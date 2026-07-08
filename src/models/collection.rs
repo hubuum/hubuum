@@ -10,7 +10,7 @@ use crate::schema::collections;
 
 use crate::errors::ApiError;
 
-use crate::models::output::GroupPermission;
+use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::search::QueryOptions;
 use crate::models::{Permission, Permissions};
 
@@ -25,6 +25,7 @@ pub struct Collection {
     pub description: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub parent_collection_id: Option<i32>,
 }
 
 crate::int_id_newtype! {
@@ -52,6 +53,7 @@ pub struct NewCollectionWithAssignee {
     pub name: String,
     pub description: String,
     pub group_id: i32,
+    pub parent_collection_id: Option<CollectionID>,
 }
 
 /// A new collection, without an assignee. Used for creating new collection entries
@@ -63,6 +65,12 @@ pub struct NewCollectionWithAssignee {
 pub struct NewCollection {
     pub name: String,
     pub description: String,
+    pub parent_collection_id: Option<i32>,
+}
+
+#[derive(Serialize, Deserialize, Clone, ToSchema)]
+pub struct UpdateCollectionParent {
+    pub parent_collection_id: CollectionID,
 }
 
 #[allow(dead_code)]
@@ -79,6 +87,7 @@ fn new_collection_with_assignee_example() -> NewCollectionWithAssignee {
         name: "global-assets".to_string(),
         description: "Shared assets and metadata".to_string(),
         group_id: 1,
+        parent_collection_id: None,
     }
 }
 
@@ -114,7 +123,7 @@ where
         .await
 }
 
-/// All of a principal's effective permissions across every collection, as
+/// All of a principal's direct permission rows across every collection, as
 /// `(collection, group, permission-row)` tuples.
 pub async fn principal_all_permissions<C, S>(
     backend: &C,
@@ -143,6 +152,24 @@ where
         principal,
         collection_ref,
         query_options,
+    )
+    .await
+}
+
+pub async fn effective_principal_on<C, S, T>(
+    backend: &C,
+    principal: S,
+    collection_ref: T,
+) -> Result<Vec<EffectiveGroupPermission>, ApiError>
+where
+    C: BackendContext + ?Sized,
+    S: crate::db::traits::authz::AuthzSubject,
+    T: CollectionAccessors,
+{
+    collection_backend::effective_principal_on_from_backend(
+        backend.db_pool(),
+        principal,
+        collection_ref,
     )
     .await
 }
@@ -203,6 +230,22 @@ where
         gid,
         collection_ref,
         permission_type,
+    )
+    .await
+}
+
+pub async fn effective_group_on<C>(
+    backend: &C,
+    target_collection_id: i32,
+    gid: i32,
+) -> Result<Vec<EffectiveGroupPermission>, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    collection_backend::effective_group_on_from_backend(
+        backend.db_pool(),
+        target_collection_id,
+        gid,
     )
     .await
 }
@@ -350,6 +393,46 @@ where
     collection_backend::group_on_from_backend(backend.db_pool(), target_collection_id, gid).await
 }
 
+pub async fn collection_children<C, T>(
+    backend: &C,
+    collection_ref: T,
+) -> Result<Vec<Collection>, ApiError>
+where
+    C: BackendContext + ?Sized,
+    T: CollectionAccessors,
+{
+    collection_backend::collection_children_from_backend(backend.db_pool(), collection_ref).await
+}
+
+pub async fn collection_ancestors<C, T>(
+    backend: &C,
+    collection_ref: T,
+) -> Result<Vec<Collection>, ApiError>
+where
+    C: BackendContext + ?Sized,
+    T: CollectionAccessors,
+{
+    collection_backend::collection_ancestors_from_backend(backend.db_pool(), collection_ref).await
+}
+
+pub async fn move_collection<C>(
+    backend: &C,
+    collection_id: i32,
+    new_parent_collection_id: i32,
+    context: Option<&crate::events::EventContext>,
+) -> Result<Collection, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    collection_backend::move_collection_record_from_backend(
+        backend.db_pool(),
+        collection_id,
+        new_parent_collection_id,
+        context,
+    )
+    .await
+}
+
 #[derive(serde::Serialize, diesel::Queryable, Clone, Debug, ToSchema)]
 #[diesel(table_name = crate::schema::collections_history)]
 pub struct CollectionHistory {
@@ -358,6 +441,7 @@ pub struct CollectionHistory {
     pub description: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub parent_collection_id: Option<i32>,
     pub op: String,
     pub valid_from: chrono::DateTime<chrono::Utc>,
     pub valid_to: Option<chrono::DateTime<chrono::Utc>>,
@@ -375,10 +459,11 @@ mod tests {
 
     use super::*;
     use crate::db::DbPool;
+    use crate::db::traits::UserPermissions;
     use crate::models::group::NewGroup;
     use crate::models::permissions::PermissionsList;
-    use crate::tests::{TestScope, generate_all_subsets};
-    use crate::traits::PermissionController;
+    use crate::tests::{TestScope, create_test_user, generate_all_subsets};
+    use crate::traits::{CanDelete, CanSave, PermissionController};
 
     async fn assign_to_groups(
         pool: &DbPool,
@@ -420,6 +505,211 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(groups.len() as i32, expected_count);
+    }
+
+    #[actix_rt::test]
+    async fn inherited_permissions_apply_without_unioning_rows() {
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
+        let parent = scope.collection_fixture("inherited_parent").await;
+        let child_group = NewGroup {
+            groupname: scope.scoped_name("inherited_child_group"),
+            description: Some("Child group".to_string()),
+        }
+        .save_without_events(&pool)
+        .await
+        .unwrap();
+        let child = NewCollectionWithAssignee {
+            name: scope.scoped_name("inherited_child"),
+            description: "Child collection".to_string(),
+            group_id: child_group.id,
+            parent_collection_id: Some(CollectionID::new(parent.collection.id).unwrap()),
+        }
+        .save_without_events(&pool)
+        .await
+        .unwrap();
+        let user = create_test_user(&pool).await;
+
+        parent
+            .owner_group
+            .add_member_without_events(&pool, &user)
+            .await
+            .unwrap();
+        child_group
+            .add_member_without_events(&pool, &user)
+            .await
+            .unwrap();
+
+        parent
+            .collection
+            .set_permissions_without_events(
+                &pool,
+                parent.owner_group.id,
+                PermissionsList::new([Permissions::ReadCollection]),
+            )
+            .await
+            .unwrap();
+        child
+            .set_permissions_without_events(
+                &pool,
+                child_group.id,
+                PermissionsList::new([Permissions::UpdateCollection]),
+            )
+            .await
+            .unwrap();
+
+        user.can(&pool, [Permissions::ReadCollection], [child.clone()], None)
+            .await
+            .unwrap();
+        user.can(
+            &pool,
+            [Permissions::UpdateCollection],
+            [child.clone()],
+            None,
+        )
+        .await
+        .unwrap();
+
+        let combined_result = user
+            .can(
+                &pool,
+                [Permissions::ReadCollection, Permissions::UpdateCollection],
+                [child.clone()],
+                None,
+            )
+            .await;
+        assert!(matches!(combined_result, Err(ApiError::Forbidden(_))));
+
+        assert!(
+            group_can_on(
+                &pool,
+                parent.owner_group.id,
+                child.clone(),
+                Permissions::ReadCollection,
+            )
+            .await
+            .unwrap()
+        );
+
+        let groups_with_read = groups_can_on(&pool, child.id, Permissions::ReadCollection)
+            .await
+            .unwrap();
+        assert!(
+            groups_with_read
+                .iter()
+                .any(|group| group.id == parent.owner_group.id)
+        );
+
+        let effective = effective_group_on(&pool, child.id, parent.owner_group.id)
+            .await
+            .unwrap();
+        assert_eq!(effective.len(), 1);
+        assert_eq!(effective[0].source_collection.id, parent.collection.id);
+        assert!(effective[0].inherited);
+
+        child.delete_without_events(&pool).await.unwrap();
+        parent.cleanup().await.unwrap();
+        child_group.delete_without_events(&pool).await.unwrap();
+    }
+
+    #[actix_rt::test]
+    async fn moving_collections_updates_ancestors_and_rejects_cycles() {
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
+        let parent = scope.collection_fixture("move_parent").await;
+        let root_id = parent.collection.parent_collection_id.unwrap();
+
+        let child_group = NewGroup {
+            groupname: scope.scoped_name("move_child_group"),
+            description: Some("Child group".to_string()),
+        }
+        .save_without_events(&pool)
+        .await
+        .unwrap();
+        let child = NewCollectionWithAssignee {
+            name: scope.scoped_name("move_child"),
+            description: "Child collection".to_string(),
+            group_id: child_group.id,
+            parent_collection_id: Some(CollectionID::new(parent.collection.id).unwrap()),
+        }
+        .save_without_events(&pool)
+        .await
+        .unwrap();
+
+        let grandchild_group = NewGroup {
+            groupname: scope.scoped_name("move_grandchild_group"),
+            description: Some("Grandchild group".to_string()),
+        }
+        .save_without_events(&pool)
+        .await
+        .unwrap();
+        let grandchild = NewCollectionWithAssignee {
+            name: scope.scoped_name("move_grandchild"),
+            description: "Grandchild collection".to_string(),
+            group_id: grandchild_group.id,
+            parent_collection_id: Some(CollectionID::new(child.id).unwrap()),
+        }
+        .save_without_events(&pool)
+        .await
+        .unwrap();
+
+        let initial_ancestors = collection_ancestors(&pool, grandchild.clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|collection| collection.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &initial_ancestors[0..3],
+            &[child.id, parent.collection.id, root_id]
+        );
+
+        let cycle_result = move_collection(&pool, parent.collection.id, grandchild.id, None).await;
+        assert!(matches!(cycle_result, Err(ApiError::BadRequest(_))));
+
+        let moved = move_collection(&pool, child.id, root_id, None)
+            .await
+            .unwrap();
+        assert_eq!(moved.parent_collection_id, Some(root_id));
+
+        let moved_ancestors = collection_ancestors(&pool, grandchild.clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|collection| collection.id)
+            .collect::<Vec<_>>();
+        assert_eq!(&moved_ancestors[0..2], &[child.id, root_id]);
+
+        grandchild.delete_without_events(&pool).await.unwrap();
+        child.delete_without_events(&pool).await.unwrap();
+        parent.cleanup().await.unwrap();
+        grandchild_group.delete_without_events(&pool).await.unwrap();
+        child_group.delete_without_events(&pool).await.unwrap();
+    }
+
+    #[actix_rt::test]
+    async fn database_rejects_direct_root_delete_and_reparent() {
+        let scope = TestScope::new();
+        let pool = scope.pool.clone();
+        let parent = scope.collection_fixture("protect_root").await;
+        let root_id = parent.collection.parent_collection_id.unwrap();
+
+        let delete_result = crate::db::with_connection(&pool, |conn| {
+            sql_query("DELETE FROM collections WHERE id = $1")
+                .bind::<diesel::sql_types::Integer, _>(root_id)
+                .execute(conn)
+        });
+        assert!(delete_result.is_err());
+
+        let reparent_result = crate::db::with_connection(&pool, |conn| {
+            sql_query("UPDATE collections SET parent_collection_id = $1 WHERE id = $2")
+                .bind::<diesel::sql_types::Integer, _>(parent.collection.id)
+                .bind::<diesel::sql_types::Integer, _>(root_id)
+                .execute(conn)
+        });
+        assert!(reparent_result.is_err());
+
+        parent.cleanup().await.unwrap();
     }
 
     #[actix_rt::test]

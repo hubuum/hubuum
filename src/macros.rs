@@ -98,6 +98,107 @@ macro_rules! can {
 }
 
 #[macro_export]
+/// Apply a permission flag filter to a boxed Diesel query that includes the
+/// `permissions` table.
+macro_rules! apply_permission_filter {
+    ($base_query:ident, $permission:expr, $target:expr) => {{
+        use diesel::prelude::*;
+        use $crate::models::Permissions;
+        use $crate::schema::permissions;
+
+        $base_query = match $permission {
+            Permissions::ReadCollection => {
+                $base_query.filter(permissions::has_read_collection.eq($target))
+            }
+            Permissions::UpdateCollection => {
+                $base_query.filter(permissions::has_update_collection.eq($target))
+            }
+            Permissions::DeleteCollection => {
+                $base_query.filter(permissions::has_delete_collection.eq($target))
+            }
+            Permissions::DelegateCollection => {
+                $base_query.filter(permissions::has_delegate_collection.eq($target))
+            }
+            Permissions::CreateClass => {
+                $base_query.filter(permissions::has_create_class.eq($target))
+            }
+            Permissions::ReadClass => $base_query.filter(permissions::has_read_class.eq($target)),
+            Permissions::UpdateClass => {
+                $base_query.filter(permissions::has_update_class.eq($target))
+            }
+            Permissions::DeleteClass => {
+                $base_query.filter(permissions::has_delete_class.eq($target))
+            }
+            Permissions::CreateObject => {
+                $base_query.filter(permissions::has_create_object.eq($target))
+            }
+            Permissions::ReadObject => $base_query.filter(permissions::has_read_object.eq($target)),
+            Permissions::UpdateObject => {
+                $base_query.filter(permissions::has_update_object.eq($target))
+            }
+            Permissions::DeleteObject => {
+                $base_query.filter(permissions::has_delete_object.eq($target))
+            }
+            Permissions::CreateClassRelation => {
+                $base_query.filter(permissions::has_create_class_relation.eq($target))
+            }
+            Permissions::ReadClassRelation => {
+                $base_query.filter(permissions::has_read_class_relation.eq($target))
+            }
+            Permissions::UpdateClassRelation => {
+                $base_query.filter(permissions::has_update_class_relation.eq($target))
+            }
+            Permissions::DeleteClassRelation => {
+                $base_query.filter(permissions::has_delete_class_relation.eq($target))
+            }
+            Permissions::CreateObjectRelation => {
+                $base_query.filter(permissions::has_create_object_relation.eq($target))
+            }
+            Permissions::ReadObjectRelation => {
+                $base_query.filter(permissions::has_read_object_relation.eq($target))
+            }
+            Permissions::UpdateObjectRelation => {
+                $base_query.filter(permissions::has_update_object_relation.eq($target))
+            }
+            Permissions::DeleteObjectRelation => {
+                $base_query.filter(permissions::has_delete_object_relation.eq($target))
+            }
+            Permissions::ReadTemplate => {
+                $base_query.filter(permissions::has_read_template.eq($target))
+            }
+            Permissions::CreateTemplate => {
+                $base_query.filter(permissions::has_create_template.eq($target))
+            }
+            Permissions::UpdateTemplate => {
+                $base_query.filter(permissions::has_update_template.eq($target))
+            }
+            Permissions::DeleteTemplate => {
+                $base_query.filter(permissions::has_delete_template.eq($target))
+            }
+            Permissions::ReadRemoteTarget => {
+                $base_query.filter(permissions::has_read_remote_target.eq($target))
+            }
+            Permissions::CreateRemoteTarget => {
+                $base_query.filter(permissions::has_create_remote_target.eq($target))
+            }
+            Permissions::UpdateRemoteTarget => {
+                $base_query.filter(permissions::has_update_remote_target.eq($target))
+            }
+            Permissions::DeleteRemoteTarget => {
+                $base_query.filter(permissions::has_delete_remote_target.eq($target))
+            }
+            Permissions::ExecuteRemoteTarget => {
+                $base_query.filter(permissions::has_execute_remote_target.eq($target))
+            }
+            Permissions::ReadAudit => $base_query.filter(permissions::has_read_audit.eq($target)),
+            Permissions::ManageEventSubscription => {
+                $base_query.filter(permissions::has_manage_event_subscription.eq($target))
+            }
+        };
+    }};
+}
+
+#[macro_export]
 /// A numeric search macro
 macro_rules! numeric_search {
     ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{

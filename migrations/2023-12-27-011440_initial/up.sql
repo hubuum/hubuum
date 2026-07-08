@@ -28,6 +28,7 @@
     DROP TABLE IF EXISTS user_groups CASCADE;
     DROP TABLE IF EXISTS service_accounts CASCADE;
     DROP TABLE IF EXISTS users CASCADE;
+    DROP TABLE IF EXISTS collection_closure CASCADE;
     DROP TABLE IF EXISTS collections CASCADE;
     DROP TABLE IF EXISTS groups CASCADE;
     DROP TABLE IF EXISTS principals CASCADE;
@@ -90,11 +91,28 @@
 
     CREATE TABLE collections (
         id SERIAL PRIMARY KEY,
-        name VARCHAR NOT NULL UNIQUE,
+        name VARCHAR NOT NULL,
         description VARCHAR NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
-        updated_at TIMESTAMP NOT NULL DEFAULT now()
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        parent_collection_id INT NULL REFERENCES collections (id) ON DELETE RESTRICT
     );
+
+    CREATE TABLE collection_closure (
+        ancestor_collection_id INT NOT NULL REFERENCES collections (id) ON DELETE CASCADE,
+        descendant_collection_id INT NOT NULL REFERENCES collections (id) ON DELETE CASCADE,
+        depth INT NOT NULL CHECK (depth >= 0),
+        PRIMARY KEY (ancestor_collection_id, descendant_collection_id)
+    );
+
+    WITH inserted_root AS (
+        INSERT INTO collections (name, description, parent_collection_id)
+        VALUES ('root', 'Root collection', NULL)
+        RETURNING id
+    )
+    INSERT INTO collection_closure (ancestor_collection_id, descendant_collection_id, depth)
+    SELECT id, id, 0
+    FROM inserted_root;
 
     -- Human user. id is the principal id; the login/display name is principals.name.
     CREATE TABLE users (
@@ -494,6 +512,19 @@
     CREATE INDEX idx_service_accounts_owner_group_id ON service_accounts(owner_group_id);
     CREATE INDEX idx_service_accounts_disabled_at ON service_accounts(disabled_at) WHERE disabled_at IS NOT NULL;
     CREATE INDEX idx_collections_name ON collections(name);
+    CREATE UNIQUE INDEX collections_single_root_idx
+        ON collections ((parent_collection_id IS NULL))
+        WHERE parent_collection_id IS NULL;
+    CREATE UNIQUE INDEX collections_parent_name_idx
+        ON collections (parent_collection_id, name)
+        WHERE parent_collection_id IS NOT NULL;
+    CREATE INDEX collections_parent_idx ON collections(parent_collection_id);
+    CREATE INDEX collection_closure_descendant_idx
+        ON collection_closure(descendant_collection_id);
+    CREATE INDEX collection_closure_descendant_ancestor_depth_idx
+        ON collection_closure(descendant_collection_id, ancestor_collection_id, depth);
+    CREATE INDEX collection_closure_ancestor_depth_idx
+        ON collection_closure(ancestor_collection_id, depth);
 
     ---- Tokens
     CREATE INDEX idx_tokens_principal_id ON tokens(principal_id);
@@ -509,6 +540,7 @@
     ---- Permissions
     CREATE INDEX idx_permissions_collection_id ON permissions(collection_id);
     CREATE INDEX idx_permissions_group_id ON permissions(group_id);
+    CREATE INDEX permissions_group_collection_idx ON permissions(group_id, collection_id);
 
     ---- Relations
     CREATE INDEX idx_hubuumclass_relation_on_from_to ON hubuumclass_relation (from_hubuum_class_id, to_hubuum_class_id);
@@ -689,6 +721,28 @@
         RETURN false;
     END;
     $$;
+
+    CREATE OR REPLACE FUNCTION protect_root_collection()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' AND OLD.parent_collection_id IS NULL THEN
+            RAISE EXCEPTION 'root collection cannot be deleted';
+        END IF;
+
+        IF TG_OP = 'DELETE' THEN
+            RETURN OLD;
+        END IF;
+
+        IF TG_OP = 'UPDATE'
+           AND OLD.parent_collection_id IS NULL
+           AND NEW.parent_collection_id IS NOT NULL
+        THEN
+            RAISE EXCEPTION 'root collection cannot be moved';
+        END IF;
+
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
 
     CREATE OR REPLACE FUNCTION enforce_events_append_only()
     RETURNS TRIGGER AS $$
@@ -1362,6 +1416,11 @@
     CREATE TRIGGER update_collections_updated_at
     BEFORE UPDATE ON collections
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+    DROP TRIGGER IF EXISTS protect_root_collection ON collections;
+    CREATE TRIGGER protect_root_collection
+    BEFORE UPDATE OR DELETE ON collections
+    FOR EACH ROW EXECUTE FUNCTION protect_root_collection();
 
     DROP TRIGGER IF EXISTS update_permissions_updated_at ON permissions;
     CREATE TRIGGER update_permissions_updated_at

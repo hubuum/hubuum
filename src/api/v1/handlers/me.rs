@@ -138,7 +138,7 @@ pub async fn list_my_groups(
     tag = "principals",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Current principal effective permissions per collection, grouped by granting group", body = [PrincipalCollectionPermissions]),
+        (status = 200, description = "Current principal direct permission rows per collection, grouped by granting group", body = [PrincipalCollectionPermissions]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
 )]

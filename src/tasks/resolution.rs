@@ -5,11 +5,116 @@ use super::types::{
 use crate::db::DbPool;
 use crate::db::traits::task_import::{
     lookup_class_by_collection_and_name, lookup_class_by_collection_and_name_db,
-    lookup_collection_by_id, lookup_collection_by_name, lookup_collection_by_name_db,
-    lookup_object_by_class_and_name, lookup_object_by_class_and_name_db,
+    lookup_collection_by_id, lookup_collection_by_key, lookup_collection_by_key_db,
+    lookup_collection_child_by_name_db, lookup_collections_by_name,
+    lookup_object_by_class_and_name, lookup_object_by_class_and_name_db, lookup_root_collection,
+    lookup_root_collection_db,
 };
 use crate::errors::ApiError;
-use crate::models::{ClassKey, Collection, CollectionKey, HubuumClass, HubuumObject, ObjectKey};
+use crate::models::{
+    ClassKey, Collection, CollectionKey, HubuumClass, HubuumObject, ImportCollectionInput,
+    ObjectKey,
+};
+
+fn validate_collection_key_path(key: &CollectionKey) -> Result<(), String> {
+    if let Some(path) = &key.path {
+        match path.last() {
+            Some(last) if last == &key.name => Ok(()),
+            Some(_) => Err(format!(
+                "collection_key.path must end with collection name '{}'",
+                key.name
+            )),
+            None if key.name == "root" => Ok(()),
+            None => {
+                Err("collection_key.path may be empty only for the root collection".to_string())
+            }
+        }
+    } else {
+        Ok(())
+    }
+}
+
+fn collection_key_label(key: &CollectionKey) -> String {
+    match &key.path {
+        Some(path) => format!("/{}", path.join("/")),
+        None => key.name.clone(),
+    }
+}
+
+async fn find_collection_by_key_planning(
+    pool: &DbPool,
+    state: &mut PlanningState,
+    key: &CollectionKey,
+) -> Result<Option<CollectionResolution>, String> {
+    validate_collection_key_path(key)?;
+
+    if key.path.is_some() {
+        let collection = lookup_collection_by_key(pool, key)
+            .await
+            .map_err(|err| err.to_string())?
+            .map(collection_to_resolution);
+        if let Some(collection) = &collection {
+            remember_collection(state, None, collection.clone());
+        }
+        return Ok(collection);
+    }
+
+    if state.missing_collection_names.contains(&key.name) {
+        return Ok(None);
+    }
+
+    let mut matches = state
+        .collections_by_name
+        .get(&key.name)
+        .cloned()
+        .unwrap_or_default();
+    for collection in lookup_collections_by_name(pool, &key.name)
+        .await
+        .map_err(|err| err.to_string())?
+        .into_iter()
+        .map(collection_to_resolution)
+    {
+        if !matches.iter().any(|known| known.id == collection.id) {
+            matches.push(collection);
+        }
+    }
+
+    match matches.as_slice() {
+        [] => {
+            state.missing_collection_names.insert(key.name.clone());
+            Ok(None)
+        }
+        [collection] => {
+            let collection = collection.clone();
+            remember_collection(state, None, collection.clone());
+            Ok(Some(collection))
+        }
+        _ => Err(format!(
+            "Collection name '{}' is ambiguous; use collection_key.path",
+            key.name
+        )),
+    }
+}
+
+async fn resolve_root_collection_planning(
+    pool: &DbPool,
+    state: &mut PlanningState,
+) -> Result<CollectionResolution, String> {
+    if let Some(collection) = state
+        .collections_by_parent_name
+        .get(&(None, "root".to_string()))
+        .cloned()
+    {
+        return Ok(collection);
+    }
+
+    let collection = lookup_root_collection(pool)
+        .await
+        .map_err(|err| err.to_string())
+        .map(collection_to_resolution)?;
+    remember_collection(state, None, collection.clone());
+    Ok(collection)
+}
 
 pub(super) async fn resolve_collection_planning(
     pool: &DbPool,
@@ -23,23 +128,33 @@ pub(super) async fn resolve_collection_planning(
             .get(reference)
             .cloned()
             .ok_or_else(|| format!("Unknown collection ref '{reference}'")),
-        (None, Some(key)) => {
-            if let Some(collection) = state.collections_by_name.get(&key.name) {
-                return Ok(collection.clone());
-            }
-            if state.missing_collection_names.contains(&key.name) {
-                return Err(format!("Collection '{}' not found", key.name));
-            }
-
-            let collection = lookup_collection_by_name(pool, &key.name)
-                .await
-                .map_err(|err| err.to_string())?
-                .map(collection_to_resolution)
-                .ok_or_else(|| format!("Collection '{}' not found", key.name))?;
-            remember_collection(state, None, collection.clone());
-            Ok(collection)
-        }
+        (None, Some(key)) => find_collection_by_key_planning(pool, state, key)
+            .await?
+            .ok_or_else(|| format!("Collection '{}' not found", collection_key_label(key))),
         _ => Err("Exactly one of collection_ref or collection_key must be provided".to_string()),
+    }
+}
+
+pub(super) async fn resolve_collection_parent_planning(
+    pool: &DbPool,
+    state: &mut PlanningState,
+    input: &ImportCollectionInput,
+) -> Result<CollectionResolution, String> {
+    match (
+        input.parent_collection_ref.as_deref(),
+        input.parent_collection_key.as_ref(),
+    ) {
+        (None, None) => resolve_root_collection_planning(pool, state).await,
+        (Some(reference), None) => state
+            .collections_by_ref
+            .get(reference)
+            .cloned()
+            .ok_or_else(|| format!("Unknown collection ref '{reference}'")),
+        (None, Some(key)) => resolve_collection_planning(pool, state, None, Some(key)).await,
+        (Some(_), Some(_)) => Err(
+            "At most one of parent_collection_ref or parent_collection_key may be provided"
+                .to_string(),
+        ),
     }
 }
 
@@ -170,16 +285,52 @@ pub(super) fn resolve_collection_runtime(
             .get(reference)
             .cloned()
             .ok_or_else(|| ApiError::BadRequest(format!("Unknown collection ref '{reference}'"))),
-        (None, Some(key)) => lookup_collection_by_name_db(conn, &key.name)?.ok_or_else(|| {
+        (None, Some(key)) => lookup_collection_by_key_db(conn, key)?.ok_or_else(|| {
             ApiError::NotFound(format!(
                 "Collection '{}' not found during execution",
-                key.name
+                collection_key_label(key)
             ))
         }),
         _ => Err(ApiError::BadRequest(
             "Exactly one of collection_ref or collection_key must be provided".to_string(),
         )),
     }
+}
+
+pub(super) fn resolve_collection_parent_runtime(
+    conn: &mut diesel::PgConnection,
+    runtime: &RuntimeState,
+    input: &ImportCollectionInput,
+) -> Result<Collection, ApiError> {
+    match (
+        input.parent_collection_ref.as_deref(),
+        input.parent_collection_key.as_ref(),
+    ) {
+        (None, None) => lookup_root_collection_db(conn),
+        (Some(reference), None) => runtime
+            .collections_by_ref
+            .get(reference)
+            .cloned()
+            .ok_or_else(|| ApiError::BadRequest(format!("Unknown collection ref '{reference}'"))),
+        (None, Some(key)) => lookup_collection_by_key_db(conn, key)?.ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "Collection '{}' not found during execution",
+                collection_key_label(key)
+            ))
+        }),
+        (Some(_), Some(_)) => Err(ApiError::BadRequest(
+            "At most one of parent_collection_ref or parent_collection_key may be provided"
+                .to_string(),
+        )),
+    }
+}
+
+pub(super) fn lookup_existing_collection_for_import_db(
+    conn: &mut diesel::PgConnection,
+    parent_collection_id: i32,
+    name: &str,
+) -> Result<Option<Collection>, ApiError> {
+    lookup_collection_child_by_name_db(conn, parent_collection_id, name)
 }
 
 pub(super) fn resolve_class_runtime(
@@ -258,7 +409,18 @@ pub(super) fn remember_collection(
         .insert(collection.id, collection.clone());
     state
         .collections_by_name
-        .insert(collection.name.clone(), collection.clone());
+        .entry(collection.name.clone())
+        .or_default()
+        .retain(|known| known.id != collection.id);
+    state
+        .collections_by_name
+        .entry(collection.name.clone())
+        .or_default()
+        .push(collection.clone());
+    state.collections_by_parent_name.insert(
+        (collection.parent_collection_id, collection.name.clone()),
+        collection.clone(),
+    );
     if let Some(reference) = reference {
         state.collections_by_ref.insert(reference, collection);
     }

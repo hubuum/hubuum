@@ -152,7 +152,31 @@ Selector shapes:
 
 ```json
 {
-  "name": "infra"
+  "name": "infra",
+  "path": ["infra"]
+}
+```
+
+`CollectionKey.path` is optional when the collection name is globally unique.
+When different branches contain the same collection name, use `path` to make the
+selector unambiguous. Paths are absolute from the system root collection and do
+not include the literal `root` segment. For example, the collection
+`root / company / it / assets` is selected with:
+
+```json
+{
+  "name": "assets",
+  "path": ["company", "it", "assets"]
+}
+```
+
+The last `path` segment must match `name`. The root collection itself can be
+selected with:
+
+```json
+{
+  "name": "root",
+  "path": []
 }
 ```
 
@@ -197,8 +221,15 @@ Section shapes:
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `ref` | string | no | Client-local reference for later items in the same request. |
-| `name` | string | yes | Natural key for collection lookup. |
+| `name` | string | yes | Collection name within the selected parent. |
 | `description` | string | yes | Collection description. |
+| `parent_collection_ref` | string | no | Parent collection created earlier in the same request. |
+| `parent_collection_key` | object | no | Existing parent collection selector. |
+
+If both parent selectors are omitted, the collection is created or matched under
+`root`. At most one parent selector may be set. Existing collection lookup uses
+`(parent_collection_id, name)`, so two imports may create the same collection
+name under different parents in one request.
 
 ### `classes`
 

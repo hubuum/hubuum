@@ -141,6 +141,7 @@ pub(super) fn collection_to_resolution(collection: Collection) -> CollectionReso
         id: collection.id,
         name: collection.name,
         description: collection.description,
+        parent_collection_id: collection.parent_collection_id,
         exists_in_db: true,
     }
 }

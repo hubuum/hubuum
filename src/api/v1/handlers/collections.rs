@@ -4,8 +4,9 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, Authenticated};
 use crate::models::{
-    Collection, CollectionID, Group, GroupID, GroupPermission, NewCollectionWithAssignee,
-    Permission, Permissions, PermissionsList, UpdateCollection,
+    Collection, CollectionID, EffectiveGroupPermission, Group, GroupID, GroupPermission,
+    NewCollectionWithAssignee, Permission, Permissions, PermissionsList, UpdateCollection,
+    UpdateCollectionParent,
 };
 
 use crate::models::search::parse_query_parameter;
@@ -234,6 +235,141 @@ pub async fn delete_collection(
     Ok(ApiResponse::no_content())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/collections/{collection_id}/children",
+    tag = "collections",
+    security(("bearer_auth" = [])),
+    params(
+        ("collection_id" = i32, Path, description = "Collection ID")
+    ),
+    responses(
+        (status = 200, description = "Direct child collections", body = [Collection]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Collection not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{collection_id}/children")]
+pub async fn get_collection_children(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    collection_id: web::Path<CollectionID>,
+) -> Result<impl Responder, ApiError> {
+    let collection = collection_id.instance(&pool).await?;
+    can!(
+        &pool,
+        &requestor.principal,
+        requestor.scopes(),
+        [Permissions::ReadCollection],
+        collection.clone()
+    );
+
+    let children = crate::models::collection::collection_children(&pool, collection).await?;
+    Ok(ApiResponse::new(children, StatusCode::OK))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/collections/{collection_id}/ancestors",
+    tag = "collections",
+    security(("bearer_auth" = [])),
+    params(
+        ("collection_id" = i32, Path, description = "Collection ID")
+    ),
+    responses(
+        (status = 200, description = "Ancestor collections, nearest parent first", body = [Collection]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Collection not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{collection_id}/ancestors")]
+pub async fn get_collection_ancestors(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    collection_id: web::Path<CollectionID>,
+) -> Result<impl Responder, ApiError> {
+    let collection = collection_id.instance(&pool).await?;
+    can!(
+        &pool,
+        &requestor.principal,
+        requestor.scopes(),
+        [Permissions::ReadCollection],
+        collection.clone()
+    );
+
+    let ancestors = crate::models::collection::collection_ancestors(&pool, collection).await?;
+    Ok(ApiResponse::new(ancestors, StatusCode::OK))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/v1/collections/{collection_id}/parent",
+    tag = "collections",
+    security(("bearer_auth" = [])),
+    params(
+        ("collection_id" = i32, Path, description = "Collection ID")
+    ),
+    request_body = UpdateCollectionParent,
+    responses(
+        (status = 202, description = "Collection moved", body = Collection),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Collection not found", body = ApiErrorResponse),
+        (status = 409, description = "Conflict", body = ApiErrorResponse)
+    )
+)]
+#[put("/{collection_id}/parent")]
+pub async fn move_collection_parent(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    collection_id: web::Path<CollectionID>,
+    update_parent: web::Json<UpdateCollectionParent>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let collection = collection_id.instance(&pool).await?;
+    let new_parent_id = update_parent.into_inner().parent_collection_id;
+    let new_parent = new_parent_id.instance(&pool).await?;
+
+    can!(
+        &pool,
+        &requestor.principal,
+        requestor.scopes(),
+        [Permissions::UpdateCollection],
+        collection.clone()
+    );
+
+    if let Some(old_parent_id) = collection.parent_collection_id {
+        let old_parent = CollectionID::new(old_parent_id)?.instance(&pool).await?;
+        can!(
+            &pool,
+            &requestor.principal,
+            requestor.scopes(),
+            [Permissions::DelegateCollection],
+            old_parent
+        );
+    }
+
+    can!(
+        &pool,
+        &requestor.principal,
+        requestor.scopes(),
+        [Permissions::DelegateCollection],
+        new_parent
+    );
+
+    let event_context = requestor.event_context(&req);
+    let updated = crate::models::collection::move_collection(
+        &pool,
+        collection.id,
+        new_parent_id.id(),
+        Some(&event_context),
+    )
+    .await?;
+
+    Ok(ApiResponse::accepted(updated))
+}
+
 /// List all groups who have permissions for a collection
 #[utoipa::path(
     get,
@@ -329,6 +465,44 @@ pub async fn get_collection_group_permissions(
     );
 
     let permissions = group_on(&pool, collection.id, group_id.id()).await?;
+
+    Ok(ApiResponse::new(permissions, StatusCode::OK))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/collections/{collection_id}/permissions/effective/group/{group_id}",
+    tag = "collections",
+    security(("bearer_auth" = [])),
+    params(
+        ("collection_id" = i32, Path, description = "Collection ID"),
+        ("group_id" = i32, Path, description = "Group ID")
+    ),
+    responses(
+        (status = 200, description = "Effective group permissions, including inherited ancestor grants", body = [EffectiveGroupPermission]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{collection_id}/permissions/effective/group/{group_id}")]
+pub async fn get_collection_effective_group_permissions(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    params: web::Path<(CollectionID, GroupID)>,
+) -> Result<impl Responder, ApiError> {
+    let (collection_id, group_id) = params.into_inner();
+    let collection = collection_id.instance(&pool).await?;
+    can!(
+        &pool,
+        &requestor.principal,
+        requestor.scopes(),
+        [Permissions::ReadCollection],
+        collection
+    );
+
+    let permissions =
+        crate::models::collection::effective_group_on(&pool, collection_id.id(), group_id.id())
+            .await?;
 
     Ok(ApiResponse::new(permissions, StatusCode::OK))
 }
@@ -726,6 +900,43 @@ pub async fn get_collection_principal_permissions(
     }
 
     ApiResponse::paginated(permissions, total_count, &query_options)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/collections/{collection_id}/permissions/effective/principal/{principal_id}",
+    tag = "collections",
+    security(("bearer_auth" = [])),
+    params(
+        ("collection_id" = i32, Path, description = "Collection ID"),
+        ("principal_id" = i32, Path, description = "Principal ID")
+    ),
+    responses(
+        (status = 200, description = "Effective principal permissions via group memberships, including inherited ancestor grants", body = [EffectiveGroupPermission]),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Collection not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{collection_id}/permissions/effective/principal/{principal_id}")]
+pub async fn get_collection_effective_principal_permissions(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    params: web::Path<(CollectionID, crate::models::PrincipalID)>,
+) -> Result<impl Responder, ApiError> {
+    let (collection_id, principal_id) = params.into_inner();
+    let collection = collection_id.instance(&pool).await?;
+    can!(
+        &pool,
+        &requestor.principal,
+        requestor.scopes(),
+        [Permissions::ReadCollection],
+        collection.clone()
+    );
+
+    let permissions =
+        crate::models::collection::effective_principal_on(&pool, principal_id, collection).await?;
+
+    Ok(ApiResponse::new(permissions, StatusCode::OK))
 }
 
 /// List all groups that have any permissions on a collection

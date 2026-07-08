@@ -6,12 +6,63 @@ Permissions within Hubuum are based on the following principles:
 
 - Permissions are granted to groups (only). If one wishes to grant permissions to a specific user only, create a group with a single member.
 - Permissions are granted on collections. Permissions are never granted to individual classes or objects.
-- Permissions are not inherited from any structure to any other. If a user (through a group membership) has read access to a class, they do not automatically have read access to the objects of that class.
+- Collection permissions are inherited by child collections. Class and object membership is still concrete: each class or object belongs to exactly one collection.
+- Permissions are not inherited from classes to objects. If a user has read access to a class, they do not automatically have read access to the objects of that class.
 
 Group membership is principal-centric: both human users and service accounts are
 **principals** and gain a group's permissions by being members of it. For the
 identity model, tokens, and how token **scopes** narrow these permissions for
 automated callers, see [auth_model.md](auth_model.md).
+
+For examples, hierarchy endpoints, and developer implementation notes, see
+[collection_hierarchy.md](collection_hierarchy.md).
+
+## Collection hierarchy and inheritance
+
+Collections form a tree rooted at the system `root` collection. Every collection
+except `root` has exactly one parent collection, and new collections default to
+`root` when `parent_collection_id` is omitted.
+
+A permission row granted to a group on a collection applies to that collection
+and all descendant collections. Inheritance is additive only:
+
+- There are no deny rules and no child override rules.
+- All permission types inherit, including `DelegateCollection`, `DeleteCollection`,
+  `ReadAudit`, and remote-target permissions.
+- Token scopes still only narrow by permission type. A scoped token cannot gain
+  collection access outside the principal's group grants.
+- Combined permission checks are not unioned across rows. If an operation needs
+  `ReadCollection` and `UpdateCollection` on a target collection, one permission
+  row on the target or one ancestor must contain both flags.
+
+Permission-management endpoints remain direct-row operations. Granting,
+replacing, revoking, and listing stored rows under
+`/api/v1/collections/{collection_id}/permissions` affects only the named
+collection. Use the effective endpoints when debugging inherited access:
+
+| Endpoint | Meaning |
+| --- | --- |
+| `GET /api/v1/collections/{collection_id}/permissions/effective/group/{group_id}` | Shows the direct and inherited permission rows that apply to one group. |
+| `GET /api/v1/collections/{collection_id}/permissions/effective/principal/{principal_id}` | Shows the direct and inherited permission rows that apply through a principal's group memberships. |
+| `GET /api/v1/collections/{collection_id}/has_permissions/{permission}` | Lists groups with that direct or inherited permission on the collection. |
+
+Collections can be inspected and moved with these hierarchy endpoints:
+
+| Endpoint | Meaning |
+| --- | --- |
+| `GET /api/v1/collections/{collection_id}/children` | Lists direct child collections. |
+| `GET /api/v1/collections/{collection_id}/ancestors` | Lists ancestors, nearest parent first. |
+| `PUT /api/v1/collections/{collection_id}/parent` | Moves a collection by accepting `{"parent_collection_id": <id>}`. |
+
+Moving a collection is separate from updating its name or description. The
+caller needs effective `UpdateCollection` on the collection being moved and
+effective `DelegateCollection` on both the old parent and the new parent. The
+`admin` group bypass still applies. The root collection cannot be moved or
+deleted, and a collection cannot be moved under itself or one of its
+descendants. Collections with child collections cannot be deleted.
+
+Collection names are unique among siblings. The same name may appear in
+different branches of the tree.
 
 ## Permission types
 
@@ -35,7 +86,10 @@ The following permissions are available for collections:
 | `CreateObject` | Allows creating objects within the collection. |
 | `CreateClassRelation` | Allows creating relationships of classes within the collection. |
 
-The permission to grant groups (or users) access to the collection itself is done by the parent collection. Every collection has a parent collection and the root collection is created when the Hubuum instance is created.
+Granting a group access to a parent collection grants the same permissions to
+all descendant collections. Grant rows can still be added directly on a child
+collection when a narrower or additional permission set is needed for that
+subtree.
 
 ### Permissions for classes
 
@@ -312,4 +366,9 @@ Endpoint: `POST /api/v1/permissions/objects/2/groups/3`
 
 ## A word about inheritance and admin privileges
 
-In the examples above we have to explicitly grant the central security group access to a new collection. This is by design. There is no inheritance of permissions from one collection to another and no implicit access granted to magic groups -- except for the `admin` group, which is a special case. The `admin` group has full access to everything, and is intended for use by the Hubuum system administrators only.
+In the examples above, the central security group can either be granted access
+directly on each department collection, or be granted access on a common parent
+collection so those permissions inherit to the department collections. There is
+still no implicit access granted to magic groups except for the `admin` group,
+which is a special case. The `admin` group has full access to everything and is
+intended for Hubuum system administrators only.

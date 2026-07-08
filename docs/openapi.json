@@ -3651,6 +3651,130 @@
         ]
       }
     },
+    "/api/v1/collections/{collection_id}/ancestors": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id Ancestors",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/ancestors.",
+        "operationId": "getApiV1CollectionsByCollectionIdAncestors",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ancestor collections, nearest parent first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Collection"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/children": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id Children",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/children.",
+        "operationId": "getApiV1CollectionsByCollectionIdChildren",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Direct child collections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Collection"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/collections/{collection_id}/event-subscriptions": {
       "get": {
         "tags": [
@@ -4525,6 +4649,105 @@
         ]
       }
     },
+    "/api/v1/collections/{collection_id}/parent": {
+      "put": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Put Api V1 Collections By Collection Id Parent",
+        "description": "Auto-generated documentation for PUT /api/v1/collections/{collection_id}/parent.",
+        "operationId": "putApiV1CollectionsByCollectionIdParent",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCollectionParent"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Collection moved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/collections/{collection_id}/permissions": {
       "get": {
         "tags": [
@@ -4595,6 +4818,150 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/GroupPermission"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/permissions/effective/group/{group_id}": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id Permissions Effective Group By Group Id",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/permissions/effective/group/{group_id}.",
+        "operationId": "getApiV1CollectionsByCollectionIdPermissionsEffectiveGroupByGroupId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective group permissions, including inherited ancestor grants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EffectiveGroupPermission"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Collection or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/collections/{collection_id}/permissions/effective/principal/{principal_id}": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Get Api V1 Collections By Collection Id Permissions Effective Principal By Principal Id",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/permissions/effective/principal/{principal_id}.",
+        "operationId": "getApiV1CollectionsByCollectionIdPermissionsEffectivePrincipalByPrincipalId",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective principal permissions via group memberships, including inherited ancestor grants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EffectiveGroupPermission"
                   }
                 }
               }
@@ -6960,7 +7327,7 @@
         "operationId": "getApiV1IamMePermissions",
         "responses": {
           "200": {
-            "description": "Current principal effective permissions per collection, grouped by granting group",
+            "description": "Current principal direct permission rows per collection, grouped by granting group",
             "content": {
               "application/json": {
                 "schema": {
@@ -11763,6 +12130,13 @@
           "name": {
             "type": "string"
           },
+          "parent_collection_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -11810,6 +12184,13 @@
           "op": {
             "type": "string"
           },
+          "parent_collection_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -11840,6 +12221,15 @@
         "properties": {
           "name": {
             "type": "string"
+          },
+          "path": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -11971,6 +12361,38 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "EffectiveGroupPermission": {
+        "type": "object",
+        "required": [
+          "target_collection",
+          "source_collection",
+          "depth",
+          "inherited",
+          "group",
+          "permission"
+        ],
+        "properties": {
+          "depth": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "group": {
+            "$ref": "#/components/schemas/Group"
+          },
+          "inherited": {
+            "type": "boolean"
+          },
+          "permission": {
+            "$ref": "#/components/schemas/Permission"
+          },
+          "source_collection": {
+            "$ref": "#/components/schemas/Collection"
+          },
+          "target_collection": {
+            "$ref": "#/components/schemas/Collection"
           }
         }
       },
@@ -12650,7 +13072,7 @@
       },
       "GroupGrant": {
         "type": "object",
-        "description": "One group's contribution to a principal's effective permissions on a collection.",
+        "description": "One group's direct permission row contribution on a collection.",
         "required": [
           "group_id",
           "groupname",
@@ -12740,6 +13162,13 @@
               },
               "op": {
                 "type": "string"
+              },
+              "parent_collection_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32"
               },
               "updated_at": {
                 "type": "string",
@@ -13753,6 +14182,22 @@
           "name": {
             "type": "string"
           },
+          "parent_collection_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CollectionKey"
+              }
+            ]
+          },
+          "parent_collection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "ref": {
             "type": [
               "string",
@@ -14311,12 +14756,23 @@
           },
           "name": {
             "type": "string"
+          },
+          "parent_collection_id": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CollectionID"
+              }
+            ]
           }
         },
         "example": {
           "description": "Shared assets and metadata",
           "group_id": 1,
-          "name": "global-assets"
+          "name": "global-assets",
+          "parent_collection_id": null
         }
       },
       "NewEventSink": {
@@ -15075,7 +15531,7 @@
       },
       "PrincipalCollectionPermissions": {
         "type": "object",
-        "description": "A principal's effective permissions on a single collection, broken down by the\ngroup that grants them.",
+        "description": "A principal's direct permission rows on a single collection, broken down by the\ngroup that grants them.",
         "required": [
           "collection_id",
           "collection_name",
@@ -17035,6 +17491,17 @@
         "example": {
           "description": "Shared assets and metadata",
           "name": "global-assets"
+        }
+      },
+      "UpdateCollectionParent": {
+        "type": "object",
+        "required": [
+          "parent_collection_id"
+        ],
+        "properties": {
+          "parent_collection_id": {
+            "$ref": "#/components/schemas/CollectionID"
+          }
         }
       },
       "UpdateEventSink": {

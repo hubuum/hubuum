@@ -514,6 +514,7 @@ mod tests {
                 .unwrap()
                 .and_hms_opt(1, 0, 0)
                 .unwrap(),
+            parent_collection_id: None,
         }
     }
 

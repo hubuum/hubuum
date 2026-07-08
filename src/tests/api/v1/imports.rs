@@ -76,6 +76,8 @@ mod tests {
                     ref_: Some("collection:primary".to_string()),
                     name,
                     description: description.to_string(),
+                    parent_collection_ref: None,
+                    parent_collection_key: None,
                 }],
                 ..ImportGraph::default()
             },
@@ -106,6 +108,8 @@ mod tests {
                     ref_: Some("collection:primary".to_string()),
                     name: import_collection_name.clone(),
                     description: "Imported collection".to_string(),
+                    parent_collection_ref: None,
+                    parent_collection_key: None,
                 }],
                 classes: vec![ImportClassInput {
                     ref_: Some("class:primary".to_string()),
@@ -302,6 +306,8 @@ mod tests {
                     ref_: Some("collection:dry".to_string()),
                     name: import_collection_name,
                     description: "Dry run collection".to_string(),
+                    parent_collection_ref: None,
+                    parent_collection_key: None,
                 }],
                 ..ImportGraph::default()
             },
@@ -358,6 +364,8 @@ mod tests {
                             "idempotent_import_collection_concurrent_{iteration}"
                         )),
                         description: "Dry run collection".to_string(),
+                        parent_collection_ref: None,
+                        parent_collection_key: None,
                     }],
                     ..ImportGraph::default()
                 },
@@ -433,6 +441,8 @@ mod tests {
                     ref_: Some("collection:conflict".to_string()),
                     name: context.scoped_name("idempotency_conflict_collection"),
                     description: "Dry run collection".to_string(),
+                    parent_collection_ref: None,
+                    parent_collection_key: None,
                 }],
                 ..ImportGraph::default()
             },
@@ -490,6 +500,8 @@ mod tests {
                     ref_: Some("collection:conflict".to_string()),
                     name: context.scoped_name("idempotency_conflict_collection_changed"),
                     description: "Changed dry run collection".to_string(),
+                    parent_collection_ref: None,
+                    parent_collection_key: None,
                 }],
                 ..ImportGraph::default()
             },
@@ -525,6 +537,8 @@ mod tests {
                     ref_: Some("collection:unsupported".to_string()),
                     name: context.scoped_name("unsupported_import_version"),
                     description: "unsupported".to_string(),
+                    parent_collection_ref: None,
+                    parent_collection_key: None,
                 }],
                 ..ImportGraph::default()
             },
@@ -568,6 +582,8 @@ mod tests {
                     ref_: Some("collection:page".to_string()),
                     name: context.scoped_name("paged_import_collection"),
                     description: "Imported collection".to_string(),
+                    parent_collection_ref: None,
+                    parent_collection_key: None,
                 }],
                 classes: vec![ImportClassInput {
                     ref_: Some("class:page".to_string()),
@@ -801,6 +817,7 @@ mod tests {
                         collection_ref: None,
                         collection_key: Some(CollectionKey {
                             name: allowed.collection.name.clone(),
+                            path: None,
                         }),
                     },
                     ImportClassInput {
@@ -812,6 +829,7 @@ mod tests {
                         collection_ref: None,
                         collection_key: Some(CollectionKey {
                             name: forbidden.collection.name.clone(),
+                            path: None,
                         }),
                     },
                 ],
@@ -919,6 +937,7 @@ mod tests {
                         collection_ref: None,
                         collection_key: Some(CollectionKey {
                             name: allowed.collection.name.clone(),
+                            path: None,
                         }),
                     },
                     ImportClassInput {
@@ -930,6 +949,7 @@ mod tests {
                         collection_ref: None,
                         collection_key: Some(CollectionKey {
                             name: forbidden.collection.name.clone(),
+                            path: None,
                         }),
                     },
                 ],
@@ -981,6 +1001,8 @@ mod tests {
                     ref_: Some("collection:private".to_string()),
                     name: context.scoped_name("private_task_collection"),
                     description: "private".to_string(),
+                    parent_collection_ref: None,
+                    parent_collection_key: None,
                 }],
                 ..ImportGraph::default()
             },

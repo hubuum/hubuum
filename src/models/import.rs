@@ -46,6 +46,7 @@ impl Default for ImportMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct CollectionKey {
     pub name: String,
+    pub path: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -73,6 +74,8 @@ pub struct ImportCollectionInput {
     pub ref_: Option<String>,
     pub name: String,
     pub description: String,
+    pub parent_collection_ref: Option<String>,
+    pub parent_collection_key: Option<CollectionKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]

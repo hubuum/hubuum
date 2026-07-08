@@ -3,12 +3,22 @@
 
 // A typical use is to combine the output of multiple models into a single response
 
-use crate::models::{Group, HubuumClass, Permission};
+use crate::models::{Collection, Group, HubuumClass, Permission};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 #[derive(Serialize, Deserialize, Clone, ToSchema)]
 pub struct GroupPermission {
+    pub group: Group,
+    pub permission: Permission,
+}
+
+#[derive(Serialize, Deserialize, Clone, ToSchema)]
+pub struct EffectiveGroupPermission {
+    pub target_collection: Collection,
+    pub source_collection: Collection,
+    pub depth: i32,
+    pub inherited: bool,
     pub group: Group,
     pub permission: Permission,
 }

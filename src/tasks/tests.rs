@@ -23,14 +23,16 @@ use crate::db::traits::task_import::{create_class_db, create_object_db};
 use crate::db::with_connection;
 use crate::errors::ApiError;
 use crate::models::{
-    ClassKey, CollectionKey, ImportAtomicity, ImportClassInput, ImportCollectionInput,
-    ImportCollisionPolicy, ImportMode, ImportObjectInput, ImportPermissionPolicy,
-    NewImportTaskResultRecord, NewTaskRecord, ObjectKey, TaskKind, TaskStatus,
+    ClassKey, CollectionID, CollectionKey, ImportAtomicity, ImportClassInput,
+    ImportCollectionInput, ImportCollisionPolicy, ImportMode, ImportObjectInput,
+    ImportPermissionPolicy, NewCollectionWithAssignee, NewImportTaskResultRecord, NewTaskRecord,
+    ObjectKey, TaskKind, TaskStatus,
 };
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
 use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
 use crate::tests::TestContext;
+use crate::traits::CanSave;
 
 #[test]
 fn test_execute_import_strict_rolls_back_on_runtime_failure() {
@@ -49,6 +51,8 @@ fn test_execute_import_strict_rolls_back_on_runtime_failure() {
                 ref_: Some("collection:ok".to_string()),
                 name: collection.clone(),
                 description: "Rollback collection".to_string(),
+                parent_collection_ref: None,
+                parent_collection_key: None,
             })),
         },
         PlannedItem {
@@ -117,6 +121,8 @@ fn test_execute_import_best_effort_keeps_successful_items() {
                 ref_: Some("collection:one".to_string()),
                 name: collection_one.clone(),
                 description: "Best effort collection one".to_string(),
+                parent_collection_ref: None,
+                parent_collection_key: None,
             })),
         },
         PlannedItem {
@@ -147,6 +153,8 @@ fn test_execute_import_best_effort_keeps_successful_items() {
                 ref_: Some("collection:two".to_string()),
                 name: collection_two.clone(),
                 description: "Best effort collection two".to_string(),
+                parent_collection_ref: None,
+                parent_collection_key: None,
             })),
         },
     ];
@@ -196,6 +204,8 @@ fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
                 ref_: Some("collection:one".to_string()),
                 name: collection_one.clone(),
                 description: "Best effort collection one".to_string(),
+                parent_collection_ref: None,
+                parent_collection_key: None,
             })),
         },
         PlannedItem {
@@ -226,6 +236,8 @@ fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
                 ref_: Some("collection:two".to_string()),
                 name: collection_two.clone(),
                 description: "Best effort collection two".to_string(),
+                parent_collection_ref: None,
+                parent_collection_key: None,
             })),
         },
     ];
@@ -274,6 +286,8 @@ fn test_execute_import_strict_preserves_underlying_error_variant() {
                 ref_: Some("collection:missing".to_string()),
                 name: "missing".to_string(),
                 description: "missing".to_string(),
+                parent_collection_ref: None,
+                parent_collection_key: None,
             },
         }),
     }];
@@ -378,6 +392,7 @@ fn test_remember_collection_populates_collection_id_index() {
         id: -42,
         name: "planned".to_string(),
         description: "planned collection".to_string(),
+        parent_collection_id: None,
         exists_in_db: false,
     };
 
@@ -406,6 +421,8 @@ fn test_plan_collection_rejects_duplicate_name_within_request() {
         ref_: Some("collection:one".to_string()),
         name: context.scoped_name("duplicate_collection"),
         description: "first".to_string(),
+        parent_collection_ref: None,
+        parent_collection_key: None,
     };
 
     block_on(plan_collection(
@@ -435,6 +452,57 @@ fn test_plan_collection_rejects_duplicate_name_within_request() {
 }
 
 #[test]
+fn test_plan_collection_allows_duplicate_names_under_different_parents() {
+    let context = block_on(TestContext::new());
+    let parent_one = block_on(context.collection_fixture("duplicate_import_parent_one"));
+    let parent_two = block_on(context.collection_fixture("duplicate_import_parent_two"));
+    let mut state = PlanningState::new();
+    let mode = ImportMode {
+        atomicity: Some(ImportAtomicity::BestEffort),
+        collision_policy: Some(ImportCollisionPolicy::Overwrite),
+        permission_policy: Some(ImportPermissionPolicy::Continue),
+    };
+    let child_name = context.scoped_name("duplicate_import_child");
+    let input_one = ImportCollectionInput {
+        ref_: Some("collection:one".to_string()),
+        name: child_name.clone(),
+        description: "first".to_string(),
+        parent_collection_ref: None,
+        parent_collection_key: Some(CollectionKey {
+            name: parent_one.collection.name.clone(),
+            path: None,
+        }),
+    };
+    let input_two = ImportCollectionInput {
+        ref_: Some("collection:two".to_string()),
+        name: child_name,
+        description: "second".to_string(),
+        parent_collection_ref: None,
+        parent_collection_key: Some(CollectionKey {
+            name: parent_two.collection.name.clone(),
+            path: None,
+        }),
+    };
+
+    block_on(plan_collection(
+        &context.pool,
+        &context.admin_user,
+        &mode,
+        &mut state,
+        &input_one,
+    ))
+    .unwrap();
+    block_on(plan_collection(
+        &context.pool,
+        &context.admin_user,
+        &mode,
+        &mut state,
+        &input_two,
+    ))
+    .unwrap();
+}
+
+#[test]
 fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
     let context = block_on(TestContext::new());
     let fixture = block_on(context.collection_fixture("duplicate_virtual_class"));
@@ -446,6 +514,7 @@ fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
             id: fixture.collection.id,
             name: fixture.collection.name.clone(),
             description: fixture.collection.description.clone(),
+            parent_collection_id: fixture.collection.parent_collection_id,
             exists_in_db: true,
         },
     );
@@ -507,6 +576,7 @@ fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
                 collection_ref: None,
                 collection_key: Some(CollectionKey {
                     name: fixture.collection.name.clone(),
+                    path: None,
                 }),
             },
             fixture.collection.id,
@@ -573,6 +643,7 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
             id: fixture_one.collection.id,
             name: fixture_one.collection.name.clone(),
             description: fixture_one.collection.description.clone(),
+            parent_collection_id: fixture_one.collection.parent_collection_id,
             exists_in_db: true,
         },
     );
@@ -583,6 +654,7 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
             id: fixture_two.collection.id,
             name: fixture_two.collection.name.clone(),
             description: fixture_two.collection.description.clone(),
+            parent_collection_id: fixture_two.collection.parent_collection_id,
             exists_in_db: true,
         },
     );
@@ -645,6 +717,7 @@ fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
                 collection_ref: None,
                 collection_key: Some(CollectionKey {
                     name: fixture.collection.name.clone(),
+                    path: None,
                 }),
             },
             fixture.collection.id,
@@ -663,6 +736,7 @@ fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
                 collection_ref: None,
                 collection_key: Some(CollectionKey {
                     name: fixture.collection.name.clone(),
+                    path: None,
                 }),
             },
             fixture.collection.id,
@@ -734,6 +808,7 @@ fn test_resolve_collection_planning_backfills_caches_after_db_lookup() {
         None,
         Some(&CollectionKey {
             name: fixture.collection.name.clone(),
+            path: None,
         }),
     ))
     .unwrap();
@@ -744,8 +819,10 @@ fn test_resolve_collection_planning_backfills_caches_after_db_lookup() {
             .collections_by_name
             .get(&fixture.collection.name)
             .unwrap()
-            .id,
-        fixture.collection.id
+            .iter()
+            .map(|collection| collection.id)
+            .collect::<Vec<_>>(),
+        vec![fixture.collection.id]
     );
     assert_eq!(
         state
@@ -755,6 +832,93 @@ fn test_resolve_collection_planning_backfills_caches_after_db_lookup() {
             .name,
         fixture.collection.name
     );
+}
+
+#[test]
+fn test_resolve_collection_planning_rejects_ambiguous_bare_name() {
+    let context = block_on(TestContext::new());
+    let parent_one = block_on(context.collection_fixture("ambiguous_parent_one"));
+    let parent_two = block_on(context.collection_fixture("ambiguous_parent_two"));
+    let child_name = context.scoped_name("ambiguous_child");
+
+    block_on(
+        (NewCollectionWithAssignee {
+            name: child_name.clone(),
+            description: "first ambiguous child".to_string(),
+            group_id: parent_one.owner_group.id,
+            parent_collection_id: Some(CollectionID::new(parent_one.collection.id).unwrap()),
+        })
+        .save_without_events(&context.pool),
+    )
+    .unwrap();
+    block_on(
+        (NewCollectionWithAssignee {
+            name: child_name.clone(),
+            description: "second ambiguous child".to_string(),
+            group_id: parent_two.owner_group.id,
+            parent_collection_id: Some(CollectionID::new(parent_two.collection.id).unwrap()),
+        })
+        .save_without_events(&context.pool),
+    )
+    .unwrap();
+
+    let mut state = PlanningState::new();
+    let err = block_on(resolve_collection_planning(
+        &context.pool,
+        &mut state,
+        None,
+        Some(&CollectionKey {
+            name: child_name.clone(),
+            path: None,
+        }),
+    ))
+    .unwrap_err();
+
+    assert!(err.contains("ambiguous"));
+    assert!(err.contains("collection_key.path"));
+}
+
+#[test]
+fn test_resolve_collection_planning_uses_path_to_disambiguate_name() {
+    let context = block_on(TestContext::new());
+    let parent_one = block_on(context.collection_fixture("path_parent_one"));
+    let parent_two = block_on(context.collection_fixture("path_parent_two"));
+    let child_name = context.scoped_name("path_child");
+
+    block_on(
+        (NewCollectionWithAssignee {
+            name: child_name.clone(),
+            description: "first path child".to_string(),
+            group_id: parent_one.owner_group.id,
+            parent_collection_id: Some(CollectionID::new(parent_one.collection.id).unwrap()),
+        })
+        .save_without_events(&context.pool),
+    )
+    .unwrap();
+    let target_child = block_on(
+        (NewCollectionWithAssignee {
+            name: child_name.clone(),
+            description: "second path child".to_string(),
+            group_id: parent_two.owner_group.id,
+            parent_collection_id: Some(CollectionID::new(parent_two.collection.id).unwrap()),
+        })
+        .save_without_events(&context.pool),
+    )
+    .unwrap();
+
+    let mut state = PlanningState::new();
+    let resolved = block_on(resolve_collection_planning(
+        &context.pool,
+        &mut state,
+        None,
+        Some(&CollectionKey {
+            name: child_name.clone(),
+            path: Some(vec![parent_two.collection.name.clone(), child_name]),
+        }),
+    ))
+    .unwrap();
+
+    assert_eq!(resolved.id, target_child.id);
 }
 
 #[test]
@@ -776,8 +940,10 @@ fn test_resolve_collection_by_id_planning_backfills_caches_after_db_lookup() {
             .collections_by_name
             .get(&fixture.collection.name)
             .unwrap()
-            .id,
-        fixture.collection.id
+            .iter()
+            .map(|collection| collection.id)
+            .collect::<Vec<_>>(),
+        vec![fixture.collection.id]
     );
     assert_eq!(
         state
@@ -806,6 +972,7 @@ fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
                 collection_ref: None,
                 collection_key: Some(CollectionKey {
                     name: fixture.collection.name.clone(),
+                    path: None,
                 }),
             },
             fixture.collection.id,
@@ -823,6 +990,7 @@ fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
             collection_ref: None,
             collection_key: Some(CollectionKey {
                 name: fixture.collection.name.clone(),
+                path: None,
             }),
         }),
     ))
@@ -856,6 +1024,7 @@ fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
                 collection_ref: None,
                 collection_key: Some(CollectionKey {
                     name: fixture.collection.name.clone(),
+                    path: None,
                 }),
             },
             fixture.collection.id,
@@ -877,6 +1046,7 @@ fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
                     collection_ref: None,
                     collection_key: Some(CollectionKey {
                         name: fixture.collection.name.clone(),
+                        path: None,
                     }),
                 }),
             },
@@ -898,6 +1068,7 @@ fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
                 collection_ref: None,
                 collection_key: Some(CollectionKey {
                     name: fixture.collection.name.clone(),
+                    path: None,
                 }),
             }),
         }),
@@ -926,6 +1097,8 @@ fn test_update_collection_refreshes_runtime_ref_for_following_items() {
             ref_: Some("collection:existing".to_string()),
             name: fixture.collection.name.clone(),
             description: updated_description.clone(),
+            parent_collection_ref: None,
+            parent_collection_key: None,
         },
     };
 
@@ -978,6 +1151,7 @@ fn test_update_class_refreshes_runtime_ref_for_following_items() {
                 collection_ref: None,
                 collection_key: Some(CollectionKey {
                     name: fixture.collection.name.clone(),
+                    path: None,
                 }),
             },
             fixture.collection.id,
@@ -996,6 +1170,7 @@ fn test_update_class_refreshes_runtime_ref_for_following_items() {
             collection_ref: None,
             collection_key: Some(CollectionKey {
                 name: fixture.collection.name.clone(),
+                path: None,
             }),
         },
     };
@@ -1050,6 +1225,7 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
                 collection_ref: None,
                 collection_key: Some(CollectionKey {
                     name: fixture.collection.name.clone(),
+                    path: None,
                 }),
             },
             fixture.collection.id,
@@ -1065,6 +1241,7 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
             id: fixture.collection.id,
             name: fixture.collection.name.clone(),
             description: fixture.collection.description.clone(),
+            parent_collection_id: fixture.collection.parent_collection_id,
             exists_in_db: true,
         },
     );
@@ -1128,6 +1305,7 @@ fn test_update_object_refreshes_runtime_ref_for_following_items() {
                 collection_ref: None,
                 collection_key: Some(CollectionKey {
                     name: fixture.collection.name.clone(),
+                    path: None,
                 }),
             },
             fixture.collection.id,
@@ -1150,6 +1328,7 @@ fn test_update_object_refreshes_runtime_ref_for_following_items() {
                     collection_ref: None,
                     collection_key: Some(CollectionKey {
                         name: fixture.collection.name.clone(),
+                        path: None,
                     }),
                 }),
             },
@@ -1171,6 +1350,7 @@ fn test_update_object_refreshes_runtime_ref_for_following_items() {
                 collection_ref: None,
                 collection_key: Some(CollectionKey {
                     name: fixture.collection.name.clone(),
+                    path: None,
                 }),
             }),
         },

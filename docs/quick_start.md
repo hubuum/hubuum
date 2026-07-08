@@ -221,6 +221,7 @@ services:
 - [Development Setup](development.md) - Git hooks, testing, and development workflow
 - [Authentication & Authorization Model](auth_model.md) - Principals, service accounts, tokens, and scopes
 - [Permissions](permissions.md) - Access control and authorization system
+- [Collection Hierarchy](collection_hierarchy.md) - Recursive collections, inherited permissions, and move rules
 - [Querying](querying.md) - API query syntax and filtering
 - [Unified search](search_api.md) - grouped search across collections, classes, and objects
 - [Query Support Matrix](query_support_matrix.md) - Endpoint-by-endpoint filter and sort support

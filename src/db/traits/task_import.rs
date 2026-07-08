@@ -3,43 +3,37 @@ use diesel::prelude::*;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{
-    Collection, Group, HubuumClass, HubuumClassRelation, HubuumObject, HubuumObjectRelation,
-    ImportClassInput, ImportCollectionInput, ImportObjectInput, NewHubuumClass,
-    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission,
-    Permissions, PermissionsList, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
-    UpdatePermission,
+    Collection, CollectionKey, Group, HubuumClass, HubuumClassRelation, HubuumObject,
+    HubuumObjectRelation, ImportClassInput, ImportCollectionInput, ImportObjectInput,
+    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
+    NewPermission, Permission, Permissions, PermissionsList, UpdateCollection, UpdateHubuumClass,
+    UpdateHubuumObject, UpdatePermission,
 };
 use crate::utilities::aliases::normalize_template_alias;
 
-pub async fn lookup_collection_by_name(
+pub async fn lookup_collections_by_name(
     pool: &DbPool,
     value: &str,
-) -> Result<Option<Collection>, ApiError> {
+) -> Result<Vec<Collection>, ApiError> {
     use crate::schema::collections::dsl::{collections, name};
 
     with_connection(pool, |conn| {
         collections
             .filter(name.eq(value))
-            .first::<Collection>(conn)
-            .optional()
+            .order(crate::schema::collections::id.asc())
+            .load::<Collection>(conn)
     })
 }
 
-pub async fn lookup_collections_by_names(
+pub async fn lookup_root_collection(pool: &DbPool) -> Result<Collection, ApiError> {
+    with_connection(pool, lookup_root_collection_db)
+}
+
+pub async fn lookup_collection_by_key(
     pool: &DbPool,
-    values: &[String],
-) -> Result<Vec<Collection>, ApiError> {
-    use crate::schema::collections::dsl::{collections, name};
-
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    with_connection(pool, |conn| {
-        collections
-            .filter(name.eq_any(values))
-            .load::<Collection>(conn)
-    })
+    key: &CollectionKey,
+) -> Result<Option<Collection>, ApiError> {
+    with_connection(pool, |conn| lookup_collection_by_key_db(conn, key))
 }
 
 pub async fn lookup_collection_by_id(
@@ -179,13 +173,97 @@ pub fn lookup_collection_by_name_db(
     conn: &mut diesel::PgConnection,
     value: &str,
 ) -> Result<Option<Collection>, ApiError> {
+    let matches = lookup_collections_by_name_db(conn, value)?;
+    match matches.as_slice() {
+        [] => Ok(None),
+        [collection] => Ok(Some(collection.clone())),
+        _ => Err(ApiError::BadRequest(format!(
+            "Collection name '{value}' is ambiguous; use collection_key.path"
+        ))),
+    }
+}
+
+pub fn lookup_collections_by_name_db(
+    conn: &mut diesel::PgConnection,
+    value: &str,
+) -> Result<Vec<Collection>, ApiError> {
     use crate::schema::collections::dsl::{collections, name};
 
     collections
         .filter(name.eq(value))
+        .order(crate::schema::collections::id.asc())
+        .load::<Collection>(conn)
+        .map_err(ApiError::from)
+}
+
+pub fn lookup_root_collection_db(conn: &mut diesel::PgConnection) -> Result<Collection, ApiError> {
+    use crate::schema::collections::dsl::{collections, parent_collection_id};
+
+    collections
+        .filter(parent_collection_id.is_null())
+        .first::<Collection>(conn)
+        .map_err(ApiError::from)
+}
+
+pub fn lookup_collection_child_by_name_db(
+    conn: &mut diesel::PgConnection,
+    parent_id_value: i32,
+    child_name: &str,
+) -> Result<Option<Collection>, ApiError> {
+    use crate::schema::collections::dsl::{collections, name, parent_collection_id};
+
+    collections
+        .filter(parent_collection_id.eq(parent_id_value))
+        .filter(name.eq(child_name))
         .first::<Collection>(conn)
         .optional()
         .map_err(ApiError::from)
+}
+
+fn validate_collection_key_path(key: &CollectionKey) -> Result<(), ApiError> {
+    if let Some(path) = &key.path {
+        match path.last() {
+            Some(last) if last == &key.name => Ok(()),
+            Some(_) => Err(ApiError::BadRequest(format!(
+                "collection_key.path must end with collection name '{}'",
+                key.name
+            ))),
+            None if key.name == "root" => Ok(()),
+            None => Err(ApiError::BadRequest(
+                "collection_key.path may be empty only for the root collection".to_string(),
+            )),
+        }
+    } else {
+        Ok(())
+    }
+}
+
+pub fn lookup_collection_by_key_db(
+    conn: &mut diesel::PgConnection,
+    key: &CollectionKey,
+) -> Result<Option<Collection>, ApiError> {
+    validate_collection_key_path(key)?;
+
+    let Some(path) = &key.path else {
+        return lookup_collection_by_name_db(conn, &key.name);
+    };
+
+    if path.is_empty() {
+        return lookup_root_collection_db(conn).map(Some);
+    }
+
+    let mut parent = lookup_root_collection_db(conn)?;
+    let mut current = None;
+    for segment in path {
+        let child = lookup_collection_child_by_name_db(conn, parent.id, segment)?;
+        let Some(child) = child else {
+            return Ok(None);
+        };
+        parent = child.clone();
+        current = Some(child);
+    }
+
+    Ok(current)
 }
 
 pub fn lookup_class_by_collection_and_name_db(
@@ -234,16 +312,14 @@ pub fn lookup_group_by_name_db(
 pub fn create_collection_db(
     conn: &mut diesel::PgConnection,
     input: &ImportCollectionInput,
+    parent_collection_id: Option<i32>,
 ) -> Result<Collection, ApiError> {
-    use crate::schema::collections::dsl::collections;
-
-    diesel::insert_into(collections)
-        .values((
-            crate::schema::collections::name.eq(&input.name),
-            crate::schema::collections::description.eq(&input.description),
-        ))
-        .get_result::<Collection>(conn)
-        .map_err(ApiError::from)
+    crate::db::traits::collection::insert_collection_row_with_closure(
+        conn,
+        &input.name,
+        &input.description,
+        parent_collection_id,
+    )
 }
 
 pub fn update_collection_db(

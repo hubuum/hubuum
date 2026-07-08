@@ -671,6 +671,7 @@ async fn create_collection_for_group(
         name: collection_name.to_string(),
         description: "Test collection".to_string(),
         group_id,
+        parent_collection_id: None,
     }
     .save_without_events(pool)
     .await

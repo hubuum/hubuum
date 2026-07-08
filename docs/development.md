@@ -76,6 +76,25 @@ To keep backend code navigable, large trait backends are split into focused modu
 
 The `mod.rs` files in these folders re-export the public backend traits so existing imports (`crate::db::traits::user::*`, `crate::db::traits::collection::*`) keep working.
 
+### Collection hierarchy implementation
+
+Recursive collections are implemented in the database layer, not in a workspace
+crate. The implementation is coupled to Diesel schema modules, PostgreSQL
+closure-table SQL, temporal history, `ApiError`, and Hubuum's permission
+semantics. Keep hierarchy writes in `src/db/traits/collection/records.rs` and
+permission reads in `src/db/traits/collection/permissions.rs` or
+`src/db/traits/user/*`.
+
+When adding a collection creation path, use the shared collection insert helper
+from the collection backend so `collections` and `collection_closure` stay in
+sync. Do not insert directly into `collections` unless the closure rows are
+created in the same transaction. When changing permission checks, preserve the
+combined-permission rule: a single permission row on the target collection or an
+ancestor must satisfy all requested flags.
+
+See [Collection Hierarchy](collection_hierarchy.md) for user-facing behavior,
+move constraints, indexes, and the rationale for keeping this logic app-local.
+
 ## Benchmarks
 
 Benchmarking runs in a separate GitHub workflow, `.github/workflows/benchmarks.yml`, via `terjekv/github-action-iai-callgrind`.

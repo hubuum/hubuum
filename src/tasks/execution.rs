@@ -15,7 +15,8 @@ use super::helpers::{
 };
 use super::planning::plan_import;
 use super::resolution::{
-    resolve_class_runtime, resolve_collection_runtime, resolve_object_runtime,
+    resolve_class_runtime, resolve_collection_parent_runtime, resolve_collection_runtime,
+    resolve_object_runtime,
 };
 use super::types::{
     ExecutionAccumulator, PlannedExecution, PlannedItem, PlannedTaskResult, RuntimeState,
@@ -382,7 +383,8 @@ pub(super) fn execute_planned_item(
 ) -> Result<(), ApiError> {
     match execution {
         PlannedExecution::CreateCollection(input) => {
-            let created = create_collection_db(conn, input)?;
+            let parent = resolve_collection_parent_runtime(conn, runtime, input)?;
+            let created = create_collection_db(conn, input, Some(parent.id))?;
             if let Some(reference) = &input.ref_ {
                 runtime
                     .collections_by_ref
