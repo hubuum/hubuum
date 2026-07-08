@@ -21,13 +21,7 @@ pub enum TaskKind {
 }
 
 impl TaskKind {
-    pub const ALL: [Self; 5] = [
-        Self::Import,
-        Self::Report,
-        Self::Export,
-        Self::Reindex,
-        Self::RemoteCall,
-    ];
+    pub const ALL: [Self; 4] = [Self::Import, Self::Export, Self::Reindex, Self::RemoteCall];
 
     pub fn as_str(self) -> &'static str {
         match self {
