@@ -3,7 +3,8 @@
 The task API is the generic interface for long-running operations.
 
 Imports, exports, and remote target invocations are public task-producing APIs today, and the task
-model is designed so later exports or reindex jobs can use the same status and event model too.
+model is designed so reserved reindex jobs and future task kinds can use the same status and event
+model too.
 
 The current architecture is:
 
@@ -30,7 +31,6 @@ Access rules:
 Current and reserved task kinds:
 
 - `import`
-- `export`
 - `export`
 - `reindex`
 - `remote_call`
@@ -215,7 +215,7 @@ Sorting:
 
 Filters:
 
-- `kind` (optional): `import`, `export`, `export`, `reindex`
+- `kind` (optional): `import`, `export`, `reindex`, `remote_call`
 - `status` (optional): `queued`, `validating`, `running`, `succeeded`, `failed`, `partially_succeeded`, `cancelled`
 - `submitted_by` (optional): admin-only filter by user ID; non-admin callers are always restricted to their own tasks regardless of this parameter
 

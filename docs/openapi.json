@@ -11740,7 +11740,7 @@
           {
             "name": "kind",
             "in": "query",
-            "description": "Optional task kind filter (import|export|export|reindex)",
+            "description": "Optional task kind filter (import|export|reindex|remote_call)",
             "required": true,
             "schema": {
               "type": "string"

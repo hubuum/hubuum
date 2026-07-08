@@ -81,7 +81,7 @@ fn parse_task_list_query(
     tag = "tasks",
     security(("bearer_auth" = [])),
     params(
-        ("kind" = String, Query, description = "Optional task kind filter (import|export|export|reindex)"),
+        ("kind" = String, Query, description = "Optional task kind filter (import|export|reindex|remote_call)"),
         ("status" = String, Query, description = "Optional task status filter"),
         ("submitted_by" = i32, Query, description = "Optional submitter user id filter (effective only for admins)"),
         ("limit" = usize, Query, description = "Cursor page size"),
@@ -135,7 +135,7 @@ pub async fn get_tasks(
         .into_iter()
         .map(|task| {
             // Classify each summary the same way the single-task lookups do, so `output_expired`
-            // is exported consistently here as on GET /tasks/{id} and GET /exports/{id}.
+            // is reported consistently here as on GET /tasks/{id} and GET /exports/{id}.
             let export_output = match export_outputs.get(&task.id) {
                 Some(summary) if summary.output_expires_at > now => {
                     ExportOutputLookup::Available(summary)
