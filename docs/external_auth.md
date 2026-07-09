@@ -12,7 +12,7 @@ Set `HUBUUM_AUTH_CONFIG_PATH` to a TOML file readable by the server.
 ```toml
 [[ldap]]
 scope = "example-directory"
-url = "ldap://ldap.example.org"
+url = "ldaps://ldap.example.org"
 bind_dn = "cn=readonly,dc=example,dc=org"
 bind_password = "readonly-password"
 connect_timeout_seconds = 5
@@ -34,6 +34,11 @@ name = "$1"
 key = "$0"
 description = "Directory group $1"
 ```
+
+LDAP transport is always encrypted. Use `ldaps://` for implicit TLS. An
+`ldap://` URL is upgraded with StartTLS before any bind or search, and the
+connection fails if the server cannot establish verified TLS. Plaintext LDAP
+binds are not supported.
 
 All group extraction is configuration-driven. Use `group_attributes` and
 `group_rules` to map provider attributes to Hubuum groups; do not hard-code

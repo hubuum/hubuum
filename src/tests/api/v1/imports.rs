@@ -133,6 +133,7 @@ mod tests {
                     collection_ref: Some("collection:primary".to_string()),
                     collection_key: None,
                     group_key: GroupKey {
+                        identity_scope: None,
                         groupname: delegate_group.groupname.clone(),
                     },
                     permissions: vec![Permissions::ReadCollection, Permissions::ReadClass],
@@ -607,6 +608,7 @@ mod tests {
                     collection_ref: Some("collection:page".to_string()),
                     collection_key: None,
                     group_key: GroupKey {
+                        identity_scope: None,
                         groupname: delegate_group.groupname.clone(),
                     },
                     permissions: vec![Permissions::ReadCollection],

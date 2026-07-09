@@ -51,7 +51,16 @@ pub struct CollectionKey {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct GroupKey {
+    pub identity_scope: Option<String>,
     pub groupname: String,
+}
+
+impl GroupKey {
+    pub fn identity_scope_name(&self) -> &str {
+        self.identity_scope
+            .as_deref()
+            .unwrap_or(crate::models::identity::LOCAL_IDENTITY_SCOPE)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]

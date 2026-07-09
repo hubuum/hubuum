@@ -1461,7 +1461,8 @@ pub(super) async fn plan_collection_permission(
         message,
     })?;
 
-    let group = lookup_group_by_name(pool, &input.group_key.groupname)
+    let identity_scope = input.group_key.identity_scope_name();
+    let group = lookup_group_by_name(pool, identity_scope, &input.group_key.groupname)
         .await
         .map_err(|err| PlanningFailure {
             kind: FailureKind::Runtime,
@@ -1481,7 +1482,10 @@ pub(super) async fn plan_collection_permission(
                 input.ref_.clone(),
                 Some(input.group_key.groupname.clone()),
             ),
-            message: format!("Group '{}' not found", input.group_key.groupname),
+            message: format!(
+                "Group '{}/{}' not found",
+                identity_scope, input.group_key.groupname
+            ),
         })?;
 
     Ok(PlannedItem {

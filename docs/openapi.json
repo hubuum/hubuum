@@ -13878,6 +13878,12 @@
         "properties": {
           "groupname": {
             "type": "string"
+          },
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

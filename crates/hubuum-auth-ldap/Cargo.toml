@@ -10,3 +10,4 @@ ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ri
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
+url = "2"

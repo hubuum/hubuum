@@ -84,6 +84,7 @@ Example:
         "ref": "acl:ops-read",
         "collection_ref": "collection:infra",
         "group_key": {
+          "identity_scope": "local",
           "groupname": "ops"
         },
         "permissions": [
@@ -141,10 +142,15 @@ Examples:
 ```json
 {
   "group_key": {
+    "identity_scope": "local",
     "groupname": "ops"
   }
 }
 ```
+
+`GroupKey.identity_scope` defaults to `local` when omitted. Set it explicitly
+when targeting a provider-managed group, especially when multiple scopes contain
+the same group name.
 
 Selector shapes:
 
@@ -330,7 +336,7 @@ Example:
 | `ref` | string | no | Client-local reference. |
 | `collection_ref` | string | conditional | Use when the collection is created in the same request. |
 | `collection_key` | object | conditional | Use when the collection already exists. |
-| `group_key` | object | yes | Existing group selector. |
+| `group_key` | object | yes | Existing group selector by identity scope and group name. |
 | `permissions` | array of strings | yes | Permission names listed below. |
 | `replace_existing` | boolean | no | Defaults to `false`. `false` adds the requested permissions to any existing grant. `true` replaces the existing grant for that collection/group pair. |
 

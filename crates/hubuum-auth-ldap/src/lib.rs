@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::time::Duration;
+use url::Url;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LdapScopeConfig {
@@ -100,11 +101,28 @@ pub struct LdapIdentityProvider {
     scope_name: IdentityScopeName,
     config: LdapScopeConfig,
     rules: Vec<GroupMappingRule>,
+    starttls: bool,
 }
 
 impl LdapIdentityProvider {
     pub fn new(config: LdapScopeConfig) -> Result<Self, AuthProviderError> {
         let scope_name = IdentityScopeName::new(config.scope.clone())?;
+        let parsed_url = Url::parse(&config.url)
+            .map_err(|e| AuthProviderError::Config(format!("invalid ldap url: {e}")))?;
+        if parsed_url.host_str().is_none() {
+            return Err(AuthProviderError::Config(
+                "ldap url must include a host".to_string(),
+            ));
+        }
+        let starttls = match parsed_url.scheme() {
+            "ldap" => true,
+            "ldaps" => false,
+            scheme => {
+                return Err(AuthProviderError::Config(format!(
+                    "ldap url scheme must be 'ldap' or 'ldaps', got '{scheme}'"
+                )));
+            }
+        };
         if config.user_filter.trim().is_empty() {
             return Err(AuthProviderError::Config(
                 "ldap user_filter must not be empty".to_string(),
@@ -142,11 +160,14 @@ impl LdapIdentityProvider {
             scope_name,
             config,
             rules,
+            starttls,
         })
     }
 
     async fn ldap(&self) -> Result<ldap3::Ldap, AuthProviderError> {
-        let settings = LdapConnSettings::new().set_conn_timeout(self.connect_timeout());
+        let settings = LdapConnSettings::new()
+            .set_conn_timeout(self.connect_timeout())
+            .set_starttls(self.starttls);
         let (conn, ldap) = LdapConnAsync::with_settings(settings, &self.config.url)
             .await
             .map_err(|e| AuthProviderError::Unavailable(e.to_string()))?;
@@ -423,11 +444,10 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    #[test]
-    fn group_mapping_uses_configured_regexes() {
-        let provider = LdapIdentityProvider::new(LdapScopeConfig {
+    fn ldap_config(url: &str) -> LdapScopeConfig {
+        LdapScopeConfig {
             scope: "directory".into(),
-            url: "ldap://localhost".into(),
+            url: url.into(),
             bind_dn: None,
             bind_password: None,
             connect_timeout_seconds: default_connect_timeout_seconds(),
@@ -439,6 +459,42 @@ mod tests {
             subject_attribute: "dn".into(),
             display_name_attribute: None,
             email_attribute: None,
+            group_attributes: Vec::new(),
+            group_rules: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn ldap_url_enables_starttls() {
+        let provider = LdapIdentityProvider::new(ldap_config("ldap://localhost")).unwrap();
+        assert!(provider.starttls);
+    }
+
+    #[test]
+    fn ldaps_url_uses_implicit_tls() {
+        let provider = LdapIdentityProvider::new(ldap_config("ldaps://localhost")).unwrap();
+        assert!(!provider.starttls);
+    }
+
+    #[test]
+    fn non_ldap_url_is_rejected() {
+        let error = LdapIdentityProvider::new(ldap_config("http://localhost"))
+            .err()
+            .unwrap();
+        assert!(matches!(error, AuthProviderError::Config(_)));
+    }
+
+    #[test]
+    fn ldap_url_without_host_is_rejected() {
+        let error = LdapIdentityProvider::new(ldap_config("ldap:directory"))
+            .err()
+            .unwrap();
+        assert!(matches!(error, AuthProviderError::Config(_)));
+    }
+
+    #[test]
+    fn group_mapping_uses_configured_regexes() {
+        let provider = LdapIdentityProvider::new(LdapScopeConfig {
             group_attributes: vec!["memberOf".into()],
             group_rules: vec![GroupMappingRuleConfig {
                 pattern: "^cn=([^,]+),ou=groups,dc=example,dc=org$".into(),
@@ -446,6 +502,7 @@ mod tests {
                 key: Some("example:$1".into()),
                 description: Some("Example group $1".into()),
             }],
+            ..ldap_config("ldap://localhost")
         })
         .unwrap();
 

@@ -158,12 +158,19 @@ pub async fn lookup_object_relation(
     })
 }
 
-pub async fn lookup_group_by_name(pool: &DbPool, value: &str) -> Result<Option<Group>, ApiError> {
-    use crate::schema::groups::dsl::{groupname, groups};
+pub async fn lookup_group_by_name(
+    pool: &DbPool,
+    identity_scope: &str,
+    value: &str,
+) -> Result<Option<Group>, ApiError> {
+    use crate::schema::{groups, identity_scopes};
 
     with_connection(pool, |conn| {
-        groups
-            .filter(groupname.eq(value))
+        groups::table
+            .inner_join(identity_scopes::table)
+            .filter(groups::groupname.eq(value))
+            .filter(identity_scopes::name.eq(identity_scope))
+            .select(groups::all_columns)
             .first::<Group>(conn)
             .optional()
     })
@@ -298,12 +305,16 @@ pub fn lookup_object_by_class_and_name_db(
 
 pub fn lookup_group_by_name_db(
     conn: &mut diesel::PgConnection,
+    identity_scope: &str,
     value: &str,
 ) -> Result<Option<Group>, ApiError> {
-    use crate::schema::groups::dsl::{groupname, groups};
+    use crate::schema::{groups, identity_scopes};
 
-    groups
-        .filter(groupname.eq(value))
+    groups::table
+        .inner_join(identity_scopes::table)
+        .filter(groups::groupname.eq(value))
+        .filter(identity_scopes::name.eq(identity_scope))
+        .select(groups::all_columns)
         .first::<Group>(conn)
         .optional()
         .map_err(ApiError::from)
@@ -672,5 +683,72 @@ fn apply_permission_list_to_update(update: &mut UpdatePermission, permissions: &
                 update.has_manage_event_subscription = Some(true);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::traits::identity::ensure_identity_scope;
+    use crate::models::{GroupKey, LDAP_PROVIDER_KIND, NewGroup};
+    use crate::tests::TestScope;
+
+    #[actix_rt::test]
+    async fn group_lookup_disambiguates_identity_scopes() {
+        let scope = TestScope::new();
+        let groupname = scope.scoped_name("shared_groupname");
+        let local_group = NewGroup {
+            identity_scope: None,
+            groupname: groupname.clone(),
+            description: Some("Local group".to_string()),
+        }
+        .save_without_events(&scope.pool)
+        .await
+        .unwrap();
+
+        let external_scope_name = scope.scoped_name("directory");
+        let external_scope =
+            ensure_identity_scope(&scope.pool, &external_scope_name, LDAP_PROVIDER_KIND)
+                .await
+                .unwrap();
+        let external_group = with_connection(&scope.pool, |conn| {
+            use crate::schema::groups;
+
+            diesel::insert_into(groups::table)
+                .values((
+                    groups::identity_scope_id.eq(external_scope.id),
+                    groups::groupname.eq(&groupname),
+                    groups::description.eq("Directory group"),
+                    groups::managed_by.eq(LDAP_PROVIDER_KIND),
+                    groups::external_key.eq(scope.scoped_name("external_group_key")),
+                ))
+                .get_result::<Group>(conn)
+        })
+        .unwrap();
+
+        let external_key = GroupKey {
+            identity_scope: Some(external_scope_name),
+            groupname: groupname.clone(),
+        };
+        let loaded_external = lookup_group_by_name(
+            scope.pool.get_ref(),
+            external_key.identity_scope_name(),
+            &external_key.groupname,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let local_key = GroupKey {
+            identity_scope: None,
+            groupname,
+        };
+        let loaded_local = with_connection(&scope.pool, |conn| {
+            lookup_group_by_name_db(conn, local_key.identity_scope_name(), &local_key.groupname)
+        })
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(loaded_external.id, external_group.id);
+        assert_eq!(loaded_local.id, local_group.id);
     }
 }
