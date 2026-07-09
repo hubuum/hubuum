@@ -54,6 +54,7 @@ async fn test_endpoint_access() {
             Method::POST,
             AccessLevel::Open,
             Some(TestDataForEndpoint::LoginUser(LoginUser {
+                identity_scope: None,
                 name: normal_user.name(&pool).await.unwrap(),
                 password: "testpassword".to_string(),
             })),

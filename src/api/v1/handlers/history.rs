@@ -1,19 +1,16 @@
 //! Shared building blocks for the per-resource history read API:
-//! a response wrapper that adds the actor's username, actor-id resolution,
-//! `as_of` query parsing, and macros that implement cursor pagination and the
-//! DB fetch functions for each history table.
-
-use std::collections::HashMap;
+//! a response wrapper that adds the actor's username and `as_of` query parsing.
 
 use chrono::{DateTime, Utc};
-use diesel::prelude::*;
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use crate::db::DbPool;
 use crate::db::traits::authz::AuthzSubject;
-use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
+
+pub use crate::db::traits::history::resolve_actor_usernames;
 
 /// A serialized history row plus the resolved username of its actor (if any).
 #[derive(Serialize, ToSchema)]
@@ -47,27 +44,6 @@ pub fn parse_as_of(query_string: &str) -> Result<DateTime<Utc>, ApiError> {
     DateTime::parse_from_rfc3339(at)
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|_| ApiError::BadRequest(format!("invalid rfc3339 timestamp: {at}")))
-}
-
-/// Batch-resolve a set of actor ids to principal names (anonymized users keep
-/// their tombstoned principal name; ids with no matching principal are absent).
-pub async fn resolve_actor_usernames(
-    pool: &DbPool,
-    mut actor_ids: Vec<i32>,
-) -> Result<HashMap<i32, String>, ApiError> {
-    use crate::schema::principals::dsl::{id, name, principals};
-    actor_ids.sort_unstable();
-    actor_ids.dedup();
-    if actor_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let rows: Vec<(i32, String)> = with_connection(pool, |conn| {
-        principals
-            .filter(id.eq_any(&actor_ids))
-            .select((id, name))
-            .load(conn)
-    })?;
-    Ok(rows.into_iter().collect())
 }
 
 /// Implement `CursorPaginated` + `CursorSqlMapping` for a history Queryable
@@ -133,56 +109,6 @@ macro_rules! impl_history_pagination {
                     }
                 })
             }
-        }
-    };
-}
-
-/// Generate the two DB fetch functions for a history table:
-/// - `$paginate_fn(entity_id, pool, &QueryOptions) -> (Vec<$ty>, i64)` — a page
-///   of versions for one entity plus the total version count.
-/// - `$as_of_fn(entity_id, at, pool) -> Option<$ty>` — the version valid at `at`.
-///
-/// `$schema` is the diesel schema module path, e.g. `crate::schema::hubuumclass_history`.
-#[macro_export]
-macro_rules! history_db_fns {
-    ($paginate_fn:ident, $as_of_fn:ident, $($schema:tt)::+, $ty:ty) => {
-        pub async fn $paginate_fn(
-            entity_id: i32,
-            pool: &$crate::db::DbPool,
-            query_options: &$crate::models::search::QueryOptions,
-        ) -> Result<(Vec<$ty>, i64), $crate::errors::ApiError> {
-            use diesel::prelude::*;
-            use $($schema)::+::dsl::*;
-            let total = $crate::db::with_connection(pool, |conn| {
-                $($schema)::+::table
-                    .filter(id.eq(entity_id))
-                    .count()
-                    .get_result::<i64>(conn)
-            })?;
-            let mut query = $($schema)::+::table.into_boxed().filter(id.eq(entity_id));
-            $crate::apply_query_options!(query, query_options, $ty);
-            let items =
-                $crate::db::with_connection(pool, |conn| query.load::<$ty>(conn))?;
-            Ok((items, total))
-        }
-
-        pub async fn $as_of_fn(
-            entity_id: i32,
-            at: chrono::DateTime<chrono::Utc>,
-            pool: &$crate::db::DbPool,
-        ) -> Result<Option<$ty>, $crate::errors::ApiError> {
-            use diesel::prelude::*;
-            use $($schema)::+::dsl::*;
-            $crate::db::with_connection(pool, |conn| {
-                $($schema)::+::table
-                    .into_boxed()
-                    .filter(id.eq(entity_id))
-                    .filter(valid_from.le(at))
-                    .filter(valid_to.is_null().or(valid_to.gt(at)))
-                    .order(history_id.desc())
-                    .first::<$ty>(conn)
-                    .optional()
-            })
         }
     };
 }

@@ -1,5 +1,12 @@
 use super::*;
+use crate::db::traits::identity::identity_scope_by_name;
+use crate::db::traits::principal::InsertPrincipalRecord;
+use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::{NewPrincipal, PrincipalKind};
+
+/// Sentinel password value set during anonymization. It is not a valid Argon2
+/// PHC hash, so verification can never succeed.
+const ANONYMIZED_PASSWORD: &str = "!anonymized-no-login";
 
 fn user_snapshot(user: &User, name: &str) -> serde_json::Value {
     serde_json::json!({
@@ -40,16 +47,49 @@ fn load_user_with_name(
         .first::<(User, String)>(conn)
 }
 
+fn ensure_user_allows_local_write_conn(
+    conn: &mut diesel::PgConnection,
+    principal_id_value: i32,
+) -> Result<(), ApiError> {
+    use crate::schema::principals;
+
+    let provider_managed = principals::table
+        .filter(principals::id.eq(principal_id_value))
+        .select(principals::provider_managed)
+        .first::<bool>(conn)?;
+    if provider_managed {
+        return Err(ApiError::Forbidden(
+            "Provider-managed users are read-only in Hubuum".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 impl User {
     /// Resolve a human user by its principal name.
     pub async fn get_by_name(pool: &DbPool, name_arg: &str) -> Result<User, ApiError> {
+        Self::get_by_name_in_scope(pool, LOCAL_IDENTITY_SCOPE, name_arg).await
+    }
+
+    /// Resolve a human user by identity scope and principal name.
+    pub async fn get_by_name_in_scope(
+        pool: &DbPool,
+        scope_arg: &str,
+        name_arg: &str,
+    ) -> Result<User, ApiError> {
+        use crate::schema::identity_scopes;
         use crate::schema::principals;
         use crate::schema::users;
 
         with_connection(pool, |conn| {
             users::table
                 .inner_join(principals::table.on(users::id.eq(principals::id)))
+                .inner_join(
+                    identity_scopes::table
+                        .on(principals::identity_scope_id.eq(identity_scopes::id)),
+                )
                 .filter(principals::name.eq(name_arg))
+                .filter(identity_scopes::name.eq(scope_arg))
                 .select(users::all_columns)
                 .first::<User>(conn)
         })
@@ -65,14 +105,20 @@ impl User {
         let new_password = hash_password(new_password)
             .map_err(|e| ApiError::HashError(format!("Failed to hash password: {e}")))?;
 
-        with_connection(pool, |conn| {
-            diesel::update(users.filter(id.eq(self.id)))
-                .set(password.eq(new_password))
-                .execute(conn)
+        with_connection(pool, |conn| -> Result<usize, ApiError> {
+            ensure_user_allows_local_write_conn(conn, self.id)?;
+            Ok(diesel::update(users.filter(id.eq(self.id)))
+                .set(password.eq(Some(new_password)))
+                .execute(conn)?)
         })?;
 
         Ok(())
     }
+}
+
+pub fn count_user_records(pool: &DbPool) -> Result<i64, ApiError> {
+    use crate::schema::users::dsl::users;
+    with_connection(pool, |conn| users.count().get_result::<i64>(conn))
 }
 
 pub trait StoreUserTokenRecord {
@@ -191,8 +237,9 @@ fn delete_principal_without_events(
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
     use crate::schema::principals::dsl::{id, principals};
-    with_connection(pool, |conn| {
-        diesel::delete(principals.filter(id.eq(principal_id_value))).execute(conn)
+    with_connection(pool, |conn| -> Result<usize, ApiError> {
+        ensure_user_allows_local_write_conn(conn, principal_id_value)?;
+        Ok(diesel::delete(principals.filter(id.eq(principal_id_value))).execute(conn)?)
     })
 }
 
@@ -209,6 +256,7 @@ fn delete_principal(
 
     with_transaction(pool, |conn| -> Result<usize, ApiError> {
         let (user, name) = load_user_with_name(conn, principal_id_value)?;
+        ensure_user_allows_local_write_conn(conn, principal_id_value)?;
         let deleted = diesel::delete(principals.filter(id.eq(principal_id_value))).execute(conn)?;
         let event = user_event(
             &user,
@@ -271,12 +319,25 @@ impl CreateUserRecord for NewUser {
         use crate::schema::users;
 
         let name = self.name.clone();
+        let scope_name = self
+            .identity_scope
+            .clone()
+            .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
         let password = self.password.clone();
         let proper_name = self.proper_name.clone();
         let email = self.email.clone();
 
+        if scope_name != LOCAL_IDENTITY_SCOPE {
+            return Err(ApiError::BadRequest(
+                "users in non-local identity scopes are managed by their identity provider"
+                    .to_string(),
+            ));
+        }
+        let scope = identity_scope_by_name(pool, &scope_name).await?;
+
         with_transaction(pool, |conn| -> Result<User, ApiError> {
             let principal = NewPrincipal {
+                identity_scope_id: scope.id,
                 kind: PrincipalKind::Human.as_str(),
                 name: &name,
             }
@@ -285,7 +346,7 @@ impl CreateUserRecord for NewUser {
             let user = diesel::insert_into(users::table)
                 .values((
                     users::id.eq(principal.id),
-                    users::password.eq(&password),
+                    users::password.eq(Some(&password)),
                     users::proper_name.eq(&proper_name),
                     users::email.eq(&email),
                 ))
@@ -307,12 +368,25 @@ impl CreateUserRecord for NewUser {
         use crate::schema::users;
 
         let name = self.name.clone();
+        let scope_name = self
+            .identity_scope
+            .clone()
+            .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
         let password = self.password.clone();
         let proper_name = self.proper_name.clone();
         let email = self.email.clone();
 
+        if scope_name != LOCAL_IDENTITY_SCOPE {
+            return Err(ApiError::BadRequest(
+                "users in non-local identity scopes are managed by their identity provider"
+                    .to_string(),
+            ));
+        }
+        let scope = identity_scope_by_name(pool, &scope_name).await?;
+
         with_transaction(pool, |conn| -> Result<User, ApiError> {
             let principal = NewPrincipal {
+                identity_scope_id: scope.id,
                 kind: PrincipalKind::Human.as_str(),
                 name: &name,
             }
@@ -321,7 +395,7 @@ impl CreateUserRecord for NewUser {
             let user = diesel::insert_into(users::table)
                 .values((
                     users::id.eq(principal.id),
-                    users::password.eq(&password),
+                    users::password.eq(Some(&password)),
                     users::proper_name.eq(&proper_name),
                     users::email.eq(&email),
                 ))
@@ -367,10 +441,11 @@ impl UpdateUserRecord for UpdateUser {
     ) -> Result<User, ApiError> {
         use crate::schema::users::dsl::{id, users};
 
-        with_connection(pool, |conn| {
-            diesel::update(users.filter(id.eq(user_id)))
+        with_connection(pool, |conn| -> Result<User, ApiError> {
+            ensure_user_allows_local_write_conn(conn, user_id)?;
+            Ok(diesel::update(users.filter(id.eq(user_id)))
                 .set(self)
-                .get_result::<User>(conn)
+                .get_result::<User>(conn)?)
         })
     }
 
@@ -388,6 +463,7 @@ impl UpdateUserRecord for UpdateUser {
 
         with_transaction(pool, |conn| -> Result<User, ApiError> {
             let (before, name) = load_user_with_name(conn, user_id)?;
+            ensure_user_allows_local_write_conn(conn, user_id)?;
             let after = diesel::update(users.filter(id.eq(user_id)))
                 .set(self)
                 .get_result::<User>(conn)?;
@@ -407,6 +483,55 @@ impl UpdateUserRecord for UpdateUser {
             Ok(after)
         })
     }
+}
+
+pub trait AnonymizeUserRecord {
+    async fn anonymize_user_record(&self, pool: &DbPool) -> Result<(), ApiError>;
+}
+
+impl AnonymizeUserRecord for UserID {
+    async fn anonymize_user_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+        anonymize_user_record(pool, self.id())
+    }
+}
+
+impl AnonymizeUserRecord for User {
+    async fn anonymize_user_record(&self, pool: &DbPool) -> Result<(), ApiError> {
+        anonymize_user_record(pool, self.id)
+    }
+}
+
+fn anonymize_user_record(pool: &DbPool, target_id: i32) -> Result<(), ApiError> {
+    use crate::schema::principals::dsl as p;
+    use crate::schema::tokens::dsl as t;
+    use crate::schema::users::dsl as u;
+
+    with_transaction(pool, |conn| -> Result<(), ApiError> {
+        ensure_user_allows_local_write_conn(conn, target_id)?;
+        let updated = diesel::update(u::users.filter(u::id.eq(target_id)))
+            .set((
+                u::proper_name.eq::<Option<String>>(None),
+                u::email.eq::<Option<String>>(None),
+                u::password.eq(Some(ANONYMIZED_PASSWORD)),
+                u::anonymized_at.eq(diesel::dsl::now),
+            ))
+            .execute(conn)?;
+        if updated == 0 {
+            return Err(ApiError::NotFound(format!("User {target_id} not found")));
+        }
+
+        diesel::update(p::principals.filter(p::id.eq(target_id)))
+            .set(p::name.eq(format!("anonymized-{target_id}")))
+            .execute(conn)?;
+        diesel::update(
+            t::tokens
+                .filter(t::principal_id.eq(target_id))
+                .filter(t::revoked_at.is_null()),
+        )
+        .set(t::revoked_at.eq(diesel::dsl::now))
+        .execute(conn)?;
+        Ok(())
+    })
 }
 
 pub trait DeleteTokenRecord {

@@ -142,6 +142,7 @@ pub enum EntityType {
     ServiceAccount,
     EventSink,
     EventSubscription,
+    ExternalIdentitySync,
 }
 
 impl EntityType {
@@ -163,6 +164,7 @@ impl EntityType {
             EntityType::ServiceAccount => "service_account",
             EntityType::EventSink => "event_sink",
             EntityType::EventSubscription => "event_subscription",
+            EntityType::ExternalIdentitySync => "external_identity_sync",
         }
     }
 
@@ -184,6 +186,7 @@ impl EntityType {
             "service_account" => Ok(EntityType::ServiceAccount),
             "event_sink" => Ok(EntityType::EventSink),
             "event_subscription" => Ok(EntityType::EventSubscription),
+            "external_identity_sync" => Ok(EntityType::ExternalIdentitySync),
             other => Err(EventCatalogError::UnknownEntityType(other.to_string())),
         }
     }
@@ -279,6 +282,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         }
         E::ServiceAccount => &[A::Created, A::Updated, A::Disabled, A::Deleted],
         E::EventSink | E::EventSubscription => &[A::Created, A::Updated, A::Deleted],
+        E::ExternalIdentitySync => &[A::Succeeded, A::Failed],
         E::RemoteTarget => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ClassRelation | E::ObjectRelation => &[A::Created, A::Deleted],
         E::UserGroup => &[A::Added, A::Removed],

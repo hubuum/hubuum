@@ -6,9 +6,9 @@
 //! revealed. These methods replace the per-handler free functions that previously took a bare id.
 
 use crate::db::DbPool;
+use crate::db::traits::service_account::{is_human_owner_group_member, load_service_account_by_id};
 use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
-use crate::models::service_account::{is_human_owner_group_member, load_service_account_by_id};
 use crate::models::{TaskID, TaskKind, TaskRecord};
 use crate::traits::AuthzSubject;
 

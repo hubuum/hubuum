@@ -1193,6 +1193,7 @@ async fn group_writes_emit_lifecycle_events_in_transaction() {
     let context = EventContext::user(21, Some(Uuid::new_v4()), Some("group-correlation".into()));
 
     let group = NewGroup {
+        identity_scope: None,
         groupname: scope.scoped_name("event_group"),
         description: Some("before".to_string()),
     }
@@ -1256,6 +1257,7 @@ async fn group_membership_writes_emit_added_removed_events_when_changed() {
     );
 
     let group = NewGroup {
+        identity_scope: None,
         groupname: scope.scoped_name("event_membership_group"),
         description: Some("membership group".to_string()),
     }
@@ -1314,6 +1316,7 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
     let username = scope.scoped_name("event_user");
 
     let user = NewUser {
+        identity_scope: None,
         name: username.clone(),
         password: "initial-password".to_string(),
         proper_name: Some("Before User".to_string()),
@@ -1378,6 +1381,7 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
     let context = EventContext::user(24, Some(Uuid::new_v4()), Some("token-correlation".into()));
 
     let user = NewUser {
+        identity_scope: None,
         name: scope.scoped_name("event_token_user"),
         password: "token-user-password".to_string(),
         proper_name: None,
@@ -1435,6 +1439,7 @@ async fn permission_writes_emit_granted_revoked_events() {
         Some("permission-correlation".into()),
     );
     let group = NewGroup {
+        identity_scope: None,
         groupname: scope.scoped_name("event_permission_group"),
         description: Some("permission group".to_string()),
     }

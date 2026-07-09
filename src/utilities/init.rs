@@ -3,14 +3,13 @@
 
 use crate::models::user::NewUser;
 
-use crate::db::{DbPool, with_connection};
+use crate::db::DbPool;
 
-use diesel::prelude::*;
-
-use crate::schema::groups::dsl::*;
-use crate::schema::users::dsl::*;
-
+use crate::db::traits::group::count_group_records;
+use crate::db::traits::identity::ensure_identity_scope;
+use crate::db::traits::user::count_user_records;
 use crate::models::group::NewGroup;
+use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::utilities::auth::generate_random_password;
 
 use tracing::{debug, error, trace, warn};
@@ -19,7 +18,18 @@ pub type InitError = String;
 pub type InitResult = Result<(), InitError>;
 
 pub async fn init(pool: DbPool) -> InitResult {
-    let users_count = match with_connection(&pool, |conn| users.count().get_result::<i64>(conn)) {
+    if let Err(e) = ensure_identity_scope(&pool, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND).await {
+        let err_msg = format!("Failed to ensure local identity scope: {}", e);
+        error!(message = &err_msg);
+        return Err(err_msg);
+    }
+    if let Err(e) = crate::auth::ensure_configured_identity_scopes(&pool).await {
+        let err_msg = format!("Failed to ensure configured identity scopes: {}", e);
+        error!(message = &err_msg);
+        return Err(err_msg);
+    }
+
+    let users_count = match count_user_records(&pool) {
         Ok(count) => count,
         Err(e) => {
             let err_msg = format!("Failed to count users during initialization: {}", e);
@@ -28,7 +38,7 @@ pub async fn init(pool: DbPool) -> InitResult {
         }
     };
 
-    let groups_count = match with_connection(&pool, |conn| groups.count().get_result::<i64>(conn)) {
+    let groups_count = match count_group_records(&pool) {
         Ok(count) => count,
         Err(e) => {
             let err_msg = format!("Failed to count groups during initialization: {}", e);
@@ -51,12 +61,10 @@ pub async fn init(pool: DbPool) -> InitResult {
             err_msg
         })?;
 
-    let adm_group = match (NewGroup {
-        groupname: admin_groupname,
-        description: Some("Default admin group.".to_string()),
-    }
-    .save_without_events(&pool))
-    .await
+    let adm_group = match NewGroup::new(&admin_groupname, Some("Default admin group."))
+        .await
+        .save_without_events(&pool)
+        .await
     {
         Ok(group) => group,
         Err(e) => {
@@ -69,6 +77,7 @@ pub async fn init(pool: DbPool) -> InitResult {
     let default_password = generate_random_password(32);
 
     let adm_user = match (NewUser {
+        identity_scope: None,
         name: "admin".to_string(),
         email: None,
         proper_name: Some("Administrator".to_string()),

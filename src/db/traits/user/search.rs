@@ -3117,6 +3117,7 @@ impl User {
         pool: &DbPool,
         query_options: QueryOptions,
     ) -> Result<Vec<crate::models::UserWithName>, ApiError> {
+        use crate::schema::identity_scopes;
         use crate::schema::principals;
         use crate::schema::users::dsl::{created_at, email, id, proper_name, updated_at, users};
 
@@ -3131,6 +3132,9 @@ impl User {
 
         let mut base_query = users
             .inner_join(principals::table.on(id.eq(principals::id)))
+            .inner_join(
+                identity_scopes::table.on(principals::identity_scope_id.eq(identity_scopes::id)),
+            )
             .into_boxed();
 
         for param in query_params {
@@ -3139,6 +3143,9 @@ impl User {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
                 FilterField::Name | FilterField::Username => {
                     string_search!(base_query, param, operator, principals::name)
+                }
+                FilterField::IdentityScope => {
+                    string_search!(base_query, param, operator, identity_scopes::name)
                 }
                 FilterField::ProperName => {
                     string_search!(base_query, param, operator, proper_name)
@@ -3161,9 +3168,25 @@ impl User {
 
         let rows = with_connection(pool, |conn| {
             base_query
-                .select((crate::schema::users::all_columns, principals::name))
+                .select((
+                    crate::schema::users::all_columns,
+                    identity_scopes::name,
+                    identity_scopes::provider_kind,
+                    principals::name,
+                    principals::provider_managed,
+                    principals::last_sync_attempted_at,
+                    principals::last_sync_success_at,
+                ))
                 .distinct() // TODO: Is it the joins that makes this required?
-                .load::<(User, String)>(conn)
+                .load::<(
+                    User,
+                    String,
+                    String,
+                    String,
+                    bool,
+                    Option<chrono::NaiveDateTime>,
+                    Option<chrono::NaiveDateTime>,
+                )>(conn)
         })?;
 
         Ok(rows
@@ -3177,12 +3200,16 @@ impl User {
         pool: &DbPool,
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
+        use crate::schema::identity_scopes;
         use crate::schema::principals;
         use crate::schema::users::dsl::{created_at, email, id, proper_name, updated_at, users};
 
         let query_params = query_options.filters.clone();
         let mut base_query = users
             .inner_join(principals::table.on(id.eq(principals::id)))
+            .inner_join(
+                identity_scopes::table.on(principals::identity_scope_id.eq(identity_scopes::id)),
+            )
             .into_boxed();
 
         for param in query_params {
@@ -3191,6 +3218,9 @@ impl User {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
                 FilterField::Name | FilterField::Username => {
                     string_search!(base_query, param, operator, principals::name)
+                }
+                FilterField::IdentityScope => {
+                    string_search!(base_query, param, operator, identity_scopes::name)
                 }
                 FilterField::ProperName => {
                     string_search!(base_query, param, operator, proper_name)
@@ -3224,6 +3254,7 @@ impl User {
         use crate::schema::groups::dsl::{
             created_at, description, groupname, groups, id, updated_at,
         };
+        use crate::schema::identity_scopes;
 
         let query_params = query_options.filters.clone();
 
@@ -3234,7 +3265,7 @@ impl User {
             query_params = ?query_params
         );
 
-        let mut base_query = groups.into_boxed();
+        let mut base_query = groups.inner_join(identity_scopes::table).into_boxed();
 
         for param in query_params {
             let operator = param.operator.clone();
@@ -3242,6 +3273,9 @@ impl User {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
                 FilterField::Name => string_search!(base_query, param, operator, groupname),
                 FilterField::Groupname => string_search!(base_query, param, operator, groupname),
+                FilterField::IdentityScope => {
+                    string_search!(base_query, param, operator, identity_scopes::name)
+                }
                 FilterField::Description => {
                     string_search!(base_query, param, operator, description)
                 }
@@ -3278,9 +3312,10 @@ impl User {
         use crate::schema::groups::dsl::{
             created_at, description, groupname, groups, id, updated_at,
         };
+        use crate::schema::identity_scopes;
 
         let query_params = query_options.filters.clone();
-        let mut base_query = groups.into_boxed();
+        let mut base_query = groups.inner_join(identity_scopes::table).into_boxed();
 
         for param in query_params {
             let operator = param.operator.clone();
@@ -3288,6 +3323,9 @@ impl User {
                 FilterField::Id => numeric_search!(base_query, param, operator, id),
                 FilterField::Name => string_search!(base_query, param, operator, groupname),
                 FilterField::Groupname => string_search!(base_query, param, operator, groupname),
+                FilterField::IdentityScope => {
+                    string_search!(base_query, param, operator, identity_scopes::name)
+                }
                 FilterField::Description => {
                     string_search!(base_query, param, operator, description)
                 }

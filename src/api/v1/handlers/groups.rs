@@ -2,12 +2,12 @@ use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
+use crate::db::traits::service_account::service_accounts_owned_by_group;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
 use crate::models::search::parse_query_parameter;
-use crate::models::service_account::service_accounts_owned_by_group;
-use crate::models::{Group, Principal, PrincipalID, PrincipalMemberResponse};
+use crate::models::{Group, GroupResponse, Principal, PrincipalID, PrincipalMemberResponse};
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ struct GroupMember {
     tag = "groups",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Groups matching optional query filters", body = [Group]),
+        (status = 200, description = "Groups matching optional query filters", body = [GroupResponse]),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
@@ -56,7 +56,11 @@ pub async fn get_groups(
         .count_groups(&pool, count_query_options(&params))
         .await?;
     let search_params = prepare_db_pagination::<Group>(&params)?;
-    let result = user.search_groups(&pool, search_params).await?;
+    let groups = user.search_groups(&pool, search_params).await?;
+    let mut result = Vec::with_capacity(groups.len());
+    for group in groups {
+        result.push(group.to_response(&pool).await?);
+    }
 
     ApiResponse::paginated(result, total_count, &params)
 }
@@ -68,7 +72,7 @@ pub async fn get_groups(
     security(("bearer_auth" = [])),
     request_body = NewGroup,
     responses(
-        (status = 201, description = "Group created", body = Group),
+        (status = 201, description = "Group created", body = GroupResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse)
@@ -93,7 +97,10 @@ pub async fn create_group(
     let group = new_group.save(&pool, Some(&event_context)).await?;
 
     let location = api_locations::group(group.id)?;
-    Ok(ApiResponse::created(group, location))
+    Ok(ApiResponse::created(
+        group.to_response(&pool).await?,
+        location,
+    ))
 }
 
 #[utoipa::path(
@@ -105,7 +112,7 @@ pub async fn create_group(
         ("group_id" = i32, Path, description = "Group ID")
     ),
     responses(
-        (status = 200, description = "Group", body = Group),
+        (status = 200, description = "Group", body = GroupResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Group not found", body = ApiErrorResponse)
     )
@@ -124,7 +131,10 @@ pub async fn get_group(
         requestor = requestor.user.id
     );
 
-    Ok(ApiResponse::new(group, StatusCode::OK))
+    Ok(ApiResponse::new(
+        group.to_response(&pool).await?,
+        StatusCode::OK,
+    ))
 }
 
 #[utoipa::path(
@@ -137,9 +147,10 @@ pub async fn get_group(
     ),
     request_body = UpdateGroup,
     responses(
-        (status = 200, description = "Updated group", body = Group),
+        (status = 200, description = "Updated group", body = GroupResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Directory-managed group is read-only", body = ApiErrorResponse),
         (status = 404, description = "Group not found", body = ApiErrorResponse)
     )
 )]
@@ -151,20 +162,23 @@ pub async fn update_group(
     requestor: AdminAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let group = group_id.group(&pool).await?;
+    let target_id = group_id.id();
 
     debug!(
         message = "Group patch requested",
-        target = group.id,
+        target = target_id,
         requestor = requestor.user.id
     );
 
     let event_context = requestor.event_context(&req);
     let updated = updated_group
         .into_inner()
-        .save(group.id, &pool, Some(&event_context))
+        .save(target_id, &pool, Some(&event_context))
         .await?;
-    Ok(ApiResponse::new(updated, StatusCode::OK))
+    Ok(ApiResponse::new(
+        updated.to_response(&pool).await?,
+        StatusCode::OK,
+    ))
 }
 
 #[utoipa::path(
@@ -178,6 +192,7 @@ pub async fn update_group(
     responses(
         (status = 204, description = "Group deleted"),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Directory-managed group is read-only", body = ApiErrorResponse),
         (status = 404, description = "Group not found", body = ApiErrorResponse),
         (status = 409, description = "Group still owns service accounts", body = ApiErrorResponse)
     )
@@ -250,12 +265,11 @@ pub async fn get_group_members(
     let search_params = prepare_db_pagination::<Principal>(&params)?;
     let members = group.members_paginated(&pool, &search_params).await?;
 
-    ApiResponse::mapped_paginated(members, total_count, &params, |members| {
-        members
-            .into_iter()
-            .map(PrincipalMemberResponse::from)
-            .collect()
-    })
+    let mut response = Vec::with_capacity(members.len());
+    for member in members {
+        response.push(PrincipalMemberResponse::from_principal(&pool, member).await?);
+    }
+    ApiResponse::paginated(response, total_count, &params)
 }
 
 #[utoipa::path(

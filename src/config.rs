@@ -581,6 +581,14 @@ pub struct AppConfig {
     #[clap(long, env = "HUBUUM_ADMIN_GROUPNAME", default_value = "admin")]
     pub admin_groupname: String,
 
+    /// Identity scope that contains the admin group.
+    #[clap(long, env = "HUBUUM_ADMIN_IDENTITY_SCOPE", default_value = "local")]
+    pub admin_identity_scope: Option<String>,
+
+    /// Optional path to TOML auth provider configuration.
+    #[clap(long, env = "HUBUUM_AUTH_CONFIG_PATH", default_value = None)]
+    pub auth_config_path: Option<String>,
+
     /// Path to the TLS certificate chain file
     #[clap(long, env = "HUBUUM_TLS_CERT_PATH", default_value = None)]
     pub tls_cert_path: Option<String>,
@@ -895,6 +903,26 @@ impl AppConfig {
         if self.max_transitive_depth <= 0 {
             return Err(ApiError::BadRequest(
                 "max_transitive_depth must be greater than 0".to_string(),
+            ));
+        }
+
+        if self
+            .admin_identity_scope
+            .as_deref()
+            .is_some_and(|scope| scope.trim().is_empty())
+        {
+            return Err(ApiError::BadRequest(
+                "admin_identity_scope must not be empty".to_string(),
+            ));
+        }
+
+        if self
+            .auth_config_path
+            .as_deref()
+            .is_some_and(|path| path.trim().is_empty())
+        {
+            return Err(ApiError::BadRequest(
+                "auth_config_path must not be empty".to_string(),
             ));
         }
 
@@ -1309,6 +1337,8 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .parse()
             .unwrap_or(DEFAULT_MAX_TRANSITIVE_DEPTH),
         admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", "admin"),
+        admin_identity_scope: Some(env_or_default("HUBUUM_ADMIN_IDENTITY_SCOPE", "local")),
+        auth_config_path: env_or_default_opt("HUBUUM_AUTH_CONFIG_PATH", None),
         tls_cert_path: env_or_default_opt("HUBUUM_TLS_CERT_PATH", None),
         tls_key_path: env_or_default_opt("HUBUUM_TLS_KEY_PATH", None),
         tls_key_passphrase: env_or_default_opt("HUBUUM_TLS_KEY_PASSPHRASE", None),

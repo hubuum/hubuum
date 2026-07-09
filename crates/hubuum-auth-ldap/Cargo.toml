@@ -1,0 +1,12 @@
+[package]
+name = "hubuum-auth-ldap"
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+hubuum-auth-core = { path = "../hubuum-auth-core" }
+ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"

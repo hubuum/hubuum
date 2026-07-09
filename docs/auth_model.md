@@ -8,6 +8,7 @@ do.
 For the collection/group permission model itself (what `ReadCollection`,
 `CreateClass`, … mean), see [permissions.md](permissions.md). This page is about
 identity, tokens, and the authority gates that sit in front of those permissions.
+For provider setup, see [external_auth.md](external_auth.md).
 
 ---
 
@@ -28,9 +29,9 @@ A principal id *is* the user/service-account id.
 ```text
                  ┌──────────────────────────┐
                  │        principals         │
-                 │  id (PK), kind, name      │   name is globally unique
-                 │  UNIQUE(name)             │   across BOTH kinds
-                 │  UNIQUE(id, kind)         │
+                 │ id (PK), kind, scope, name│   name is unique inside
+                 │ provider metadata         │   one identity scope
+                 │ UNIQUE(scope, name)       │
                  └────────────┬─────────────┘
             kind='human'      │      kind='service_account'
         ┌────────────────────┐│┌──────────────────────────────┐
@@ -43,9 +44,16 @@ A principal id *is* the user/service-account id.
 Key consequences:
 
 - **The login/display name lives on `principals.name`** — there is no separate
-  `users.username`. It is the single, race-safe uniqueness authority: a service
-  account can never take a name already used by a user, and vice versa (enforced by
-  a database `UNIQUE` constraint).
+  `users.username`. Names are unique per identity scope, so `local/alice` and
+  `example-directory/alice` are distinct principals.
+- **Provider ownership lives on the principal.** `identity_scope_id`,
+  `provider_managed`, `external_subject`, and sync timestamps describe which
+  provider owns the identity. The `users` and `service_accounts` tables remain
+  kind-specific profile tables.
+- **Provider-managed data is source-authoritative.** Hubuum materializes
+  provider users, groups, and memberships so local permission assignments have
+  stable ids, but provider-managed users and groups are read-only through local
+  mutation APIs.
 - **Subtypes are mutually exclusive by construction.** The composite
   `(id, kind)` foreign key makes it impossible for one id to be both a user and a
   service account, or to disagree with `principals.kind`. No triggers or caller
@@ -54,6 +62,15 @@ Key consequences:
   `principals` row, which cascades to the subtype row, its `group_memberships`, and
   its `tokens`. Subtype rows are never deleted alone (that would orphan the
   principal).
+
+Identity scopes are provider-backed principal namespaces. `local` is the built-in
+scope. LDAP and future external providers can add more scopes; token scopes are a
+separate concept and only narrow what a token may do.
+
+Service accounts are currently local principals with Hubuum-issued token
+credentials. Long term, service account credentials should be treated as a
+credential provider plugged into the same principal model, not as a separate
+identity system.
 
 ---
 
@@ -71,9 +88,11 @@ Those grants apply to the collection itself and to descendant collections.
   `group_memberships`, so the same authorization path serves humans and service
   accounts identically.
 - A principal is an **admin** iff it is a member of the configured admin group
-  (`HUBUUM_ADMIN_GROUPNAME`, default `admin`). Admin membership grants collection
-  authority — but, by itself, it does **not** make a service account a human IAM
-  administrator (see [Privilege separation](#privilege-separation)).
+  selected by `HUBUUM_ADMIN_GROUPNAME` and `HUBUUM_ADMIN_IDENTITY_SCOPE`.
+  `local/admin` and an external-scope `admin` group are different groups. Admin
+  membership grants collection authority — but, by itself, it does **not** make a
+  service account a human IAM administrator (see
+  [Privilege separation](#privilege-separation)).
 
 A freshly created service account has its `owner_group_id` set for *management*
 purposes only; that does **not** grant it any runtime collection permission. A

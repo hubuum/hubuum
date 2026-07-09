@@ -3,7 +3,6 @@ pub mod auth;
 pub mod db;
 pub mod exporting;
 pub mod extensions;
-pub mod iam;
 pub mod init;
 
 pub fn is_valid_log_level(level: &str) -> bool {

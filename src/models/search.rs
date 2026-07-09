@@ -1804,6 +1804,7 @@ filter_fields!(
     (Collections, "collections"),
     (CollectionId, "collection_id"),
     (Name, "name"),
+    (IdentityScope, "identity_scope"),
     (Groupname, "groupname"),
     (Username, "username"),
     (ProperName, "proper_name"),

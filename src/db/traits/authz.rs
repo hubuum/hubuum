@@ -20,9 +20,10 @@ use diesel::sql_types::Integer;
 
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
+use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::permissions::Permissions;
 use crate::models::{Principal, PrincipalID, ServiceAccount, ServiceAccountID, User, UserID};
-use crate::schema::{group_memberships, groups};
+use crate::schema::{group_memberships, groups, identity_scopes};
 
 /// Cheap, local access to a subject's principal id (no backend round-trip).
 ///
@@ -88,6 +89,14 @@ pub trait AuthzSubject: PrincipalIdAccessor {
         Ok(crate::config::get_config()?.admin_groupname.clone())
     }
 
+    /// The configured admin identity scope name.
+    async fn admin_identity_scope(&self) -> Result<String, ApiError> {
+        Ok(crate::config::get_config()?
+            .admin_identity_scope
+            .clone()
+            .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string()))
+    }
+
     /// Is this principal a member of the named group?
     async fn is_in_group_by_name(
         &self,
@@ -96,12 +105,18 @@ pub trait AuthzSubject: PrincipalIdAccessor {
     ) -> Result<bool, ApiError> {
         use diesel::dsl::{exists, select};
         let pid = self.principal_id();
+        let scope = self.admin_identity_scope().await?;
         let is_in_group = with_connection(pool, |conn| {
             select(exists(
                 group_memberships::table
                     .inner_join(groups::table)
+                    .inner_join(
+                        identity_scopes::table
+                            .on(groups::identity_scope_id.eq(identity_scopes::id)),
+                    )
                     .filter(group_memberships::principal_id.eq(pid))
-                    .filter(groups::groupname.eq(groupname_queried)),
+                    .filter(groups::groupname.eq(groupname_queried))
+                    .filter(identity_scopes::name.eq(scope)),
             ))
             .get_result(conn)
         })?;

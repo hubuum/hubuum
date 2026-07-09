@@ -18,7 +18,7 @@ mod tests {
     /// Drive enough failures to lock the `(username, ip)` scope (default threshold is 5).
     async fn lock_user_ip(username: &str, ip: IpAddr) {
         for _ in 0..5 {
-            record_login_failure(username, Some(ip)).await;
+            record_login_failure("local", username, Some(ip)).await;
         }
     }
 
@@ -102,7 +102,7 @@ mod tests {
         let context = test_context;
 
         let ip: IpAddr = "203.0.113.55".parse().unwrap();
-        let identifier = "meta-release-user|203.0.113.55";
+        let identifier = "local/meta-release-user|203.0.113.55";
         lock_user_ip("meta-release-user", ip).await;
 
         // The locked scope is visible in the default (locked-only) listing.
@@ -173,7 +173,12 @@ mod tests {
         let context = test_context;
 
         // One failure seeds three scopes: user_ip, ip, and subnet.
-        record_login_failure("filter-alice", Some("203.0.113.77".parse().unwrap())).await;
+        record_login_failure(
+            "local",
+            "filter-alice",
+            Some("203.0.113.77".parse().unwrap()),
+        )
+        .await;
 
         // scope=user_ip with a username substring returns only the user_ip scope.
         let resp = get_request(

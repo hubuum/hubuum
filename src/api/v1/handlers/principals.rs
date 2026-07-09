@@ -7,16 +7,18 @@ use crate::api::openapi::{ApiErrorResponse, LoginResponse};
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::db::traits::ActiveTokens;
+use crate::db::traits::service_account::{
+    is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
+};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, ManagementAccess};
 use crate::models::collection::principal_all_permissions;
 use crate::models::principal::{Principal, PrincipalKind};
 use crate::models::search::parse_query_parameter;
-use crate::models::service_account::{
-    is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
-};
 use crate::models::token::{create_principal_token, revoke_token_by_id_for_principal};
-use crate::models::{Group, Permissions, PrincipalID, PrincipalToken, PrincipalTokenMetadata};
+use crate::models::{
+    Group, GroupResponse, Permissions, PrincipalID, PrincipalToken, PrincipalTokenMetadata,
+};
 use crate::pagination::prepare_db_pagination;
 use crate::traits::{AuthzSubject, GroupAccessors};
 use std::collections::BTreeMap;
@@ -264,7 +266,7 @@ pub async fn revoke_token(
     security(("bearer_auth" = [])),
     params(("principal_id" = i32, Path, description = "Principal id")),
     responses(
-        (status = 200, description = "Groups the principal belongs to", body = [Group]),
+        (status = 200, description = "Groups the principal belongs to", body = [GroupResponse]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse)
     )
@@ -285,7 +287,11 @@ pub async fn list_principal_groups(
     let (groups, total_count) = pid
         .groups_paginated_with_total_count(&pool, &search_params)
         .await?;
-    ApiResponse::paginated(groups, total_count, &params)
+    let mut response = Vec::with_capacity(groups.len());
+    for group in groups {
+        response.push(group.to_response(&pool).await?);
+    }
+    ApiResponse::paginated(response, total_count, &params)
 }
 
 /// One group's direct permission row contribution on a collection.

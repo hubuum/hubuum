@@ -4414,7 +4414,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Group"
+                    "$ref": "#/components/schemas/GroupResponse"
                   }
                 }
               }
@@ -7601,7 +7601,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Group"
+                    "$ref": "#/components/schemas/GroupResponse"
                   }
                 }
               }
@@ -7657,7 +7657,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Group"
+                  "$ref": "#/components/schemas/GroupResponse"
                 }
               }
             }
@@ -7726,7 +7726,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Group"
+                  "$ref": "#/components/schemas/GroupResponse"
                 }
               }
             }
@@ -7783,6 +7783,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Directory-managed group is read-only",
             "content": {
               "application/json": {
                 "schema": {
@@ -7853,7 +7863,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Group"
+                  "$ref": "#/components/schemas/GroupResponse"
                 }
               }
             }
@@ -7870,6 +7880,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Directory-managed group is read-only",
             "content": {
               "application/json": {
                 "schema": {
@@ -8363,7 +8383,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Group"
+                    "$ref": "#/components/schemas/GroupResponse"
                   }
                 }
               }
@@ -8589,7 +8609,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Group"
+                    "$ref": "#/components/schemas/GroupResponse"
                   }
                 }
               }
@@ -9649,6 +9669,16 @@
               }
             }
           },
+          "403": {
+            "description": "Provider-managed user is read-only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "User not found",
             "content": {
@@ -9718,6 +9748,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Provider-managed user is read-only",
             "content": {
               "application/json": {
                 "schema": {
@@ -13754,7 +13794,9 @@
           "groupname",
           "description",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "identity_scope_id",
+          "managed_by"
         ],
         "properties": {
           "created_at": {
@@ -13764,12 +13806,39 @@
           "description": {
             "type": "string"
           },
+          "external_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "groupname": {
             "type": "string"
           },
           "id": {
             "type": "integer",
             "format": "int32"
+          },
+          "identity_scope_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "last_sync_attempted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_sync_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "managed_by": {
+            "type": "string"
           },
           "updated_at": {
             "type": "string",
@@ -13824,6 +13893,64 @@
           },
           "permission": {
             "$ref": "#/components/schemas/Permission"
+          }
+        }
+      },
+      "GroupResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "identity_scope",
+          "groupname",
+          "description",
+          "managed_by",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "external_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "groupname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "identity_scope": {
+            "type": "string"
+          },
+          "last_sync_attempted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_sync_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "managed_by": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -15393,6 +15520,12 @@
           "password"
         ],
         "properties": {
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -15401,6 +15534,7 @@
           }
         },
         "example": {
+          "identity_scope": null,
           "name": "alice",
           "password": "correct-horse-battery-staple"
         }
@@ -15673,11 +15807,18 @@
           },
           "groupname": {
             "type": "string"
+          },
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "example": {
           "description": "Operations team",
-          "groupname": "ops"
+          "groupname": "ops",
+          "identity_scope": null
         }
       },
       "NewHubuumClass": {
@@ -15918,6 +16059,12 @@
               "null"
             ]
           },
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -15928,6 +16075,7 @@
         },
         "example": {
           "description": "Production DNS importer",
+          "identity_scope": null,
           "name": "dns-sync",
           "owner_group_id": 1
         }
@@ -15980,6 +16128,12 @@
               "null"
             ]
           },
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -15995,6 +16149,7 @@
         },
         "example": {
           "email": "alice@example.com",
+          "identity_scope": null,
           "name": "alice",
           "password": "correct-horse-battery-staple",
           "proper_name": "Alice Doe"
@@ -16265,10 +16420,20 @@
         "description": "Public representation of a group member (a principal of either kind).",
         "required": [
           "principal_id",
+          "identity_scope",
           "kind",
-          "name"
+          "name",
+          "created_at",
+          "updated_at"
         ],
         "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "identity_scope": {
+            "type": "string"
+          },
           "kind": {
             "type": "string"
           },
@@ -16278,6 +16443,10 @@
           "principal_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -16947,6 +17116,7 @@
         "description": "Public response shape, combining the service-account row with its principal\nname (the name lives on `principals`).",
         "required": [
           "id",
+          "identity_scope",
           "name",
           "description",
           "owner_group_id",
@@ -16978,6 +17148,9 @@
           "id": {
             "type": "integer",
             "format": "int32"
+          },
+          "identity_scope": {
+            "type": "string"
           },
           "name": {
             "type": "string"
@@ -17943,6 +18116,9 @@
         "description": "Public representation of a user, including the name resolved from the\nprincipal (the name authority).",
         "required": [
           "id",
+          "identity_scope",
+          "provider_kind",
+          "provider_managed",
           "name",
           "created_at",
           "updated_at"
@@ -17962,6 +18138,23 @@
             "type": "integer",
             "format": "int32"
           },
+          "identity_scope": {
+            "type": "string"
+          },
+          "last_sync_attempted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_sync_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "name": {
             "type": "string"
           },
@@ -17970,6 +18163,12 @@
               "string",
               "null"
             ]
+          },
+          "provider_kind": {
+            "type": "string"
+          },
+          "provider_managed": {
+            "type": "boolean"
           },
           "updated_at": {
             "type": "string",

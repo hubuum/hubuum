@@ -7,6 +7,7 @@
 
 use actix_web::{HttpMessage, HttpRequest};
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use uuid::Uuid;
 
 pub use hubuum_events_core::EventContext;
@@ -16,13 +17,23 @@ pub use hubuum_events_core::EventContext;
 pub struct RequestProvenance {
     request_id: Uuid,
     correlation_id: Option<String>,
+    client_ip: Option<IpAddr>,
 }
 
 impl RequestProvenance {
     pub fn new(request_id: Uuid, correlation_id: Option<String>) -> Self {
+        Self::new_with_client_ip(request_id, correlation_id, None)
+    }
+
+    pub fn new_with_client_ip(
+        request_id: Uuid,
+        correlation_id: Option<String>,
+        client_ip: Option<IpAddr>,
+    ) -> Self {
         Self {
             request_id,
             correlation_id,
+            client_ip,
         }
     }
 
@@ -32,6 +43,10 @@ impl RequestProvenance {
 
     pub fn correlation_id(&self) -> Option<&str> {
         self.correlation_id.as_deref()
+    }
+
+    pub fn client_ip(&self) -> Option<IpAddr> {
+        self.client_ip
     }
 
     pub fn user_event_context(&self, actor_user_id: i32) -> EventContext {

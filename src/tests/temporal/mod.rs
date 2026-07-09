@@ -377,9 +377,8 @@ async fn actor_scope_sets_actor_and_default_is_null() {
 #[actix_rt::test]
 async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     use crate::db::{with_actor_scope, with_connection};
-    use crate::models::{NewHubuumClass, NewUser};
+    use crate::models::{NewHubuumClass, NewUser, UserID};
     use crate::traits::CanSave;
-    use crate::utilities::iam::anonymize_user;
     use diesel::prelude::*;
 
     let scope = TestScope::new();
@@ -389,6 +388,7 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     // A user who will make a change and then be anonymized.
     let uname = format!("anon_user_{}", scope.scope_id);
     let user = NewUser {
+        identity_scope: None,
         name: uname.clone(),
         password: "secret".into(),
         proper_name: Some("Anon User".into()),
@@ -416,13 +416,17 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     .await
     .unwrap();
 
-    anonymize_user(&pool, user.id).await.unwrap();
+    UserID::new(user.id)
+        .unwrap()
+        .anonymize(&pool)
+        .await
+        .unwrap();
 
     // PII scrubbed on the (non-versioned) users row.
     let (proper_name, email, stored_password, anonymized_at): (
         Option<String>,
         Option<String>,
-        String,
+        Option<String>,
         Option<chrono::NaiveDateTime>,
     ) = with_connection(&pool, |conn| {
         use crate::schema::users::dsl as u;
@@ -447,6 +451,7 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     assert_eq!(principal_name, format!("anonymized-{}", user.id));
 
     // Anonymized password cannot authenticate (neither the original password nor empty string).
+    let stored_password = stored_password.expect("anonymized local user has sentinel password");
     assert!(
         !crate::utilities::auth::verify_password("secret", &stored_password).unwrap(),
         "original password must not verify"

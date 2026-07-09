@@ -31,6 +31,7 @@ use crate::models::{HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject};
 
 use crate::utilities::auth::generate_random_password;
 
+use crate::db::traits::service_account::SaveServiceAccount;
 use crate::traits::{CanDelete, CanSave};
 use std::sync::LazyLock;
 use tokio::sync::{Mutex, MutexGuard};
@@ -428,6 +429,7 @@ pub(crate) async fn create_object_fixture(
 
 pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
     let result = NewUser {
+        identity_scope: None,
         name: username.to_string(),
         password: password.to_string(),
         proper_name: None,
@@ -477,6 +479,7 @@ pub async fn create_test_service_account(
 ) -> crate::models::ServiceAccount {
     let name = "sa-".to_string() + &generate_random_password(16);
     crate::models::NewServiceAccount {
+        identity_scope: None,
         name,
         description: Some("test service account".to_string()),
         owner_group_id: owner_group.id,
@@ -529,6 +532,7 @@ pub async fn create_groups_with_prefix(
     for i in 0..num_groups {
         let groupname = format!("{prefix}-group-{i}");
         let result = NewGroup {
+            identity_scope: None,
             groupname: groupname.to_string(),
             description: Some(groupname.clone()),
         }
@@ -553,6 +557,7 @@ pub async fn ensure_user(pool: &DbPool, uname: &str) -> User {
     }
 
     let result = NewUser {
+        identity_scope: None,
         name: uname.to_string(),
         password: "testpassword".to_string(),
         proper_name: None,
@@ -606,6 +611,7 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
     }
 
     let result = NewGroup {
+        identity_scope: None,
         groupname: admin_groupname.clone(),
         description: Some("Admin group".to_string()),
     }

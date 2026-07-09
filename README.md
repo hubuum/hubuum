@@ -42,6 +42,8 @@ Authorization: Bearer <token>
 The identity model (human users and service-account principals), the token
 lifecycle, token scopes, and the request-authority gates are documented in
 [docs/auth_model.md](docs/auth_model.md).
+External identity scopes are documented in
+[docs/external_auth.md](docs/external_auth.md).
 
 Quick example:
 

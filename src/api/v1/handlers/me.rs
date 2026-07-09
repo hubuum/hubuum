@@ -12,7 +12,7 @@ use crate::db::traits::ActiveTokens;
 use crate::errors::ApiError;
 use crate::extractors::{Authenticated, ManagementAccess};
 use crate::models::search::parse_query_parameter;
-use crate::models::{Group, Permissions, PrincipalMemberResponse, PrincipalToken};
+use crate::models::{Group, GroupResponse, Permissions, PrincipalMemberResponse, PrincipalToken};
 use crate::pagination::prepare_db_pagination;
 use crate::traits::GroupAccessors;
 
@@ -54,7 +54,10 @@ pub struct MeResponse {
 #[routes]
 #[get("")]
 #[get("/")]
-pub async fn get_me(requestor: Authenticated) -> Result<impl Responder, ApiError> {
+pub async fn get_me(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+) -> Result<impl Responder, ApiError> {
     let token = CurrentTokenMetadata {
         id: requestor.token_meta.id,
         name: requestor.token_meta.name,
@@ -68,7 +71,7 @@ pub async fn get_me(requestor: Authenticated) -> Result<impl Responder, ApiError
 
     Ok(ApiResponse::new(
         MeResponse {
-            principal: requestor.principal.into(),
+            principal: PrincipalMemberResponse::from_principal(&pool, requestor.principal).await?,
             token,
         },
         StatusCode::OK,
@@ -113,7 +116,7 @@ pub async fn list_my_tokens(
     tag = "principals",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Groups the current principal belongs to", body = [Group]),
+        (status = 200, description = "Groups the current principal belongs to", body = [GroupResponse]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
 )]
@@ -129,7 +132,11 @@ pub async fn list_my_groups(
         .principal
         .groups_paginated_with_total_count(&pool, &search_params)
         .await?;
-    ApiResponse::paginated(groups, total_count, &params)
+    let mut response = Vec::with_capacity(groups.len());
+    for group in groups {
+        response.push(group.to_response(&pool).await?);
+    }
+    ApiResponse::paginated(response, total_count, &params)
 }
 
 #[utoipa::path(

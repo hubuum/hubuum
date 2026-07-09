@@ -27,6 +27,7 @@ DROP TABLE IF EXISTS hubuumclass_relation CASCADE;
 DROP TABLE IF EXISTS hubuumobject CASCADE;
 DROP TABLE IF EXISTS hubuumclass CASCADE;
 DROP TABLE IF EXISTS permissions CASCADE;
+DROP TABLE IF EXISTS group_membership_sources CASCADE;
 DROP TABLE IF EXISTS group_memberships CASCADE;
 DROP TABLE IF EXISTS service_accounts CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
@@ -34,6 +35,7 @@ DROP TABLE IF EXISTS collection_closure CASCADE;
 DROP TABLE IF EXISTS collections CASCADE;
 DROP TABLE IF EXISTS groups CASCADE;
 DROP TABLE IF EXISTS principals CASCADE;
+DROP TABLE IF EXISTS identity_scopes CASCADE;
 
 -- Functions
 DROP FUNCTION IF EXISTS get_bidirectionally_related_objects(INT, INT[], INT);

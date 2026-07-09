@@ -2,7 +2,7 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::{DbPool, with_connection};
+use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::principals;
@@ -48,8 +48,8 @@ impl PrincipalKind {
 }
 
 /// The identity parent shared by both users and service accounts. A principal id
-/// IS the user/service-account id (class-table inheritance), and `name` is the
-/// single, race-safe authority for cross-kind identity-name uniqueness.
+/// IS the user/service-account id (class-table inheritance), and `(identity_scope_id,
+/// name)` is the race-safe authority for cross-kind identity-name uniqueness.
 #[derive(
     Serialize, Deserialize, Queryable, Selectable, Insertable, PartialEq, Debug, Clone, ToSchema,
 )]
@@ -60,6 +60,11 @@ pub struct Principal {
     pub name: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub identity_scope_id: i32,
+    pub provider_managed: bool,
+    pub external_subject: Option<String>,
+    pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
+    pub last_sync_success_at: Option<chrono::NaiveDateTime>,
 }
 
 impl Principal {
@@ -75,23 +80,70 @@ impl Principal {
     pub fn is_service_account(&self) -> bool {
         matches!(self.principal_kind(), Ok(kind) if kind.is_service_account())
     }
+
+    pub fn is_provider_managed(&self) -> bool {
+        self.provider_managed
+    }
 }
 
 /// Public representation of a group member (a principal of either kind).
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
 pub struct PrincipalMemberResponse {
     pub principal_id: i32,
+    pub identity_scope: String,
     pub kind: String,
     pub name: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
-impl From<Principal> for PrincipalMemberResponse {
-    fn from(principal: Principal) -> Self {
-        Self {
+impl PrincipalMemberResponse {
+    pub async fn from_principal<C>(backend: &C, principal: Principal) -> Result<Self, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let metadata = crate::db::traits::principal::principal_identity_metadata(
+            backend.db_pool(),
+            principal.id,
+        )
+        .await?;
+        Ok(Self {
             principal_id: principal.id,
+            identity_scope: metadata.identity_scope,
             kind: principal.kind,
             name: principal.name,
-        }
+            created_at: principal.created_at,
+            updated_at: principal.updated_at,
+        })
+    }
+}
+
+impl CursorPaginated for PrincipalMemberResponse {
+    fn supports_sort(field: &FilterField) -> bool {
+        Principal::supports_sort(field)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.principal_id as i64),
+            FilterField::Name | FilterField::Username => CursorValue::String(self.name.clone()),
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for principals",
+                    field
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        Principal::default_sort()
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Principal::tie_breaker_sort()
     }
 }
 
@@ -112,20 +164,9 @@ impl InstanceAdapter<Principal> for Principal {
 #[derive(Insertable)]
 #[diesel(table_name = principals)]
 pub struct NewPrincipal<'a> {
+    pub identity_scope_id: i32,
     pub kind: &'a str,
     pub name: &'a str,
-}
-
-impl NewPrincipal<'_> {
-    /// Insert the principal row and return it (principal-first id allocation).
-    pub fn insert(&self, conn: &mut PgConnection) -> Result<Principal, diesel::result::Error> {
-        diesel::insert_into(principals::table)
-            .values((
-                principals::kind.eq(self.kind),
-                principals::name.eq(self.name),
-            ))
-            .get_result::<Principal>(conn)
-    }
 }
 
 crate::int_id_newtype! {
@@ -157,12 +198,7 @@ impl PrincipalID {
 
 /// Load a principal by id.
 pub async fn load_principal_by_id(pool: &DbPool, principal_id: i32) -> Result<Principal, ApiError> {
-    use crate::schema::principals::dsl::{id, principals as principals_table};
-    with_connection(pool, |conn| {
-        principals_table
-            .filter(id.eq(principal_id))
-            .first::<Principal>(conn)
-    })
+    crate::db::traits::principal::load_principal_by_id(pool, principal_id).await
 }
 
 impl CursorPaginated for Principal {

@@ -7,6 +7,10 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::can;
 use crate::db::DbPool;
+use crate::db::traits::history::{
+    class_as_of, class_history_paginated_with_total_count, object_as_of,
+    object_history_paginated_with_total_count,
+};
 use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
@@ -30,62 +34,6 @@ use crate::models::search::{
     parse_query_parameter_with_passthrough,
 };
 use crate::models::traits::class_relation::ToHubuumClasses;
-
-crate::history_db_fns!(
-    class_history_paginated_with_total_count,
-    class_as_of,
-    crate::schema::hubuumclass_history,
-    crate::models::HubuumClassHistory
-);
-
-async fn object_history_paginated_with_total_count(
-    object_id: i32,
-    class_id: i32,
-    pool: &DbPool,
-    query_options: &QueryOptions,
-) -> Result<(Vec<crate::models::HubuumObjectHistory>, i64), ApiError> {
-    use crate::schema::hubuumobject_history::dsl as history;
-    use diesel::prelude::*;
-
-    let total = crate::db::with_connection(pool, |conn| {
-        history::hubuumobject_history
-            .filter(history::id.eq(object_id))
-            .filter(history::hubuum_class_id.eq(class_id))
-            .count()
-            .get_result::<i64>(conn)
-    })?;
-    let mut query = history::hubuumobject_history
-        .into_boxed()
-        .filter(history::id.eq(object_id))
-        .filter(history::hubuum_class_id.eq(class_id));
-    crate::apply_query_options!(query, query_options, crate::models::HubuumObjectHistory);
-    let items = crate::db::with_connection(pool, |conn| {
-        query.load::<crate::models::HubuumObjectHistory>(conn)
-    })?;
-    Ok((items, total))
-}
-
-async fn object_as_of(
-    object_id: i32,
-    class_id: i32,
-    at: chrono::DateTime<chrono::Utc>,
-    pool: &DbPool,
-) -> Result<Option<crate::models::HubuumObjectHistory>, ApiError> {
-    use crate::schema::hubuumobject_history::dsl as history;
-    use diesel::prelude::*;
-
-    crate::db::with_connection(pool, |conn| {
-        history::hubuumobject_history
-            .into_boxed()
-            .filter(history::id.eq(object_id))
-            .filter(history::hubuum_class_id.eq(class_id))
-            .filter(history::valid_from.le(at))
-            .filter(history::valid_to.is_null().or(history::valid_to.gt(at)))
-            .order(history::history_id.desc())
-            .first::<crate::models::HubuumObjectHistory>(conn)
-            .optional()
-    })
-}
 
 fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
     HubuumObjectWithPath {

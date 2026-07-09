@@ -137,6 +137,7 @@ pub async fn get_user(
         (status = 200, description = "Updated user", body = UserResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Provider-managed user is read-only", body = ApiErrorResponse),
         (status = 404, description = "User not found", body = ApiErrorResponse)
     )
 )]
@@ -148,17 +149,18 @@ pub async fn update_user(
     requestor: AdminAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let user = user_id.into_inner().user(&pool).await?;
+    let user_id = user_id.into_inner();
+    let target_id = user_id.id();
     debug!(
         message = "User patch requested",
-        target = user.id,
+        target = target_id,
         requestor = requestor.user.id
     );
 
     let event_context = requestor.event_context(&req);
     let user = updated_user
         .into_inner()
-        .save(user.id, &pool, Some(&event_context))
+        .save(target_id, &pool, Some(&event_context))
         .await?;
     Ok(ApiResponse::new(
         user.to_response(&pool).await?,
@@ -177,6 +179,7 @@ pub async fn update_user(
     responses(
         (status = 204, description = "User deleted"),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Provider-managed user is read-only", body = ApiErrorResponse),
         (status = 404, description = "User not found", body = ApiErrorResponse)
     )
 )]
@@ -192,6 +195,8 @@ pub async fn delete_user(
         target = user_id.id(),
         requestor = requestor.user.id
     );
+
+    let user_id = user_id.into_inner();
 
     let event_context = requestor.event_context(&req);
     let delete_result = user_id.delete(&pool, Some(&event_context)).await;
@@ -222,11 +227,12 @@ pub async fn anonymize_user(
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
     let target_id = user_id.id();
+    let user_id = user_id.into_inner();
     debug!(
         message = "User anonymize requested",
         target = target_id,
         requestor = requestor.user.id
     );
-    crate::utilities::iam::anonymize_user(&pool, target_id).await?;
+    user_id.anonymize(&pool).await?;
     Ok(ApiResponse::no_content())
 }

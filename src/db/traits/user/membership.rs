@@ -42,11 +42,13 @@ where
     ) -> Result<(Vec<Group>, i64), ApiError> {
         use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
         use crate::schema::groups::dsl::*;
+        use crate::schema::identity_scopes;
         use crate::{date_search, numeric_search, string_search};
 
         let build_query = || -> Result<_, ApiError> {
             let mut base_query = group_memberships
                 .inner_join(groups.on(id.eq(group_id)))
+                .inner_join(identity_scopes::table.on(identity_scope_id.eq(identity_scopes::id)))
                 .filter(principal_id.eq(self.principal_id()))
                 .into_boxed();
 
@@ -56,6 +58,9 @@ where
                     FilterField::Id => numeric_search!(base_query, param, operator, id),
                     FilterField::Name | FilterField::Groupname => {
                         string_search!(base_query, param, operator, groupname)
+                    }
+                    FilterField::IdentityScope => {
+                        string_search!(base_query, param, operator, identity_scopes::name)
                     }
                     FilterField::Description => {
                         string_search!(base_query, param, operator, description)
