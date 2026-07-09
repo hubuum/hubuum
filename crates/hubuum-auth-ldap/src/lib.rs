@@ -421,6 +421,7 @@ fn default_operation_timeout_seconds() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn group_mapping_uses_configured_regexes() {
@@ -450,14 +451,14 @@ mod tests {
 
         let entry = SearchEntry {
             dn: "uid=alice,ou=people,dc=example,dc=org".into(),
-            attrs: BTreeMap::from([(
+            attrs: HashMap::from([(
                 "memberOf".into(),
                 vec![
                     "cn=admin,ou=groups,dc=example,dc=org".into(),
                     "cn=ignored,ou=other,dc=example,dc=org".into(),
                 ],
             )]),
-            bin_attrs: BTreeMap::new(),
+            bin_attrs: HashMap::new(),
         };
         let groups = provider.groups_from_entry(&entry);
         assert_eq!(groups.len(), 1);
