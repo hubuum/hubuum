@@ -63,6 +63,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         meta::get_login_rate_limit_state,
         meta::release_login_rate_limit_entry,
         meta::clear_login_rate_limit,
+        auth::get_auth_providers,
         auth::login,
         auth::logout,
         auth::logout_all,
@@ -232,6 +233,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             NewUser,
             UpdateUser,
             LoginUser,
+            auth::AuthProvidersResponse,
             auth::LogoutTokenRequest,
             PrincipalToken,
             PrincipalTokenMetadata,
@@ -825,6 +827,7 @@ mod tests {
             "/healthz",
             "/readyz",
             "/api/v0/auth/login",
+            "/api/v0/auth/providers",
             "/api/v0/auth/logout",
             "/api/v0/auth/logout_all",
             "/api/v0/auth/logout/token",
@@ -1075,7 +1078,8 @@ mod tests {
                 let is_public_probe =
                     matches!(path.as_str(), "/healthz" | "/readyz") && method == "get";
                 let is_login = path == "/api/v0/auth/login" && method == "post";
-                if !is_login && !is_public_probe {
+                let is_provider_discovery = path == "/api/v0/auth/providers" && method == "get";
+                if !is_login && !is_provider_discovery && !is_public_probe {
                     let security = operation
                         .get("security")
                         .and_then(Value::as_array)

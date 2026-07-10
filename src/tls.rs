@@ -6,6 +6,20 @@ use crate::config::TlsBackend;
 
 type ServerResult<F, I, S, B> = std::io::Result<HttpServer<F, I, S, B>>;
 
+pub fn install_default_crypto_provider() -> std::io::Result<()> {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    }
+
+    if rustls::crypto::CryptoProvider::get_default().is_some() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(
+            "Failed to install the process-wide rustls crypto provider",
+        ))
+    }
+}
+
 #[cfg(not(any(feature = "tls-rustls", feature = "tls-openssl")))]
 fn no_tls_backend_error(requested_backend: Option<TlsBackend>) -> std::io::Error {
     let message = match requested_backend {
@@ -134,12 +148,6 @@ mod tls_rustls {
             ));
         }
 
-        rustls::crypto::aws_lc_rs::default_provider()
-            .install_default()
-            .map_err(|e| {
-                std::io::Error::other(format!("Failed to install crypto provider: {e:?}"))
-            })?;
-
         let cert_chain = CertificateDer::pem_file_iter(cert)
             .map_err(|e| {
                 std::io::Error::new(
@@ -246,8 +254,14 @@ mod tls_openssl {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_backend;
+    use super::{install_default_crypto_provider, resolve_backend};
     use crate::config::TlsBackend;
+
+    #[test]
+    fn installs_a_process_wide_crypto_provider() {
+        install_default_crypto_provider().unwrap();
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+    }
 
     #[cfg(all(feature = "tls-rustls", feature = "tls-openssl"))]
     #[test]

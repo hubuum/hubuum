@@ -288,6 +288,38 @@
         ]
       }
     },
+    "/api/v0/auth/providers": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Api V0 Auth Providers",
+        "description": "Auto-generated documentation for GET /api/v0/auth/providers.",
+        "operationId": "getApiV0AuthProviders",
+        "responses": {
+          "200": {
+            "description": "Configured authentication provider names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthProvidersResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v0/auth/validate": {
       "get": {
         "tags": [
@@ -12573,6 +12605,20 @@
         "example": {
           "error": "Unauthorized",
           "message": "Authentication failure"
+        }
+      },
+      "AuthProvidersResponse": {
+        "type": "object",
+        "required": [
+          "providers"
+        ],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       },
       "ClassKey": {
