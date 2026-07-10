@@ -13148,35 +13148,138 @@
       "DbStateResponse": {
         "type": "object",
         "required": [
+          "max_connections",
+          "total_connections",
           "available_connections",
           "idle_connections",
+          "in_use_connections",
+          "pending_acquisitions",
+          "acquisitions_started",
+          "acquisitions_direct",
+          "acquisitions_waited",
+          "acquisitions_timed_out",
+          "acquisition_wait_time_ms",
+          "connections_created",
+          "connections_closed_broken",
+          "connections_closed_invalid",
+          "connections_closed_max_lifetime",
+          "connections_closed_idle_timeout",
           "active_connections",
           "db_size"
         ],
         "properties": {
+          "acquisition_wait_time_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cumulative time spent waiting for connections, in milliseconds.",
+            "minimum": 0
+          },
+          "acquisitions_direct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cumulative acquisitions completed without waiting.",
+            "minimum": 0
+          },
+          "acquisitions_started": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cumulative connection acquisitions started.",
+            "minimum": 0
+          },
+          "acquisitions_timed_out": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cumulative acquisitions that exceeded the acquisition timeout.",
+            "minimum": 0
+          },
+          "acquisitions_waited": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cumulative acquisitions that waited for a connection.",
+            "minimum": 0
+          },
           "active_connections": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "Active PostgreSQL sessions reported by `pg_stat_activity`."
           },
           "available_connections": {
             "type": "integer",
             "format": "int32",
+            "description": "Remaining capacity: idle connections plus capacity to create connections.",
+            "minimum": 0
+          },
+          "connections_closed_broken": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cumulative connections discarded because they were broken.",
+            "minimum": 0
+          },
+          "connections_closed_idle_timeout": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cumulative connections closed after reaching the idle timeout.",
+            "minimum": 0
+          },
+          "connections_closed_invalid": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cumulative connections discarded after checkout validation failed.",
+            "minimum": 0
+          },
+          "connections_closed_max_lifetime": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cumulative connections closed after reaching their maximum lifetime.",
+            "minimum": 0
+          },
+          "connections_created": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cumulative connections established by the pool.",
             "minimum": 0
           },
           "db_size": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "Current database size in bytes."
           },
           "idle_connections": {
             "type": "integer",
             "format": "int32",
+            "description": "Established connections currently waiting in the pool.",
+            "minimum": 0
+          },
+          "in_use_connections": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Established connections currently checked out of the pool.",
             "minimum": 0
           },
           "last_vacuum_time": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Most recent vacuum timestamp among user tables."
+          },
+          "max_connections": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Configured maximum number of connections in this process-local pool.",
+            "minimum": 0
+          },
+          "pending_acquisitions": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Connection acquisitions currently waiting to complete.",
+            "minimum": 0
+          },
+          "total_connections": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Connections currently managed by this process-local pool.",
+            "minimum": 0
           }
         }
       },

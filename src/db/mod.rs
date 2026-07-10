@@ -712,6 +712,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_transaction_is_discarded_and_rolled_back() {
+        let config = get_config().expect("Failed to load config for test");
+        let pool = init_pool(&config.database_url, 1);
+        let cancelled_name = unique_group_name("with_tx_cancelled");
+        let closed_broken_before = pool.state().statistics.connections_closed_broken;
+        let (inserted_tx, inserted_rx) = tokio::sync::oneshot::channel();
+        let transaction_pool = pool.clone();
+        let transaction_name = cancelled_name.clone();
+
+        let transaction_task = tokio::spawn(async move {
+            with_transaction(
+                &transaction_pool,
+                async move |conn| -> Result<(), diesel::result::Error> {
+                    use crate::schema::groups::dsl::{description, groupname, groups};
+
+                    insert_into(groups)
+                        .values((
+                            groupname.eq(&transaction_name),
+                            description.eq("cancelled-transaction-test"),
+                        ))
+                        .execute(conn)
+                        .await?;
+                    let _ = inserted_tx.send(());
+                    std::future::pending::<()>().await;
+                    Ok(())
+                },
+            )
+            .await
+        });
+
+        inserted_rx
+            .await
+            .expect("transaction task ended before inserting its marker");
+        transaction_task.abort();
+        let join_error = transaction_task
+            .await
+            .expect_err("transaction task should have been cancelled");
+        assert!(join_error.is_cancelled());
+
+        let state_after_cancel = pool.state();
+        assert!(
+            state_after_cancel.statistics.connections_closed_broken > closed_broken_before,
+            "the cancelled transaction connection must be discarded instead of pooled",
+        );
+
+        let persisted_rows = with_connection(&pool, async |conn| {
+            use crate::schema::groups::dsl::{groupname, groups};
+
+            groups
+                .filter(groupname.eq(&cancelled_name))
+                .select(count_star())
+                .first::<i64>(conn)
+                .await
+        })
+        .await
+        .expect("replacement connection should remain usable");
+
+        assert_eq!(
+            persisted_rows, 0,
+            "Postgres should roll back work from the discarded connection",
+        );
+    }
+
+    #[tokio::test]
     async fn test_with_transaction_commits_on_success() {
         let config = get_config().expect("Failed to load config for test");
         let pool = init_pool(&config.database_url, 1);
