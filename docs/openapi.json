@@ -8571,13 +8571,21 @@
           "principals"
         ],
         "summary": "Patch Api V1 Iam Me Settings",
-        "description": "Auto-generated documentation for PATCH /api/v1/iam/me/settings.",
+        "description": "Applies an object-only JSON Merge Patch to the current principal settings. Object values merge recursively; a `null` value removes its key; arrays, strings, numbers, and booleans replace the existing value. An object patch applied to a missing or non-object value starts from an empty object. The document root must be an object. Use PUT, rather than PATCH, when a setting itself must retain a null value.",
         "operationId": "patchApiV1IamMeSettings",
         "requestBody": {
+          "description": "The settings patch object.",
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PrincipalSettings"
+              },
+              "example": {
+                "layout": {
+                  "columns": 2,
+                  "sidebar": null
+                },
+                "theme": "dark"
               }
             }
           },
@@ -8590,6 +8598,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PrincipalSettings"
+                },
+                "example": {
+                  "layout": {
+                    "columns": 2,
+                    "density": "normal"
+                  },
+                  "theme": "dark"
                 }
               }
             }
@@ -9070,7 +9085,7 @@
           "principals"
         ],
         "summary": "Patch Api V1 Iam Principals By Principal Id Settings",
-        "description": "Auto-generated documentation for PATCH /api/v1/iam/principals/{principal_id}/settings.",
+        "description": "Applies an object-only JSON Merge Patch to the target principal settings. Object values merge recursively; a `null` value removes its key; arrays, strings, numbers, and booleans replace the existing value. An object patch applied to a missing or non-object value starts from an empty object. The document root must be an object. Use PUT, rather than PATCH, when a setting itself must retain a null value.",
         "operationId": "patchApiV1IamPrincipalsByPrincipalIdSettings",
         "parameters": [
           {
@@ -9085,10 +9100,18 @@
           }
         ],
         "requestBody": {
+          "description": "The settings patch object.",
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PrincipalSettings"
+              },
+              "example": {
+                "layout": {
+                  "columns": 2,
+                  "sidebar": null
+                },
+                "theme": "dark"
               }
             }
           },
@@ -9101,6 +9124,13 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PrincipalSettings"
+                },
+                "example": {
+                  "layout": {
+                    "columns": 2,
+                    "density": "normal"
+                  },
+                  "theme": "dark"
                 }
               }
             }

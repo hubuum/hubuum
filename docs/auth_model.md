@@ -273,6 +273,62 @@ Two safety properties worth calling out:
 
 ---
 
+## Principal settings
+
+Every principal has a local settings document for preferences. It is not included
+in existing user, service-account, principal, or `/iam/me` responses, and it is
+not searchable.
+
+| Endpoint | Purpose | Authorization |
+| --- | --- | --- |
+| `GET /api/v1/iam/me/settings` | Read the current principal settings | Any valid token for the current principal |
+| `PUT /api/v1/iam/me/settings` | Replace the current principal settings | Any valid token for the current principal |
+| `PATCH /api/v1/iam/me/settings` | Merge a patch into the current principal settings | Any valid token for the current principal |
+| `DELETE /api/v1/iam/me/settings` | Reset the current principal settings to `{}` | Any valid token for the current principal |
+| `/api/v1/iam/principals/{principal_id}/settings` | The same operations for a named principal | Self, or an unscoped human admin; denied cross-principal requests return `404` |
+
+The settings document root must be a JSON object. Nested values may be any JSON
+type. `PUT` replaces the entire document, so it can retain a nested `null` value.
+
+`PATCH` applies object-only JSON Merge Patch semantics:
+
+- Object values merge recursively.
+- A `null` patch value removes that key; it does not store a JSON `null`.
+- Arrays, strings, numbers, and booleans replace the existing value.
+- Patching an object into a missing key or a non-object value starts with `{}`.
+
+For example:
+
+```json
+// Current settings
+{
+  "theme": "light",
+  "layout": { "density": "normal", "sidebar": true },
+  "tags": ["a"]
+}
+
+// PATCH body
+{
+  "theme": "dark",
+  "layout": { "sidebar": null, "columns": 2 },
+  "tags": ["b"]
+}
+
+// Result
+{
+  "theme": "dark",
+  "layout": { "density": "normal", "columns": 2 },
+  "tags": ["b"]
+}
+```
+
+Settings mutations are serialized with a principal row lock, so concurrent patches
+preserve unrelated changes. Each successful mutation records a complete before and
+after settings snapshot in an `updated` audit event for the target user or service
+account.
+
+---
+
 ## Request authority: extractors and gates
 
 Each handler declares the authority it requires. There are two families.

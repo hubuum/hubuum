@@ -216,9 +216,20 @@ pub async fn put_my_settings(
     path = "/api/v1/iam/me/settings",
     tag = "principals",
     security(("bearer_auth" = [])),
-    request_body = PrincipalSettings,
+    description = "Applies an object-only JSON Merge Patch to the current principal settings. Object values merge recursively; a `null` value removes its key; arrays, strings, numbers, and booleans replace the existing value. An object patch applied to a missing or non-object value starts from an empty object. The document root must be an object. Use PUT, rather than PATCH, when a setting itself must retain a null value.",
+    request_body(
+        content = PrincipalSettings,
+        description = "The settings patch object.",
+        example = json!({
+            "theme": "dark",
+            "layout": { "sidebar": null, "columns": 2 }
+        })
+    ),
     responses(
-        (status = 200, description = "Merged current principal settings", body = PrincipalSettings),
+        (status = 200, description = "Merged current principal settings", body = PrincipalSettings, example = json!({
+            "theme": "dark",
+            "layout": { "density": "normal", "columns": 2 }
+        })),
         (status = 400, description = "Settings root is not an object", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
