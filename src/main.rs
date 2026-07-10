@@ -51,6 +51,13 @@ use crate::utilities::is_valid_log_level;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    if let Err(e) = tls::install_default_crypto_provider() {
+        fatal_error(
+            &format!("Failed to initialize TLS cryptography: {e}"),
+            EXIT_CODE_INIT_ERROR,
+        );
+    }
+
     // Clone the config to prevent the mutex from being locked
     // See https://rust-lang.github.io/rust-clippy/master/index.html#await_holding_lock
     let config = match get_config() {

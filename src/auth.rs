@@ -1,9 +1,13 @@
 use chrono::NaiveDateTime;
-use hubuum_auth_core::{AuthProviderError, AuthenticatedExternalUser, ExternalIdentityProvider};
+#[cfg(test)]
+use hubuum_auth_core::AuthenticatedExternalUser;
+use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider};
 use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::{Arc, LazyLock, OnceLock};
 use tokio::sync::Mutex;
 
@@ -80,48 +84,144 @@ impl ConfiguredLdapScope {
 }
 
 struct AuthProviderRegistry {
-    ldap: HashMap<String, ConfiguredLdapProvider>,
+    providers: HashMap<String, RegisteredAuthProvider>,
 }
 
-struct ConfiguredLdapProvider {
-    scope: String,
+type AuthProviderFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ApiError>> + Send + 'a>>;
+type AuthProviderRefreshFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), AuthProviderRefreshError>> + Send + 'a>>;
+
+enum AuthProviderRefreshError {
+    Provider(ApiError),
+    Internal(ApiError),
+}
+
+trait AuthProviderBackend: Send + Sync {
+    fn authenticate<'a>(
+        &'a self,
+        pool: &'a DbPool,
+        login: LoginUser,
+    ) -> AuthProviderFuture<'a, User>;
+
+    fn refresh<'a>(
+        &'a self,
+        pool: &'a DbPool,
+        state: &'a ExternalUserState,
+    ) -> AuthProviderRefreshFuture<'a>;
+}
+
+struct RegisteredAuthProvider {
+    name: String,
+    kind: String,
+    display_order: u16,
+    refresh_policy: Option<RefreshPolicy>,
+    backend: Box<dyn AuthProviderBackend>,
+}
+
+#[derive(Clone, Copy)]
+struct RefreshPolicy {
     refresh_ttl_seconds: i64,
     max_stale_seconds: i64,
+}
+
+struct LocalAuthProvider;
+
+struct LdapAuthProvider {
+    scope: String,
     provider: LdapIdentityProvider,
 }
 
 impl AuthProviderRegistry {
     fn from_config(config: AuthProvidersConfig) -> Result<Self, ApiError> {
-        let mut ldap = HashMap::new();
+        let mut registry = Self {
+            providers: HashMap::new(),
+        };
+        LocalAuthProvider::register(&mut registry)?;
         for configured in config.ldap {
-            let provider = ConfiguredLdapProvider::new(configured)?;
-            if provider.scope == LOCAL_IDENTITY_SCOPE {
-                return Err(ApiError::BadRequest(
-                    "external auth provider scope must not be 'local'".to_string(),
-                ));
-            }
-            if ldap.insert(provider.scope.clone(), provider).is_some() {
-                return Err(ApiError::BadRequest(
-                    "duplicate external auth provider scope".to_string(),
-                ));
-            }
+            LdapAuthProvider::register(configured, &mut registry)?;
         }
-        Ok(Self { ldap })
+        Ok(registry)
     }
 
-    fn ldap_scope(&self, scope: &str) -> Result<&ConfiguredLdapProvider, ApiError> {
-        self.ldap
-            .get(scope)
+    fn register(&mut self, provider: RegisteredAuthProvider) -> Result<(), ApiError> {
+        let name = provider.name.clone();
+        if self.providers.insert(name.clone(), provider).is_some() {
+            return Err(ApiError::BadRequest(format!(
+                "duplicate auth provider name '{name}'"
+            )));
+        }
+        Ok(())
+    }
+
+    fn provider_names(&self) -> Vec<String> {
+        let mut providers = self.providers.values().collect::<Vec<_>>();
+        providers.sort_unstable_by(|left, right| {
+            left.display_order
+                .cmp(&right.display_order)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        providers
+            .into_iter()
+            .map(|provider| provider.name.clone())
+            .collect()
+    }
+
+    fn provider(&self, name: &str) -> Result<&RegisteredAuthProvider, ApiError> {
+        self.providers
+            .get(name)
             .ok_or_else(|| ApiError::Unauthorized("Authentication failure".to_string()))
     }
 
-    fn scopes(&self) -> impl Iterator<Item = &ConfiguredLdapProvider> {
-        self.ldap.values()
+    fn providers(&self) -> impl Iterator<Item = &RegisteredAuthProvider> {
+        self.providers.values()
     }
 }
 
-impl ConfiguredLdapProvider {
-    fn new(configured: ConfiguredLdapScope) -> Result<Self, ApiError> {
+pub fn auth_provider_names() -> Result<Vec<String>, ApiError> {
+    Ok(auth_provider_registry()?.provider_names())
+}
+
+impl LocalAuthProvider {
+    fn register(registry: &mut AuthProviderRegistry) -> Result<(), ApiError> {
+        registry.register(RegisteredAuthProvider {
+            name: LOCAL_IDENTITY_SCOPE.to_string(),
+            kind: LOCAL_PROVIDER_KIND.to_string(),
+            display_order: 0,
+            refresh_policy: None,
+            backend: Box::new(Self),
+        })
+    }
+}
+
+impl AuthProviderBackend for LocalAuthProvider {
+    fn authenticate<'a>(
+        &'a self,
+        pool: &'a DbPool,
+        login: LoginUser,
+    ) -> AuthProviderFuture<'a, User> {
+        Box::pin(async move { login.login(pool).await })
+    }
+
+    fn refresh<'a>(
+        &'a self,
+        _pool: &'a DbPool,
+        _state: &'a ExternalUserState,
+    ) -> AuthProviderRefreshFuture<'a> {
+        Box::pin(async {
+            Err(AuthProviderRefreshError::Internal(
+                ApiError::InternalServerError(
+                    "Local authentication provider does not support external refresh".to_string(),
+                ),
+            ))
+        })
+    }
+}
+
+impl LdapAuthProvider {
+    fn register(
+        configured: ConfiguredLdapScope,
+        registry: &mut AuthProviderRegistry,
+    ) -> Result<(), ApiError> {
         let refresh_ttl_seconds = configured.refresh_ttl_seconds();
         let max_stale_seconds = configured.max_stale_seconds();
         if refresh_ttl_seconds <= 0 {
@@ -136,11 +236,51 @@ impl ConfiguredLdapProvider {
         }
         let scope = configured.ldap.scope.clone();
         let provider = LdapIdentityProvider::new(configured.ldap).map_err(provider_config_error)?;
-        Ok(Self {
-            scope,
-            refresh_ttl_seconds,
-            max_stale_seconds,
-            provider,
+        registry.register(RegisteredAuthProvider {
+            name: scope.clone(),
+            kind: LDAP_PROVIDER_KIND.to_string(),
+            display_order: 100,
+            refresh_policy: Some(RefreshPolicy {
+                refresh_ttl_seconds,
+                max_stale_seconds,
+            }),
+            backend: Box::new(Self { scope, provider }),
+        })
+    }
+}
+
+impl AuthProviderBackend for LdapAuthProvider {
+    fn authenticate<'a>(
+        &'a self,
+        pool: &'a DbPool,
+        login: LoginUser,
+    ) -> AuthProviderFuture<'a, User> {
+        Box::pin(async move {
+            let authenticated = self
+                .provider
+                .authenticate(&login.name, &login.password)
+                .await
+                .map_err(login_provider_error)?;
+            sync_external_user_from_backend(pool, &self.scope, LDAP_PROVIDER_KIND, authenticated)
+                .await
+        })
+    }
+
+    fn refresh<'a>(
+        &'a self,
+        pool: &'a DbPool,
+        state: &'a ExternalUserState,
+    ) -> AuthProviderRefreshFuture<'a> {
+        Box::pin(async move {
+            let refreshed = self
+                .provider
+                .refresh_user(&state.external_subject)
+                .await
+                .map_err(|error| AuthProviderRefreshError::Provider(provider_error(error)))?;
+            sync_external_user_from_backend(pool, &self.scope, LDAP_PROVIDER_KIND, refreshed)
+                .await
+                .map(|_| ())
+                .map_err(AuthProviderRefreshError::Internal)
         })
     }
 }
@@ -151,17 +291,11 @@ pub async fn login(pool: &DbPool, login: LoginUser) -> Result<User, ApiError> {
         .as_deref()
         .unwrap_or(LOCAL_IDENTITY_SCOPE)
         .to_string();
-    if scope == LOCAL_IDENTITY_SCOPE {
-        return login.login(pool).await;
-    }
-
-    let configured = auth_provider_registry()?.ldap_scope(&scope)?;
-    let authenticated = configured
-        .provider
-        .authenticate(&login.name, &login.password)
+    auth_provider_registry()?
+        .provider(&scope)?
+        .backend
+        .authenticate(pool, login)
         .await
-        .map_err(login_provider_error)?;
-    sync_external_user_from_configured_provider(pool, configured, authenticated).await
 }
 
 pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Result<(), ApiError> {
@@ -192,38 +326,33 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
                 RefreshStatus::Fresh => Ok(()),
                 RefreshStatus::Backoff => cached_external_state_result(&state),
                 RefreshStatus::Due => match auth_provider_registry()
-                    .and_then(|registry| registry.ldap_scope(&state.identity_scope))
+                    .and_then(|registry| registry.provider(&state.identity_scope))
                 {
                     Err(err) => Err(err),
-                    Ok(configured) => match configured
-                        .provider
-                        .refresh_user(&state.external_subject)
-                        .await
-                    {
-                        Ok(refreshed) => {
-                            sync_external_user_from_configured_provider(pool, configured, refreshed)
-                                .await
-                                .map(|_| ())
-                        }
-                        Err(err) => match mark_external_sync_attempted(pool, principal_id) {
-                            Err(mark_err) => Err(mark_err),
-                            Ok(()) => {
-                                if within_max_stale(
-                                    state.last_sync_success_at,
-                                    state.max_stale_seconds,
-                                ) {
-                                    tracing::warn!(
-                                        principal_id,
-                                        identity_scope = state.identity_scope,
-                                        error = %err,
-                                        "External identity refresh failed; using cached memberships inside max-stale window"
-                                    );
-                                    Ok(())
-                                } else {
-                                    stale_external_state_error()
+                    Ok(configured) => match configured.backend.refresh(pool, &state).await {
+                        Ok(()) => Ok(()),
+                        Err(AuthProviderRefreshError::Internal(err)) => Err(err),
+                        Err(AuthProviderRefreshError::Provider(err)) => {
+                            match mark_external_sync_attempted(pool, principal_id) {
+                                Err(mark_err) => Err(mark_err),
+                                Ok(()) => {
+                                    if within_max_stale(
+                                        state.last_sync_success_at,
+                                        state.max_stale_seconds,
+                                    ) {
+                                        tracing::warn!(
+                                            principal_id,
+                                            identity_scope = state.identity_scope,
+                                            error = %err,
+                                            "External identity refresh failed; using cached memberships inside max-stale window"
+                                        );
+                                        Ok(())
+                                    } else {
+                                        stale_external_state_error()
+                                    }
                                 }
                             }
-                        },
+                        }
                     },
                 },
             },
@@ -241,9 +370,8 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
 }
 
 pub async fn ensure_configured_identity_scopes(pool: &DbPool) -> Result<(), ApiError> {
-    ensure_identity_scope(pool, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND).await?;
-    for scope in auth_provider_registry()?.scopes() {
-        ensure_identity_scope(pool, &scope.scope, LDAP_PROVIDER_KIND).await?;
+    for provider in auth_provider_registry()?.providers() {
+        ensure_identity_scope(pool, &provider.name, &provider.kind).await?;
     }
     Ok(())
 }
@@ -396,24 +524,21 @@ async fn external_user_state(
     let Some(state) = external_principal_state(pool, principal_id_value).await? else {
         return Ok(None);
     };
-    let configured = auth_provider_registry()?.ldap_scope(&state.identity_scope)?;
+    let configured = auth_provider_registry()?.provider(&state.identity_scope)?;
+    let refresh_policy = configured.refresh_policy.ok_or_else(|| {
+        ApiError::InternalServerError(format!(
+            "Authentication provider '{}' does not support external refresh",
+            configured.name
+        ))
+    })?;
     Ok(Some(ExternalUserState {
         identity_scope: state.identity_scope,
         external_subject: state.external_subject,
         last_sync_attempted_at: state.last_sync_attempted_at,
         last_sync_success_at: state.last_sync_success_at,
-        refresh_ttl_seconds: configured.refresh_ttl_seconds,
-        max_stale_seconds: configured.max_stale_seconds,
+        refresh_ttl_seconds: refresh_policy.refresh_ttl_seconds,
+        max_stale_seconds: refresh_policy.max_stale_seconds,
     }))
-}
-
-async fn sync_external_user_from_configured_provider(
-    pool: &DbPool,
-    configured: &ConfiguredLdapProvider,
-    authenticated: AuthenticatedExternalUser,
-) -> Result<User, ApiError> {
-    sync_external_user_from_backend(pool, &configured.scope, LDAP_PROVIDER_KIND, authenticated)
-        .await
 }
 
 #[cfg(test)]
@@ -434,12 +559,47 @@ pub(crate) async fn sync_external_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hubuum_auth_ldap::{LdapScopeConfig, LdapSearchScope};
+
+    fn ldap_scope(scope: &str) -> ConfiguredLdapScope {
+        ConfiguredLdapScope {
+            ldap: LdapScopeConfig {
+                scope: scope.to_string(),
+                url: "ldap://ldap.example.org".to_string(),
+                bind_dn: None,
+                bind_password: None,
+                connect_timeout_seconds: 5,
+                operation_timeout_seconds: 10,
+                user_base_dn: "ou=people,dc=example,dc=org".to_string(),
+                user_filter: "(uid={username})".to_string(),
+                user_scope: LdapSearchScope::Subtree,
+                username_attribute: "uid".to_string(),
+                subject_attribute: "dn".to_string(),
+                display_name_attribute: Some("cn".to_string()),
+                email_attribute: Some("mail".to_string()),
+                group_attributes: Vec::new(),
+                group_rules: Vec::new(),
+            },
+            refresh_ttl_seconds: Some(300),
+            max_stale_seconds: Some(3600),
+        }
+    }
 
     fn timestamp() -> NaiveDateTime {
         chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
             .unwrap()
             .and_hms_opt(12, 0, 0)
             .unwrap()
+    }
+
+    #[test]
+    fn provider_names_include_local_and_sorted_external_scopes() {
+        let registry = AuthProviderRegistry::from_config(AuthProvidersConfig {
+            ldap: vec![ldap_scope("zeta"), ldap_scope("alpha")],
+        })
+        .unwrap();
+
+        assert_eq!(registry.provider_names(), vec!["local", "alpha", "zeta"]);
     }
 
     #[test]
