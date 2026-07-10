@@ -1,9 +1,9 @@
+use crate::db::prelude::*;
 use crate::db::with_connection;
 use crate::models::{NewHubuumClass, UpdateHubuumClass};
 use crate::tests::TestScope;
 use crate::traits::{CanSave, CanUpdate};
 use chrono::{DateTime, Utc};
-use diesel::prelude::*;
 use diesel::sql_types::{Integer, Text, Timestamp, Timestamptz};
 
 /// Driving INSERT/UPDATE/DELETE on a base table through raw SQL (with the
@@ -17,39 +17,46 @@ async fn trigger_records_ops_and_actor() {
     let cname = format!("trigger_actor_class_{}", scope.scope_id);
 
     // All three DML statements in one transaction with the actor GUC set.
-    with_connection(&pool, |conn| {
-        conn.transaction::<(), diesel::result::Error, _>(|conn| {
+    with_connection(&pool, async |conn| {
+        conn.transaction::<(), diesel::result::Error, _>(async |conn| {
             diesel::sql_query("SELECT set_config('hubuum.actor_id', '4242', true)")
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
             diesel::sql_query(
                 "INSERT INTO hubuumclass (name, collection_id, validate_schema, description)
                  VALUES ($1, $2, false, 'd')",
             )
             .bind::<Text, _>(&cname)
             .bind::<Integer, _>(collection_id)
-            .execute(conn)?;
+            .execute(conn)
+            .await?;
 
             let cid: i32 = {
                 use crate::schema::hubuumclass::dsl as c;
                 c::hubuumclass
                     .filter(c::name.eq(&cname))
                     .select(c::id)
-                    .first(conn)?
+                    .first(conn)
+                    .await?
             };
             diesel::sql_query("UPDATE hubuumclass SET description='d2' WHERE id=$1")
                 .bind::<Integer, _>(cid)
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
             diesel::sql_query("DELETE FROM hubuumclass WHERE id=$1")
                 .bind::<Integer, _>(cid)
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
             Ok(())
         })
+        .await
     })
+    .await
     .unwrap();
 
     // Read back the history for that class, oldest first.
     type HistRow = (String, DateTime<Utc>, Option<DateTime<Utc>>, Option<i32>);
-    let rows: Vec<HistRow> = with_connection(&pool, |conn| {
+    let rows: Vec<HistRow> = with_connection(&pool, async |conn| {
         use crate::schema::hubuumclass_history::dsl as h;
         // The class itself is deleted; find history by the name snapshot instead.
         h::hubuumclass_history
@@ -57,7 +64,9 @@ async fn trigger_records_ops_and_actor() {
             .order(h::history_id.asc())
             .select((h::op, h::valid_from, h::valid_to, h::actor_id))
             .load(conn)
+            .await
     })
+    .await
     .unwrap();
 
     let ops: Vec<&str> = rows.iter().map(|(op, _, _, _)| op.as_str()).collect();
@@ -91,8 +100,8 @@ async fn trigger_inserts_history_by_column_name() {
     let scope = TestScope::new();
     let pool = scope.pool.clone();
 
-    let row: ColumnOrderHistoryRow = with_connection(&pool, |conn| {
-        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+    let row: ColumnOrderHistoryRow = with_connection(&pool, async |conn| {
+        conn.transaction::<_, diesel::result::Error, _>(async |conn| {
             diesel::sql_query(
                 "CREATE TEMP TABLE temporal_column_order (
                     id int PRIMARY KEY,
@@ -100,7 +109,8 @@ async fn trigger_inserts_history_by_column_name() {
                     a int NOT NULL
                  )",
             )
-            .execute(conn)?;
+            .execute(conn)
+            .await?;
             diesel::sql_query(
                 "CREATE TEMP TABLE temporal_column_order_history (
                     a int NOT NULL,
@@ -113,25 +123,32 @@ async fn trigger_inserts_history_by_column_name() {
                     history_id bigint NOT NULL
                  )",
             )
-            .execute(conn)?;
+            .execute(conn)
+            .await?;
             diesel::sql_query("CREATE TEMP SEQUENCE temporal_column_order_history_seq")
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
             diesel::sql_query(
                 "CREATE TRIGGER temporal_column_order_history_trg
                  AFTER INSERT OR UPDATE OR DELETE ON temporal_column_order
                  FOR EACH ROW EXECUTE FUNCTION hubuum_record_history()",
             )
-            .execute(conn)?;
+            .execute(conn)
+            .await?;
             diesel::sql_query("INSERT INTO temporal_column_order (id, b, a) VALUES (7, 'bee', 42)")
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
             diesel::sql_query(
                 "SELECT id AS hist_id, a AS hist_a, b AS hist_b
                  FROM temporal_column_order_history
                  WHERE history_id = 1",
             )
             .get_result(conn)
+            .await
         })
+        .await
     })
+    .await
     .unwrap();
 
     assert_eq!(
@@ -149,33 +166,41 @@ async fn trigger_timestamp_is_execution_time_not_transaction_start() {
     let collection_fixture = scope.collection_fixture("clock_timestamp").await;
     let cname = format!("clock_timestamp_class_{}", scope.scope_id);
 
-    let (tx_start, valid_from): (DateTime<Utc>, DateTime<Utc>) = with_connection(&pool, |conn| {
-        conn.transaction::<_, diesel::result::Error, _>(|conn| {
-            let tx_start = diesel::sql_query("SELECT transaction_timestamp() AS value")
-                .get_result::<SingleTimestamp>(conn)?
-                .value;
-            diesel::sql_query("SELECT pg_sleep(0.02)").execute(conn)?;
-            diesel::sql_query(
-                "INSERT INTO hubuumclass (name, collection_id, validate_schema, description)
+    let (tx_start, valid_from): (DateTime<Utc>, DateTime<Utc>) =
+        with_connection(&pool, async |conn| {
+            conn.transaction::<_, diesel::result::Error, _>(async |conn| {
+                let tx_start = diesel::sql_query("SELECT transaction_timestamp() AS value")
+                    .get_result::<SingleTimestamp>(conn)
+                    .await?
+                    .value;
+                diesel::sql_query("SELECT pg_sleep(0.02)")
+                    .execute(conn)
+                    .await?;
+                diesel::sql_query(
+                    "INSERT INTO hubuumclass (name, collection_id, validate_schema, description)
                      VALUES ($1, $2, false, 'd')",
-            )
-            .bind::<Text, _>(&cname)
-            .bind::<Integer, _>(collection_fixture.collection.id)
-            .execute(conn)?;
-            let valid_from = diesel::sql_query(
-                "SELECT valid_from AS value
+                )
+                .bind::<Text, _>(&cname)
+                .bind::<Integer, _>(collection_fixture.collection.id)
+                .execute(conn)
+                .await?;
+                let valid_from = diesel::sql_query(
+                    "SELECT valid_from AS value
                      FROM hubuumclass_history
                      WHERE name = $1
                      ORDER BY history_id DESC
                      LIMIT 1",
-            )
-            .bind::<Text, _>(&cname)
-            .get_result::<SingleTimestamp>(conn)?
-            .value;
-            Ok((tx_start, valid_from))
+                )
+                .bind::<Text, _>(&cname)
+                .get_result::<SingleTimestamp>(conn)
+                .await?
+                .value;
+                Ok((tx_start, valid_from))
+            })
+            .await
         })
-    })
-    .unwrap();
+        .await
+        .unwrap();
 
     assert!(
         valid_from > tx_start,
@@ -207,9 +232,12 @@ async fn unchanged_domain_update_is_noop() {
     .unwrap();
     let before_updated_at = class.updated_at;
 
-    with_connection(&pool, |conn| {
-        diesel::sql_query("SELECT pg_sleep(0.02)").execute(conn)
+    with_connection(&pool, async |conn| {
+        diesel::sql_query("SELECT pg_sleep(0.02)")
+            .execute(conn)
+            .await
     })
+    .await
     .unwrap();
 
     let returned = UpdateHubuumClass {
@@ -224,21 +252,24 @@ async fn unchanged_domain_update_is_noop() {
     .unwrap();
 
     let (after_updated_at, history_count): (chrono::NaiveDateTime, i64) =
-        with_connection(&pool, |conn| {
+        with_connection(&pool, async |conn| {
             let after_updated_at =
                 diesel::sql_query("SELECT updated_at AS value FROM hubuumclass WHERE id = $1")
                     .bind::<Integer, _>(class.id)
-                    .get_result::<SingleNaiveTimestamp>(conn)?
+                    .get_result::<SingleNaiveTimestamp>(conn)
+                    .await?
                     .value;
             let history_count = {
                 use crate::schema::hubuumclass_history::dsl as h;
                 h::hubuumclass_history
                     .filter(h::id.eq(class.id))
                     .count()
-                    .get_result::<i64>(conn)?
+                    .get_result::<i64>(conn)
+                    .await?
             };
             Ok::<_, diesel::result::Error>((after_updated_at, history_count))
         })
+        .await
         .unwrap();
 
     assert_eq!(returned.updated_at, before_updated_at);
@@ -296,14 +327,16 @@ async fn cascade_delete_records_history() {
 
     collection_fixture.cleanup().await.unwrap(); // cascade-deletes the class
 
-    let ops: Vec<String> = with_connection(&pool, |conn| {
+    let ops: Vec<String> = with_connection(&pool, async |conn| {
         use crate::schema::hubuumclass_history::dsl as h;
         h::hubuumclass_history
             .filter(h::id.eq(class.id))
             .order(h::history_id.asc())
             .select(h::op)
             .load(conn)
+            .await
     })
+    .await
     .unwrap();
 
     assert_eq!(
@@ -356,30 +389,32 @@ async fn actor_scope_sets_actor_and_default_is_null() {
     .await
     .unwrap();
 
-    let read_actor = |id: i32| {
-        with_connection(&pool, move |conn| {
+    let read_actor = async |id: i32| {
+        with_connection(&pool, async move |conn| {
             use crate::schema::hubuumclass_history::dsl as h;
             h::hubuumclass_history
                 .filter(h::id.eq(id))
                 .order(h::history_id.desc())
                 .select(h::actor_id)
                 .first::<Option<i32>>(conn)
+                .await
         })
+        .await
         .unwrap()
     };
 
-    assert_eq!(read_actor(in_class.id), Some(4242));
-    assert_eq!(read_actor(out_class.id), None);
+    assert_eq!(read_actor(in_class.id).await, Some(4242));
+    assert_eq!(read_actor(out_class.id).await, None);
 
     collection_fixture.cleanup().await.unwrap();
 }
 
 #[actix_rt::test]
 async fn anonymize_scrubs_pii_but_keeps_history_actor() {
+    use crate::db::prelude::*;
     use crate::db::{with_actor_scope, with_connection};
     use crate::models::{NewHubuumClass, NewUser, UserID};
     use crate::traits::CanSave;
-    use diesel::prelude::*;
 
     let scope = TestScope::new();
     let pool = scope.pool.clone();
@@ -428,25 +463,29 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
         Option<String>,
         Option<String>,
         Option<chrono::NaiveDateTime>,
-    ) = with_connection(&pool, |conn| {
+    ) = with_connection(&pool, async |conn| {
         use crate::schema::users::dsl as u;
         u::users
             .filter(u::id.eq(user.id))
             .select((u::proper_name, u::email, u::password, u::anonymized_at))
             .first(conn)
+            .await
     })
+    .await
     .unwrap();
     assert_eq!(proper_name, None);
     assert_eq!(email, None);
     assert!(anonymized_at.is_some());
 
-    let principal_name: String = with_connection(&pool, |conn| {
+    let principal_name: String = with_connection(&pool, async |conn| {
         use crate::schema::principals::dsl as p;
         p::principals
             .filter(p::id.eq(user.id))
             .select(p::name)
             .first(conn)
+            .await
     })
+    .await
     .unwrap();
     assert_eq!(principal_name, format!("anonymized-{}", user.id));
 
@@ -462,26 +501,30 @@ async fn anonymize_scrubs_pii_but_keeps_history_actor() {
     );
 
     // Tokens revoked.
-    let token_count: i64 = with_connection(&pool, |conn| {
+    let token_count: i64 = with_connection(&pool, async |conn| {
         use crate::schema::tokens::dsl as t;
         t::tokens
             .filter(t::principal_id.eq(user.id))
             .filter(t::revoked_at.is_null())
             .count()
             .get_result(conn)
+            .await
     })
+    .await
     .unwrap();
     assert_eq!(token_count, 0);
 
     // History still attributes the change to the (now pseudonymous) id.
-    let actor: Option<i32> = with_connection(&pool, |conn| {
+    let actor: Option<i32> = with_connection(&pool, async |conn| {
         use crate::schema::hubuumclass_history::dsl as h;
         h::hubuumclass_history
             .filter(h::id.eq(class.id))
             .order(h::history_id.desc())
             .select(h::actor_id)
             .first::<Option<i32>>(conn)
+            .await
     })
+    .await
     .unwrap();
     assert_eq!(actor, Some(user.id));
 

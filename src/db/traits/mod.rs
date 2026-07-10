@@ -161,7 +161,6 @@ where
         query_options: &QueryOptions,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError> {
         use crate::pagination::{cursor_filter_sql, normalized_sorts, order_sql_clause};
-        use diesel::prelude::*;
         use diesel::sql_query;
         use diesel::sql_types::Integer;
 
@@ -195,7 +194,7 @@ where
             raw_sql.push_str(&format!("\nLIMIT {limit}"));
         }
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             let query = bind_transitive_filter_params!(
                 sql_query(raw_sql)
                     .bind::<Integer, _>(self.id())
@@ -203,8 +202,9 @@ where
                 filter
             );
 
-            query.load::<HubuumClassRelationTransitive>(conn)
+            diesel_async::RunQueryDsl::load::<HubuumClassRelationTransitive>(query, conn).await
         })
+        .await
     }
 
     // We typically end up searching, so this interface is rarely used.

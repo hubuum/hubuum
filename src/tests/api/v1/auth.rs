@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::config::get_config;
+    use crate::db::prelude::*;
     use crate::db::traits::ActiveTokens;
     use crate::db::{init_pool, with_connection};
     use crate::middlewares::rate_limit::{
@@ -11,7 +12,6 @@ mod tests {
     use crate::{api, assert_not_contains};
     use actix_web::http::header;
     use actix_web::{App, http::StatusCode, test, web, web::Data};
-    use diesel::prelude::*;
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
     const AUTH_PROVIDERS_ENDPOINT: &str = "/api/v0/auth/providers";
@@ -135,12 +135,14 @@ mod tests {
         use crate::models::token::{PrincipalToken, Token};
         use crate::schema::tokens::dsl::*;
         let token_hash = Token::storage_hash_from_raw(&token_value);
-        let token_exists = with_connection(&pool, |conn| {
+        let token_exists = with_connection(&pool, async |conn| {
             tokens
                 .filter(token.eq(&token_hash))
                 .filter(principal_id.eq(new_user.id))
                 .first::<PrincipalToken>(conn)
+                .await
         })
+        .await
         .is_ok();
 
         assert!(token_exists, "Token not found in database");

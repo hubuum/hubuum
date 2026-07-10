@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
+use crate::db::prelude::*;
 use chrono::NaiveDateTime;
-use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;

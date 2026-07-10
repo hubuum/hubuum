@@ -710,8 +710,8 @@ pub mod tests {
     #[rstest]
     #[actix_web::test]
     async fn test_api_create_records_actor(#[future(awt)] test_context: TestContext) {
+        use crate::db::prelude::*;
         use crate::db::with_connection;
-        use diesel::prelude::*;
 
         let context = test_context;
         let collection_fixture = context.collection_fixture("actor_history").await;
@@ -736,23 +736,27 @@ pub mod tests {
 
         // The user behind admin_token, resolved straight from the tokens table.
         let token_hash = crate::models::token::Token::storage_hash_from_raw(&context.admin_token);
-        let expected_actor: i32 = with_connection(&context.pool, |conn| {
+        let expected_actor: i32 = with_connection(&context.pool, async |conn| {
             use crate::schema::tokens::dsl as t;
             t::tokens
                 .filter(t::token.eq(&token_hash))
                 .select(t::principal_id)
                 .first::<i32>(conn)
+                .await
         })
+        .await
         .unwrap();
 
-        let actor: Option<i32> = with_connection(&context.pool, |conn| {
+        let actor: Option<i32> = with_connection(&context.pool, async |conn| {
             use crate::schema::hubuumclass_history::dsl as h;
             h::hubuumclass_history
                 .filter(h::id.eq(created.id))
                 .order(h::history_id.desc())
                 .select(h::actor_id)
                 .first::<Option<i32>>(conn)
+                .await
         })
+        .await
         .unwrap();
 
         assert_eq!(

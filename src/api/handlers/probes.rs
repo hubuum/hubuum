@@ -1,5 +1,5 @@
 use actix_web::{Responder, get, http::StatusCode, web};
-use diesel::RunQueryDsl;
+use diesel_async::RunQueryDsl;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -45,8 +45,10 @@ pub async fn healthz() -> impl Responder {
 )]
 #[get("/readyz")]
 pub async fn readyz(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
-    with_connection_async(pool.get_ref().clone(), |conn| {
-        diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>("1")).get_result::<i32>(conn)
+    with_connection_async(pool.get_ref().clone(), async |conn| {
+        diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>("1"))
+            .get_result::<i32>(conn)
+            .await
     })
     .await
     .map_err(|_| ApiError::ServiceUnavailable("Database is not ready".to_string()))?;

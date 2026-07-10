@@ -81,9 +81,28 @@ fn spawn_task_worker_loop(pool: DbPool, poll_interval: Duration, worker_index: u
                 poll_interval = ?poll_interval
             );
             let system = actix_rt::System::new();
-            system.block_on(task_worker_loop(pool, poll_interval));
+            system.block_on(async move {
+                let pool = task_worker_pool(pool);
+                task_worker_loop(pool, poll_interval).await;
+            });
         })
         .expect("failed to spawn task worker thread");
+}
+
+#[cfg(not(test))]
+fn task_worker_pool(pool: DbPool) -> DbPool {
+    pool
+}
+
+/// Async Postgres connections are tied to the runtime that established them.
+/// Test cases each own a short-lived Actix runtime, while the background worker
+/// thread is process-global. Build the test worker's pool on its own long-lived
+/// runtime so it never inherits connections driven by a completed test runtime.
+#[cfg(test)]
+fn task_worker_pool(pool: DbPool) -> DbPool {
+    drop(pool);
+    let config = get_config().expect("test task worker requires database configuration");
+    crate::db::init_pool(&config.database_url, config.db_pool_size)
 }
 
 pub fn ensure_task_worker_running(pool: DbPool) {

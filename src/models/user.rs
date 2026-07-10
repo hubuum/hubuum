@@ -1,3 +1,4 @@
+use crate::db::prelude::*;
 use crate::db::traits::user::{
     AnonymizeUserRecord, CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord,
     StoreUserTokenRecord, UpdateUserRecord,
@@ -7,7 +8,6 @@ use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::load_principal_by_id;
 use crate::models::token::{PrincipalToken, Token};
 use crate::schema::users;
-use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

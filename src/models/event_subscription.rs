@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
+use crate::db::prelude::*;
 use chrono::NaiveDateTime;
-use diesel::prelude::*;
 use hubuum_events_core::EventSubscriptionFilter;
 use serde::{Deserialize, Serialize, Serializer};
 use utoipa::ToSchema;

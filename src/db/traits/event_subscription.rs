@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 use serde_json::json;
 
 use crate::apply_query_options;
@@ -20,11 +20,13 @@ impl LoadEventSinkRecord for EventSinkID {
     async fn load_event_sink_record(&self, pool: &DbPool) -> Result<EventSinkRow, ApiError> {
         use crate::schema::event_sinks::dsl::{event_sinks, id};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             event_sinks
                 .filter(id.eq(self.id()))
                 .first::<EventSinkRow>(conn)
+                .await
         })
+        .await
     }
 }
 
@@ -67,13 +69,15 @@ async fn insert_event_sink_record(
 ) -> Result<EventSinkRow, ApiError> {
     use crate::schema::event_sinks::dsl::event_sinks;
 
-    with_transaction(pool, |conn| -> Result<EventSinkRow, ApiError> {
+    with_transaction(pool, async |conn| -> Result<EventSinkRow, ApiError> {
         let created = diesel::insert_into(event_sinks)
             .values(row)
-            .get_result::<EventSinkRow>(conn)?;
-        emit_event_sink_audit(conn, Action::Created, event_context, None, &created)?;
+            .get_result::<EventSinkRow>(conn)
+            .await?;
+        emit_event_sink_audit(conn, Action::Created, event_context, None, &created).await?;
         Ok(created)
     })
+    .await
 }
 
 pub(crate) trait UpdateEventSinkRecord {
@@ -104,22 +108,26 @@ async fn update_event_sink_record_impl(
 ) -> Result<EventSinkRow, ApiError> {
     use crate::schema::event_sinks::dsl::{event_sinks, id};
 
-    with_transaction(pool, |conn| -> Result<EventSinkRow, ApiError> {
+    with_transaction(pool, async |conn| -> Result<EventSinkRow, ApiError> {
         let before = event_sinks
             .filter(id.eq(sink_id))
-            .first::<EventSinkRow>(conn)?;
+            .first::<EventSinkRow>(conn)
+            .await?;
         let updated = diesel::update(event_sinks.filter(id.eq(sink_id)))
             .set(row)
-            .get_result::<EventSinkRow>(conn)?;
+            .get_result::<EventSinkRow>(conn)
+            .await?;
         emit_event_sink_audit(
             conn,
             Action::Updated,
             event_context,
             Some(&before),
             &updated,
-        )?;
+        )
+        .await?;
         Ok(updated)
     })
+    .await
 }
 
 pub(crate) trait DeleteEventSinkRecord {
@@ -147,16 +155,19 @@ async fn delete_event_sink_record_impl(
 ) -> Result<(), ApiError> {
     use crate::schema::event_sinks::dsl::{event_sinks, id};
 
-    with_transaction(pool, |conn| -> Result<(), ApiError> {
+    with_transaction(pool, async |conn| -> Result<(), ApiError> {
         let before = event_sinks
             .filter(id.eq(sink_id.id()))
-            .first::<EventSinkRow>(conn)?;
-        emit_event_sink_audit(conn, Action::Deleted, event_context, Some(&before), &before)?;
+            .first::<EventSinkRow>(conn)
+            .await?;
+        emit_event_sink_audit(conn, Action::Deleted, event_context, Some(&before), &before).await?;
         diesel::delete(event_sinks.filter(id.eq(sink_id.id())))
             .execute(conn)
+            .await
             .map_err(ApiError::from)?;
         Ok(())
-    })?;
+    })
+    .await?;
     Ok(())
 }
 
@@ -174,11 +185,13 @@ impl LoadEventSubscriptionRecord for EventSubscriptionID {
     ) -> Result<EventSubscriptionRow, ApiError> {
         use crate::schema::event_subscriptions::dsl::{event_subscriptions, id};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             event_subscriptions
                 .filter(id.eq(self.id()))
                 .first::<EventSubscriptionRow>(conn)
+                .await
         })
+        .await
     }
 }
 
@@ -221,13 +234,19 @@ async fn insert_event_subscription_record(
 ) -> Result<EventSubscriptionRow, ApiError> {
     use crate::schema::event_subscriptions::dsl::event_subscriptions;
 
-    with_transaction(pool, |conn| -> Result<EventSubscriptionRow, ApiError> {
-        let created = diesel::insert_into(event_subscriptions)
-            .values(row)
-            .get_result::<EventSubscriptionRow>(conn)?;
-        emit_event_subscription_audit(conn, Action::Created, event_context, None, &created)?;
-        Ok(created)
-    })
+    with_transaction(
+        pool,
+        async |conn| -> Result<EventSubscriptionRow, ApiError> {
+            let created = diesel::insert_into(event_subscriptions)
+                .values(row)
+                .get_result::<EventSubscriptionRow>(conn)
+                .await?;
+            emit_event_subscription_audit(conn, Action::Created, event_context, None, &created)
+                .await?;
+            Ok(created)
+        },
+    )
+    .await
 }
 
 pub(crate) trait UpdateEventSubscriptionRecord {
@@ -259,22 +278,29 @@ async fn update_event_subscription_record_impl(
 ) -> Result<EventSubscriptionRow, ApiError> {
     use crate::schema::event_subscriptions::dsl::{event_subscriptions, id};
 
-    with_transaction(pool, |conn| -> Result<EventSubscriptionRow, ApiError> {
-        let before = event_subscriptions
-            .filter(id.eq(subscription_id))
-            .first::<EventSubscriptionRow>(conn)?;
-        let updated = diesel::update(event_subscriptions.filter(id.eq(subscription_id)))
-            .set(row)
-            .get_result::<EventSubscriptionRow>(conn)?;
-        emit_event_subscription_audit(
-            conn,
-            Action::Updated,
-            event_context,
-            Some(&before),
-            &updated,
-        )?;
-        Ok(updated)
-    })
+    with_transaction(
+        pool,
+        async |conn| -> Result<EventSubscriptionRow, ApiError> {
+            let before = event_subscriptions
+                .filter(id.eq(subscription_id))
+                .first::<EventSubscriptionRow>(conn)
+                .await?;
+            let updated = diesel::update(event_subscriptions.filter(id.eq(subscription_id)))
+                .set(row)
+                .get_result::<EventSubscriptionRow>(conn)
+                .await?;
+            emit_event_subscription_audit(
+                conn,
+                Action::Updated,
+                event_context,
+                Some(&before),
+                &updated,
+            )
+            .await?;
+            Ok(updated)
+        },
+    )
+    .await
 }
 
 pub(crate) trait DeleteEventSubscriptionRecord {
@@ -302,27 +328,25 @@ async fn delete_event_subscription_record_impl(
 ) -> Result<(), ApiError> {
     use crate::schema::event_subscriptions::dsl::{event_subscriptions, id};
 
-    with_transaction(pool, |conn| -> Result<(), ApiError> {
+    with_transaction(pool, async |conn| -> Result<(), ApiError> {
         let before = event_subscriptions
             .filter(id.eq(subscription_id.id()))
-            .first::<EventSubscriptionRow>(conn)?;
-        emit_event_subscription_audit(
-            conn,
-            Action::Deleted,
-            event_context,
-            Some(&before),
-            &before,
-        )?;
+            .first::<EventSubscriptionRow>(conn)
+            .await?;
+        emit_event_subscription_audit(conn, Action::Deleted, event_context, Some(&before), &before)
+            .await?;
         diesel::delete(event_subscriptions.filter(id.eq(subscription_id.id())))
             .execute(conn)
+            .await
             .map_err(ApiError::from)?;
         Ok(())
-    })?;
+    })
+    .await?;
     Ok(())
 }
 
-fn emit_event_sink_audit(
-    conn: &mut PgConnection,
+async fn emit_event_sink_audit(
+    conn: &mut crate::db::DbConnection,
     action: Action,
     event_context: Option<&EventContext>,
     before: Option<&EventSinkRow>,
@@ -347,12 +371,12 @@ fn emit_event_sink_audit(
         "kind": after.kind,
         "enabled": after.enabled,
     }));
-    emit_event(conn, &event)?;
+    emit_event(conn, &event).await?;
     Ok(())
 }
 
-fn emit_event_subscription_audit(
-    conn: &mut PgConnection,
+async fn emit_event_subscription_audit(
+    conn: &mut crate::db::DbConnection,
     action: Action,
     event_context: Option<&EventContext>,
     before: Option<&EventSubscriptionRow>,
@@ -379,7 +403,7 @@ fn emit_event_subscription_audit(
         "collection_id": after.collection_id,
         "enabled": after.enabled,
     }));
-    emit_event(conn, &event)?;
+    emit_event(conn, &event).await?;
     Ok(())
 }
 
@@ -415,12 +439,16 @@ pub(crate) async fn list_event_sink_rows_with_total_count(
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventSinkRow>, i64), ApiError> {
     let query = build_event_sink_query(query_options)?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
-    })?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+        with_connection(pool, async |conn| {
+            query.count().get_result::<i64>(conn).await
+        })
+        .await
+    })
+    .await?;
     let mut query = build_event_sink_query(query_options)?;
     apply_query_options!(query, query_options, EventSink);
-    let rows = with_connection(pool, |conn| query.load::<EventSinkRow>(conn))?;
+    let rows = with_connection(pool, async |conn| query.load::<EventSinkRow>(conn).await).await?;
     Ok((rows, total_count))
 }
 
@@ -454,12 +482,19 @@ pub(crate) async fn list_event_subscription_rows_with_total_count(
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventSubscriptionRow>, i64), ApiError> {
     let base = build_event_subscription_query(collection, query_options)?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-        with_connection(pool, |conn| base.count().get_result::<i64>(conn))
-    })?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+        with_connection(pool, async |conn| {
+            base.count().get_result::<i64>(conn).await
+        })
+        .await
+    })
+    .await?;
     let mut query = build_event_subscription_query(collection, query_options)?;
     apply_query_options!(query, query_options, EventSubscription);
-    let rows = with_connection(pool, |conn| query.load::<EventSubscriptionRow>(conn))?;
+    let rows = with_connection(pool, async |conn| {
+        query.load::<EventSubscriptionRow>(conn).await
+    })
+    .await?;
     Ok((rows, total_count))
 }
 

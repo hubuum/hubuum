@@ -1,13 +1,13 @@
-use diesel::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-use crate::db::{DbPool, with_connection};
+use crate::db::prelude::*;
+use crate::db::{DbConnection, DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{IdentityScope, NewIdentityScope};
 use crate::schema::identity_scopes;
 
-pub(crate) fn identity_scope_id_by_name_conn(
-    conn: &mut PgConnection,
+pub(crate) async fn identity_scope_id_by_name_conn(
+    conn: &mut DbConnection,
     scope_name: &str,
 ) -> Result<i32, ApiError> {
     use crate::schema::identity_scopes::dsl::{identity_scopes as scopes, name};
@@ -15,6 +15,7 @@ pub(crate) fn identity_scope_id_by_name_conn(
         .filter(name.eq(scope_name))
         .select(identity_scopes::id)
         .first::<i32>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
@@ -23,11 +24,13 @@ pub async fn identity_scope_by_name(
     scope_name: &str,
 ) -> Result<IdentityScope, ApiError> {
     use crate::schema::identity_scopes::dsl::{identity_scopes as scopes, name};
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         scopes
             .filter(name.eq(scope_name))
             .first::<IdentityScope>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn identity_scope_names_by_ids(
@@ -40,12 +43,14 @@ pub async fn identity_scope_names_by_ids(
 
     let unique_ids = scope_ids.iter().copied().collect::<HashSet<_>>();
     let query_ids = unique_ids.iter().copied().collect::<Vec<_>>();
-    let rows = with_connection(pool, |conn| {
+    let rows = with_connection(pool, async |conn| {
         identity_scopes::table
             .filter(identity_scopes::id.eq_any(&query_ids))
             .select((identity_scopes::id, identity_scopes::name))
             .load::<(i32, String)>(conn)
-    })?;
+            .await
+    })
+    .await?;
     if rows.len() != unique_ids.len() {
         return Err(ApiError::InternalServerError(
             "One or more identity scopes could not be resolved".to_string(),
@@ -61,7 +66,7 @@ pub async fn ensure_identity_scope(
     provider: &str,
 ) -> Result<IdentityScope, ApiError> {
     use crate::schema::identity_scopes::dsl::{identity_scopes as scopes, name};
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         diesel::insert_into(scopes)
             .values(NewIdentityScope {
                 name: scope_name,
@@ -71,5 +76,7 @@ pub async fn ensure_identity_scope(
             .do_update()
             .set(identity_scopes::provider_kind.eq(provider))
             .get_result::<IdentityScope>(conn)
+            .await
     })
+    .await
 }

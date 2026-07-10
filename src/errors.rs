@@ -1,8 +1,8 @@
 use actix_web::{
     HttpRequest, HttpResponse, ResponseError, error::JsonPayloadError, http::StatusCode,
 };
-use diesel::r2d2::PoolError;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
+use diesel_async::pooled_connection::bb8::RunError as PoolError;
 use serde::Serialize;
 use serde_json::json;
 use std::fmt;
@@ -349,27 +349,14 @@ mod tests {
         // We don't actually call it (would exit), just verify it compiles
     }
 
-    #[test]
-    fn test_api_error_from_pool_error() {
-        // Test that PoolError converts to DbConnectionError
-        use diesel::PgConnection;
-        use diesel::r2d2::ConnectionManager;
-
-        let manager = ConnectionManager::<PgConnection>::new("postgres://invalid:5432/nonexistent");
-        let pool_result = diesel::r2d2::Pool::builder()
-            .max_size(1)
-            .connection_timeout(std::time::Duration::from_millis(1))
-            .build(manager);
-
-        if let Ok(pool) = pool_result {
-            let result = crate::db::with_connection(&pool, |_conn| Ok::<(), ApiError>(()));
-            match result {
-                Err(ApiError::DbConnectionError(_)) => {
-                    // Expected
-                }
-                Err(other) => panic!("Expected DbConnectionError from PoolError, got: {other:?}"),
-                Ok(_) => panic!("Expected pool connection to fail"),
-            }
+    #[tokio::test]
+    async fn test_api_error_from_pool_error() {
+        let pool = crate::db::init_pool("postgres://invalid:5432/nonexistent", 1);
+        let result = crate::db::with_connection(&pool, async |_conn| Ok::<(), ApiError>(())).await;
+        match result {
+            Err(ApiError::DbConnectionError(_)) => {}
+            Err(other) => panic!("Expected DbConnectionError from pool error, got: {other:?}"),
+            Ok(_) => panic!("Expected pool connection to fail"),
         }
     }
 

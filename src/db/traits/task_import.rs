@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
@@ -17,23 +17,28 @@ pub async fn lookup_collections_by_name(
 ) -> Result<Vec<Collection>, ApiError> {
     use crate::schema::collections::dsl::{collections, name};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         collections
             .filter(name.eq(value))
             .order(crate::schema::collections::id.asc())
             .load::<Collection>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn lookup_root_collection(pool: &DbPool) -> Result<Collection, ApiError> {
-    with_connection(pool, lookup_root_collection_db)
+    with_connection(pool, lookup_root_collection_db).await
 }
 
 pub async fn lookup_collection_by_key(
     pool: &DbPool,
     key: &CollectionKey,
 ) -> Result<Option<Collection>, ApiError> {
-    with_connection(pool, |conn| lookup_collection_by_key_db(conn, key))
+    with_connection(pool, async |conn| {
+        lookup_collection_by_key_db(conn, key).await
+    })
+    .await
 }
 
 pub async fn lookup_collection_by_id(
@@ -42,12 +47,14 @@ pub async fn lookup_collection_by_id(
 ) -> Result<Option<Collection>, ApiError> {
     use crate::schema::collections::dsl::{collections, id};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         collections
             .filter(id.eq(collection_id))
             .first::<Collection>(conn)
+            .await
             .optional()
     })
+    .await
 }
 
 pub async fn lookup_class_by_collection_and_name(
@@ -57,13 +64,15 @@ pub async fn lookup_class_by_collection_and_name(
 ) -> Result<Option<HubuumClass>, ApiError> {
     use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, name};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         hubuumclass
             .filter(collection_id.eq(collection_id_value))
             .filter(name.eq(class_name))
             .first::<HubuumClass>(conn)
+            .await
             .optional()
     })
+    .await
 }
 
 pub async fn lookup_classes_by_collection_and_names(
@@ -77,12 +86,14 @@ pub async fn lookup_classes_by_collection_and_names(
         return Ok(Vec::new());
     }
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         hubuumclass
             .filter(collection_id.eq(collection_id_value))
             .filter(name.eq_any(class_names))
             .load::<HubuumClass>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn lookup_object_by_class_and_name(
@@ -92,13 +103,15 @@ pub async fn lookup_object_by_class_and_name(
 ) -> Result<Option<HubuumObject>, ApiError> {
     use crate::schema::hubuumobject::dsl::{hubuum_class_id, hubuumobject, name};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         hubuumobject
             .filter(hubuum_class_id.eq(class_id_value))
             .filter(name.eq(object_name))
             .first::<HubuumObject>(conn)
+            .await
             .optional()
     })
+    .await
 }
 
 pub async fn lookup_objects_by_class_and_names(
@@ -112,12 +125,14 @@ pub async fn lookup_objects_by_class_and_names(
         return Ok(Vec::new());
     }
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         hubuumobject
             .filter(hubuum_class_id.eq(class_id_value))
             .filter(name.eq_any(object_names))
             .load::<HubuumObject>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn lookup_direct_class_relation(
@@ -130,13 +145,15 @@ pub async fn lookup_direct_class_relation(
     };
     let pair = normalize_pair(left, right);
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         hubuumclass_relation
             .filter(from_hubuum_class_id.eq(pair.0))
             .filter(to_hubuum_class_id.eq(pair.1))
             .first::<HubuumClassRelation>(conn)
+            .await
             .optional()
     })
+    .await
 }
 
 pub async fn lookup_object_relation(
@@ -149,13 +166,15 @@ pub async fn lookup_object_relation(
     };
     let pair = normalize_pair(left, right);
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         hubuumobject_relation
             .filter(from_hubuum_object_id.eq(pair.0))
             .filter(to_hubuum_object_id.eq(pair.1))
             .first::<HubuumObjectRelation>(conn)
+            .await
             .optional()
     })
+    .await
 }
 
 pub async fn lookup_group_by_name(
@@ -165,22 +184,24 @@ pub async fn lookup_group_by_name(
 ) -> Result<Option<Group>, ApiError> {
     use crate::schema::{groups, identity_scopes};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         groups::table
             .inner_join(identity_scopes::table)
             .filter(groups::groupname.eq(value))
             .filter(identity_scopes::name.eq(identity_scope))
             .select(groups::all_columns)
             .first::<Group>(conn)
+            .await
             .optional()
     })
+    .await
 }
 
-pub fn lookup_collection_by_name_db(
-    conn: &mut diesel::PgConnection,
+pub async fn lookup_collection_by_name_db(
+    conn: &mut crate::db::DbConnection,
     value: &str,
 ) -> Result<Option<Collection>, ApiError> {
-    let matches = lookup_collections_by_name_db(conn, value)?;
+    let matches = lookup_collections_by_name_db(conn, value).await?;
     match matches.as_slice() {
         [] => Ok(None),
         [collection] => Ok(Some(collection.clone())),
@@ -190,8 +211,8 @@ pub fn lookup_collection_by_name_db(
     }
 }
 
-pub fn lookup_collections_by_name_db(
-    conn: &mut diesel::PgConnection,
+pub async fn lookup_collections_by_name_db(
+    conn: &mut crate::db::DbConnection,
     value: &str,
 ) -> Result<Vec<Collection>, ApiError> {
     use crate::schema::collections::dsl::{collections, name};
@@ -200,20 +221,24 @@ pub fn lookup_collections_by_name_db(
         .filter(name.eq(value))
         .order(crate::schema::collections::id.asc())
         .load::<Collection>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
-pub fn lookup_root_collection_db(conn: &mut diesel::PgConnection) -> Result<Collection, ApiError> {
+pub async fn lookup_root_collection_db(
+    conn: &mut crate::db::DbConnection,
+) -> Result<Collection, ApiError> {
     use crate::schema::collections::dsl::{collections, parent_collection_id};
 
     collections
         .filter(parent_collection_id.is_null())
         .first::<Collection>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
-pub fn lookup_collection_child_by_name_db(
-    conn: &mut diesel::PgConnection,
+pub async fn lookup_collection_child_by_name_db(
+    conn: &mut crate::db::DbConnection,
     parent_id_value: i32,
     child_name: &str,
 ) -> Result<Option<Collection>, ApiError> {
@@ -223,6 +248,7 @@ pub fn lookup_collection_child_by_name_db(
         .filter(parent_collection_id.eq(parent_id_value))
         .filter(name.eq(child_name))
         .first::<Collection>(conn)
+        .await
         .optional()
         .map_err(ApiError::from)
 }
@@ -245,24 +271,24 @@ fn validate_collection_key_path(key: &CollectionKey) -> Result<(), ApiError> {
     }
 }
 
-pub fn lookup_collection_by_key_db(
-    conn: &mut diesel::PgConnection,
+pub async fn lookup_collection_by_key_db(
+    conn: &mut crate::db::DbConnection,
     key: &CollectionKey,
 ) -> Result<Option<Collection>, ApiError> {
     validate_collection_key_path(key)?;
 
     let Some(path) = &key.path else {
-        return lookup_collection_by_name_db(conn, &key.name);
+        return lookup_collection_by_name_db(conn, &key.name).await;
     };
 
     if path.is_empty() {
-        return lookup_root_collection_db(conn).map(Some);
+        return lookup_root_collection_db(conn).await.map(Some);
     }
 
-    let mut parent = lookup_root_collection_db(conn)?;
+    let mut parent = lookup_root_collection_db(conn).await?;
     let mut current = None;
     for segment in path {
-        let child = lookup_collection_child_by_name_db(conn, parent.id, segment)?;
+        let child = lookup_collection_child_by_name_db(conn, parent.id, segment).await?;
         let Some(child) = child else {
             return Ok(None);
         };
@@ -273,8 +299,8 @@ pub fn lookup_collection_by_key_db(
     Ok(current)
 }
 
-pub fn lookup_class_by_collection_and_name_db(
-    conn: &mut diesel::PgConnection,
+pub async fn lookup_class_by_collection_and_name_db(
+    conn: &mut crate::db::DbConnection,
     collection_id_value: i32,
     class_name: &str,
 ) -> Result<Option<HubuumClass>, ApiError> {
@@ -284,12 +310,13 @@ pub fn lookup_class_by_collection_and_name_db(
         .filter(collection_id.eq(collection_id_value))
         .filter(name.eq(class_name))
         .first::<HubuumClass>(conn)
+        .await
         .optional()
         .map_err(ApiError::from)
 }
 
-pub fn lookup_object_by_class_and_name_db(
-    conn: &mut diesel::PgConnection,
+pub async fn lookup_object_by_class_and_name_db(
+    conn: &mut crate::db::DbConnection,
     class_id_value: i32,
     object_name: &str,
 ) -> Result<Option<HubuumObject>, ApiError> {
@@ -299,12 +326,13 @@ pub fn lookup_object_by_class_and_name_db(
         .filter(hubuum_class_id.eq(class_id_value))
         .filter(name.eq(object_name))
         .first::<HubuumObject>(conn)
+        .await
         .optional()
         .map_err(ApiError::from)
 }
 
-pub fn lookup_group_by_name_db(
-    conn: &mut diesel::PgConnection,
+pub async fn lookup_group_by_name_db(
+    conn: &mut crate::db::DbConnection,
     identity_scope: &str,
     value: &str,
 ) -> Result<Option<Group>, ApiError> {
@@ -316,12 +344,13 @@ pub fn lookup_group_by_name_db(
         .filter(identity_scopes::name.eq(identity_scope))
         .select(groups::all_columns)
         .first::<Group>(conn)
+        .await
         .optional()
         .map_err(ApiError::from)
 }
 
-pub fn create_collection_db(
-    conn: &mut diesel::PgConnection,
+pub async fn create_collection_db(
+    conn: &mut crate::db::DbConnection,
     input: &ImportCollectionInput,
     parent_collection_id: Option<i32>,
 ) -> Result<Collection, ApiError> {
@@ -331,10 +360,11 @@ pub fn create_collection_db(
         &input.description,
         parent_collection_id,
     )
+    .await
 }
 
-pub fn update_collection_db(
-    conn: &mut diesel::PgConnection,
+pub async fn update_collection_db(
+    conn: &mut crate::db::DbConnection,
     collection_id_value: i32,
     input: &ImportCollectionInput,
 ) -> Result<Collection, ApiError> {
@@ -349,14 +379,21 @@ pub fn update_collection_db(
         diesel::update(collections.filter(id.eq(collection_id_value)))
             .set(&update)
             .get_result::<Collection>(conn)
+            .await
             .optional(),
-        || collections.filter(id.eq(collection_id_value)).first(conn),
+        async || {
+            collections
+                .filter(id.eq(collection_id_value))
+                .first(conn)
+                .await
+        },
     )
+    .await
     .map_err(ApiError::from)
 }
 
-pub fn create_class_db(
-    conn: &mut diesel::PgConnection,
+pub async fn create_class_db(
+    conn: &mut crate::db::DbConnection,
     input: &ImportClassInput,
     collection_id_value: i32,
 ) -> Result<HubuumClass, ApiError> {
@@ -373,11 +410,12 @@ pub fn create_class_db(
     diesel::insert_into(hubuumclass)
         .values(&new_class)
         .get_result::<HubuumClass>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
-pub fn update_class_db(
-    conn: &mut diesel::PgConnection,
+pub async fn update_class_db(
+    conn: &mut crate::db::DbConnection,
     class_id_value: i32,
     input: &ImportClassInput,
 ) -> Result<HubuumClass, ApiError> {
@@ -395,14 +433,16 @@ pub fn update_class_db(
         diesel::update(hubuumclass.filter(id.eq(class_id_value)))
             .set(&update)
             .get_result::<HubuumClass>(conn)
+            .await
             .optional(),
-        || hubuumclass.filter(id.eq(class_id_value)).first(conn),
+        async || hubuumclass.filter(id.eq(class_id_value)).first(conn).await,
     )
+    .await
     .map_err(ApiError::from)
 }
 
-pub fn create_object_db(
-    conn: &mut diesel::PgConnection,
+pub async fn create_object_db(
+    conn: &mut crate::db::DbConnection,
     input: &ImportObjectInput,
     class: &HubuumClass,
 ) -> Result<HubuumObject, ApiError> {
@@ -419,11 +459,12 @@ pub fn create_object_db(
     diesel::insert_into(hubuumobject)
         .values(&new_object)
         .get_result::<HubuumObject>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
-pub fn update_object_db(
-    conn: &mut diesel::PgConnection,
+pub async fn update_object_db(
+    conn: &mut crate::db::DbConnection,
     object_id_value: i32,
     input: &ImportObjectInput,
 ) -> Result<HubuumObject, ApiError> {
@@ -441,14 +482,21 @@ pub fn update_object_db(
         diesel::update(hubuumobject.filter(id.eq(object_id_value)))
             .set(&update)
             .get_result::<HubuumObject>(conn)
+            .await
             .optional(),
-        || hubuumobject.filter(id.eq(object_id_value)).first(conn),
+        async || {
+            hubuumobject
+                .filter(id.eq(object_id_value))
+                .first(conn)
+                .await
+        },
     )
+    .await
     .map_err(ApiError::from)
 }
 
-pub fn create_class_relation_db(
-    conn: &mut diesel::PgConnection,
+pub async fn create_class_relation_db(
+    conn: &mut crate::db::DbConnection,
     left: i32,
     right: i32,
     forward_template_alias: Option<String>,
@@ -478,6 +526,7 @@ pub fn create_class_relation_db(
     diesel::insert_into(hubuumclass_relation)
         .values(&new_relation)
         .get_result::<HubuumClassRelation>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
@@ -485,8 +534,8 @@ fn normalize_template_alias_option(alias: Option<&str>) -> Result<Option<String>
     alias.map(normalize_template_alias).transpose()
 }
 
-pub fn create_object_relation_db(
-    conn: &mut diesel::PgConnection,
+pub async fn create_object_relation_db(
+    conn: &mut crate::db::DbConnection,
     from_object: &HubuumObject,
     to_object: &HubuumObject,
 ) -> Result<HubuumObjectRelation, ApiError> {
@@ -498,7 +547,8 @@ pub fn create_object_relation_db(
     let relation = hubuumclass_relation
         .filter(from_hubuum_class_id.eq(class_pair.0))
         .filter(to_hubuum_class_id.eq(class_pair.1))
-        .first::<HubuumClassRelation>(conn)?;
+        .first::<HubuumClassRelation>(conn)
+        .await?;
 
     let object_pair = normalize_pair(from_object.id, to_object.id);
     let new_relation = NewHubuumObjectRelation {
@@ -510,11 +560,12 @@ pub fn create_object_relation_db(
     diesel::insert_into(hubuumobject_relation)
         .values(&new_relation)
         .get_result::<HubuumObjectRelation>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
-pub fn apply_permissions_db(
-    conn: &mut diesel::PgConnection,
+pub async fn apply_permissions_db(
+    conn: &mut crate::db::DbConnection,
     collection_id_value: i32,
     group_id_value: i32,
     permissions: &[Permissions],
@@ -528,6 +579,7 @@ pub fn apply_permissions_db(
         .filter(collection_id.eq(collection_id_value))
         .filter(group_id.eq(group_id_value))
         .first::<Permission>(conn)
+        .await
         .optional()?;
 
     let permission_list = PermissionsList::new(permissions.to_vec());
@@ -579,6 +631,7 @@ pub fn apply_permissions_db(
             )
             .set(&update)
             .get_result::<Permission>(conn)
+            .await
             .map_err(ApiError::from)
         }
         None => {
@@ -633,6 +686,7 @@ pub fn apply_permissions_db(
             diesel::insert_into(permissions_table)
                 .values(&new_entry)
                 .get_result::<Permission>(conn)
+                .await
                 .map_err(ApiError::from)
         }
     }
@@ -711,7 +765,7 @@ mod tests {
             ensure_identity_scope(&scope.pool, &external_scope_name, LDAP_PROVIDER_KIND)
                 .await
                 .unwrap();
-        let external_group = with_connection(&scope.pool, |conn| {
+        let external_group = with_connection(&scope.pool, async |conn| {
             use crate::schema::groups;
 
             diesel::insert_into(groups::table)
@@ -723,7 +777,9 @@ mod tests {
                     groups::external_key.eq(scope.scoped_name("external_group_key")),
                 ))
                 .get_result::<Group>(conn)
+                .await
         })
+        .await
         .unwrap();
 
         let external_key = GroupKey {
@@ -742,9 +798,11 @@ mod tests {
             identity_scope: None,
             groupname,
         };
-        let loaded_local = with_connection(&scope.pool, |conn| {
+        let loaded_local = with_connection(&scope.pool, async |conn| {
             lookup_group_by_name_db(conn, local_key.identity_scope_name(), &local_key.groupname)
+                .await
         })
+        .await
         .unwrap()
         .unwrap();
 

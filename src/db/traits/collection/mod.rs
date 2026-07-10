@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 use tracing::{debug, trace};
 
 use crate::db::traits::GetCollection;

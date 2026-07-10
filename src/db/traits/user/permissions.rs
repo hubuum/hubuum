@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::traits::authz::{AuthzSubject, scope_allows};
+use diesel_async::RunQueryDsl;
 pub trait UserPermissions: AuthzSubject {
     /// ## Check if a subject has a set of permissions in a set of collections
     ///
@@ -78,11 +79,13 @@ pub trait UserPermissions: AuthzSubject {
         }
 
         // Count the number of distinct collections that match all criteria
-        let matching_collections_count = with_connection(pool, |conn| {
+        let matching_collections_count = with_connection(pool, async |conn| {
             base_query
                 .select(count(descendant_collection_id).aggregate_distinct())
                 .first::<i64>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         // Check if the count of matching collections equals the number of input collections
         if matching_collections_count as usize == collection_ids.len() {

@@ -29,7 +29,7 @@ pub async fn init(pool: DbPool) -> InitResult {
         return Err(err_msg);
     }
 
-    let users_count = match count_user_records(&pool) {
+    let users_count = match count_user_records(&pool).await {
         Ok(count) => count,
         Err(e) => {
             let err_msg = format!("Failed to count users during initialization: {}", e);
@@ -38,7 +38,7 @@ pub async fn init(pool: DbPool) -> InitResult {
         }
     };
 
-    let groups_count = match count_group_records(&pool) {
+    let groups_count = match count_group_records(&pool).await {
         Ok(count) => count,
         Err(e) => {
             let err_msg = format!("Failed to count groups during initialization: {}", e);

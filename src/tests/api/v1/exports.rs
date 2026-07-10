@@ -1463,7 +1463,7 @@ mod tests {
     async fn test_export_output_cleanup_removes_expired_artifacts(
         #[future(awt)] test_context: TestContext,
     ) {
-        use diesel::prelude::*;
+        use crate::db::prelude::*;
 
         let context = test_context;
         let classes = create_test_classes(&context, "export_cleanup").await;
@@ -1500,7 +1500,7 @@ mod tests {
         // test, which relies on its own expired row surviving.
         let _purge_guard = lock_test_mutex(&EXPIRED_OUTPUT_PURGE_LOCK).await;
 
-        crate::db::with_connection(&context.pool, |conn| {
+        crate::db::with_connection(&context.pool, async |conn| {
             use crate::schema::export_task_outputs::dsl::{
                 export_task_outputs, output_expires_at, task_id,
             };
@@ -1511,7 +1511,9 @@ mod tests {
                         .eq(chrono::Utc::now().naive_utc() - chrono::Duration::hours(1)),
                 )
                 .execute(conn)
+                .await
         })
+        .await
         .unwrap();
 
         // The purge is process-wide; assert it cleaned *our* task rather than asserting it cleaned
@@ -1572,7 +1574,7 @@ mod tests {
     async fn test_export_output_returns_gone_when_expired_before_purge(
         #[future(awt)] test_context: TestContext,
     ) {
-        use diesel::prelude::*;
+        use crate::db::prelude::*;
 
         let context = test_context;
         let classes = create_test_classes(&context, "export_expired").await;
@@ -1613,7 +1615,7 @@ mod tests {
             .unwrap()
             .and_hms_opt(0, 0, 0)
             .unwrap();
-        crate::db::with_connection(&context.pool, |conn| {
+        crate::db::with_connection(&context.pool, async |conn| {
             use crate::schema::export_task_outputs::dsl::{
                 export_task_outputs, output_expires_at, task_id,
             };
@@ -1621,7 +1623,9 @@ mod tests {
             diesel::update(export_task_outputs.filter(task_id.eq(task.id)))
                 .set(output_expires_at.eq(backdated_expiry))
                 .execute(conn)
+                .await
         })
+        .await
         .unwrap();
 
         // Deliberately do NOT purge: the row still exists but is past its retention window.
@@ -1684,7 +1688,7 @@ mod tests {
     async fn test_finalize_export_with_output_is_idempotent(
         #[future(awt)] test_context: TestContext,
     ) {
-        use diesel::prelude::*;
+        use crate::db::prelude::*;
 
         let context = test_context;
         let classes = create_test_classes(&context, "export_refinalize").await;
@@ -1757,7 +1761,7 @@ mod tests {
 
         // The output row is untouched: exactly one row, and the original body, not the duplicate.
         let (count, text): (i64, Option<String>) =
-            crate::db::with_connection(&context.pool, |conn| {
+            crate::db::with_connection(&context.pool, async |conn| {
                 use crate::schema::export_task_outputs::dsl::{
                     export_task_outputs, task_id, text_output,
                 };
@@ -1765,13 +1769,16 @@ mod tests {
                 let count = export_task_outputs
                     .filter(task_id.eq(task.id))
                     .count()
-                    .get_result::<i64>(conn)?;
+                    .get_result::<i64>(conn)
+                    .await?;
                 let text = export_task_outputs
                     .filter(task_id.eq(task.id))
                     .select(text_output)
-                    .first::<Option<String>>(conn)?;
+                    .first::<Option<String>>(conn)
+                    .await?;
                 Ok::<_, diesel::result::Error>((count, text))
             })
+            .await
             .unwrap();
         assert_eq!(count, 1);
         assert_ne!(text.as_deref(), Some("second finalize body"));

@@ -7,7 +7,7 @@
 
 #![cfg(test)]
 
-use diesel::prelude::*;
+use crate::db::prelude::*;
 use rstest::rstest;
 use uuid::Uuid;
 
@@ -55,19 +55,21 @@ static EVENT_DELIVERY_TEST_LOCK: TestMutex = test_mutex();
 static EVENT_RETENTION_TEST_LOCK: TestMutex = test_mutex();
 
 /// Count event rows for a given `event_id` (0 or 1, since `event_id` is UNIQUE).
-fn count_events_for(conn: &mut PgConnection, target: Uuid) -> i64 {
+async fn count_events_for(conn: &mut crate::db::DbConnection, target: Uuid) -> i64 {
     use crate::schema::events::dsl::event_id;
     events
         .filter(event_id.eq(target))
         .count()
         .get_result(conn)
+        .await
         .expect("count query")
 }
 
 #[rstest]
+#[tokio::test]
 #[case::commit_persists(false)]
 #[case::rollback_discards(true)]
-fn emit_event_respects_transaction_outcome(#[case] rollback: bool) {
+async fn emit_event_respects_transaction_outcome(#[case] rollback: bool) {
     let scope = test_scope();
     let pool = scope.pool.clone();
 
@@ -86,16 +88,17 @@ fn emit_event_respects_transaction_outcome(#[case] rollback: bool) {
     .with_metadata(serde_json::json!({"k": "v"}));
     let event_uuid = new_event.event_id();
 
-    let result: Result<Event, ApiError> = with_transaction(&pool, |conn| {
-        let event = emit_event(conn, &new_event)?;
+    let result: Result<Event, ApiError> = with_transaction(&pool, async |conn| {
+        let event = emit_event(conn, &new_event).await?;
         // The row is visible inside the same transaction.
-        assert_eq!(count_events_for(conn, event_uuid), 1);
+        assert_eq!(count_events_for(conn, event_uuid).await, 1);
         if rollback {
             // Simulate a later mutation step failing, aborting the whole tx.
             return Err(ApiError::InternalServerError("simulated failure".into()));
         }
         Ok(event)
-    });
+    })
+    .await;
 
     if rollback {
         assert!(result.is_err(), "expected rollback error");
@@ -104,9 +107,10 @@ fn emit_event_respects_transaction_outcome(#[case] rollback: bool) {
     }
 
     // After the transaction settles, the row persists iff it committed.
-    let persisted = with_connection(&pool, |conn| {
-        Ok::<_, diesel::result::Error>(count_events_for(conn, event_uuid))
+    let persisted = with_connection(&pool, async |conn| {
+        Ok::<_, diesel::result::Error>(count_events_for(conn, event_uuid).await)
     })
+    .await
     .unwrap();
     if rollback {
         assert_eq!(
@@ -172,11 +176,11 @@ fn new_event_applies_event_context() {
     assert_eq!(ev.correlation_id(), Some("client-correlation"));
 }
 
-#[test]
-fn fanout_backlog_index_exists() {
+#[tokio::test]
+async fn fanout_backlog_index_exists() {
     // The partial fan-out backlog index must be present before #76 (#71 done-when).
     let scope = test_scope();
-    with_connection(&scope.pool, |conn| {
+    with_connection(&scope.pool, async |conn| {
         let exists: bool = diesel::sql_query(
             "SELECT EXISTS (
                 SELECT 1 FROM pg_indexes
@@ -187,10 +191,12 @@ fn fanout_backlog_index_exists() {
             )",
         )
         .get_result::<IndexExistsRow>(conn)
+        .await
         .map(|r| r.exists)?;
         assert!(exists, "events_fanout_backlog_idx partial index is missing");
         Ok::<_, diesel::result::Error>(())
     })
+    .await
     .unwrap();
 }
 
@@ -248,7 +254,7 @@ async fn create_collection_event_subscription_with_filter(
     .id
 }
 
-fn emit_collection_created_event(scope: &TestScope, collection_id: i32) -> Event {
+async fn emit_collection_created_event(scope: &TestScope, collection_id: i32) -> Event {
     let event = NewEvent::new(
         EntityType::Collection,
         Action::Created,
@@ -260,10 +266,12 @@ fn emit_collection_created_event(scope: &TestScope, collection_id: i32) -> Event
     .with_entity_id(collection_id)
     .with_entity_name(scope.scoped_name("fanout_collection"));
 
-    with_connection(&scope.pool, |conn| emit_event(conn, &event)).unwrap()
+    with_connection(&scope.pool, async |conn| emit_event(conn, &event).await)
+        .await
+        .unwrap()
 }
 
-fn insert_collection_created_event_at(
+async fn insert_collection_created_event_at(
     scope: &TestScope,
     collection_id: i32,
     occurred_at_value: chrono::NaiveDateTime,
@@ -273,7 +281,7 @@ fn insert_collection_created_event_at(
         entity_type, event_id, events, metadata, occurred_at, summary,
     };
 
-    with_connection(&scope.pool, |conn| {
+    with_connection(&scope.pool, async |conn| {
         diesel::insert_into(events)
             .values((
                 event_id.eq(Uuid::new_v4()),
@@ -288,42 +296,50 @@ fn insert_collection_created_event_at(
                 metadata.eq(serde_json::json!({})),
             ))
             .get_result::<Event>(conn)
+            .await
     })
+    .await
     .unwrap()
 }
 
-fn mark_event_dispatched(scope: &TestScope, event_id_value: i64) {
+async fn mark_event_dispatched(scope: &TestScope, event_id_value: i64) {
     use crate::schema::events::dsl::{dispatched_at, events, id};
 
-    with_connection(&scope.pool, |conn| {
+    with_connection(&scope.pool, async |conn| {
         diesel::update(events.filter(id.eq(event_id_value)))
             .set(dispatched_at.eq(Some(chrono::Utc::now().naive_utc())))
             .execute(conn)
+            .await
     })
+    .await
     .unwrap();
 }
 
-fn delivery_for_event(scope: &TestScope, event_id_value: i64) -> EventDelivery {
+async fn delivery_for_event(scope: &TestScope, event_id_value: i64) -> EventDelivery {
     use crate::schema::event_deliveries::dsl::{event_deliveries, event_id};
 
-    with_connection(&scope.pool, |conn| {
+    with_connection(&scope.pool, async |conn| {
         event_deliveries
             .filter(event_id.eq(event_id_value))
             .first::<EventDelivery>(conn)
+            .await
     })
+    .await
     .unwrap()
 }
 
-fn expire_delivery_claim(scope: &TestScope, delivery_id: i64) {
+async fn expire_delivery_claim(scope: &TestScope, delivery_id: i64) {
     use crate::schema::event_deliveries::dsl::{event_deliveries, id, locked_until};
 
-    with_connection(&scope.pool, |conn| {
+    with_connection(&scope.pool, async |conn| {
         diesel::update(event_deliveries.filter(id.eq(delivery_id)))
             .set(locked_until.eq(Some(
                 chrono::Utc::now().naive_utc() - chrono::Duration::seconds(1),
             )))
             .execute(conn)
+            .await
     })
+    .await
     .unwrap();
 }
 
@@ -401,7 +417,7 @@ async fn event_fanout_creates_delivery_for_each_matching_subscription_once() {
     let fixture = scope.with_collection().await;
     create_collection_event_subscription(&scope, fixture.collection.id, "fanout_one", true).await;
     create_collection_event_subscription(&scope, fixture.collection.id, "fanout_two", true).await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
 
     let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
     assert_eq!(inserted, 2);
@@ -428,7 +444,7 @@ async fn event_fanout_skips_disabled_subscriptions() {
     let fixture = scope.with_collection().await;
     create_collection_event_subscription(&scope, fixture.collection.id, "fanout_disabled", false)
         .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
 
     let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
 
@@ -467,7 +483,7 @@ async fn event_fanout_applies_subscription_filter_before_creating_delivery() {
         },
     )
     .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
 
     let inserted = fanout_event(&scope.pool, event.id).await.unwrap();
 
@@ -484,7 +500,7 @@ async fn event_fanout_applies_subscription_filter_before_creating_delivery() {
 async fn event_fanout_reclaims_expired_claims() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
     let settings = EventFanoutSettings {
         batch_size: 100_000,
         lock_timeout_ms: 30_000,
@@ -500,7 +516,7 @@ async fn event_fanout_reclaims_expired_claims() {
         .unwrap();
     assert!(!blocked.iter().any(|claimed| claimed.id == event.id));
 
-    with_connection(&scope.pool, |conn| {
+    with_connection(&scope.pool, async |conn| {
         use crate::schema::events::dsl::{events, fanout_locked_until, id};
 
         diesel::update(events.filter(id.eq(event.id)))
@@ -508,7 +524,9 @@ async fn event_fanout_reclaims_expired_claims() {
                 chrono::Utc::now().naive_utc() - chrono::Duration::seconds(1),
             )))
             .execute(conn)
+            .await
     })
+    .await
     .unwrap();
 
     let reclaimed = claim_events_for_fanout(&scope.pool, settings)
@@ -520,11 +538,14 @@ async fn event_fanout_reclaims_expired_claims() {
 #[actix_web::test]
 async fn ordinary_event_delete_is_rejected_by_append_only_trigger() {
     let scope = test_scope();
-    let event = emit_collection_created_event(&scope, 1);
+    let event = emit_collection_created_event(&scope, 1).await;
 
-    let error = with_connection(&scope.pool, |conn| {
-        diesel::delete(events.filter(crate::schema::events::dsl::id.eq(event.id))).execute(conn)
+    let error = with_connection(&scope.pool, async |conn| {
+        diesel::delete(events.filter(crate::schema::events::dsl::id.eq(event.id)))
+            .execute(conn)
+            .await
     })
+    .await
     .unwrap_err();
 
     assert!(
@@ -543,19 +564,22 @@ async fn event_retention_purge_deletes_old_events_through_guarded_path() {
         &scope,
         1,
         chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
-    );
-    mark_event_dispatched(&scope, old_event.id);
+    )
+    .await;
+    mark_event_dispatched(&scope, old_event.id).await;
 
     purge_event_retention_without_archive(&scope.pool, make_retention_settings())
         .await
         .unwrap();
 
-    let remaining = with_connection(&scope.pool, |conn| {
+    let remaining = with_connection(&scope.pool, async |conn| {
         events
             .filter(crate::schema::events::dsl::id.eq(old_event.id))
             .count()
             .get_result::<i64>(conn)
+            .await
     })
+    .await
     .unwrap();
     assert_eq!(remaining, 0);
 }
@@ -568,18 +592,21 @@ async fn event_retention_purge_keeps_events_pending_fanout() {
         &scope,
         1,
         chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
-    );
+    )
+    .await;
 
     purge_event_retention_without_archive(&scope.pool, make_retention_settings())
         .await
         .unwrap();
 
-    let remaining = with_connection(&scope.pool, |conn| {
+    let remaining = with_connection(&scope.pool, async |conn| {
         events
             .filter(crate::schema::events::dsl::id.eq(old_event.id))
             .count()
             .get_result::<i64>(conn)
+            .await
     })
+    .await
     .unwrap();
     assert_eq!(remaining, 1);
 }
@@ -595,19 +622,22 @@ async fn event_retention_purge_keeps_events_with_active_deliveries() {
         &scope,
         fixture.collection.id,
         chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
-    );
+    )
+    .await;
     fanout_event(&scope.pool, old_event.id).await.unwrap();
 
     purge_event_retention_without_archive(&scope.pool, make_retention_settings())
         .await
         .unwrap();
 
-    let remaining = with_connection(&scope.pool, |conn| {
+    let remaining = with_connection(&scope.pool, async |conn| {
         events
             .filter(crate::schema::events::dsl::id.eq(old_event.id))
             .count()
             .get_result::<i64>(conn)
+            .await
     })
+    .await
     .unwrap();
     assert_eq!(remaining, 1);
 }
@@ -624,13 +654,13 @@ async fn event_retention_purge_deletes_old_terminal_deliveries_without_deleting_
         true,
     )
     .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
     let old_timestamp = chrono::Utc::now().naive_utc() - chrono::Duration::days(40);
     use crate::schema::event_deliveries::dsl::{
         created_at, event_deliveries, event_id, status,
         subscription_id as delivery_subscription_id, updated_at,
     };
-    with_connection(&scope.pool, |conn| {
+    with_connection(&scope.pool, async |conn| {
         diesel::insert_into(event_deliveries)
             .values((
                 event_id.eq(event.id),
@@ -640,7 +670,9 @@ async fn event_retention_purge_deletes_old_terminal_deliveries_without_deleting_
                 updated_at.eq(old_timestamp),
             ))
             .execute(conn)
+            .await
     })
+    .await
     .unwrap();
 
     let summary = purge_event_retention_without_archive(&scope.pool, make_retention_settings())
@@ -655,12 +687,14 @@ async fn event_retention_purge_deletes_old_terminal_deliveries_without_deleting_
             .unwrap(),
         0
     );
-    let remaining_events = with_connection(&scope.pool, |conn| {
+    let remaining_events = with_connection(&scope.pool, async |conn| {
         events
             .filter(crate::schema::events::dsl::id.eq(event.id))
             .count()
             .get_result::<i64>(conn)
+            .await
     })
+    .await
     .unwrap();
     assert_eq!(remaining_events, 1);
 }
@@ -672,12 +706,12 @@ async fn event_delivery_worker_marks_successful_delivery_succeeded() {
     let fixture = scope.with_collection().await;
     create_collection_event_subscription(&scope, fixture.collection.id, "delivery_success", true)
         .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
     fanout_event(&scope.pool, event.id).await.unwrap();
     let sink = SuccessfulSink;
     let resolver = StaticSinkResolver { sink: &sink };
 
-    let delivery = delivery_for_event(&scope, event.id);
+    let delivery = delivery_for_event(&scope, event.id).await;
     let settings = make_delivery_settings(3);
     let claimed = claim_event_delivery_by_id(&scope.pool, delivery.id, settings)
         .await
@@ -686,7 +720,7 @@ async fn event_delivery_worker_marks_successful_delivery_succeeded() {
         .await
         .unwrap();
 
-    let delivery = delivery_for_event(&scope, event.id);
+    let delivery = delivery_for_event(&scope, event.id).await;
     assert_eq!(delivery.status, EventDeliveryStatus::Succeeded.as_str());
     assert_eq!(delivery.attempts, 0);
     assert!(delivery.claim_token.is_none());
@@ -701,32 +735,34 @@ async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
     let fixture = scope.with_collection().await;
     create_collection_event_subscription(&scope, fixture.collection.id, "delivery_retry", true)
         .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
     fanout_event(&scope.pool, event.id).await.unwrap();
     let sink = FailingSink;
     let resolver = StaticSinkResolver { sink: &sink };
     let settings = make_delivery_settings(2);
 
-    let delivery = delivery_for_event(&scope, event.id);
+    let delivery = delivery_for_event(&scope, event.id).await;
     let claimed = claim_event_delivery_by_id(&scope.pool, delivery.id, settings)
         .await
         .unwrap();
     process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
         .await
         .unwrap();
-    let first_failure = delivery_for_event(&scope, event.id);
+    let first_failure = delivery_for_event(&scope, event.id).await;
     assert_eq!(first_failure.status, EventDeliveryStatus::Failed.as_str());
     assert_eq!(first_failure.attempts, 1);
     assert_eq!(first_failure.last_error.as_deref(), Some("delivery failed"));
     assert!(first_failure.next_attempt_at > chrono::Utc::now().naive_utc());
 
-    with_connection(&scope.pool, |conn| {
+    with_connection(&scope.pool, async |conn| {
         use crate::schema::event_deliveries::dsl::{event_deliveries, id, next_attempt_at};
 
         diesel::update(event_deliveries.filter(id.eq(first_failure.id)))
             .set(next_attempt_at.eq(chrono::Utc::now().naive_utc() - chrono::Duration::seconds(1)))
             .execute(conn)
+            .await
     })
+    .await
     .unwrap();
 
     let claimed = claim_event_delivery_by_id(&scope.pool, first_failure.id, settings)
@@ -735,7 +771,7 @@ async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
     process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
         .await
         .unwrap();
-    let dead = delivery_for_event(&scope, event.id);
+    let dead = delivery_for_event(&scope, event.id).await;
     assert_eq!(dead.status, EventDeliveryStatus::Dead.as_str());
     assert_eq!(dead.attempts, 2);
     assert!(dead.claim_token.is_none());
@@ -749,7 +785,7 @@ async fn event_delivery_claims_expired_in_flight_rows_again() {
     let fixture = scope.with_collection().await;
     create_collection_event_subscription(&scope, fixture.collection.id, "delivery_reclaim", true)
         .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
     fanout_event(&scope.pool, event.id).await.unwrap();
     let settings = make_delivery_settings(3);
 
@@ -767,7 +803,7 @@ async fn event_delivery_claims_expired_in_flight_rows_again() {
             .any(|claimed| claimed.delivery.id == delivery_id)
     );
 
-    expire_delivery_claim(&scope, delivery_id);
+    expire_delivery_claim(&scope, delivery_id).await;
 
     let reclaimed = claim_event_deliveries(&scope.pool, settings).await.unwrap();
     assert!(
@@ -789,7 +825,7 @@ async fn event_delivery_failed_mark_respects_claim_token() {
         true,
     )
     .await;
-    let event = emit_collection_created_event(&scope, fixture.collection.id);
+    let event = emit_collection_created_event(&scope, fixture.collection.id).await;
     fanout_event(&scope.pool, event.id).await.unwrap();
     let settings = make_delivery_settings(3);
     let mut claimed = claim_event_deliveries(&scope.pool, settings).await.unwrap();
@@ -831,7 +867,7 @@ async fn collection_writes_emit_lifecycle_events_in_transaction() {
 
     updated.delete(&scope.pool, &context).await.unwrap();
 
-    let rows = events_for(&scope, "collection", collection.id);
+    let rows = events_for(&scope, "collection", collection.id).await;
     assert_eq!(rows.len(), 3);
 
     assert_eq!(rows[0].action, "created");
@@ -890,7 +926,7 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
 
     updated.delete(&scope.pool, &context).await.unwrap();
 
-    let rows = events_for(&scope, "class", class.id);
+    let rows = events_for(&scope, "class", class.id).await;
     assert_eq!(rows.len(), 3);
 
     assert_eq!(rows[0].action, "created");
@@ -956,7 +992,7 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
 
     updated.delete(&scope.pool, &context).await.unwrap();
 
-    let rows = events_for(&scope, "object", object.id);
+    let rows = events_for(&scope, "object", object.id).await;
     assert_eq!(rows.len(), 3);
 
     assert_eq!(rows[0].action, "created");
@@ -1029,7 +1065,7 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
         .await
         .unwrap();
 
-    let rows = events_for(&scope, "class_relation", relation.id);
+    let rows = events_for(&scope, "class_relation", relation.id).await;
     assert_eq!(rows.len(), 2);
 
     assert_eq!(rows[0].action, "created");
@@ -1143,7 +1179,7 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
 
     relation.delete(&scope.pool, &context).await.unwrap();
 
-    let rows = events_for(&scope, "object_relation", relation.id);
+    let rows = events_for(&scope, "object_relation", relation.id).await;
     assert_eq!(rows.len(), 2);
 
     assert_eq!(rows[0].action, "created");
@@ -1214,7 +1250,7 @@ async fn group_writes_emit_lifecycle_events_in_transaction() {
         .await
         .unwrap();
 
-    let rows = events_for(&scope, "group", group.id);
+    let rows = events_for(&scope, "group", group.id).await;
     assert_eq!(rows.len(), 3);
 
     assert_eq!(rows[0].action, "created");
@@ -1284,6 +1320,7 @@ async fn group_membership_writes_emit_added_removed_events_when_changed() {
         .unwrap();
 
     let rows = events_for_type(&scope, "user_group")
+        .await
         .into_iter()
         .filter(|row| {
             row.metadata["principal_id"] == serde_json::json!(user.id)
@@ -1337,7 +1374,7 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
 
     updated.delete(&scope.pool, Some(&context)).await.unwrap();
 
-    let rows = events_for(&scope, "user", user.id);
+    let rows = events_for(&scope, "user", user.id).await;
     assert_eq!(rows.len(), 3);
 
     assert_eq!(rows[0].action, "created");
@@ -1402,14 +1439,14 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
     )
     .await
     .unwrap();
-    let token = token_by_raw_value(&scope, &raw);
+    let token = token_by_raw_value(&scope, &raw).await;
 
     let revoked = revoke_token_by_id_for_principal(&scope.pool, token.id, user.id, Some(&context))
         .await
         .unwrap();
     assert_eq!(revoked, 1);
 
-    let rows = events_for(&scope, "token", token.id);
+    let rows = events_for(&scope, "token", token.id).await;
     assert_eq!(rows.len(), 2);
 
     assert_eq!(rows[0].action, "created");
@@ -1475,7 +1512,7 @@ async fn permission_writes_emit_granted_revoked_events() {
         .await
         .unwrap();
 
-    let rows = events_for(&scope, "permission", permission.id);
+    let rows = events_for(&scope, "permission", permission.id).await;
     assert_eq!(rows.len(), 3);
 
     assert_eq!(rows[0].action, "granted");
@@ -1576,7 +1613,7 @@ async fn export_template_writes_emit_lifecycle_events() {
         .await
         .unwrap();
 
-    let rows = events_for(&scope, "export_template", template.id);
+    let rows = events_for(&scope, "export_template", template.id).await;
     assert_eq!(rows.len(), 3);
 
     assert_eq!(rows[0].action, "created");
@@ -1668,7 +1705,7 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
         .await
         .unwrap();
 
-    let rows = events_for(&scope, "remote_target", row.id);
+    let rows = events_for(&scope, "remote_target", row.id).await;
     assert_eq!(rows.len(), 4);
 
     assert_eq!(rows[0].action, "created");
@@ -1712,39 +1749,49 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
     fixture.cleanup().await.unwrap();
 }
 
-fn events_for(scope: &TestScope, event_entity_type: &str, event_entity_id: i32) -> Vec<Event> {
+async fn events_for(
+    scope: &TestScope,
+    event_entity_type: &str,
+    event_entity_id: i32,
+) -> Vec<Event> {
     use crate::schema::events::dsl::{entity_id, entity_type, id};
 
-    with_connection(&scope.pool, |conn| {
+    with_connection(&scope.pool, async |conn| {
         events
             .filter(entity_type.eq(event_entity_type))
             .filter(entity_id.eq(event_entity_id))
             .order(id.asc())
             .load::<Event>(conn)
+            .await
     })
+    .await
     .unwrap()
 }
 
-fn token_by_raw_value(scope: &TestScope, raw: &Token) -> PrincipalToken {
+async fn token_by_raw_value(scope: &TestScope, raw: &Token) -> PrincipalToken {
     use crate::schema::tokens::dsl::{token, tokens};
 
-    with_connection(&scope.pool, |conn| {
+    with_connection(&scope.pool, async |conn| {
         tokens
             .filter(token.eq(raw.storage_hash()))
             .first::<PrincipalToken>(conn)
+            .await
     })
+    .await
     .unwrap()
 }
 
-fn events_for_type(scope: &TestScope, event_entity_type: &str) -> Vec<Event> {
+async fn events_for_type(scope: &TestScope, event_entity_type: &str) -> Vec<Event> {
     use crate::schema::events::dsl::{entity_type, id};
 
-    with_connection(&scope.pool, |conn| {
+    with_connection(&scope.pool, async |conn| {
         events
             .filter(entity_type.eq(event_entity_type))
             .order(id.asc())
             .load::<Event>(conn)
+            .await
     })
+    .await
     .unwrap()
 }
 

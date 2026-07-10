@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::traits::authz::{AuthzSubject, scope_allows};
+use diesel_async::RunQueryDsl;
 
 pub trait LoadUserGroups: AuthzSubject {
     async fn load_user_groups(&self, pool: &DbPool) -> Result<Vec<Group>, ApiError>;
@@ -13,13 +14,16 @@ where
         use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
         use crate::schema::groups::dsl::*;
 
-        with_connection(pool, |conn| {
+        let principal_id_value = self.principal_id();
+        with_connection(pool, async |conn| {
             group_memberships
                 .inner_join(groups.on(id.eq(group_id)))
-                .filter(principal_id.eq(self.principal_id()))
+                .filter(principal_id.eq(principal_id_value))
                 .select(groups::all_columns())
                 .load::<Group>(conn)
+                .await
         })
+        .await
     }
 }
 
@@ -80,13 +84,18 @@ where
         };
 
         let base_query = build_query()?;
-        let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-            with_connection(pool, |conn| base_query.count().get_result::<i64>(conn))
-        })?;
+        let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+            with_connection(pool, async |conn| {
+                base_query.count().get_result::<i64>(conn).await
+            })
+            .await
+        })
+        .await?;
 
         let mut base_query = build_query()?.select(groups::all_columns());
         crate::apply_query_options!(base_query, query_options, Group);
-        let items = with_connection(pool, |conn| base_query.load::<Group>(conn))?;
+        let items =
+            with_connection(pool, async |conn| base_query.load::<Group>(conn).await).await?;
 
         Ok((items, total_count))
     }
@@ -164,11 +173,13 @@ where
         // Unscoped admins see everything; scoped admins fall through to the
         // permission query so their token scope still bounds the listing.
         if is_admin && scopes.is_none() {
-            return with_connection(pool, |conn| {
+            return with_connection(pool, async |conn| {
                 collections
                     .select(collections::all_columns())
                     .load::<Collection>(conn)
-            });
+                    .await
+            })
+            .await;
         }
 
         let groups_id_subquery = self.group_ids_subquery();
@@ -181,7 +192,7 @@ where
             base_query = perm.create_boxed_filter(base_query, true);
         }
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             base_query
                 .inner_join(
                     collection_closure.on(permission_collection_id.eq(ancestor_collection_id)),
@@ -190,6 +201,8 @@ where
                 .select(collections::all_columns())
                 .distinct()
                 .load::<Collection>(conn)
+                .await
         })
+        .await
     }
 }

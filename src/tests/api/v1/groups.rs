@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test};
-    use diesel::prelude::*;
     use rstest::rstest;
 
     use crate::db::traits::identity::ensure_identity_scope;
@@ -140,7 +140,7 @@ mod tests {
         .await
         .unwrap();
         let groupname = context.scoped_name("external_group");
-        let group = with_connection(&context.pool, |conn| {
+        let group = with_connection(&context.pool, async |conn| {
             use crate::schema::groups;
 
             diesel::insert_into(groups::table)
@@ -152,7 +152,9 @@ mod tests {
                     groups::external_key.eq(context.scoped_name("external_group_key")),
                 ))
                 .get_result::<Group>(conn)
+                .await
         })
+        .await
         .unwrap();
         let group_url = format!("{GROUPS_ENDPOINT}/{}", group.id);
 
@@ -196,7 +198,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let external_group = with_connection(&context.pool, |conn| {
+        let external_group = with_connection(&context.pool, async |conn| {
             use crate::schema::groups;
 
             diesel::insert_into(groups::table)
@@ -208,7 +210,9 @@ mod tests {
                     groups::external_key.eq(context.scoped_name("batch_external_group_key")),
                 ))
                 .get_result::<Group>(conn)
+                .await
         })
+        .await
         .unwrap();
 
         let responses =
@@ -241,7 +245,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let external = with_connection(&context.pool, |conn| {
+        let external = with_connection(&context.pool, async |conn| {
             use crate::schema::principals;
 
             diesel::insert_into(principals::table)
@@ -253,7 +257,9 @@ mod tests {
                     principals::external_subject.eq(context.scoped_name("batch_subject")),
                 ))
                 .get_result::<Principal>(conn)
+                .await
         })
+        .await
         .unwrap();
 
         let responses =

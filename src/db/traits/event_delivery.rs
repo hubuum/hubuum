@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
+use crate::db::prelude::*;
 use chrono::{Duration, Utc};
-use diesel::prelude::*;
 use uuid::Uuid;
 
 use crate::db::{DbPool, with_connection, with_transaction};
@@ -43,7 +43,7 @@ pub(crate) async fn claim_event_deliveries(
 
     with_transaction(
         pool,
-        |conn| -> Result<Vec<ClaimedEventDelivery>, ApiError> {
+        async |conn| -> Result<Vec<ClaimedEventDelivery>, ApiError> {
             let now = Utc::now().naive_utc();
             let delivery_ids = event_deliveries
                 .filter(
@@ -61,7 +61,8 @@ pub(crate) async fn claim_event_deliveries(
                 .skip_locked()
                 .limit(settings.batch_size as i64)
                 .select(id)
-                .load::<i64>(conn)?;
+                .load::<i64>(conn)
+                .await?;
 
             if delivery_ids.is_empty() {
                 return Ok(Vec::new());
@@ -78,11 +79,13 @@ pub(crate) async fn claim_event_deliveries(
                         )),
                         claim_token.eq(Some(claim)),
                     ))
-                    .get_results::<EventDelivery>(conn)?;
+                    .get_results::<EventDelivery>(conn)
+                    .await?;
 
-            load_claimed_delivery_contexts(conn, claimed_deliveries)
+            load_claimed_delivery_contexts(conn, claimed_deliveries).await
         },
     )
+    .await
 }
 
 #[cfg(test)]
@@ -95,47 +98,53 @@ pub(crate) async fn claim_event_delivery_by_id(
         claim_token, event_deliveries, id, locked_until, next_attempt_at, status,
     };
 
-    with_transaction(pool, |conn| -> Result<ClaimedEventDelivery, ApiError> {
-        let now = Utc::now().naive_utc();
-        let claim = Uuid::new_v4();
-        let delivery = diesel::update(
-            event_deliveries.filter(id.eq(delivery_id)).filter(
-                status
-                    .eq(EventDeliveryStatus::Pending.as_str())
-                    .or(status
-                        .eq(EventDeliveryStatus::Failed.as_str())
-                        .and(next_attempt_at.le(now)))
-                    .or(status
-                        .eq(EventDeliveryStatus::InFlight.as_str())
-                        .and(locked_until.lt(now))),
-            ),
-        )
-        .set((
-            status.eq(EventDeliveryStatus::InFlight.as_str()),
-            locked_until.eq(Some(
-                now + Duration::milliseconds(settings.lock_timeout_ms as i64),
-            )),
-            claim_token.eq(Some(claim)),
-        ))
-        .get_result::<EventDelivery>(conn)?;
+    with_transaction(
+        pool,
+        async |conn| -> Result<ClaimedEventDelivery, ApiError> {
+            let now = Utc::now().naive_utc();
+            let claim = Uuid::new_v4();
+            let delivery = diesel::update(
+                event_deliveries.filter(id.eq(delivery_id)).filter(
+                    status
+                        .eq(EventDeliveryStatus::Pending.as_str())
+                        .or(status
+                            .eq(EventDeliveryStatus::Failed.as_str())
+                            .and(next_attempt_at.le(now)))
+                        .or(status
+                            .eq(EventDeliveryStatus::InFlight.as_str())
+                            .and(locked_until.lt(now))),
+                ),
+            )
+            .set((
+                status.eq(EventDeliveryStatus::InFlight.as_str()),
+                locked_until.eq(Some(
+                    now + Duration::milliseconds(settings.lock_timeout_ms as i64),
+                )),
+                claim_token.eq(Some(claim)),
+            ))
+            .get_result::<EventDelivery>(conn)
+            .await?;
 
-        load_claimed_delivery_context(conn, delivery)
-    })
+            load_claimed_delivery_context(conn, delivery).await
+        },
+    )
+    .await
 }
 
 #[cfg(test)]
-fn load_claimed_delivery_context(
-    conn: &mut PgConnection,
+async fn load_claimed_delivery_context(
+    conn: &mut crate::db::DbConnection,
     delivery: EventDelivery,
 ) -> Result<ClaimedEventDelivery, ApiError> {
-    load_claimed_delivery_contexts(conn, vec![delivery])?
+    load_claimed_delivery_contexts(conn, vec![delivery])
+        .await?
         .into_iter()
         .next()
         .ok_or_else(|| ApiError::NotFound("Event delivery not found".to_string()))
 }
 
-fn load_claimed_delivery_contexts(
-    conn: &mut PgConnection,
+async fn load_claimed_delivery_contexts(
+    conn: &mut crate::db::DbConnection,
     deliveries: Vec<EventDelivery>,
 ) -> Result<Vec<ClaimedEventDelivery>, ApiError> {
     use crate::schema::{event_sinks, event_subscriptions, events};
@@ -155,13 +164,15 @@ fn load_claimed_delivery_contexts(
 
     let loaded_events = events::table
         .filter(events::id.eq_any(&event_ids))
-        .load::<Event>(conn)?
+        .load::<Event>(conn)
+        .await?
         .into_iter()
         .map(|event| (event.id, event))
         .collect::<HashMap<_, _>>();
     let loaded_subscriptions = event_subscriptions::table
         .filter(event_subscriptions::id.eq_any(&subscription_ids))
-        .load::<EventSubscriptionRow>(conn)?
+        .load::<EventSubscriptionRow>(conn)
+        .await?
         .into_iter()
         .map(|subscription| (subscription.id, subscription))
         .collect::<HashMap<_, _>>();
@@ -171,7 +182,8 @@ fn load_claimed_delivery_contexts(
         .collect::<Vec<_>>();
     let loaded_sinks = event_sinks::table
         .filter(event_sinks::id.eq_any(&sink_ids))
-        .load::<EventSinkRow>(conn)?
+        .load::<EventSinkRow>(conn)
+        .await?
         .into_iter()
         .map(|sink| (sink.id, sink))
         .collect::<HashMap<_, _>>();
@@ -214,7 +226,7 @@ pub async fn mark_event_delivery_succeeded(
         claim_token, event_deliveries, id, last_error, locked_until, status,
     };
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         diesel::update(
             event_deliveries
                 .filter(id.eq(delivery_id_value))
@@ -228,7 +240,9 @@ pub async fn mark_event_delivery_succeeded(
             last_error.eq::<Option<String>>(None),
         ))
         .get_result::<EventDelivery>(conn)
+        .await
     })
+    .await
 }
 
 pub async fn mark_event_delivery_failed(
@@ -256,7 +270,7 @@ pub async fn mark_event_delivery_failed(
         ) as i64);
     let error = truncate_delivery_error(error);
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         diesel::update(
             event_deliveries
                 .filter(id.eq(delivery.id))
@@ -272,7 +286,9 @@ pub async fn mark_event_delivery_failed(
             claim_token.eq::<Option<Uuid>>(None),
         ))
         .get_result::<EventDelivery>(conn)
+        .await
     })
+    .await
 }
 
 pub fn retry_backoff_ms(attempts: i32, base_ms: u64, max_ms: u64) -> u64 {
@@ -301,11 +317,13 @@ pub async fn load_event_delivery(
 ) -> Result<EventDelivery, ApiError> {
     use crate::schema::event_deliveries::dsl::{event_deliveries, id};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         event_deliveries
             .filter(id.eq(delivery_id.id()))
             .first::<EventDelivery>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn list_event_deliveries_with_total_count(
@@ -313,12 +331,17 @@ pub async fn list_event_deliveries_with_total_count(
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventDelivery>, i64), ApiError> {
     let query = build_event_delivery_query(query_options)?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
-    })?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+        with_connection(pool, async |conn| {
+            query.count().get_result::<i64>(conn).await
+        })
+        .await
+    })
+    .await?;
     let mut query = build_event_delivery_query(query_options)?;
     crate::apply_query_options!(query, query_options, EventDelivery);
-    let deliveries = with_connection(pool, |conn| query.load::<EventDelivery>(conn))?;
+    let deliveries =
+        with_connection(pool, async |conn| query.load::<EventDelivery>(conn).await).await?;
     Ok((deliveries, total_count))
 }
 
@@ -382,7 +405,7 @@ pub async fn release_event_delivery_for_retry(
 
     with_connection(
         pool,
-        |conn| -> Result<EventDelivery, diesel::result::Error> {
+        async |conn| -> Result<EventDelivery, diesel::result::Error> {
             let delivery = diesel::update(event_deliveries.filter(id.eq(delivery_id.id())).filter(
                 status.eq_any([
                     EventDeliveryStatus::Failed.as_str(),
@@ -396,11 +419,13 @@ pub async fn release_event_delivery_for_retry(
                 claim_token.eq::<Option<Uuid>>(None),
                 last_error.eq::<Option<String>>(None),
             ))
-            .get_result::<EventDelivery>(conn)?;
-            crate::events::notify_event_delivery(conn)?;
+            .get_result::<EventDelivery>(conn)
+            .await?;
+            crate::events::notify_event_delivery(conn).await?;
             Ok(delivery)
         },
     )
+    .await
 }
 
 pub async fn mark_event_delivery_dead(
@@ -411,7 +436,7 @@ pub async fn mark_event_delivery_dead(
         claim_token, event_deliveries, id, last_error, locked_until, status,
     };
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         diesel::update(
             event_deliveries
                 .filter(id.eq(delivery_id.id()))
@@ -424,5 +449,7 @@ pub async fn mark_event_delivery_dead(
             last_error.eq(Some("marked dead by operator".to_string())),
         ))
         .get_result::<EventDelivery>(conn)
+        .await
     })
+    .await
 }

@@ -1,7 +1,9 @@
+#![allow(async_fn_in_trait)]
+
 mod api;
 mod auth;
 mod config;
-mod db;
+pub mod db;
 mod errors;
 pub mod events;
 mod extractors;

@@ -1,24 +1,117 @@
 pub mod traits;
 
-use diesel::Connection;
-use diesel::PgConnection;
-use diesel::r2d2::ConnectionManager;
-use diesel::r2d2::Pool;
-use diesel::r2d2::PooledConnection;
+/// Diesel query-building traits paired with diesel-async's I/O traits.
+///
+/// Importing this prelude avoids bringing the synchronous `Connection` and
+/// `RunQueryDsl` traits into scope, which can otherwise make query execution
+/// ambiguous when an [`AsyncPgConnection`] is used.
+pub mod prelude {
+    pub use diesel::associations::{Associations, GroupedBy, Identifiable};
+    pub use diesel::deserialize::{Queryable, QueryableByName};
+    pub use diesel::expression::IntoSql as _;
+    pub use diesel::expression::functions::{declare_sql_function, define_sql_function};
+    pub use diesel::expression::{
+        AppearsOnTable, BoxableExpression, Expression, IntoSql, Selectable, SelectableExpression,
+        SelectableHelper,
+    };
+    pub use diesel::expression_methods::*;
+    pub use diesel::insertable::Insertable;
+    pub use diesel::query_builder::{AsChangeset, DecoratableTarget};
+    pub use diesel::query_dsl::{BelongingToDsl, CombineDsl, JoinOnDsl, QueryDsl};
+    pub use diesel::query_source::SizeRestrictedColumn as _;
+    pub use diesel::query_source::{Column, JoinTo, QuerySource, Table};
+    pub use diesel::result::{
+        ConnectionError, ConnectionResult, OptionalEmptyChangesetExtension, OptionalExtension,
+        QueryResult,
+    };
+    pub use diesel_async::{AsyncConnection, RunQueryDsl, SaveChangesDsl};
+}
+
+use diesel_async::pooled_connection::bb8::{Pool, PooledConnection};
+use diesel_async::pooled_connection::{AsyncDieselConnectionManager, ManagerConfig};
+use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
+use futures_util::FutureExt;
+use rustls::pki_types::{CertificateDer, pem::PemObject};
+use rustls::{ClientConfig, RootCertStore};
+use rustls_platform_verifier::BuilderVerifierExt;
+use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tracing::debug;
 
-use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, fatal_error};
+use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use crate::models::search::StatementTimeoutMs;
 use crate::utilities::db::DatabaseUrlComponents;
 
-pub type DbPool = Pool<ConnectionManager<PgConnection>>;
+pub type DbConnection = AsyncPgConnection;
+pub type DbPool = Pool<DbConnection>;
 
-fn acquire_connection(
-    pool: &DbPool,
-) -> Result<PooledConnection<ConnectionManager<PgConnection>>, ApiError> {
-    pool.get().map_err(ApiError::from)
+fn database_tls_config() -> Result<ClientConfig, diesel::result::ConnectionError> {
+    let builder = ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(|error| diesel::result::ConnectionError::BadConnection(error.to_string()))?;
+
+    let Some(root_cert_path) = std::env::var_os("PGSSLROOTCERT") else {
+        return builder
+            .with_platform_verifier()
+            .map(|builder| builder.with_no_client_auth())
+            .map_err(|error| diesel::result::ConnectionError::BadConnection(error.to_string()));
+    };
+
+    // PostgreSQL 17 accepts `PGSSLROOTCERT=system`; match that behavior by
+    // delegating to the platform verifier rather than treating it as a path.
+    if root_cert_path == "system" {
+        return builder
+            .with_platform_verifier()
+            .map(|builder| builder.with_no_client_auth())
+            .map_err(|error| diesel::result::ConnectionError::BadConnection(error.to_string()));
+    }
+
+    let certificates = CertificateDer::pem_file_iter(&root_cert_path)
+        .map_err(|error| diesel::result::ConnectionError::BadConnection(error.to_string()))?;
+    let mut roots = RootCertStore::empty();
+    let mut root_count = 0usize;
+    for certificate in certificates {
+        roots
+            .add(certificate.map_err(|error| {
+                diesel::result::ConnectionError::BadConnection(error.to_string())
+            })?)
+            .map_err(|error| diesel::result::ConnectionError::BadConnection(error.to_string()))?;
+        root_count += 1;
+    }
+    if root_count == 0 {
+        return Err(diesel::result::ConnectionError::BadConnection(format!(
+            "PGSSLROOTCERT contains no certificates: {}",
+            root_cert_path.to_string_lossy()
+        )));
+    }
+
+    Ok(builder.with_root_certificates(roots).with_no_client_auth())
+}
+
+/// Helper bound used to require that futures returned by higher-ranked async
+/// closures are `Send`. This mirrors diesel-async's transaction bound while
+/// keeping the helper private to the database adapter.
+#[doc(hidden)]
+pub trait SendAsyncFn<T, R>:
+    AsyncFnOnce(T) -> R + FnOnce(T) -> <Self as SendAsyncFn<T, R>>::Fut
+{
+    type Fut: Future<Output = R>;
+}
+
+impl<F, T, Fut, R> SendAsyncFn<T, R> for F
+where
+    F: AsyncFnOnce(T) -> R + FnOnce(T) -> Fut,
+    Fut: Future<Output = R>,
+{
+    type Fut = Fut;
+}
+
+async fn acquire_connection(pool: &DbPool) -> Result<PooledConnection<'_, DbConnection>, ApiError> {
+    pool.get().await.map_err(ApiError::from)
 }
 
 tokio::task_local! {
@@ -85,11 +178,11 @@ fn ambient_actor() -> Option<i32> {
 
 /// Apply a transaction-local `SET LOCAL hubuum.actor_id`. Bound, not formatted,
 /// mirroring [`set_local_statement_timeout`]. Reverts at COMMIT/ROLLBACK.
-fn set_local_actor(conn: &mut PgConnection, actor: i32) -> Result<(), diesel::result::Error> {
-    use diesel::RunQueryDsl;
+async fn set_local_actor(conn: &mut DbConnection, actor: i32) -> Result<(), diesel::result::Error> {
     diesel::sql_query("SELECT set_config('hubuum.actor_id', $1, true)")
         .bind::<diesel::sql_types::Text, _>(actor.to_string())
-        .execute(conn)?;
+        .execute(conn)
+        .await?;
     Ok(())
 }
 
@@ -98,14 +191,14 @@ fn set_local_actor(conn: &mut PgConnection, actor: i32) -> Result<(), diesel::re
 /// mirroring [`StatementTimeoutCustomizer`]. `set_config(name, value,
 /// is_local=true)` scopes the value to the current transaction, so it reverts
 /// automatically at COMMIT/ROLLBACK and never leaks back to the shared pool.
-fn set_local_statement_timeout(
-    conn: &mut PgConnection,
+async fn set_local_statement_timeout(
+    conn: &mut DbConnection,
     statement_timeout: StatementTimeoutMs,
 ) -> Result<(), diesel::result::Error> {
-    use diesel::RunQueryDsl;
     diesel::sql_query("SELECT set_config('statement_timeout', $1, true)")
         .bind::<diesel::sql_types::Text, _>(statement_timeout.as_millis().to_string())
-        .execute(conn)?;
+        .execute(conn)
+        .await?;
     Ok(())
 }
 
@@ -126,63 +219,63 @@ fn set_local_statement_timeout(
 ///
 /// Note: block closures that use `?` and end with `Ok(...)` may require an explicit closure
 /// return type, for example:
-/// `with_connection(pool, |conn| -> Result<_, diesel::result::Error> { ... })`
-pub fn with_connection<F, R, E>(pool: &DbPool, f: F) -> Result<R, ApiError>
+/// `with_connection(pool, async |conn| -> Result<_, diesel::result::Error> { ... }).await`
+pub async fn with_connection<F, R, E>(pool: &DbPool, f: F) -> Result<R, ApiError>
 where
-    F: FnOnce(&mut PgConnection) -> Result<R, E>,
+    F: for<'conn> AsyncFnOnce(&'conn mut DbConnection) -> Result<R, E>
+        + for<'conn> SendAsyncFn<&'conn mut DbConnection, Result<R, E>, Fut: Send>
+        + Send,
+    R: Send,
+    E: Send,
     ApiError: From<E>,
 {
-    with_connection_timeout(pool, ambient_statement_timeout(), f)
+    with_connection_timeout(pool, ambient_statement_timeout(), f).await
 }
 
-/// Run synchronous Diesel work on Tokio's blocking pool so an Actix worker can
-/// continue serving unrelated requests while waiting for a connection or Postgres.
-/// New async request paths should prefer this helper until the Diesel backend is
-/// migrated fully to `diesel-async`.
+/// Compatibility alias retained while callers migrate from the former
+/// `spawn_blocking` bridge. Both helpers now execute non-blocking database I/O.
 pub async fn with_connection_async<F, R, E>(pool: DbPool, f: F) -> Result<R, ApiError>
 where
-    F: FnOnce(&mut PgConnection) -> Result<R, E> + Send + 'static,
-    R: Send + 'static,
-    E: Send + 'static,
+    F: for<'conn> AsyncFnOnce(&'conn mut DbConnection) -> Result<R, E>
+        + for<'conn> SendAsyncFn<&'conn mut DbConnection, Result<R, E>, Fut: Send>
+        + Send,
+    R: Send,
+    E: Send,
     ApiError: From<E>,
 {
     let statement_timeout = ambient_statement_timeout();
     let actor = ambient_actor();
-    if tokio::runtime::Handle::try_current().is_err() {
-        // CLI and unit-test callers may drive these async domain APIs with a
-        // runtime-agnostic executor. There is no Actix worker to protect there.
-        return with_connection_context(&pool, statement_timeout, actor, f);
-    }
-    tokio::task::spawn_blocking(move || with_connection_context(&pool, statement_timeout, actor, f))
-        .await
-        .map_err(|error| {
-            ApiError::InternalServerError(format!("Database blocking task failed: {error}"))
-        })?
+    with_connection_context(&pool, statement_timeout, actor, f).await
 }
 
-fn with_connection_context<F, R, E>(
+async fn with_connection_context<F, R, E>(
     pool: &DbPool,
     statement_timeout: Option<StatementTimeoutMs>,
     actor: Option<i32>,
     f: F,
 ) -> Result<R, ApiError>
 where
-    F: FnOnce(&mut PgConnection) -> Result<R, E>,
+    F: for<'conn> AsyncFnOnce(&'conn mut DbConnection) -> Result<R, E>
+        + for<'conn> SendAsyncFn<&'conn mut DbConnection, Result<R, E>, Fut: Send>
+        + Send,
+    R: Send,
+    E: Send,
     ApiError: From<E>,
 {
-    let mut conn = acquire_connection(pool)?;
+    let mut conn = acquire_connection(pool).await?;
     if statement_timeout.is_none() && actor.is_none() {
-        f(&mut conn).map_err(ApiError::from)
+        f(&mut conn).await.map_err(ApiError::from)
     } else {
-        conn.transaction::<R, ApiError, _>(|conn| {
+        conn.transaction::<R, ApiError, _>(async move |conn| {
             if let Some(statement_timeout) = statement_timeout {
-                set_local_statement_timeout(conn, statement_timeout)?;
+                set_local_statement_timeout(conn, statement_timeout).await?;
             }
             if let Some(actor) = actor {
-                set_local_actor(conn, actor)?;
+                set_local_actor(conn, actor).await?;
             }
-            f(conn).map_err(ApiError::from)
+            f(conn).await.map_err(ApiError::from)
         })
+        .await
     }
 }
 
@@ -193,13 +286,13 @@ where
 /// `UPDATE ... RETURNING` therefore returns no row even though the target row
 /// still exists. Centralizing that fallback keeps update call sites from
 /// encoding trigger behavior themselves.
-pub fn updated_or_current<T, E>(
+pub async fn updated_or_current<T, E>(
     updated: Result<Option<T>, E>,
-    select_current: impl FnOnce() -> Result<T, E>,
+    select_current: impl AsyncFnOnce() -> Result<T, E>,
 ) -> Result<T, E> {
     match updated? {
         Some(row) => Ok(row),
-        None => select_current(),
+        None => select_current().await,
     }
 }
 
@@ -225,16 +318,20 @@ pub fn updated_or_current<T, E>(
 /// [`with_connection`]" guidance, but the transaction here exists solely to
 /// scope `SET LOCAL`, not for multi-statement atomicity, and is encapsulated in
 /// this one helper rather than imposed on callers.
-pub fn with_connection_timeout<F, R, E>(
+pub async fn with_connection_timeout<F, R, E>(
     pool: &DbPool,
     statement_timeout: Option<StatementTimeoutMs>,
     f: F,
 ) -> Result<R, ApiError>
 where
-    F: FnOnce(&mut PgConnection) -> Result<R, E>,
+    F: for<'conn> AsyncFnOnce(&'conn mut DbConnection) -> Result<R, E>
+        + for<'conn> SendAsyncFn<&'conn mut DbConnection, Result<R, E>, Fut: Send>
+        + Send,
+    R: Send,
+    E: Send,
     ApiError: From<E>,
 {
-    with_connection_context(pool, statement_timeout, ambient_actor(), f)
+    with_connection_context(pool, statement_timeout, ambient_actor(), f).await
 }
 
 /// Run database work inside a SQL transaction on a single pooled connection.
@@ -255,24 +352,29 @@ where
 /// As with [`with_connection`], the closure may return any error type `E` that converts into
 /// [`ApiError`]. Block closures that end with `Ok(...)` may need an explicit closure return type,
 /// for example:
-/// `with_transaction(pool, |conn| -> Result<_, ApiError> { ... })`
-pub fn with_transaction<F, R, E>(pool: &DbPool, f: F) -> Result<R, ApiError>
+/// `with_transaction(pool, async |conn| -> Result<_, ApiError> { ... }).await`
+pub async fn with_transaction<F, R, E>(pool: &DbPool, f: F) -> Result<R, ApiError>
 where
-    F: FnOnce(&mut PgConnection) -> Result<R, E>,
+    F: for<'conn> AsyncFnOnce(&'conn mut DbConnection) -> Result<R, E>
+        + for<'conn> SendAsyncFn<&'conn mut DbConnection, Result<R, E>, Fut: Send>
+        + Send,
+    R: Send,
+    E: Send,
     ApiError: From<E>,
 {
     let statement_timeout = ambient_statement_timeout();
     let actor = ambient_actor();
-    let mut conn = acquire_connection(pool)?;
-    conn.transaction::<R, ApiError, _>(|conn| {
+    let mut conn = acquire_connection(pool).await?;
+    conn.transaction::<R, ApiError, _>(async move |conn| {
         if let Some(statement_timeout) = statement_timeout {
-            set_local_statement_timeout(conn, statement_timeout)?;
+            set_local_statement_timeout(conn, statement_timeout).await?;
         }
         if let Some(actor) = actor {
-            set_local_actor(conn, actor)?;
+            set_local_actor(conn, actor).await?;
         }
-        f(conn).map_err(ApiError::from)
+        f(conn).await.map_err(ApiError::from)
     })
+    .await
 }
 
 pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
@@ -339,61 +441,60 @@ fn init_pool_with_timeouts(
         ),
     }
 
-    let manager = ConnectionManager::<PgConnection>::new(database_url);
+    let mut manager_config = ManagerConfig::<DbConnection>::default();
+    let tls_config = database_tls_config().unwrap_or_else(|error| {
+        fatal_error(
+            &format!("Failed to configure database TLS: {error}"),
+            EXIT_CODE_CONFIG_ERROR,
+        )
+    });
+    manager_config.custom_setup = Box::new(move |url| {
+        let tls_config = tls_config.clone();
+        async move {
+            // AsyncPgConnection::establish uses NoTls. Constructing it from a
+            // tokio-postgres TLS connection preserves support for the
+            // repository's documented sslmode=require production URLs and
+            // verifies both the certificate chain and database hostname.
+            let tls = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
+            let (client, connection) =
+                tokio_postgres::connect(url, tls).await.map_err(|error| {
+                    diesel::result::ConnectionError::BadConnection(error.to_string())
+                })?;
+            let mut conn = DbConnection::try_from_client_and_connection(client, connection).await?;
 
-    let mut builder = Pool::builder()
+            if statement_timeout_ms > 0 {
+                diesel::sql_query("SELECT set_config('statement_timeout', $1, false)")
+                    .bind::<diesel::sql_types::Text, _>(statement_timeout_ms.to_string())
+                    .execute(&mut conn)
+                    .await
+                    .map_err(|error| {
+                        diesel::result::ConnectionError::BadConnection(error.to_string())
+                    })?;
+            }
+            Ok(conn)
+        }
+        .boxed()
+    });
+    let manager =
+        AsyncDieselConnectionManager::<DbConnection>::new_with_config(database_url, manager_config);
+
+    let builder = Pool::builder()
         .max_size(max_size)
         .connection_timeout(Duration::from_millis(acquire_timeout_ms));
-    if statement_timeout_ms > 0 {
-        builder = builder.connection_customizer(Box::new(StatementTimeoutCustomizer {
-            statement_timeout_ms,
-        }));
-    }
 
-    match builder.build(manager) {
-        Ok(pool) => pool,
-        Err(e) => fatal_error(
-            &format!("Failed to create database pool: {}", e),
-            EXIT_CODE_DATABASE_ERROR,
-        ),
-    }
-}
-
-/// r2d2 connection customizer that applies a Postgres `statement_timeout` to
-/// each connection as it is acquired from the pool. Postgres cancels any
-/// statement exceeding this budget server-side and returns an error, which
-/// frees the (synchronous) connection - a genuine in-flight timeout, unlike a
-/// post-completion wall-clock check.
-#[derive(Debug)]
-struct StatementTimeoutCustomizer {
-    statement_timeout_ms: u64,
-}
-
-impl diesel::r2d2::CustomizeConnection<PgConnection, diesel::r2d2::Error>
-    for StatementTimeoutCustomizer
-{
-    fn on_acquire(&self, conn: &mut PgConnection) -> Result<(), diesel::r2d2::Error> {
-        use diesel::RunQueryDsl;
-        // `set_config(name, value, is_local=false)` sets the value for the
-        // session; a bare numeric string is interpreted as milliseconds. The
-        // value is bound rather than formatted into the SQL.
-        diesel::sql_query("SELECT set_config('statement_timeout', $1, false)")
-            .bind::<diesel::sql_types::Text, _>(self.statement_timeout_ms.to_string())
-            .execute(conn)
-            .map_err(diesel::r2d2::Error::QueryError)?;
-        Ok(())
-    }
+    // Pool construction remains synchronous for compatibility with the test
+    // fixture singleton. The first checkout establishes connections lazily;
+    // startup initialization immediately verifies connectivity.
+    builder.build_unchecked(manager)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::get_config;
-    use diesel::PgConnection;
+    use crate::db::prelude::*;
     use diesel::dsl::count_star;
     use diesel::insert_into;
-    use diesel::prelude::*;
-    use diesel::r2d2::{ConnectionManager, Pool};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -408,24 +509,29 @@ mod tests {
         format!("{prefix}_{now}_{counter}")
     }
 
-    #[test]
-    fn test_init_pool() {
+    #[tokio::test]
+    async fn test_init_pool() {
         let config = get_config().expect("Failed to load config for test");
         let database_url = config.database_url.clone();
         let pool_size = config.db_pool_size;
         let pool = init_pool(&database_url, pool_size);
-        assert_eq!(pool.max_size(), pool_size);
+        assert_eq!(pool.config().max_size, pool_size);
     }
 
-    #[test]
-    fn statement_timeout_cancels_slow_queries() {
+    #[tokio::test]
+    async fn statement_timeout_cancels_slow_queries() {
         let config = get_config().expect("Failed to load config for test");
         let database_url = config.database_url.clone();
 
         // A tiny timeout must cancel a query that sleeps past the budget...
         let bounded = init_pool_with_statement_timeout(&database_url, 1, 50);
-        let mut conn = bounded.get().expect("failed to acquire bounded connection");
-        let slow = diesel::sql_query("SELECT pg_sleep(1)").execute(&mut conn);
+        let mut conn = bounded
+            .get()
+            .await
+            .expect("failed to acquire bounded connection");
+        let slow = diesel::sql_query("SELECT pg_sleep(1)")
+            .execute(&mut conn)
+            .await;
         assert!(
             slow.is_err(),
             "pg_sleep(1) should be cancelled by a 50ms statement_timeout"
@@ -436,23 +542,27 @@ mod tests {
         // connection was returned in a usable state.
         let mut conn = bounded
             .get()
+            .await
             .expect("failed to re-acquire bounded connection");
         diesel::sql_query("SELECT 1")
             .execute(&mut conn)
+            .await
             .expect("fast query should succeed under the timeout");
 
         // With the timeout disabled (0), the same sleep completes.
         let unbounded = init_pool_with_statement_timeout(&database_url, 1, 0);
         let mut conn = unbounded
             .get()
+            .await
             .expect("failed to acquire unbounded connection");
         diesel::sql_query("SELECT pg_sleep(0.1)")
             .execute(&mut conn)
+            .await
             .expect("pg_sleep should complete when statement_timeout is disabled");
     }
 
-    #[test]
-    fn statement_timeout_ms_new_treats_zero_as_disabled() {
+    #[tokio::test]
+    async fn statement_timeout_ms_new_treats_zero_as_disabled() {
         assert_eq!(StatementTimeoutMs::new(0), None);
         assert_eq!(
             StatementTimeoutMs::new(50).map(StatementTimeoutMs::as_millis),
@@ -460,17 +570,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn with_connection_timeout_bounds_and_reverts() {
+    #[tokio::test]
+    async fn with_connection_timeout_bounds_and_reverts() {
         let config = get_config().expect("Failed to load config for test");
         // Pool-global timeout disabled, so any cancellation must come from the
         // per-query `SET LOCAL` applied by `with_connection_timeout` itself.
         let pool = init_pool_with_statement_timeout(&config.database_url, 1, 0);
 
         // A tiny explicit timeout cancels a query that sleeps past the budget.
-        let slow = with_connection_timeout(&pool, StatementTimeoutMs::new(50), |conn| {
-            diesel::sql_query("SELECT pg_sleep(1)").execute(conn)
-        });
+        let slow = with_connection_timeout(&pool, StatementTimeoutMs::new(50), async |conn| {
+            diesel::sql_query("SELECT pg_sleep(1)").execute(conn).await
+        })
+        .await;
         assert!(
             slow.is_err(),
             "pg_sleep(1) should be cancelled by a 50ms per-query statement_timeout"
@@ -478,9 +589,12 @@ mod tests {
 
         // The `SET LOCAL` reverts with the transaction, so a later checkout that
         // passes `None` is unbounded again (proving no leak back to the pool).
-        with_connection_timeout(&pool, None, |conn| {
-            diesel::sql_query("SELECT pg_sleep(0.1)").execute(conn)
+        with_connection_timeout(&pool, None, async |conn| {
+            diesel::sql_query("SELECT pg_sleep(0.1)")
+                .execute(conn)
+                .await
         })
+        .await
         .expect("pg_sleep should complete when no per-query timeout is applied");
     }
 
@@ -493,9 +607,10 @@ mod tests {
 
         // Inside the scope, a plain `with_connection` call is bounded.
         let bounded = with_statement_timeout_scope(StatementTimeoutMs::new(50), async {
-            with_connection(&pool, |conn| {
-                diesel::sql_query("SELECT pg_sleep(1)").execute(conn)
+            with_connection(&pool, async |conn| {
+                diesel::sql_query("SELECT pg_sleep(1)").execute(conn).await
             })
+            .await
         })
         .await;
         assert!(
@@ -504,33 +619,21 @@ mod tests {
         );
 
         // Outside any scope, the ambient timeout is gone and slow work runs.
-        with_connection(&pool, |conn| {
-            diesel::sql_query("SELECT pg_sleep(0.1)").execute(conn)
+        with_connection(&pool, async |conn| {
+            diesel::sql_query("SELECT pg_sleep(0.1)")
+                .execute(conn)
+                .await
         })
+        .await
         .expect("with_connection outside a scope must not be bounded");
     }
 
-    #[test]
-    fn test_with_connection_returns_error_on_invalid_pool() {
-        // Create a pool with an invalid database URL to test error handling
-        let manager = ConnectionManager::<PgConnection>::new("postgres://invalid:5432/nonexistent");
-
-        // Try to build the pool - if this fails, we can't run the test
-        let pool = match Pool::builder()
-            .max_size(1)
-            .connection_timeout(std::time::Duration::from_millis(100))
-            .build(manager)
-        {
-            Ok(p) => p,
-            Err(_) => {
-                // Pool creation itself failed - this is acceptable for this test
-                // as we're testing error handling in general
-                return;
-            }
-        };
+    #[tokio::test]
+    async fn test_with_connection_returns_error_on_invalid_pool() {
+        let pool = init_pool_with_timeouts("postgres://invalid:5432/nonexistent", 1, 0, 100);
 
         // This should return an error, not panic
-        let result = with_connection(&pool, |_conn| Ok::<_, diesel::result::Error>(()));
+        let result = with_connection(&pool, async |_conn| Ok::<_, diesel::result::Error>(())).await;
 
         assert!(result.is_err());
 
@@ -543,26 +646,27 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_with_connection_success_path() {
+    #[tokio::test]
+    async fn test_with_connection_success_path() {
         let config = get_config().expect("Failed to load config for test");
         let pool = init_pool(&config.database_url, 1);
 
         // This should succeed
-        let result = with_connection(&pool, |_conn| Ok::<i32, diesel::result::Error>(42));
+        let result =
+            with_connection(&pool, async |_conn| Ok::<i32, diesel::result::Error>(42)).await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 42);
     }
 
-    #[test]
-    fn test_with_transaction_rolls_back_on_error() {
+    #[tokio::test]
+    async fn test_with_transaction_rolls_back_on_error() {
         let config = get_config().expect("Failed to load config for test");
         let pool = init_pool(&config.database_url, 1);
         let rollback_name = unique_group_name("with_tx_rollback");
 
         let result: Result<(), ApiError> =
-            with_transaction(&pool, |conn| -> Result<(), diesel::result::Error> {
+            with_transaction(&pool, async |conn| -> Result<(), diesel::result::Error> {
                 use crate::schema::groups::dsl::{description, groupname, groups};
 
                 insert_into(groups)
@@ -570,30 +674,35 @@ mod tests {
                         groupname.eq(&rollback_name),
                         description.eq("rollback-test"),
                     ))
-                    .execute(conn)?;
+                    .execute(conn)
+                    .await?;
 
                 insert_into(groups)
                     .values((
                         groupname.eq(&rollback_name),
                         description.eq("rollback-test-duplicate"),
                     ))
-                    .execute(conn)?;
+                    .execute(conn)
+                    .await?;
                 Ok(())
-            });
+            })
+            .await;
 
         assert!(
             matches!(result, Err(ApiError::Conflict(_))),
             "expected unique violation mapped to ApiError::Conflict, got {result:?}",
         );
 
-        let committed_rows = with_connection(&pool, |conn| {
+        let committed_rows = with_connection(&pool, async |conn| {
             use crate::schema::groups::dsl::{groupname, groups};
 
             groups
                 .filter(groupname.eq(&rollback_name))
                 .select(count_star())
                 .first::<i64>(conn)
+                .await
         })
+        .await
         .expect("Failed to count rows after rollback test");
 
         assert_eq!(
@@ -602,43 +711,48 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_with_transaction_commits_on_success() {
+    #[tokio::test]
+    async fn test_with_transaction_commits_on_success() {
         let config = get_config().expect("Failed to load config for test");
         let pool = init_pool(&config.database_url, 1);
         let first_name = unique_group_name("with_tx_commit_one");
         let second_name = unique_group_name("with_tx_commit_two");
 
         let result: Result<(), ApiError> =
-            with_transaction(&pool, |conn| -> Result<(), diesel::result::Error> {
+            with_transaction(&pool, async |conn| -> Result<(), diesel::result::Error> {
                 use crate::schema::groups::dsl::{description, groupname, groups};
 
                 insert_into(groups)
                     .values((groupname.eq(&first_name), description.eq("commit-test-one")))
-                    .execute(conn)?;
+                    .execute(conn)
+                    .await?;
 
                 insert_into(groups)
                     .values((
                         groupname.eq(&second_name),
                         description.eq("commit-test-two"),
                     ))
-                    .execute(conn)?;
+                    .execute(conn)
+                    .await?;
                 Ok(())
-            });
+            })
+            .await;
 
         assert!(
             result.is_ok(),
             "expected transaction commit, got {result:?}"
         );
 
-        let committed_rows = with_connection(&pool, |conn| {
+        let committed_rows = with_connection(&pool, async |conn| {
             use crate::schema::groups::dsl::{groupname, groups};
 
             groups
                 .filter(groupname.eq_any(vec![first_name.clone(), second_name.clone()]))
                 .select(count_star())
                 .first::<i64>(conn)
+                .await
         })
+        .await
         .expect("Failed to count rows after commit test");
 
         assert_eq!(
@@ -646,11 +760,13 @@ mod tests {
             "successful transaction should commit both rows",
         );
 
-        let _ = with_connection(&pool, |conn| {
+        let _ = with_connection(&pool, async |conn| {
             use crate::schema::groups::dsl::{groupname, groups};
 
             diesel::delete(groups.filter(groupname.eq_any(vec![first_name, second_name])))
                 .execute(conn)
-        });
+                .await
+        })
+        .await;
     }
 }

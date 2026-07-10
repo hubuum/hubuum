@@ -3,6 +3,7 @@ use crate::db::traits::identity::identity_scope_by_name;
 use crate::db::traits::principal::InsertPrincipalRecord;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::{NewPrincipal, PrincipalKind};
+use diesel_async::RunQueryDsl;
 
 /// Sentinel password value set during anonymization. It is not a valid Argon2
 /// PHC hash, so verification can never succeed.
@@ -34,8 +35,8 @@ fn user_event(
     )
 }
 
-fn load_user_with_name(
-    conn: &mut diesel::PgConnection,
+async fn load_user_with_name(
+    conn: &mut crate::db::DbConnection,
     user_id_value: i32,
 ) -> Result<(User, String), diesel::result::Error> {
     use crate::schema::{principals, users};
@@ -45,10 +46,11 @@ fn load_user_with_name(
         .filter(users::id.eq(user_id_value))
         .select((users::all_columns, principals::name))
         .first::<(User, String)>(conn)
+        .await
 }
 
-fn ensure_user_allows_local_write_conn(
-    conn: &mut diesel::PgConnection,
+async fn ensure_user_allows_local_write_conn(
+    conn: &mut crate::db::DbConnection,
     principal_id_value: i32,
 ) -> Result<(), ApiError> {
     use crate::schema::principals;
@@ -56,7 +58,8 @@ fn ensure_user_allows_local_write_conn(
     let provider_managed = principals::table
         .filter(principals::id.eq(principal_id_value))
         .select(principals::provider_managed)
-        .first::<bool>(conn)?;
+        .first::<bool>(conn)
+        .await?;
     if provider_managed {
         return Err(ApiError::Forbidden(
             "Provider-managed users are read-only in Hubuum".to_string(),
@@ -84,7 +87,7 @@ impl User {
         let pool = pool.clone();
         let name = name_arg.to_string();
         let scope = scope_arg.to_string();
-        crate::db::with_connection_async(pool, move |conn| {
+        crate::db::with_connection_async(pool, async move |conn| {
             users::table
                 .inner_join(principals::table.on(users::id.eq(principals::id)))
                 .inner_join(
@@ -95,6 +98,7 @@ impl User {
                 .filter(identity_scopes::name.eq(scope))
                 .select(users::all_columns)
                 .first::<User>(conn)
+                .await
         })
         .await
     }
@@ -109,20 +113,25 @@ impl User {
         let new_password = hash_password(new_password)
             .map_err(|e| ApiError::HashError(format!("Failed to hash password: {e}")))?;
 
-        with_connection(pool, |conn| -> Result<usize, ApiError> {
-            ensure_user_allows_local_write_conn(conn, self.id)?;
+        with_connection(pool, async |conn| -> Result<usize, ApiError> {
+            ensure_user_allows_local_write_conn(conn, self.id).await?;
             Ok(diesel::update(users.filter(id.eq(self.id)))
                 .set(password.eq(Some(new_password)))
-                .execute(conn)?)
-        })?;
+                .execute(conn)
+                .await?)
+        })
+        .await?;
 
         Ok(())
     }
 }
 
-pub fn count_user_records(pool: &DbPool) -> Result<i64, ApiError> {
+pub async fn count_user_records(pool: &DbPool) -> Result<i64, ApiError> {
     use crate::schema::users::dsl::users;
-    with_connection(pool, |conn| users.count().get_result::<i64>(conn))
+    with_connection(pool, async |conn| {
+        users.count().get_result::<i64>(conn).await
+    })
+    .await
 }
 
 pub trait StoreUserTokenRecord {
@@ -142,11 +151,13 @@ impl StoreUserTokenRecord for User {
         use crate::schema::tokens::dsl::{principal_id, token};
         let token_hash = token_value.storage_hash();
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             diesel::insert_into(crate::schema::tokens::table)
                 .values((principal_id.eq(self.id), token.eq(token_hash)))
                 .execute(conn)
-        })?;
+                .await
+        })
+        .await?;
         Ok(())
     }
 }
@@ -176,12 +187,14 @@ impl OwnedUserTokenRecord for User {
         use crate::schema::tokens::dsl::{principal_id, token, tokens};
         let token_hash = token_value.storage_hash();
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             tokens
                 .filter(principal_id.eq(self.id))
                 .filter(token.eq(token_hash))
                 .first::<PrincipalToken>(conn)
+                .await
         })
+        .await
     }
 
     async fn delete_owned_user_token_record(
@@ -193,7 +206,7 @@ impl OwnedUserTokenRecord for User {
         let token_hash = token_value.storage_hash();
 
         // Soft-revoke: revoked rows are retained for auditability.
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             diesel::update(
                 tokens
                     .filter(principal_id.eq(self.id))
@@ -202,13 +215,15 @@ impl OwnedUserTokenRecord for User {
             )
             .set(revoked_at.eq(diesel::dsl::now))
             .execute(conn)
+            .await
         })
+        .await
     }
 
     async fn delete_all_user_tokens_record(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::tokens::dsl::{principal_id, revoked_at, tokens};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             diesel::update(
                 tokens
                     .filter(principal_id.eq(self.id))
@@ -216,7 +231,9 @@ impl OwnedUserTokenRecord for User {
             )
             .set(revoked_at.eq(diesel::dsl::now))
             .execute(conn)
+            .await
         })
+        .await
     }
 }
 
@@ -236,32 +253,37 @@ pub trait DeleteUserRecord {
 /// Delete a user by removing its principal row, which cascades to the `users`
 /// row, group memberships, and tokens. (The FK cascades principal → subtype, so
 /// deleting the `users` row alone would orphan the principal.)
-fn delete_principal_without_events(
+async fn delete_principal_without_events(
     pool: &DbPool,
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
     use crate::schema::principals::dsl::{id, principals};
-    with_connection(pool, |conn| -> Result<usize, ApiError> {
-        ensure_user_allows_local_write_conn(conn, principal_id_value)?;
-        Ok(diesel::delete(principals.filter(id.eq(principal_id_value))).execute(conn)?)
+    with_connection(pool, async |conn| -> Result<usize, ApiError> {
+        ensure_user_allows_local_write_conn(conn, principal_id_value).await?;
+        Ok(diesel::delete(principals.filter(id.eq(principal_id_value)))
+            .execute(conn)
+            .await?)
     })
+    .await
 }
 
-fn delete_principal(
+async fn delete_principal(
     pool: &DbPool,
     principal_id_value: i32,
     context: Option<&EventContext>,
 ) -> Result<usize, ApiError> {
     let Some(context) = context else {
-        return delete_principal_without_events(pool, principal_id_value);
+        return delete_principal_without_events(pool, principal_id_value).await;
     };
 
     use crate::schema::principals::dsl::{id, principals};
 
-    with_transaction(pool, |conn| -> Result<usize, ApiError> {
-        let (user, name) = load_user_with_name(conn, principal_id_value)?;
-        ensure_user_allows_local_write_conn(conn, principal_id_value)?;
-        let deleted = diesel::delete(principals.filter(id.eq(principal_id_value))).execute(conn)?;
+    with_transaction(pool, async |conn| -> Result<usize, ApiError> {
+        let (user, name) = load_user_with_name(conn, principal_id_value).await?;
+        ensure_user_allows_local_write_conn(conn, principal_id_value).await?;
+        let deleted = diesel::delete(principals.filter(id.eq(principal_id_value)))
+            .execute(conn)
+            .await?;
         let event = user_event(
             &user,
             &name,
@@ -270,14 +292,15 @@ fn delete_principal(
             format!("User '{name}' deleted"),
         )?
         .with_before(user_snapshot(&user, &name));
-        emit_event(conn, &event)?;
+        emit_event(conn, &event).await?;
         Ok(deleted)
     })
+    .await
 }
 
 impl DeleteUserRecord for User {
     async fn delete_user_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        delete_principal_without_events(pool, self.id)
+        delete_principal_without_events(pool, self.id).await
     }
 
     async fn delete_user_record(
@@ -285,13 +308,13 @@ impl DeleteUserRecord for User {
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
-        delete_principal(pool, self.id, context)
+        delete_principal(pool, self.id, context).await
     }
 }
 
 impl DeleteUserRecord for UserID {
     async fn delete_user_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        delete_principal_without_events(pool, self.id())
+        delete_principal_without_events(pool, self.id()).await
     }
 
     async fn delete_user_record(
@@ -299,7 +322,7 @@ impl DeleteUserRecord for UserID {
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
-        delete_principal(pool, self.id(), context)
+        delete_principal(pool, self.id(), context).await
     }
 }
 
@@ -339,13 +362,14 @@ impl CreateUserRecord for NewUser {
         }
         let scope = identity_scope_by_name(pool, &scope_name).await?;
 
-        with_transaction(pool, |conn| -> Result<User, ApiError> {
+        with_transaction(pool, async |conn| -> Result<User, ApiError> {
             let principal = NewPrincipal {
                 identity_scope_id: scope.id,
                 kind: PrincipalKind::Human.as_str(),
                 name: &name,
             }
-            .insert(conn)?;
+            .insert(conn)
+            .await?;
 
             let user = diesel::insert_into(users::table)
                 .values((
@@ -354,10 +378,12 @@ impl CreateUserRecord for NewUser {
                     users::proper_name.eq(&proper_name),
                     users::email.eq(&email),
                 ))
-                .get_result::<User>(conn)?;
+                .get_result::<User>(conn)
+                .await?;
 
             Ok(user)
         })
+        .await
     }
 
     async fn create_user_record(
@@ -388,13 +414,14 @@ impl CreateUserRecord for NewUser {
         }
         let scope = identity_scope_by_name(pool, &scope_name).await?;
 
-        with_transaction(pool, |conn| -> Result<User, ApiError> {
+        with_transaction(pool, async |conn| -> Result<User, ApiError> {
             let principal = NewPrincipal {
                 identity_scope_id: scope.id,
                 kind: PrincipalKind::Human.as_str(),
                 name: &name,
             }
-            .insert(conn)?;
+            .insert(conn)
+            .await?;
 
             let user = diesel::insert_into(users::table)
                 .values((
@@ -403,7 +430,8 @@ impl CreateUserRecord for NewUser {
                     users::proper_name.eq(&proper_name),
                     users::email.eq(&email),
                 ))
-                .get_result::<User>(conn)?;
+                .get_result::<User>(conn)
+                .await?;
 
             let event = user_event(
                 &user,
@@ -413,9 +441,10 @@ impl CreateUserRecord for NewUser {
                 format!("User '{name}' created"),
             )?
             .with_after(user_snapshot(&user, &name));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(user)
         })
+        .await
     }
 }
 
@@ -445,12 +474,14 @@ impl UpdateUserRecord for UpdateUser {
     ) -> Result<User, ApiError> {
         use crate::schema::users::dsl::{id, users};
 
-        with_connection(pool, |conn| -> Result<User, ApiError> {
-            ensure_user_allows_local_write_conn(conn, user_id)?;
+        with_connection(pool, async |conn| -> Result<User, ApiError> {
+            ensure_user_allows_local_write_conn(conn, user_id).await?;
             Ok(diesel::update(users.filter(id.eq(user_id)))
                 .set(self)
-                .get_result::<User>(conn)?)
+                .get_result::<User>(conn)
+                .await?)
         })
+        .await
     }
 
     async fn update_user_record(
@@ -465,12 +496,13 @@ impl UpdateUserRecord for UpdateUser {
 
         use crate::schema::users::dsl::{id, users};
 
-        with_transaction(pool, |conn| -> Result<User, ApiError> {
-            let (before, name) = load_user_with_name(conn, user_id)?;
-            ensure_user_allows_local_write_conn(conn, user_id)?;
+        with_transaction(pool, async |conn| -> Result<User, ApiError> {
+            let (before, name) = load_user_with_name(conn, user_id).await?;
+            ensure_user_allows_local_write_conn(conn, user_id).await?;
             let after = diesel::update(users.filter(id.eq(user_id)))
                 .set(self)
-                .get_result::<User>(conn)?;
+                .get_result::<User>(conn)
+                .await?;
             let event = user_event(
                 &after,
                 &name,
@@ -483,9 +515,10 @@ impl UpdateUserRecord for UpdateUser {
             .with_metadata(serde_json::json!({
                 "password_changed": self.password.is_some(),
             }));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(after)
         })
+        .await
     }
 }
 
@@ -495,23 +528,23 @@ pub trait AnonymizeUserRecord {
 
 impl AnonymizeUserRecord for UserID {
     async fn anonymize_user_record(&self, pool: &DbPool) -> Result<(), ApiError> {
-        anonymize_user_record(pool, self.id())
+        anonymize_user_record(pool, self.id()).await
     }
 }
 
 impl AnonymizeUserRecord for User {
     async fn anonymize_user_record(&self, pool: &DbPool) -> Result<(), ApiError> {
-        anonymize_user_record(pool, self.id)
+        anonymize_user_record(pool, self.id).await
     }
 }
 
-fn anonymize_user_record(pool: &DbPool, target_id: i32) -> Result<(), ApiError> {
+async fn anonymize_user_record(pool: &DbPool, target_id: i32) -> Result<(), ApiError> {
     use crate::schema::principals::dsl as p;
     use crate::schema::tokens::dsl as t;
     use crate::schema::users::dsl as u;
 
-    with_transaction(pool, |conn| -> Result<(), ApiError> {
-        ensure_user_allows_local_write_conn(conn, target_id)?;
+    with_transaction(pool, async |conn| -> Result<(), ApiError> {
+        ensure_user_allows_local_write_conn(conn, target_id).await?;
         let updated = diesel::update(u::users.filter(u::id.eq(target_id)))
             .set((
                 u::proper_name.eq::<Option<String>>(None),
@@ -519,23 +552,27 @@ fn anonymize_user_record(pool: &DbPool, target_id: i32) -> Result<(), ApiError> 
                 u::password.eq(Some(ANONYMIZED_PASSWORD)),
                 u::anonymized_at.eq(diesel::dsl::now),
             ))
-            .execute(conn)?;
+            .execute(conn)
+            .await?;
         if updated == 0 {
             return Err(ApiError::NotFound(format!("User {target_id} not found")));
         }
 
         diesel::update(p::principals.filter(p::id.eq(target_id)))
             .set(p::name.eq(format!("anonymized-{target_id}")))
-            .execute(conn)?;
+            .execute(conn)
+            .await?;
         diesel::update(
             t::tokens
                 .filter(t::principal_id.eq(target_id))
                 .filter(t::revoked_at.is_null()),
         )
         .set(t::revoked_at.eq(diesel::dsl::now))
-        .execute(conn)?;
+        .execute(conn)
+        .await?;
         Ok(())
     })
+    .await
 }
 
 pub trait DeleteTokenRecord {
@@ -548,7 +585,7 @@ impl DeleteTokenRecord for Token {
         let token_hash = self.storage_hash();
 
         // Soft-revoke rather than hard-delete.
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             diesel::update(
                 tokens
                     .filter(token.eq(token_hash))
@@ -556,7 +593,9 @@ impl DeleteTokenRecord for Token {
             )
             .set(revoked_at.eq(diesel::dsl::now))
             .execute(conn)
-        })?;
+            .await
+        })
+        .await?;
         Ok(())
     }
 }
@@ -575,8 +614,9 @@ impl LoadUserRecord for UserID {
     async fn load_user_record(&self, pool: &DbPool) -> Result<User, ApiError> {
         use crate::schema::users::dsl::{id, users};
 
-        with_connection(pool, |conn| {
-            users.filter(id.eq(self.id())).first::<User>(conn)
+        with_connection(pool, async |conn| {
+            users.filter(id.eq(self.id())).first::<User>(conn).await
         })
+        .await
     }
 }

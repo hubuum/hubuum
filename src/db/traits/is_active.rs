@@ -1,5 +1,5 @@
+use crate::db::prelude::*;
 use chrono::SubsecRound;
-use diesel::prelude::*;
 use tracing::warn;
 
 use crate::db::traits::Status;
@@ -39,7 +39,7 @@ impl Status<PrincipalToken> for Token {
         let now = chrono::Utc::now().naive_utc().trunc_subsecs(6);
         let cutoff = active_tokens_cutoff();
 
-        let result = with_connection_async(pool.clone(), move |conn| {
+        let result = with_connection_async(pool.clone(), async move |conn| {
             tokens
                 .filter(token.eq(&token_hash))
                 .filter(active_token_predicate(now, cutoff))
@@ -49,6 +49,7 @@ impl Status<PrincipalToken> for Token {
                         .filter(service_accounts::disabled_at.is_not_null()),
                 )))
                 .first::<PrincipalToken>(conn)
+                .await
                 .optional()
         })
         .await;
@@ -77,10 +78,11 @@ impl Status<PrincipalToken> for Token {
             // Best-effort telemetry: a failure to advance `last_used_at` must
             // never fail an otherwise-valid request.
             let token_id_value = valid_token.id;
-            let updated = with_connection_async(pool.clone(), move |conn| {
+            let updated = with_connection_async(pool.clone(), async move |conn| {
                 diesel::update(tokens.filter(token_id.eq(token_id_value)))
                     .set(last_used_at.eq(now))
                     .execute(conn)
+                    .await
             })
             .await;
             // Reflect the advance in the returned row (the SELECT above read the

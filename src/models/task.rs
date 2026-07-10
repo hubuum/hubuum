@@ -1,5 +1,5 @@
+use crate::db::prelude::*;
 use chrono::NaiveDateTime;
-use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

@@ -1,4 +1,5 @@
 use super::*;
+use diesel_async::RunQueryDsl;
 impl GetCollection<(Collection, Collection)> for HubuumClassRelation {
     async fn collection_from_backend(
         &self,
@@ -13,13 +14,15 @@ impl GetCollection<(Collection, Collection)> for HubuumClassRelation {
         // Work with raw ids at the Diesel boundary.
         let (from_id, to_id) = (from_id.id(), to_id.id());
 
-        let collection_list = with_connection(pool, |conn| {
+        let collection_list = with_connection(pool, async |conn| {
             hubuumclass
                 .filter(class_id.eq_any(&[from_id, to_id]))
                 .inner_join(collections.on(collection_id.eq(class_collection_id)))
                 .select(collections::all_columns())
                 .load::<Collection>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         if from_id == to_id && collection_list.len() == 1 {
             trace!("Found same collection for class relation, returning same collection twice");
@@ -52,13 +55,15 @@ impl GetCollection<(Collection, Collection)> for NewHubuumClassRelation {
         // Work with raw ids at the Diesel boundary.
         let (from_id, to_id) = (from_id.id(), to_id.id());
 
-        let collection_list = with_connection(pool, |conn| {
+        let collection_list = with_connection(pool, async |conn| {
             hubuumclass
                 .filter(class_id.eq_any(&[from_id, to_id]))
                 .inner_join(collections.on(collection_id.eq(class_collection_id)))
                 .select(collections::all_columns())
                 .load::<Collection>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         if collection_list.len() == 1 {
             trace!("Found same collection for class relation, returning same collection twice");
@@ -91,13 +96,15 @@ impl GetCollection<(Collection, Collection)> for HubuumObjectRelation {
         // Work with raw ids at the Diesel boundary.
         let (from_id, to_id) = (from_id.id(), to_id.id());
 
-        let collection_list = with_connection(pool, |conn| {
+        let collection_list = with_connection(pool, async |conn| {
             hubuumobject
                 .filter(object_id.eq_any(&[from_id, to_id]))
                 .inner_join(collections.on(collection_id.eq(object_collection_id)))
                 .select(collections::all_columns())
                 .load::<Collection>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         if collection_list.len() == 1 {
             trace!("Found same collection for object relation, returning same collection twice");
@@ -130,13 +137,15 @@ impl GetCollection<(Collection, Collection)> for NewHubuumObjectRelation {
         // Work with raw ids at the Diesel boundary.
         let (from_id, to_id) = (from_id.id(), to_id.id());
 
-        let collection_list = with_connection(pool, |conn| {
+        let collection_list = with_connection(pool, async |conn| {
             hubuumobject
                 .filter(object_id.eq_any(&[from_id, to_id]))
                 .inner_join(collections.on(collection_id.eq(object_collection_id)))
                 .select(collections::all_columns())
                 .load::<Collection>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         if collection_list.len() == 1 {
             trace!("Found same collection for object relation, returning same collection twice");
@@ -169,13 +178,15 @@ impl GetCollection<(Collection, Collection)> for HubuumObjectRelationID {
         // Work with raw ids at the Diesel boundary.
         let (from_id, to_id) = (from_id.id(), to_id.id());
 
-        let collection_list = with_connection(pool, |conn| {
+        let collection_list = with_connection(pool, async |conn| {
             hubuumobject
                 .filter(object_id.eq_any(&[from_id, to_id]))
                 .inner_join(collections.on(collection_id.eq(object_collection_id)))
                 .select(collections::all_columns())
                 .load::<Collection>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         if collection_list.len() == 1 {
             trace!("Found same collection for object relation, returning same collection twice");
@@ -196,16 +207,18 @@ impl GetCollection<(Collection, Collection)> for HubuumObjectRelationID {
 
 impl<S> GetCollection for S
 where
-    S: SelfAccessors<Collection>,
+    S: SelfAccessors<Collection> + Sync,
 {
     async fn collection_from_backend(&self, pool: &DbPool) -> Result<Collection, ApiError> {
         use crate::schema::collections::dsl::{collections, id};
 
-        let collection = with_connection(pool, |conn| {
+        let collection = with_connection(pool, async |conn| {
             collections
                 .filter(id.eq(self.id()))
                 .first::<Collection>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         Ok(collection)
     }

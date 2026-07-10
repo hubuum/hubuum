@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 
 use crate::apply_query_options;
 use crate::db::{DbPool, with_connection, with_transaction};
@@ -37,11 +37,13 @@ impl LoadRemoteTargetRecord for RemoteTargetID {
     async fn load_remote_target_record(&self, pool: &DbPool) -> Result<RemoteTargetRow, ApiError> {
         use crate::schema::remote_targets::dsl::{id, remote_targets};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             remote_targets
                 .filter(id.eq(self.id()))
                 .first::<RemoteTargetRow>(conn)
+                .await
         })
+        .await
     }
 }
 
@@ -68,11 +70,13 @@ impl SaveRemoteTargetRecord for NewRemoteTargetRow {
     ) -> Result<RemoteTargetRow, ApiError> {
         use crate::schema::remote_targets::dsl::remote_targets;
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             diesel::insert_into(remote_targets)
                 .values(self)
                 .get_result::<RemoteTargetRow>(conn)
+                .await
         })
+        .await
     }
 
     async fn save_remote_target_record(
@@ -86,10 +90,11 @@ impl SaveRemoteTargetRecord for NewRemoteTargetRow {
 
         use crate::schema::remote_targets::dsl::remote_targets;
 
-        with_transaction(pool, |conn| -> Result<RemoteTargetRow, ApiError> {
+        with_transaction(pool, async |conn| -> Result<RemoteTargetRow, ApiError> {
             let row = diesel::insert_into(remote_targets)
                 .values(self)
-                .get_result::<RemoteTargetRow>(conn)?;
+                .get_result::<RemoteTargetRow>(conn)
+                .await?;
             let event = remote_target_event(
                 &row,
                 Action::Created,
@@ -97,9 +102,10 @@ impl SaveRemoteTargetRecord for NewRemoteTargetRow {
                 format!("Remote target '{}' created", row.name),
             )?
             .with_after(row.audit_snapshot());
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(row)
         })
+        .await
     }
 }
 
@@ -130,15 +136,18 @@ impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
     ) -> Result<RemoteTargetRow, ApiError> {
         use crate::schema::remote_targets::dsl::{id, remote_targets};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             crate::db::updated_or_current(
                 diesel::update(remote_targets.filter(id.eq(target_id)))
                     .set(self)
                     .get_result::<RemoteTargetRow>(conn)
+                    .await
                     .optional(),
-                || remote_targets.filter(id.eq(target_id)).first(conn),
+                async || remote_targets.filter(id.eq(target_id)).first(conn).await,
             )
+            .await
         })
+        .await
     }
 
     async fn update_remote_target_record(
@@ -155,13 +164,15 @@ impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
 
         use crate::schema::remote_targets::dsl::{id, remote_targets};
 
-        with_transaction(pool, |conn| -> Result<RemoteTargetRow, ApiError> {
+        with_transaction(pool, async |conn| -> Result<RemoteTargetRow, ApiError> {
             let before = remote_targets
                 .filter(id.eq(target_id))
-                .first::<RemoteTargetRow>(conn)?;
+                .first::<RemoteTargetRow>(conn)
+                .await?;
             let after = diesel::update(remote_targets.filter(id.eq(target_id)))
                 .set(self)
-                .get_result::<RemoteTargetRow>(conn)?;
+                .get_result::<RemoteTargetRow>(conn)
+                .await?;
             let event = remote_target_event(
                 &after,
                 Action::Updated,
@@ -170,9 +181,10 @@ impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
             )?
             .with_before(before.audit_snapshot())
             .with_after(after.audit_snapshot());
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(after)
         })
+        .await
     }
 }
 
@@ -199,9 +211,12 @@ impl DeleteRemoteTargetRecord for RemoteTargetID {
     ) -> Result<(), ApiError> {
         use crate::schema::remote_targets::dsl::{id, remote_targets};
 
-        with_connection(pool, |conn| {
-            diesel::delete(remote_targets.filter(id.eq(self.id()))).execute(conn)
-        })?;
+        with_connection(pool, async |conn| {
+            diesel::delete(remote_targets.filter(id.eq(self.id())))
+                .execute(conn)
+                .await
+        })
+        .await?;
         Ok(())
     }
 
@@ -216,11 +231,14 @@ impl DeleteRemoteTargetRecord for RemoteTargetID {
 
         use crate::schema::remote_targets::dsl::{id, remote_targets};
 
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
             let before = remote_targets
                 .filter(id.eq(self.id()))
-                .first::<RemoteTargetRow>(conn)?;
-            diesel::delete(remote_targets.filter(id.eq(self.id()))).execute(conn)?;
+                .first::<RemoteTargetRow>(conn)
+                .await?;
+            diesel::delete(remote_targets.filter(id.eq(self.id())))
+                .execute(conn)
+                .await?;
             let event = remote_target_event(
                 &before,
                 Action::Deleted,
@@ -228,9 +246,10 @@ impl DeleteRemoteTargetRecord for RemoteTargetID {
                 format!("Remote target '{}' deleted", before.name),
             )?
             .with_before(before.audit_snapshot());
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(())
         })
+        .await
     }
 }
 
@@ -242,7 +261,7 @@ pub(crate) async fn emit_remote_target_invoked_event(
     subject_type: &str,
     subject_id: i32,
 ) -> Result<(), ApiError> {
-    with_connection(pool, |conn| -> Result<(), ApiError> {
+    with_connection(pool, async |conn| -> Result<(), ApiError> {
         let event = NewEvent::new(
             EntityType::RemoteTarget,
             Action::Invoked,
@@ -258,9 +277,10 @@ pub(crate) async fn emit_remote_target_invoked_event(
             "subject_type": subject_type,
             "subject_id": subject_id,
         }));
-        emit_event(conn, &event)?;
+        emit_event(conn, &event).await?;
         Ok(())
     })
+    .await
 }
 
 pub(crate) async fn list_rows_with_total_count(
@@ -269,13 +289,18 @@ pub(crate) async fn list_rows_with_total_count(
     query_options: &QueryOptions,
 ) -> Result<(Vec<RemoteTargetRow>, i64), ApiError> {
     let query = build_list_query(allowed_collection_ids, query_options)?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
-    })?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+        with_connection(pool, async |conn| {
+            query.count().get_result::<i64>(conn).await
+        })
+        .await
+    })
+    .await?;
 
     let mut query = build_list_query(allowed_collection_ids, query_options)?;
     apply_query_options!(query, query_options, RemoteTarget);
-    let rows = with_connection(pool, |conn| query.load::<RemoteTargetRow>(conn))?;
+    let rows =
+        with_connection(pool, async |conn| query.load::<RemoteTargetRow>(conn).await).await?;
 
     Ok((rows, total_count))
 }
@@ -324,7 +349,7 @@ pub async fn insert_remote_call_result(
 ) -> Result<RemoteCallResult, ApiError> {
     use crate::schema::remote_call_results::dsl::{remote_call_results, task_id};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         diesel::insert_into(remote_call_results)
             .values(&entry)
             .on_conflict(task_id)
@@ -345,7 +370,9 @@ pub async fn insert_remote_call_result(
                 crate::schema::remote_call_results::error.eq(entry.error.clone()),
             ))
             .get_result::<RemoteCallResult>(conn)
+            .await
     })
+    .await
 }
 
 impl RemoteTargetID {

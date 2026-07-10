@@ -1,4 +1,4 @@
-use diesel::{ExpressionMethods, JoinOnDsl, QueryDsl, RunQueryDsl, Table};
+use diesel::{ExpressionMethods, JoinOnDsl, QueryDsl, Table};
 use std::iter::IntoIterator;
 
 use tracing::debug;

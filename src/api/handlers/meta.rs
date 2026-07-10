@@ -12,9 +12,9 @@ use actix_web::{Responder, delete, get, http::StatusCode, web};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use diesel::QueryableByName;
-use diesel::RunQueryDsl;
 use diesel::sql_query;
 use diesel::sql_types::{BigInt, Nullable, Timestamp};
+use diesel_async::RunQueryDsl;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 use utoipa::ToSchema;
@@ -123,7 +123,11 @@ pub async fn get_db_state(
           pg_stat_user_tables;
     "#;
 
-    let results = match with_connection(&pool, |conn| sql_query(query).load::<DbState>(conn)) {
+    let results = match with_connection(&pool, async |conn| {
+        sql_query(query).load::<DbState>(conn).await
+    })
+    .await
+    {
         Ok(results) => results,
         Err(e) => {
             return Err(ApiError::InternalServerError(format!(
@@ -132,7 +136,7 @@ pub async fn get_db_state(
         }
     };
 
-    if let Some(row) = results.first() {
+    if let Some(row) = results.as_slice().first() {
         debug!(
             message = "DB state requested",
             requestor = requestor.user.id
@@ -221,8 +225,11 @@ pub async fn get_task_queue_state(
         FROM tasks;
     "#;
 
-    let results = with_connection(&pool, |conn| sql_query(query).load::<TaskQueueState>(conn))?;
-    let state = results.first().ok_or_else(|| {
+    let results = with_connection(&pool, async |conn| {
+        sql_query(query).load::<TaskQueueState>(conn).await
+    })
+    .await?;
+    let state = results.as_slice().first().ok_or_else(|| {
         ApiError::InternalServerError("Error getting state for the task queue".to_string())
     })?;
 

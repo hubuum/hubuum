@@ -14,8 +14,8 @@
 //! extractor; task workers pass the scope snapshot persisted on the task; plain
 //! internal callers pass `None`.
 
+use crate::db::prelude::*;
 use diesel::pg::Pg;
-use diesel::prelude::*;
 use diesel::sql_types::Integer;
 
 use crate::db::{DbPool, with_connection, with_connection_async};
@@ -107,7 +107,7 @@ pub trait AuthzSubject: PrincipalIdAccessor {
         let pid = self.principal_id();
         let scope = self.admin_identity_scope().await?;
         let group_name = groupname_queried.to_string();
-        let is_in_group = with_connection_async(pool.clone(), move |conn| {
+        let is_in_group = with_connection_async(pool.clone(), async move |conn| {
             select(exists(
                 group_memberships::table
                     .inner_join(groups::table)
@@ -120,6 +120,7 @@ pub trait AuthzSubject: PrincipalIdAccessor {
                     .filter(identity_scopes::name.eq(scope)),
             ))
             .get_result(conn)
+            .await
         })
         .await?;
         Ok(is_in_group)
@@ -160,12 +161,14 @@ pub fn scope_allows(scopes: Option<&[Permissions]>, requested: &[Permissions]) -
 pub async fn load_token_scopes(pool: &DbPool, token_id: i32) -> Result<Vec<Permissions>, ApiError> {
     use crate::schema::token_scopes::dsl::{permission, token_id as ts_token_id, token_scopes};
 
-    let raw: Vec<String> = with_connection(pool, |conn| {
+    let raw: Vec<String> = with_connection(pool, async |conn| {
         token_scopes
             .filter(ts_token_id.eq(token_id))
             .select(permission)
             .load::<String>(conn)
-    })?;
+            .await
+    })
+    .await?;
 
     raw.iter().map(|s| Permissions::from_string(s)).collect()
 }

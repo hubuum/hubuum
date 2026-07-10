@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 use diesel::sql_query;
 use diesel::sql_types::{BigInt, Bool, Integer, Text};
 
@@ -140,7 +140,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
             cursor_values(params.collection_cursor.as_ref());
         let limit = bounded_limit(params.limit_per_kind);
 
-        with_connection_async(pool.clone(), move |conn| {
+        with_connection_async(pool.clone(), async move |conn| {
             sql_query(COLLECTION_SEARCH_SQL)
                 .bind::<Text, _>(query)
                 .bind::<Bool, _>(is_unscoped_admin)
@@ -151,6 +151,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Integer, _>(cursor_id)
                 .bind::<BigInt, _>(limit)
                 .load::<Collection>(conn)
+                .await
         })
         .await
     }
@@ -176,7 +177,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
             cursor_values(params.class_cursor.as_ref());
         let limit = bounded_limit(params.limit_per_kind);
 
-        let classes = with_connection_async(pool.clone(), move |conn| {
+        let classes = with_connection_async(pool.clone(), async move |conn| {
             sql_query(CLASS_SEARCH_SQL)
                 .bind::<Text, _>(query)
                 .bind::<Bool, _>(search_schema)
@@ -188,6 +189,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Integer, _>(cursor_id)
                 .bind::<BigInt, _>(limit)
                 .load::<HubuumClass>(conn)
+                .await
         })
         .await?;
 
@@ -199,11 +201,12 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
             .iter()
             .map(|class| class.collection_id)
             .collect::<Vec<_>>();
-        let collections = with_connection_async(pool.clone(), move |conn| {
+        let collections = with_connection_async(pool.clone(), async move |conn| {
             use crate::schema::collections::dsl::{collections, id};
             collections
                 .filter(id.eq_any(collection_ids))
                 .load::<Collection>(conn)
+                .await
         })
         .await?;
         let collection_map = collections
@@ -235,7 +238,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
             cursor_values(params.object_cursor.as_ref());
         let limit = bounded_limit(params.limit_per_kind);
 
-        with_connection_async(pool.clone(), move |conn| {
+        with_connection_async(pool.clone(), async move |conn| {
             sql_query(OBJECT_SEARCH_SQL)
                 .bind::<Text, _>(query)
                 .bind::<Bool, _>(search_data)
@@ -247,6 +250,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Integer, _>(cursor_id)
                 .bind::<BigInt, _>(limit)
                 .load::<HubuumObject>(conn)
+                .await
         })
         .await
     }

@@ -1,9 +1,10 @@
 use super::*;
 use crate::db::traits::authz::AuthzSubject;
+use diesel_async::RunQueryDsl;
 use std::collections::HashMap;
 
-fn build_effective_group_permissions(
-    conn: &mut diesel::PgConnection,
+async fn build_effective_group_permissions(
+    conn: &mut crate::db::DbConnection,
     target_collection_id: i32,
     rows: Vec<(i32, i32, Group, Permission)>,
 ) -> Result<Vec<EffectiveGroupPermission>, ApiError> {
@@ -15,7 +16,8 @@ fn build_effective_group_permissions(
 
     let target_collection = collections
         .filter(id.eq(target_collection_id))
-        .first::<Collection>(conn)?;
+        .first::<Collection>(conn)
+        .await?;
     let mut source_ids: Vec<i32> = rows
         .iter()
         .map(|(source_collection_id, _, _, _)| *source_collection_id)
@@ -24,7 +26,8 @@ fn build_effective_group_permissions(
     source_ids.dedup();
     let source_collections = collections
         .filter(id.eq_any(source_ids))
-        .load::<Collection>(conn)?
+        .load::<Collection>(conn)
+        .await?
         .into_iter()
         .map(|collection| (collection.id, collection))
         .collect::<HashMap<_, _>>();
@@ -57,7 +60,10 @@ fn build_effective_group_permissions(
 pub async fn total_collection_count_from_backend(pool: &DbPool) -> Result<i64, ApiError> {
     use crate::schema::collections::dsl::*;
 
-    with_connection(pool, |conn| collections.count().get_result::<i64>(conn))
+    with_connection(pool, async |conn| {
+        collections.count().get_result::<i64>(conn).await
+    })
+    .await
 }
 
 pub async fn principal_on_from_backend<S: AuthzSubject, T: CollectionAccessors>(
@@ -71,14 +77,16 @@ pub async fn principal_on_from_backend<S: AuthzSubject, T: CollectionAccessors>(
 
     let collection_target_id = collection_ref.collection_id(pool).await?.id();
     let group_ids_subquery = principal.group_ids_subquery();
-    let rows = with_connection(pool, |conn| {
+    let rows = with_connection(pool, async |conn| {
         groups
             .inner_join(permissions.on(group_table_id.eq(group_id)))
             .filter(collection_id.eq(collection_target_id))
             .filter(group_id.eq_any(group_ids_subquery))
             .select((groups::all_columns(), permissions::all_columns()))
             .load::<(Group, Permission)>(conn)
-    })?;
+            .await
+    })
+    .await?;
 
     Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
 }
@@ -95,7 +103,7 @@ pub async fn principal_all_permissions_from_backend<S: AuthzSubject>(
     use diesel::SelectableHelper;
 
     let group_ids_subquery = principal.group_ids_subquery();
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         permissions
             .inner_join(crate::schema::groups::table)
             .inner_join(crate::schema::collections::table)
@@ -106,7 +114,9 @@ pub async fn principal_all_permissions_from_backend<S: AuthzSubject>(
                 Permission::as_select(),
             ))
             .load::<(Collection, Group, Permission)>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn principal_on_paginated_with_total_count_from_backend<
@@ -166,13 +176,20 @@ pub async fn principal_on_paginated_with_total_count_from_backend<
     };
 
     let query = build_query()?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
-    })?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+        with_connection(pool, async |conn| {
+            query.count().get_result::<i64>(conn).await
+        })
+        .await
+    })
+    .await?;
 
     let mut query = build_query()?;
     crate::apply_query_options!(query, query_options, GroupPermission);
-    let rows = with_connection(pool, |conn| query.load::<(Group, Permission)>(conn))?;
+    let rows = with_connection(pool, async |conn| {
+        query.load::<(Group, Permission)>(conn).await
+    })
+    .await?;
 
     Ok((
         rows.into_iter().map(GroupPermission::from_tuple).collect(),
@@ -196,7 +213,7 @@ pub async fn effective_principal_on_from_backend<S: AuthzSubject, T: CollectionA
     let target_collection_id = collection_ref.collection_id(pool).await?.id();
     let group_ids_subquery = principal.group_ids_subquery();
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         let rows = groups
             .inner_join(permissions.on(group_table_id.eq(group_id)))
             .inner_join(collection_closure.on(permission_collection_id.eq(ancestor_collection_id)))
@@ -213,10 +230,12 @@ pub async fn effective_principal_on_from_backend<S: AuthzSubject, T: CollectionA
                 groups::all_columns(),
                 permissions::all_columns(),
             ))
-            .load::<(i32, i32, Group, Permission)>(conn)?;
+            .load::<(i32, i32, Group, Permission)>(conn)
+            .await?;
 
-        build_effective_group_permissions(conn, target_collection_id, rows)
+        build_effective_group_permissions(conn, target_collection_id, rows).await
     })
+    .await
 }
 
 pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
@@ -243,9 +262,12 @@ pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
     // The admin "all collections" fast path applies only to unscoped tokens; a
     // scoped admin token falls through to the scoped grant query below.
     if scopes.is_none() && AuthzSubject::is_admin(&user_id, pool).await? {
-        return with_connection(pool, |conn| {
-            crate::schema::collections::table.load::<Collection>(conn)
-        });
+        return with_connection(pool, async |conn| {
+            crate::schema::collections::table
+                .load::<Collection>(conn)
+                .await
+        })
+        .await;
     }
 
     let base_query = {
@@ -257,14 +279,16 @@ pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
     };
 
     let filtered_query = permission_type.create_boxed_filter(base_query, true);
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         filtered_query
             .inner_join(collection_closure.on(permission_collection_id.eq(ancestor_collection_id)))
             .inner_join(collections.on(collection_table_id.eq(descendant_collection_id)))
             .select(collections::all_columns())
             .distinct()
             .load::<Collection>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn group_can_on_from_backend<T: CollectionAccessors>(
@@ -283,13 +307,15 @@ pub async fn group_can_on_from_backend<T: CollectionAccessors>(
     let base_query = permissions.filter(group_id.eq(gid)).into_boxed();
     let filtered_query = permission_type.create_boxed_filter(base_query, true);
     let target_collection_id = collection_ref.collection_id(pool).await?.id();
-    let result = with_connection(pool, |conn| {
+    let result = with_connection(pool, async |conn| {
         filtered_query
             .inner_join(collection_closure.on(permission_collection_id.eq(ancestor_collection_id)))
             .filter(descendant_collection_id.eq(target_collection_id))
             .count()
             .get_result::<i64>(conn)
-    })?;
+            .await
+    })
+    .await?;
 
     Ok(result != 0)
 }
@@ -307,7 +333,7 @@ pub async fn effective_group_on_from_backend(
         collection_id as permission_collection_id, group_id, permissions,
     };
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         let rows = groups
             .inner_join(permissions.on(group_table_id.eq(group_id)))
             .inner_join(collection_closure.on(permission_collection_id.eq(ancestor_collection_id)))
@@ -324,10 +350,12 @@ pub async fn effective_group_on_from_backend(
                 groups::all_columns(),
                 permissions::all_columns(),
             ))
-            .load::<(i32, i32, Group, Permission)>(conn)?;
+            .load::<(i32, i32, Group, Permission)>(conn)
+            .await?;
 
-        build_effective_group_permissions(conn, target_collection_id, rows)
+        build_effective_group_permissions(conn, target_collection_id, rows).await
     })
+    .await
 }
 
 pub async fn groups_can_on_from_backend(
@@ -346,25 +374,29 @@ pub async fn groups_can_on_from_backend(
     let base_query = permissions.into_boxed();
     let filtered_query = permission_type.create_boxed_filter(base_query, true);
 
-    let group_ids = with_connection(pool, |conn| {
+    let group_ids = with_connection(pool, async |conn| {
         filtered_query
             .inner_join(collection_closure.on(permission_collection_id.eq(ancestor_collection_id)))
             .filter(descendant_collection_id.eq(target_collection_id))
             .select(group_id)
             .distinct()
             .load::<i32>(conn)
-    })?;
+            .await
+    })
+    .await?;
 
     if group_ids.is_empty() {
         return Ok(Vec::new());
     }
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         groups
             .filter(group_table_id.eq_any(group_ids))
             .order(group_table_id.asc())
             .load::<Group>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn groups_can_on_paginated_with_total_count_from_backend(
@@ -426,13 +458,17 @@ pub async fn groups_can_on_paginated_with_total_count_from_backend(
     };
 
     let query = build_query()?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
-    })?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+        with_connection(pool, async |conn| {
+            query.count().get_result::<i64>(conn).await
+        })
+        .await
+    })
+    .await?;
 
     let mut query = build_query()?;
     crate::apply_query_options!(query, query_options, Group);
-    let items = with_connection(pool, |conn| query.load::<Group>(conn))?;
+    let items = with_connection(pool, async |conn| query.load::<Group>(conn).await).await?;
 
     Ok((items, total_count))
 }
@@ -514,12 +550,14 @@ pub async fn groups_on_from_backend<T: CollectionAccessors>(
         base_query = base_query.limit(limit as i64);
     }
 
-    let rows = with_connection(pool, |conn| {
+    let rows = with_connection(pool, async |conn| {
         base_query
             .inner_join(groups.on(group_table_id.eq(group_id)))
             .select((groups::all_columns(), permissions::all_columns()))
             .load::<(Group, Permission)>(conn)
-    })?;
+            .await
+    })
+    .await?;
 
     Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
 }
@@ -595,17 +633,23 @@ pub async fn groups_on_paginated_with_total_count_from_backend<T: CollectionAcce
     };
 
     let query = build_query()?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
-    })?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+        with_connection(pool, async |conn| {
+            query.count().get_result::<i64>(conn).await
+        })
+        .await
+    })
+    .await?;
 
     let mut query = build_query()?;
     crate::apply_query_options!(query, query_options, GroupPermission);
-    let rows = with_connection(pool, |conn| {
+    let rows = with_connection(pool, async |conn| {
         query
             .select((groups::all_columns(), permissions::all_columns()))
             .load::<(Group, Permission)>(conn)
-    })?;
+            .await
+    })
+    .await?;
 
     Ok((
         rows.into_iter().map(GroupPermission::from_tuple).collect(),
@@ -636,10 +680,12 @@ pub async fn group_on_from_backend(
 ) -> Result<Permission, ApiError> {
     use crate::schema::permissions::dsl::*;
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         permissions
             .filter(collection_id.eq(target_collection_id))
             .filter(group_id.eq(gid))
             .first::<Permission>(conn)
+            .await
     })
+    .await
 }

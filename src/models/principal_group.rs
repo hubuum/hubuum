@@ -11,8 +11,8 @@ use crate::traits::BackendContext;
 
 use crate::db::DbPool;
 
+use crate::db::prelude::*;
 use crate::traits::crud::SaveAdapter;
-use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// A principal's membership in a group. Both human users and service accounts

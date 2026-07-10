@@ -1,8 +1,8 @@
 use chrono::NaiveDateTime;
-use diesel::prelude::*;
 use hubuum_auth_core::AuthenticatedExternalUser;
 use std::collections::HashSet;
 
+use crate::db::prelude::*;
 use crate::db::traits::identity::ensure_identity_scope;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -24,7 +24,7 @@ pub async fn external_principal_state(
 ) -> Result<Option<ExternalPrincipalState>, ApiError> {
     use crate::schema::{identity_scopes, principals, users};
 
-    let row = with_connection(pool, |conn| {
+    let row = with_connection(pool, async |conn| {
         users::table
             .inner_join(principals::table.on(users::id.eq(principals::id)))
             .inner_join(
@@ -47,8 +47,10 @@ pub async fn external_principal_state(
                 Option<NaiveDateTime>,
                 String,
             )>(conn)
+            .await
             .optional()
-    })?;
+    })
+    .await?;
 
     let Some((
         provider,
@@ -77,17 +79,19 @@ pub async fn external_principal_state(
     }))
 }
 
-pub fn mark_external_sync_attempted(
+pub async fn mark_external_sync_attempted(
     pool: &DbPool,
     principal_id_value: i32,
 ) -> Result<(), ApiError> {
     use crate::schema::principals;
     let attempted_at = now();
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         diesel::update(principals::table.filter(principals::id.eq(principal_id_value)))
             .set(principals::last_sync_attempted_at.eq(attempted_at))
             .execute(conn)
-    })?;
+            .await
+    })
+    .await?;
     Ok(())
 }
 
@@ -103,7 +107,7 @@ pub async fn sync_external_user(
     let groups = authenticated.groups;
     let synced_group_count = groups.len();
 
-    with_transaction(pool, |conn| -> Result<User, ApiError> {
+    with_transaction(pool, async |conn| -> Result<User, ApiError> {
         use crate::schema::{group_membership_sources, group_memberships, groups as groups_table};
         use crate::schema::{principals, users};
 
@@ -112,6 +116,7 @@ pub async fn sync_external_user(
             .filter(principals::external_subject.eq(&profile.subject))
             .select(principals::all_columns)
             .first::<Principal>(conn)
+            .await
             .optional()?;
 
         let principal = if let Some(existing) = existing_by_subject {
@@ -125,7 +130,8 @@ pub async fn sync_external_user(
                         principals::last_sync_attempted_at.eq(sync_time),
                         principals::last_sync_success_at.eq(sync_time),
                     ))
-                    .get_result::<Principal>(conn)?
+                    .get_result::<Principal>(conn)
+                    .await?
             }
         } else {
             let inserted = diesel::insert_into(principals::table)
@@ -140,6 +146,7 @@ pub async fn sync_external_user(
                 ))
                 .on_conflict_do_nothing()
                 .get_result::<Principal>(conn)
+                .await
                 .optional()?;
 
             match inserted {
@@ -148,7 +155,8 @@ pub async fn sync_external_user(
                     let principal = principals::table
                         .filter(principals::identity_scope_id.eq(scope.id))
                         .filter(principals::name.eq(&profile.name))
-                        .first::<Principal>(conn)?;
+                        .first::<Principal>(conn)
+                        .await?;
                     if principal.provider_managed && principal.kind == PrincipalKind::Human.as_str()
                     {
                         principal
@@ -181,7 +189,8 @@ pub async fn sync_external_user(
                 users::proper_name.eq(&profile.proper_name),
                 users::email.eq(&profile.email),
             ))
-            .get_result::<User>(conn)?;
+            .get_result::<User>(conn)
+            .await?;
 
         diesel::update(principals::table.filter(principals::id.eq(principal.id)))
             .set((
@@ -190,7 +199,8 @@ pub async fn sync_external_user(
                 principals::last_sync_attempted_at.eq(sync_time),
                 principals::last_sync_success_at.eq(sync_time),
             ))
-            .execute(conn)?;
+            .execute(conn)
+            .await?;
 
         let mut synced_group_ids = Vec::new();
         for group in groups {
@@ -214,7 +224,8 @@ pub async fn sync_external_user(
                     groups_table::last_sync_attempted_at.eq(sync_time),
                     groups_table::last_sync_success_at.eq(sync_time),
                 ))
-                .get_result::<crate::models::Group>(conn)?;
+                .get_result::<crate::models::Group>(conn)
+                .await?;
             synced_group_ids.push(saved.id);
 
             diesel::insert_into(group_memberships::table)
@@ -223,7 +234,8 @@ pub async fn sync_external_user(
                     group_memberships::group_id.eq(saved.id),
                 ))
                 .on_conflict_do_nothing()
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
             let source_key = saved.external_key.clone().unwrap_or_default();
             diesel::insert_into(group_membership_sources::table)
                 .values((
@@ -234,7 +246,8 @@ pub async fn sync_external_user(
                     group_membership_sources::source_key.eq(&source_key),
                 ))
                 .on_conflict_do_nothing()
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
         }
 
         diesel::delete(
@@ -246,18 +259,21 @@ pub async fn sync_external_user(
                     group_membership_sources::group_id.eq_any(&synced_group_ids),
                 )),
         )
-        .execute(conn)?;
+        .execute(conn)
+        .await?;
 
         let retained: HashSet<i32> = group_membership_sources::table
             .filter(group_membership_sources::principal_id.eq(user.id))
             .select(group_membership_sources::group_id)
-            .load::<i32>(conn)?
+            .load::<i32>(conn)
+            .await?
             .into_iter()
             .collect();
         let current: Vec<i32> = group_memberships::table
             .filter(group_memberships::principal_id.eq(user.id))
             .select(group_memberships::group_id)
-            .load(conn)?;
+            .load(conn)
+            .await?;
         for group_id in current {
             if !retained.contains(&group_id) {
                 diesel::delete(
@@ -265,7 +281,8 @@ pub async fn sync_external_user(
                         .filter(group_memberships::principal_id.eq(user.id))
                         .filter(group_memberships::group_id.eq(group_id)),
                 )
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
             }
         }
 
@@ -289,10 +306,11 @@ pub async fn sync_external_user(
             "external_subject": profile.subject,
             "synced_group_count": synced_group_count,
         }));
-        emit_event(conn, &event)?;
+        emit_event(conn, &event).await?;
 
         Ok(user)
     })
+    .await
 }
 
 fn now() -> NaiveDateTime {
@@ -366,13 +384,15 @@ mod tests {
             renamed
         );
 
-        let principal_count = with_connection(scope.pool.get_ref(), |conn| {
+        let principal_count = with_connection(scope.pool.get_ref(), async |conn| {
             principals::table
                 .inner_join(identity_scopes::table)
                 .filter(identity_scopes::name.eq(&identity_scope))
                 .count()
                 .get_result::<i64>(conn)
+                .await
         })
+        .await
         .unwrap();
         assert_eq!(principal_count, 1);
     }
@@ -442,7 +462,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let first_group_id = group_id_by_external_key(scope.pool.get_ref(), &first_group_key);
+        let first_group_id = group_id_by_external_key(scope.pool.get_ref(), &first_group_key).await;
 
         let manual_group = NewGroup {
             identity_scope: None,
@@ -469,28 +489,33 @@ mod tests {
         )
         .await
         .unwrap();
-        let second_group_id = group_id_by_external_key(scope.pool.get_ref(), &second_group_key);
+        let second_group_id =
+            group_id_by_external_key(scope.pool.get_ref(), &second_group_key).await;
 
         assert_eq!(synced.id, user.id);
-        let memberships = with_connection(scope.pool.get_ref(), |conn| {
+        let memberships = with_connection(scope.pool.get_ref(), async |conn| {
             group_memberships::table
                 .filter(group_memberships::principal_id.eq(user.id))
                 .select(group_memberships::group_id)
                 .load::<i32>(conn)
+                .await
         })
+        .await
         .unwrap();
         assert!(memberships.contains(&manual_group.id));
         assert!(memberships.contains(&second_group_id));
         assert!(!memberships.contains(&first_group_id));
     }
 
-    fn group_id_by_external_key(pool: &DbPool, external_key: &str) -> i32 {
-        with_connection(pool, |conn| {
+    async fn group_id_by_external_key(pool: &DbPool, external_key: &str) -> i32 {
+        with_connection(pool, async |conn| {
             groups_table::table
                 .filter(groups_table::external_key.eq(external_key))
                 .select(groups_table::id)
                 .first::<i32>(conn)
+                .await
         })
+        .await
         .unwrap()
     }
 }
