@@ -6,9 +6,9 @@ mod tests {
 
     use crate::db::traits::identity::ensure_identity_scope;
     use crate::db::with_connection;
-    use crate::models::PrincipalMemberResponse;
     use crate::models::group::{Group, GroupResponse, NewGroup, UpdateGroup};
     use crate::models::user::{NewUser, User};
+    use crate::models::{Principal, PrincipalID, PrincipalKind, PrincipalMemberResponse};
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -180,6 +180,92 @@ mod tests {
 
         let resp = delete_request(&context.pool, &context.admin_token, &member_url).await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn batch_group_responses_resolve_multiple_identity_scopes(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let local_group = create_test_group(&context.pool).await;
+        let external_scope = ensure_identity_scope(
+            &context.pool,
+            &context.scoped_name("batch_group_scope"),
+            crate::models::LDAP_PROVIDER_KIND,
+        )
+        .await
+        .unwrap();
+        let external_group = with_connection(&context.pool, |conn| {
+            use crate::schema::groups;
+
+            diesel::insert_into(groups::table)
+                .values((
+                    groups::identity_scope_id.eq(external_scope.id),
+                    groups::groupname.eq(context.scoped_name("batch_external_group")),
+                    groups::description.eq("Directory managed group"),
+                    groups::managed_by.eq(crate::models::LDAP_PROVIDER_KIND),
+                    groups::external_key.eq(context.scoped_name("batch_external_group_key")),
+                ))
+                .get_result::<Group>(conn)
+        })
+        .unwrap();
+
+        let responses =
+            GroupResponse::from_groups(&context.pool, vec![local_group, external_group])
+                .await
+                .unwrap();
+
+        assert_eq!(
+            responses[0].identity_scope,
+            crate::models::LOCAL_IDENTITY_SCOPE
+        );
+        assert_eq!(responses[1].identity_scope, external_scope.name);
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn batch_principal_responses_resolve_multiple_identity_scopes(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let local = PrincipalID::new(context.normal_user.id)
+            .unwrap()
+            .principal(&context.pool)
+            .await
+            .unwrap();
+        let external_scope = ensure_identity_scope(
+            &context.pool,
+            &context.scoped_name("batch_principal_scope"),
+            crate::models::LDAP_PROVIDER_KIND,
+        )
+        .await
+        .unwrap();
+        let external = with_connection(&context.pool, |conn| {
+            use crate::schema::principals;
+
+            diesel::insert_into(principals::table)
+                .values((
+                    principals::identity_scope_id.eq(external_scope.id),
+                    principals::kind.eq(PrincipalKind::Human.as_str()),
+                    principals::name.eq(context.scoped_name("batch_external_principal")),
+                    principals::provider_managed.eq(true),
+                    principals::external_subject.eq(context.scoped_name("batch_subject")),
+                ))
+                .get_result::<Principal>(conn)
+        })
+        .unwrap();
+
+        let responses =
+            PrincipalMemberResponse::from_principals(&context.pool, vec![local, external])
+                .await
+                .unwrap();
+
+        assert_eq!(
+            responses[0].identity_scope,
+            crate::models::LOCAL_IDENTITY_SCOPE
+        );
+        assert_eq!(responses[1].identity_scope, external_scope.name);
     }
 
     #[rstest]

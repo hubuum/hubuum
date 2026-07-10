@@ -1,4 +1,5 @@
 use diesel::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
@@ -27,6 +28,31 @@ pub async fn identity_scope_by_name(
             .filter(name.eq(scope_name))
             .first::<IdentityScope>(conn)
     })
+}
+
+pub async fn identity_scope_names_by_ids(
+    pool: &DbPool,
+    scope_ids: &[i32],
+) -> Result<HashMap<i32, String>, ApiError> {
+    if scope_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let unique_ids = scope_ids.iter().copied().collect::<HashSet<_>>();
+    let query_ids = unique_ids.iter().copied().collect::<Vec<_>>();
+    let rows = with_connection(pool, |conn| {
+        identity_scopes::table
+            .filter(identity_scopes::id.eq_any(&query_ids))
+            .select((identity_scopes::id, identity_scopes::name))
+            .load::<(i32, String)>(conn)
+    })?;
+    if rows.len() != unique_ids.len() {
+        return Err(ApiError::InternalServerError(
+            "One or more identity scopes could not be resolved".to_string(),
+        ));
+    }
+
+    Ok(rows.into_iter().collect())
 }
 
 pub async fn ensure_identity_scope(

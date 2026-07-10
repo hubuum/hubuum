@@ -139,10 +139,7 @@ pub async fn list_my_groups(
         .principal
         .groups_paginated_with_total_count(&pool, &search_params)
         .await?;
-    let mut response = Vec::with_capacity(groups.len());
-    for group in groups {
-        response.push(group.to_response(&pool).await?);
-    }
+    let response = GroupResponse::from_groups(&pool, groups).await?;
     ApiResponse::paginated(response, total_count, &params)
 }
 

@@ -222,6 +222,45 @@ impl PrincipalMemberResponse {
             updated_at: principal.updated_at,
         })
     }
+
+    pub async fn from_principals<C>(
+        backend: &C,
+        principals: Vec<Principal>,
+    ) -> Result<Vec<Self>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let scope_ids = principals
+            .iter()
+            .map(|principal| principal.identity_scope_id)
+            .collect::<Vec<_>>();
+        let scope_names =
+            crate::db::traits::identity::identity_scope_names_by_ids(backend.db_pool(), &scope_ids)
+                .await?;
+
+        principals
+            .into_iter()
+            .map(|principal| {
+                let identity_scope = scope_names
+                    .get(&principal.identity_scope_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        ApiError::InternalServerError(format!(
+                            "Identity scope '{}' was not resolved",
+                            principal.identity_scope_id
+                        ))
+                    })?;
+                Ok(Self {
+                    principal_id: principal.id,
+                    identity_scope,
+                    kind: principal.kind,
+                    name: principal.name,
+                    created_at: principal.created_at,
+                    updated_at: principal.updated_at,
+                })
+            })
+            .collect()
+    }
 }
 
 impl CursorPaginated for PrincipalMemberResponse {

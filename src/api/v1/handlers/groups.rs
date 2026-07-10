@@ -57,10 +57,7 @@ pub async fn get_groups(
         .await?;
     let search_params = prepare_db_pagination::<Group>(&params)?;
     let groups = user.search_groups(&pool, search_params).await?;
-    let mut result = Vec::with_capacity(groups.len());
-    for group in groups {
-        result.push(group.to_response(&pool).await?);
-    }
+    let result = GroupResponse::from_groups(&pool, groups).await?;
 
     ApiResponse::paginated(result, total_count, &params)
 }
@@ -265,10 +262,7 @@ pub async fn get_group_members(
     let search_params = prepare_db_pagination::<Principal>(&params)?;
     let members = group.members_paginated(&pool, &search_params).await?;
 
-    let mut response = Vec::with_capacity(members.len());
-    for member in members {
-        response.push(PrincipalMemberResponse::from_principal(&pool, member).await?);
-    }
+    let response = PrincipalMemberResponse::from_principals(&pool, members).await?;
     ApiResponse::paginated(response, total_count, &params)
 }
 

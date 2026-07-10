@@ -38,11 +38,51 @@ description = "Directory group $1"
 LDAP transport is always encrypted. Use `ldaps://` for implicit TLS. An
 `ldap://` URL is upgraded with StartTLS before any bind or search, and the
 connection fails if the server cannot establish verified TLS. Plaintext LDAP
-binds are not supported.
+binds are not supported. Configure `bind_dn` and `bind_password` together, or
+omit both for an anonymous service search; an incomplete pair is rejected at
+startup.
 
 All group extraction is configuration-driven. Use `group_attributes` and
 `group_rules` to map provider attributes to Hubuum groups; do not hard-code
 directory-specific group formats in code.
+
+### Multiple LDAP scopes
+
+Each `[[ldap]]` entry creates an independent provider instance keyed by its
+`scope`. Entries may use different servers, or reuse one LDAP server with
+different search bases, login attributes, and group semantics. A nested
+`[[ldap.group_rules]]` belongs to the immediately preceding `[[ldap]]` entry.
+
+```toml
+[[ldap]]
+scope = "employees"
+url = "ldaps://directory.example.org"
+user_base_dn = "ou=employees,dc=example,dc=org"
+user_filter = "(uid={username})"
+group_attributes = ["memberOf"]
+
+[[ldap.group_rules]]
+pattern = "^cn=([^,]+),ou=staff-groups,dc=example,dc=org$"
+name = "$1"
+key = "$0"
+
+[[ldap]]
+scope = "partners"
+url = "ldaps://directory.example.org"
+user_base_dn = "ou=partners,dc=example,dc=org"
+user_filter = "(mail={username})"
+username_attribute = "mail"
+group_attributes = ["businessCategory"]
+
+[[ldap.group_rules]]
+pattern = "^partner:(.+)$"
+name = "partner-$1"
+key = "$0"
+```
+
+Users select the matching scope at login. Materialized users and groups remain
+namespaced by that scope, so `employees/admin` and `partners/admin` are distinct
+identities even when their display names match.
 
 For local testing, a Docker LDAP fixture such as
 `rroemhild/docker-test-openldap` can be used with an `example.org`-style config.
@@ -64,7 +104,11 @@ Local users can omit `identity_scope` or use `local`.
 The response is the normal bearer token response. Token validation may refresh
 provider-managed group membership when the cached sync is older than the scope
 TTL. If refresh fails, cached membership remains usable only inside the
-configured max-stale window.
+configured max-stale window. Further requests back off for the scope refresh TTL
+before retrying the provider, so one outage does not serialize every request on
+repeated LDAP timeouts. Once the cache exceeds `max_stale_seconds`, requests fail
+with `503 Service Unavailable` during that backoff instead of using stale
+membership.
 
 ## Users And Groups
 

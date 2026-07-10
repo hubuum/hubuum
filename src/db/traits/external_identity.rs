@@ -14,6 +14,7 @@ use crate::models::{
 pub struct ExternalPrincipalState {
     pub identity_scope: String,
     pub external_subject: String,
+    pub last_sync_attempted_at: Option<NaiveDateTime>,
     pub last_sync_success_at: Option<NaiveDateTime>,
 }
 
@@ -34,15 +35,29 @@ pub async fn external_principal_state(
                 identity_scopes::provider_kind,
                 principals::provider_managed,
                 principals::external_subject,
+                principals::last_sync_attempted_at,
                 principals::last_sync_success_at,
                 identity_scopes::name,
             ))
-            .first::<(String, bool, Option<String>, Option<NaiveDateTime>, String)>(conn)
+            .first::<(
+                String,
+                bool,
+                Option<String>,
+                Option<NaiveDateTime>,
+                Option<NaiveDateTime>,
+                String,
+            )>(conn)
             .optional()
     })?;
 
-    let Some((provider, provider_managed, external_subject, last_sync_success_at, identity_scope)) =
-        row
+    let Some((
+        provider,
+        provider_managed,
+        external_subject,
+        last_sync_attempted_at,
+        last_sync_success_at,
+        identity_scope,
+    )) = row
     else {
         return Ok(None);
     };
@@ -57,6 +72,7 @@ pub async fn external_principal_state(
     Ok(Some(ExternalPrincipalState {
         identity_scope,
         external_subject,
+        last_sync_attempted_at,
         last_sync_success_at,
     }))
 }

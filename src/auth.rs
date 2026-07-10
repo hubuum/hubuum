@@ -169,8 +169,10 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
         return Ok(());
     };
 
-    if !refresh_due(state.last_sync_success_at, state.refresh_ttl_seconds) {
-        return Ok(());
+    match refresh_status(&state) {
+        RefreshStatus::Fresh => return Ok(()),
+        RefreshStatus::Backoff => return cached_external_state_result(&state),
+        RefreshStatus::Due => {}
     }
 
     let lock = {
@@ -186,44 +188,42 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
         match external_user_state(pool, principal_id).await {
             Err(err) => Err(err),
             Ok(None) => Ok(()),
-            Ok(Some(state))
-                if !refresh_due(state.last_sync_success_at, state.refresh_ttl_seconds) =>
-            {
-                Ok(())
-            }
-            Ok(Some(state)) => match auth_provider_registry()
-                .and_then(|registry| registry.ldap_scope(&state.identity_scope))
-            {
-                Err(err) => Err(err),
-                Ok(configured) => match configured
-                    .provider
-                    .refresh_user(&state.external_subject)
-                    .await
+            Ok(Some(state)) => match refresh_status(&state) {
+                RefreshStatus::Fresh => Ok(()),
+                RefreshStatus::Backoff => cached_external_state_result(&state),
+                RefreshStatus::Due => match auth_provider_registry()
+                    .and_then(|registry| registry.ldap_scope(&state.identity_scope))
                 {
-                    Ok(refreshed) => {
-                        sync_external_user_from_configured_provider(pool, configured, refreshed)
-                            .await
-                            .map(|_| ())
-                    }
-                    Err(err) => match mark_external_sync_attempted(pool, principal_id) {
-                        Err(mark_err) => Err(mark_err),
-                        Ok(()) => {
-                            if within_max_stale(state.last_sync_success_at, state.max_stale_seconds)
-                            {
-                                tracing::warn!(
-                                    principal_id,
-                                    identity_scope = state.identity_scope,
-                                    error = %err,
-                                    "External identity refresh failed; using cached memberships inside max-stale window"
-                                );
-                                Ok(())
-                            } else {
-                                Err(ApiError::ServiceUnavailable(
-                                    "External identity provider is unavailable and cached memberships are stale"
-                                        .to_string(),
-                                ))
-                            }
+                    Err(err) => Err(err),
+                    Ok(configured) => match configured
+                        .provider
+                        .refresh_user(&state.external_subject)
+                        .await
+                    {
+                        Ok(refreshed) => {
+                            sync_external_user_from_configured_provider(pool, configured, refreshed)
+                                .await
+                                .map(|_| ())
                         }
+                        Err(err) => match mark_external_sync_attempted(pool, principal_id) {
+                            Err(mark_err) => Err(mark_err),
+                            Ok(()) => {
+                                if within_max_stale(
+                                    state.last_sync_success_at,
+                                    state.max_stale_seconds,
+                                ) {
+                                    tracing::warn!(
+                                        principal_id,
+                                        identity_scope = state.identity_scope,
+                                        error = %err,
+                                        "External identity refresh failed; using cached memberships inside max-stale window"
+                                    );
+                                    Ok(())
+                                } else {
+                                    stale_external_state_error()
+                                }
+                            }
+                        },
                     },
                 },
             },
@@ -301,23 +301,89 @@ fn now() -> NaiveDateTime {
     chrono::Utc::now().naive_utc()
 }
 
-fn refresh_due(last_success: Option<NaiveDateTime>, ttl_seconds: i64) -> bool {
-    let Some(last_success) = last_success else {
-        return true;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefreshStatus {
+    Fresh,
+    Backoff,
+    Due,
+}
+
+fn refresh_status(state: &ExternalUserState) -> RefreshStatus {
+    refresh_status_at(
+        now(),
+        state.last_sync_success_at,
+        state.last_sync_attempted_at,
+        state.refresh_ttl_seconds,
+    )
+}
+
+fn refresh_status_at(
+    current: NaiveDateTime,
+    last_success: Option<NaiveDateTime>,
+    last_attempt: Option<NaiveDateTime>,
+    ttl_seconds: i64,
+) -> RefreshStatus {
+    let ttl = chrono::Duration::seconds(ttl_seconds);
+    if last_success.is_some_and(|success| current - success < ttl) {
+        return RefreshStatus::Fresh;
+    }
+
+    let failed_attempt = match (last_attempt, last_success) {
+        (Some(attempt), Some(success)) => (attempt > success).then_some(attempt),
+        (Some(attempt), None) => Some(attempt),
+        _ => None,
     };
-    now() - last_success >= chrono::Duration::seconds(ttl_seconds)
+    if failed_attempt.is_some_and(|attempt| current - attempt < ttl) {
+        RefreshStatus::Backoff
+    } else {
+        RefreshStatus::Due
+    }
 }
 
 fn within_max_stale(last_success: Option<NaiveDateTime>, max_stale_seconds: i64) -> bool {
+    within_max_stale_at(now(), last_success, max_stale_seconds)
+}
+
+fn within_max_stale_at(
+    current: NaiveDateTime,
+    last_success: Option<NaiveDateTime>,
+    max_stale_seconds: i64,
+) -> bool {
     let Some(last_success) = last_success else {
         return false;
     };
-    now() - last_success < chrono::Duration::seconds(max_stale_seconds)
+    current - last_success < chrono::Duration::seconds(max_stale_seconds)
+}
+
+fn cached_external_state_result(state: &ExternalUserState) -> Result<(), ApiError> {
+    cached_external_state_result_at(now(), state)
+}
+
+fn cached_external_state_result_at(
+    current: NaiveDateTime,
+    state: &ExternalUserState,
+) -> Result<(), ApiError> {
+    if within_max_stale_at(current, state.last_sync_success_at, state.max_stale_seconds) {
+        tracing::debug!(
+            identity_scope = state.identity_scope,
+            "External identity refresh is in retry backoff; using cached memberships"
+        );
+        Ok(())
+    } else {
+        stale_external_state_error()
+    }
+}
+
+fn stale_external_state_error() -> Result<(), ApiError> {
+    Err(ApiError::ServiceUnavailable(
+        "External identity provider is unavailable and cached memberships are stale".to_string(),
+    ))
 }
 
 struct ExternalUserState {
     identity_scope: String,
     external_subject: String,
+    last_sync_attempted_at: Option<NaiveDateTime>,
     last_sync_success_at: Option<NaiveDateTime>,
     refresh_ttl_seconds: i64,
     max_stale_seconds: i64,
@@ -334,6 +400,7 @@ async fn external_user_state(
     Ok(Some(ExternalUserState {
         identity_scope: state.identity_scope,
         external_subject: state.external_subject,
+        last_sync_attempted_at: state.last_sync_attempted_at,
         last_sync_success_at: state.last_sync_success_at,
         refresh_ttl_seconds: configured.refresh_ttl_seconds,
         max_stale_seconds: configured.max_stale_seconds,
@@ -362,4 +429,80 @@ pub(crate) async fn sync_external_user(
         authenticated,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn timestamp() -> NaiveDateTime {
+        chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+    }
+
+    #[test]
+    fn recent_success_keeps_external_state_fresh() {
+        let current = timestamp();
+        let success = current - chrono::Duration::seconds(299);
+
+        assert_eq!(
+            refresh_status_at(current, Some(success), Some(success), 300),
+            RefreshStatus::Fresh
+        );
+    }
+
+    #[test]
+    fn failed_refresh_enters_retry_backoff() {
+        let current = timestamp();
+        let success = current - chrono::Duration::seconds(600);
+        let failed_attempt = current - chrono::Duration::seconds(1);
+
+        assert_eq!(
+            refresh_status_at(current, Some(success), Some(failed_attempt), 300),
+            RefreshStatus::Backoff
+        );
+    }
+
+    #[test]
+    fn refresh_is_due_after_retry_backoff_expires() {
+        let current = timestamp();
+        let success = current - chrono::Duration::seconds(900);
+        let failed_attempt = current - chrono::Duration::seconds(300);
+
+        assert_eq!(
+            refresh_status_at(current, Some(success), Some(failed_attempt), 300),
+            RefreshStatus::Due
+        );
+    }
+
+    #[test]
+    fn successful_attempt_timestamp_does_not_trigger_backoff() {
+        let current = timestamp();
+        let success = current - chrono::Duration::seconds(300);
+
+        assert_eq!(
+            refresh_status_at(current, Some(success), Some(success), 300),
+            RefreshStatus::Due
+        );
+    }
+
+    #[test]
+    fn retry_backoff_rejects_cache_beyond_max_stale() {
+        let current = timestamp();
+        let state = ExternalUserState {
+            identity_scope: "directory".to_string(),
+            external_subject: "subject".to_string(),
+            last_sync_attempted_at: Some(current - chrono::Duration::seconds(1)),
+            last_sync_success_at: Some(current - chrono::Duration::seconds(3600)),
+            refresh_ttl_seconds: 300,
+            max_stale_seconds: 3600,
+        };
+
+        assert!(matches!(
+            cached_external_state_result_at(current, &state),
+            Err(ApiError::ServiceUnavailable(_))
+        ));
+    }
 }

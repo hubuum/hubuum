@@ -120,6 +120,35 @@ impl GroupResponse {
             updated_at: group.updated_at,
         }
     }
+
+    pub async fn from_groups<C>(backend: &C, groups: Vec<Group>) -> Result<Vec<Self>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let scope_ids = groups
+            .iter()
+            .map(|group| group.identity_scope_id)
+            .collect::<Vec<_>>();
+        let scope_names =
+            crate::db::traits::identity::identity_scope_names_by_ids(backend.db_pool(), &scope_ids)
+                .await?;
+
+        groups
+            .into_iter()
+            .map(|group| {
+                let identity_scope = scope_names
+                    .get(&group.identity_scope_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        ApiError::InternalServerError(format!(
+                            "Identity scope '{}' was not resolved",
+                            group.identity_scope_id
+                        ))
+                    })?;
+                Ok(Self::from_parts(&group, identity_scope))
+            })
+            .collect()
+    }
 }
 
 impl CursorPaginated for GroupResponse {

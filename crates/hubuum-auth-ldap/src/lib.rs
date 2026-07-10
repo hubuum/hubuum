@@ -143,6 +143,11 @@ impl LdapIdentityProvider {
                 "ldap operation_timeout_seconds must be positive".to_string(),
             ));
         }
+        if config.bind_dn.is_some() != config.bind_password.is_some() {
+            return Err(AuthProviderError::Config(
+                "ldap bind_dn and bind_password must be configured together".to_string(),
+            ));
+        }
         let rules = config
             .group_rules
             .iter()
@@ -255,7 +260,7 @@ impl LdapIdentityProvider {
         dn: &str,
         entry: &SearchEntry,
     ) -> Result<ExternalUserProfile, AuthProviderError> {
-        let subject = if self.config.subject_attribute == "dn" {
+        let subject = if self.subject_is_dn() {
             dn.to_string()
         } else {
             first_attr(entry, &self.config.subject_attribute)
@@ -284,7 +289,7 @@ impl LdapIdentityProvider {
     fn groups_from_entry(&self, entry: &SearchEntry) -> Vec<ExternalGroup> {
         let mut groups = BTreeMap::<String, ExternalGroup>::new();
         for attr in &self.config.group_attributes {
-            let Some(values) = entry.attrs.get(attr) else {
+            let Some(values) = attr_values(entry, attr) else {
                 continue;
             };
             for value in values {
@@ -328,6 +333,10 @@ impl LdapIdentityProvider {
             .map_err(|_| AuthProviderError::AuthenticationFailed)?;
         Ok(())
     }
+
+    fn subject_is_dn(&self) -> bool {
+        self.config.subject_attribute.eq_ignore_ascii_case("dn")
+    }
 }
 
 impl ExternalIdentityProvider for LdapIdentityProvider {
@@ -353,7 +362,7 @@ impl ExternalIdentityProvider for LdapIdentityProvider {
         &self,
         subject: &str,
     ) -> Result<AuthenticatedExternalUser, AuthProviderError> {
-        let filter = if self.config.subject_attribute == "dn" {
+        let filter = if self.subject_is_dn() {
             "(objectClass=*)".to_string()
         } else {
             format!(
@@ -362,7 +371,7 @@ impl ExternalIdentityProvider for LdapIdentityProvider {
                 escape_filter_value(subject)
             )
         };
-        let (dn, entry) = if self.config.subject_attribute == "dn" {
+        let (dn, entry) = if self.subject_is_dn() {
             let mut ldap = self.ldap().await?;
             self.bind_service(&mut ldap).await?;
             let attrs = self.search_attributes();
@@ -391,11 +400,16 @@ impl ExternalIdentityProvider for LdapIdentityProvider {
 }
 
 fn first_attr(entry: &SearchEntry, attr: &str) -> Option<String> {
-    entry
-        .attrs
-        .get(attr)
+    attr_values(entry, attr)
         .and_then(|values| values.first())
         .cloned()
+}
+
+fn attr_values<'a>(entry: &'a SearchEntry, attr: &str) -> Option<&'a [String]> {
+    entry
+        .attrs
+        .iter()
+        .find_map(|(name, values)| name.eq_ignore_ascii_case(attr).then_some(values.as_slice()))
 }
 
 fn expand_template(template: &str, captures: &regex::Captures<'_>) -> String {
@@ -481,7 +495,7 @@ mod tests {
         let error = LdapIdentityProvider::new(ldap_config("http://localhost"))
             .err()
             .unwrap();
-        assert!(matches!(error, AuthProviderError::Config(_)));
+        assert!(matches!(&error, AuthProviderError::Config(_)));
     }
 
     #[test]
@@ -489,7 +503,70 @@ mod tests {
         let error = LdapIdentityProvider::new(ldap_config("ldap:directory"))
             .err()
             .unwrap();
-        assert!(matches!(error, AuthProviderError::Config(_)));
+        assert!(matches!(&error, AuthProviderError::Config(_)));
+    }
+
+    #[test]
+    fn bind_dn_without_password_is_rejected_during_construction() {
+        let error = LdapIdentityProvider::new(LdapScopeConfig {
+            bind_dn: Some("cn=service,dc=example,dc=org".into()),
+            ..ldap_config("ldaps://localhost")
+        })
+        .err()
+        .unwrap();
+
+        assert!(matches!(&error, AuthProviderError::Config(_)));
+        assert_eq!(
+            error.to_string(),
+            "provider configuration error: ldap bind_dn and bind_password must be configured together"
+        );
+    }
+
+    #[test]
+    fn bind_password_without_dn_is_rejected_during_construction() {
+        let error = LdapIdentityProvider::new(LdapScopeConfig {
+            bind_password: Some("secret".into()),
+            ..ldap_config("ldaps://localhost")
+        })
+        .err()
+        .unwrap();
+
+        assert!(matches!(&error, AuthProviderError::Config(_)));
+        assert_eq!(
+            error.to_string(),
+            "provider configuration error: ldap bind_dn and bind_password must be configured together"
+        );
+    }
+
+    #[test]
+    fn profile_attributes_are_matched_case_insensitively() {
+        let provider = LdapIdentityProvider::new(LdapScopeConfig {
+            username_attribute: "uid".into(),
+            subject_attribute: "entryUUID".into(),
+            display_name_attribute: Some("cn".into()),
+            email_attribute: Some("mail".into()),
+            ..ldap_config("ldaps://localhost")
+        })
+        .unwrap();
+        let entry = SearchEntry {
+            dn: "uid=alice,ou=people,dc=example,dc=org".into(),
+            attrs: HashMap::from([
+                ("UID".into(), vec!["alice".into()]),
+                ("entryuuid".into(), vec!["stable-subject".into()]),
+                ("CN".into(), vec!["Alice Example".into()]),
+                ("MAIL".into(), vec!["alice@example.org".into()]),
+            ]),
+            bin_attrs: HashMap::new(),
+        };
+
+        let profile = provider
+            .profile_from_entry("fallback", &entry.dn, &entry)
+            .unwrap();
+
+        assert_eq!(profile.subject, "stable-subject");
+        assert_eq!(profile.name, "alice");
+        assert_eq!(profile.proper_name.as_deref(), Some("Alice Example"));
+        assert_eq!(profile.email.as_deref(), Some("alice@example.org"));
     }
 
     #[test]
@@ -509,7 +586,7 @@ mod tests {
         let entry = SearchEntry {
             dn: "uid=alice,ou=people,dc=example,dc=org".into(),
             attrs: HashMap::from([(
-                "memberOf".into(),
+                "MEMBEROF".into(),
                 vec![
                     "cn=admin,ou=groups,dc=example,dc=org".into(),
                     "cn=ignored,ou=other,dc=example,dc=org".into(),
