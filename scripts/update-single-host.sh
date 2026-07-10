@@ -5,6 +5,7 @@ INSTALL_DIR="/opt/hubuum"
 ENGINE="auto"
 SERVICE_NAME=""
 USE_SYSTEMD="true"
+AUTH_CONFIG_HOST_PATH=""
 
 usage() {
   cat <<'EOF'
@@ -14,6 +15,7 @@ Usage:
 Options:
   --dir PATH              Install directory. Default: /opt/hubuum
   --engine ENGINE         Container engine: auto, docker, or podman. Default: auto
+  --auth-config PATH      Replace the host auth-provider TOML path before restarting
   --service-name NAME     systemd service name. Defaults to value in .env or hubuum
   --no-systemd            Restart with compose directly even if a systemd service exists
   -h, --help              Show this help
@@ -38,10 +40,53 @@ read_env_value() {
   printf '%s' "$line"
 }
 
+quote_env() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+absolute_config_path() {
+  local path="$1"
+  local directory
+
+  [[ -f "$path" ]] || die "auth config is not a regular file: $path"
+  [[ -r "$path" ]] || die "auth config is not readable: $path"
+  directory="$(cd -- "$(dirname -- "$path")" && pwd -P)" || die "cannot resolve auth config path: $path"
+  printf '%s/%s' "$directory" "$(basename -- "$path")"
+}
+
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  local temporary
+  local found="false"
+  local line
+
+  temporary="$(mktemp "${ENV_FILE}.XXXXXX")"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      if [[ "$found" == "false" ]]; then
+        printf '%s=%s\n' "$key" "$(quote_env "$value")"
+        found="true"
+      fi
+    else
+      printf '%s\n' "$line"
+    fi
+  done < "$ENV_FILE" > "$temporary"
+  if [[ "$found" == "false" ]]; then
+    printf '%s=%s\n' "$key" "$(quote_env "$value")" >> "$temporary"
+  fi
+  chmod 0600 "$temporary"
+  mv "$temporary" "$ENV_FILE"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --engine) ENGINE="$2"; shift 2 ;;
+    --auth-config) AUTH_CONFIG_HOST_PATH="$2"; shift 2 ;;
     --service-name) SERVICE_NAME="$2"; shift 2 ;;
     --no-systemd) USE_SYSTEMD="false"; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -58,6 +103,18 @@ fi
 ENV_FILE="$INSTALL_DIR/.env"
 [[ -f "$ENV_FILE" ]] || die "missing $ENV_FILE; run install-single-host.sh first"
 [[ -f "$INSTALL_DIR/compose.yml" ]] || die "missing $INSTALL_DIR/compose.yml; run install-single-host.sh first"
+
+if [[ -n "$AUTH_CONFIG_HOST_PATH" ]]; then
+  grep -q 'HUBUUM_AUTH_CONFIG_PATH' "$INSTALL_DIR/compose.yml" || die "installed compose.yml does not support auth configuration; re-run install-single-host.sh first"
+  AUTH_CONFIG_HOST_PATH="$(absolute_config_path "$AUTH_CONFIG_HOST_PATH")"
+  set_env_value HUBUUM_AUTH_CONFIG_HOST_PATH "$AUTH_CONFIG_HOST_PATH"
+fi
+
+if grep -q 'HUBUUM_AUTH_CONFIG_PATH' "$INSTALL_DIR/compose.yml"; then
+  AUTH_CONFIG_HOST_PATH="$(read_env_value HUBUUM_AUTH_CONFIG_HOST_PATH || true)"
+  [[ -n "$AUTH_CONFIG_HOST_PATH" ]] || die "HUBUUM_AUTH_CONFIG_HOST_PATH is missing from $ENV_FILE"
+  absolute_config_path "$AUTH_CONFIG_HOST_PATH" >/dev/null
+fi
 
 BUILD_FROM_SOURCE="$(read_env_value BUILD_FROM_SOURCE || printf 'false')"
 INSTALL_MODE="$(read_env_value INSTALL_MODE || printf 'all')"

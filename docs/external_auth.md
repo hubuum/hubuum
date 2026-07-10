@@ -8,6 +8,10 @@ policies can coexist.
 ## Configuration
 
 Set `HUBUUM_AUTH_CONFIG_PATH` to a TOML file readable by the server.
+For single-host container deployments, pass the host file to
+`install-single-host.sh --auth-config`; the installer mounts it read-only and
+sets the container path automatically. See
+[Single-Host Container Deployment](deployment.md#external-authentication-configuration).
 
 ```toml
 [[ldap]]

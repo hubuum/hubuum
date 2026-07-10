@@ -19,6 +19,8 @@ POSTGRES_IMAGE="docker.io/library/postgres:18-alpine"
 VALKEY_IMAGE="docker.io/valkey/valkey:9-alpine"
 CADDY_IMAGE="docker.io/library/caddy:2-alpine"
 EXTERNAL_DATABASE_URL=""
+AUTH_CONFIG_HOST_PATH=""
+AUTH_CONFIG_CONTAINER_PATH="/etc/hubuum/auth.toml"
 NETWORK_SUBNET="172.30.42.0/24"
 RECREATE="false"
 PULL="true"
@@ -60,6 +62,7 @@ Options:
   --backend-image IMAGE   Backend image. Default: ghcr.io/hubuum/hubuum-server:main
   --frontend-image IMAGE  Frontend image. Default: ghcr.io/hubuum/hubuum-frontend:main
   --database-url URL      Existing Postgres URL. If set, no Postgres container is created
+  --auth-config PATH      Host auth-provider TOML file to mount read-only in the API container
   --engine ENGINE         Container engine: auto, docker, or podman. Default: auto
   --postgres-image IMAGE  Postgres image. Default: docker.io/library/postgres:18-alpine
   --valkey-image IMAGE    Valkey image. Default: docker.io/valkey/valkey:9-alpine
@@ -114,6 +117,16 @@ read_env_value() {
   printf '%s' "$line"
 }
 
+absolute_config_path() {
+  local path="$1"
+  local directory
+
+  [[ -f "$path" ]] || die "auth config is not a regular file: $path"
+  [[ -r "$path" ]] || die "auth config is not readable: $path"
+  directory="$(cd -- "$(dirname -- "$path")" && pwd -P)" || die "cannot resolve auth config path: $path"
+  printf '%s/%s' "$directory" "$(basename -- "$path")"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode) MODE="$2"; ARG_SET+=" MODE"; shift 2 ;;
@@ -133,6 +146,7 @@ while [[ $# -gt 0 ]]; do
     --backend-repo) BACKEND_REPO="$2"; ARG_SET+=" BACKEND_REPO"; shift 2 ;;
     --frontend-repo) FRONTEND_REPO="$2"; ARG_SET+=" FRONTEND_REPO"; shift 2 ;;
     --database-url) EXTERNAL_DATABASE_URL="$2"; shift 2 ;;
+    --auth-config) AUTH_CONFIG_HOST_PATH="$2"; ARG_SET+=" AUTH_CONFIG_HOST_PATH"; shift 2 ;;
     --engine) ENGINE="$2"; shift 2 ;;
     --postgres-image) POSTGRES_IMAGE="$2"; ARG_SET+=" POSTGRES_IMAGE"; shift 2 ;;
     --valkey-image) VALKEY_IMAGE="$2"; ARG_SET+=" VALKEY_IMAGE"; shift 2 ;;
@@ -188,6 +202,7 @@ if [[ "$ACTION" == "install" && -f "$ENV_FILE" ]]; then
   reuse_from_env FRONTEND_REPO FRONTEND_REPO
   reuse_from_env BUILD_FROM_SOURCE BUILD_FROM_SOURCE
   reuse_from_env NETWORK_SUBNET HUBUUM_CLIENT_ALLOWLIST
+  reuse_from_env AUTH_CONFIG_HOST_PATH HUBUUM_AUTH_CONFIG_HOST_PATH
 fi
 
 [[ "$MODE" == "all" || "$MODE" == "backend" ]] || die "--mode must be all or backend"
@@ -340,6 +355,14 @@ if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
   mkdir -p "$INSTALL_DIR/src"
 fi
 
+if [[ -z "$AUTH_CONFIG_HOST_PATH" ]]; then
+  AUTH_CONFIG_HOST_PATH="$INSTALL_DIR/auth.toml"
+  if [[ ! -e "$AUTH_CONFIG_HOST_PATH" ]]; then
+    install -m 0600 /dev/null "$AUTH_CONFIG_HOST_PATH"
+  fi
+fi
+AUTH_CONFIG_HOST_PATH="$(absolute_config_path "$AUTH_CONFIG_HOST_PATH")"
+
 install_management_script() {
   local script_name="$1"
   local local_path="$SCRIPT_DIR/$script_name"
@@ -465,6 +488,8 @@ fi
   printf 'HUBUUM_TOKEN_LIFETIME_HOURS=24\n'
   printf 'HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS=5\n'
   printf 'HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS=300\n'
+  printf 'HUBUUM_AUTH_CONFIG_HOST_PATH=%s\n' "$(quote_env "$AUTH_CONFIG_HOST_PATH")"
+  printf 'HUBUUM_AUTH_CONFIG_PATH=%s\n' "$AUTH_CONFIG_CONTAINER_PATH"
   printf '\n'
   printf 'BACKEND_BASE_URL=http://hubuum-api:%s\n' "$API_PORT"
   printf 'VALKEY_URL=redis://valkey:6379/0\n'
@@ -626,6 +651,12 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       HUBUUM_TOKEN_LIFETIME_HOURS: ${HUBUUM_TOKEN_LIFETIME_HOURS}
       HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: ${HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS}
       HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS: ${HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS}
+      HUBUUM_AUTH_CONFIG_PATH: ${HUBUUM_AUTH_CONFIG_PATH}
+    volumes:
+      - type: bind
+        source: "${HUBUUM_AUTH_CONFIG_HOST_PATH}"
+        target: "${HUBUUM_AUTH_CONFIG_PATH}"
+        read_only: true
 EOF
 
 if [[ "$DATABASE_MANAGED" == "true" ]]; then
@@ -824,6 +855,9 @@ Boot service:
 
 Image source:
   $([[ "$BUILD_FROM_SOURCE" == "true" ]] && printf 'local source builds' || printf 'published container images')
+
+Authentication config:
+  ${AUTH_CONFIG_HOST_PATH} (mounted read-only at ${AUTH_CONFIG_CONTAINER_PATH})
 
 Backend API:
 EOF
