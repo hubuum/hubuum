@@ -14,6 +14,7 @@ mod tests {
     use diesel::prelude::*;
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
+    const AUTH_PROVIDERS_ENDPOINT: &str = "/api/v0/auth/providers";
     const LOGOUT_ENDPOINT: &str = "/api/v0/auth/logout";
     const LOGOUT_ALL_ENDPOINT: &str = "/api/v0/auth/logout_all";
     const LOGOUT_ALL_FOR_OTHER_USER_ENDPOINT: &str = "/api/v0/auth/logout/uid/";
@@ -22,6 +23,24 @@ mod tests {
 
     async fn lock_auth_test_state() -> TestMutexGuard {
         lock_test_mutex(&LOGIN_RATE_LIMIT_TEST_LOCK).await
+    }
+
+    #[actix_web::test]
+    async fn test_auth_providers_are_publicly_discoverable() {
+        let app = test::init_service(App::new().configure(api::config)).await;
+
+        let resp = test::TestRequest::get()
+            .uri(AUTH_PROVIDERS_ENDPOINT)
+            .send_request(&app)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: crate::api::handlers::auth::AuthProvidersResponse =
+            test::read_body_json(resp).await;
+        assert_eq!(body.providers.first().map(String::as_str), Some("local"));
+        let mut sorted_external = body.providers[1..].to_vec();
+        sorted_external.sort_unstable();
+        assert_eq!(&body.providers[1..], sorted_external);
     }
 
     #[actix_web::test]

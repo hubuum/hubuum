@@ -17,9 +17,30 @@ pub struct LogoutTokenRequest {
     pub token: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AuthProvidersResponse {
+    pub providers: Vec<String>,
+}
+
 // During auth, no matter what the error is, we return a 401 Unauthorized
 // with a generic message. This is to prevent leaking information about
 // the existence of internal data.
+
+#[utoipa::path(
+    get,
+    path = "/api/v0/auth/providers",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Configured authentication provider names", body = AuthProvidersResponse),
+        (status = 500, description = "Internal server error", body = ApiErrorResponse)
+    )
+)]
+#[get("/providers")]
+pub async fn get_auth_providers() -> Result<impl Responder, ApiError> {
+    Ok(ApiResponse::ok(AuthProvidersResponse {
+        providers: crate::auth::auth_provider_names()?,
+    }))
+}
 
 #[utoipa::path(
     post,

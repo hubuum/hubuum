@@ -23,6 +23,8 @@ RUN cargo binstall --no-confirm diesel_cli
 # crates/, add a COPY for its Cargo.toml here; the dependency-only build below
 # creates and cleans up dummy source files for every copied crate manifest.
 COPY Cargo.toml Cargo.lock ./
+COPY crates/hubuum-auth-core/Cargo.toml ./crates/hubuum-auth-core/Cargo.toml
+COPY crates/hubuum-auth-ldap/Cargo.toml ./crates/hubuum-auth-ldap/Cargo.toml
 COPY crates/hubuum-event-sink-amqp/Cargo.toml ./crates/hubuum-event-sink-amqp/Cargo.toml
 COPY crates/hubuum-event-sink-email/Cargo.toml ./crates/hubuum-event-sink-email/Cargo.toml
 COPY crates/hubuum-event-sink-valkey/Cargo.toml ./crates/hubuum-event-sink-valkey/Cargo.toml

@@ -83,7 +83,7 @@ utoipa-swagger-ui = { version = "9", features = [
 urlparse = "0.7"
 uuid = { version = "1", features = ["v4", "serde"] }
 percent-encoding = "2"
-rustls = { version = "0.23", features = ["aws-lc-rs", "ring"], optional = true }
+rustls = { version = "0.23", features = ["aws-lc-rs", "ring"] }
 openssl = { version = "0.10.80", optional = true }
 lru = "0.18.0"
 toml = "0.9"
@@ -100,7 +100,7 @@ default = ["swagger-ui"]
 amqp = ["dep:hubuum-event-sink-amqp"]
 email = ["dep:hubuum-event-sink-email"]
 swagger-ui = ["dep:utoipa-swagger-ui"]
-tls-rustls = ["dep:rustls", "actix-web/rustls-0_23"]
+tls-rustls = ["actix-web/rustls-0_23"]
 tls-openssl = ["dep:openssl", "actix-web/openssl"]
 valkey = ["dep:hubuum-event-sink-valkey"]
 
