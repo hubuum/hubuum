@@ -8,6 +8,9 @@ use crate::can;
 use crate::config::{DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, get_config};
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
+use crate::db::traits::history::{
+    remote_target_as_of, remote_target_history_paginated_with_total_count,
+};
 use crate::db::traits::remote_target::{
     DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
     emit_remote_target_invoked_event,
@@ -27,13 +30,6 @@ use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
 use crate::traits::{ClassAccessors, CollectionAccessors};
-
-crate::history_db_fns!(
-    remote_target_history_paginated_with_total_count,
-    remote_target_as_of,
-    crate::schema::remote_targets_history,
-    crate::models::RemoteTargetHistory
-);
 
 #[utoipa::path(
     post,

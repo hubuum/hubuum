@@ -20,6 +20,9 @@ mod tests {
     use crate::api::v1::handlers::me::MeResponse;
     use crate::db::traits::Status;
     use crate::db::traits::authz::scope_allows;
+    use crate::db::traits::service_account::{
+        DisableServiceAccount, SaveServiceAccount, cancel_pending_tasks_for_principal,
+    };
     use crate::db::traits::task::scope_snapshot_json;
     use crate::db::with_connection;
     use crate::errors::ApiError;
@@ -27,13 +30,12 @@ mod tests {
     use crate::models::Collection;
     use crate::models::collection::user_can_on_any;
     use crate::models::principal::load_principal_by_id;
-    use crate::models::service_account::cancel_pending_tasks_for_principal;
     use crate::models::token::{Token, create_principal_token};
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
-        NewServiceAccount, NewTaskRecord, Permissions, PrincipalID, PrincipalMemberResponse,
-        PrincipalTokenMetadata, ServiceAccount, ServiceAccountID, ServiceAccountResponse, TaskID,
-        TaskKind, TaskRecord, TaskStatus,
+        GroupResponse, NewServiceAccount, NewTaskRecord, Permissions, PrincipalID,
+        PrincipalMemberResponse, PrincipalTokenMetadata, ServiceAccount, ServiceAccountID,
+        ServiceAccountResponse, TaskID, TaskKind, TaskRecord, TaskStatus,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;
@@ -69,6 +71,7 @@ mod tests {
         .await;
 
         let login = web::Form(LoginUser {
+            identity_scope: None,
             name: sa_name,
             password: "irrelevant".to_string(),
         });
@@ -95,6 +98,7 @@ mod tests {
 
         let create_user = |name: String| async move {
             NewUser {
+                identity_scope: None,
                 name,
                 password: "pw".to_string(),
                 proper_name: None,
@@ -106,6 +110,7 @@ mod tests {
         };
         let create_sa = |name: String| async move {
             NewServiceAccount {
+                identity_scope: None,
                 name,
                 description: None,
                 owner_group_id: group.id,
@@ -164,7 +169,7 @@ mod tests {
             diesel::insert_into(crate::schema::users::table)
                 .values((
                     crate::schema::users::id.eq(sa.id),
-                    crate::schema::users::password.eq("x"),
+                    crate::schema::users::password.eq(Some("x")),
                 ))
                 .execute(conn)
         });
@@ -818,7 +823,7 @@ mod tests {
 
         let resp = get_request(pool, &token, &format!("{ME_ENDPOINT}/groups")).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let groups: Vec<crate::models::Group> = test::read_body_json(resp).await;
+        let groups: Vec<GroupResponse> = test::read_body_json(resp).await;
         let ids: std::collections::HashSet<i32> = groups.iter().map(|g| g.id).collect();
 
         assert!(ids.contains(&group.id));
@@ -1368,6 +1373,7 @@ mod tests {
         let context = TestContext::new().await;
         let group = create_test_group(&context.pool).await;
         let create = NewServiceAccount {
+            identity_scope: None,
             name: context.scoped_name("audited_sa"),
             description: Some("audited".to_string()),
             owner_group_id: group.id,
@@ -1538,6 +1544,7 @@ mod tests {
         let prefix = format!("page-{}", generate_random_password(8));
         for index in 0..3 {
             NewServiceAccount {
+                identity_scope: None,
                 name: format!("{prefix}-{index}"),
                 description: None,
                 owner_group_id: group.id,

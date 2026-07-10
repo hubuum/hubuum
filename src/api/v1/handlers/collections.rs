@@ -5,8 +5,8 @@ use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, Authenticated};
 use crate::models::{
     Collection, CollectionID, EffectiveGroupPermission, Group, GroupID, GroupPermission,
-    NewCollectionWithAssignee, Permission, Permissions, PermissionsList, UpdateCollection,
-    UpdateCollectionParent,
+    GroupResponse, NewCollectionWithAssignee, Permission, Permissions, PermissionsList,
+    UpdateCollection, UpdateCollectionParent,
 };
 
 use crate::models::search::parse_query_parameter;
@@ -21,16 +21,10 @@ use tracing::{debug, info};
 use crate::can;
 
 use crate::db::traits::UserPermissions;
+use crate::db::traits::history::{collection_as_of, collection_history_paginated_with_total_count};
 use crate::traits::{
     CanDelete, CanSave, CanUpdate, CollectionAccessors, PermissionController, Search, SelfAccessors,
 };
-
-crate::history_db_fns!(
-    collection_history_paginated_with_total_count,
-    collection_as_of,
-    crate::schema::collections_history,
-    crate::models::CollectionHistory
-);
 
 #[utoipa::path(
     get,
@@ -950,7 +944,7 @@ pub async fn get_collection_effective_principal_permissions(
         ("permission" = Permissions, Path, description = "Permission value")
     ),
     responses(
-        (status = 200, description = "Groups with permission", body = [Group]),
+        (status = 200, description = "Groups with permission", body = [GroupResponse]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Collection not found", body = ApiErrorResponse)
     )
@@ -991,7 +985,9 @@ pub async fn get_collection_groups_with_permission(
         )
         .await?;
 
-    ApiResponse::paginated(groups, total_count, &query_options)
+    let response = GroupResponse::from_groups(&pool, groups).await?;
+
+    ApiResponse::paginated(response, total_count, &query_options)
 }
 
 #[utoipa::path(

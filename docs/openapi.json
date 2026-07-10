@@ -4414,7 +4414,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Group"
+                    "$ref": "#/components/schemas/GroupResponse"
                   }
                 }
               }
@@ -7601,7 +7601,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Group"
+                    "$ref": "#/components/schemas/GroupResponse"
                   }
                 }
               }
@@ -7657,7 +7657,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Group"
+                  "$ref": "#/components/schemas/GroupResponse"
                 }
               }
             }
@@ -7726,7 +7726,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Group"
+                  "$ref": "#/components/schemas/GroupResponse"
                 }
               }
             }
@@ -7783,6 +7783,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Directory-managed group is read-only",
             "content": {
               "application/json": {
                 "schema": {
@@ -7853,7 +7863,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Group"
+                  "$ref": "#/components/schemas/GroupResponse"
                 }
               }
             }
@@ -7870,6 +7880,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Directory-managed group is read-only",
             "content": {
               "application/json": {
                 "schema": {
@@ -8363,7 +8383,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Group"
+                    "$ref": "#/components/schemas/GroupResponse"
                   }
                 }
               }
@@ -8405,6 +8425,196 @@
                   "items": {
                     "$ref": "#/components/schemas/PrincipalCollectionPermissions"
                   }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/me/settings": {
+      "get": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Get Api V1 Iam Me Settings",
+        "description": "Auto-generated documentation for GET /api/v1/iam/me/settings.",
+        "operationId": "getApiV1IamMeSettings",
+        "responses": {
+          "200": {
+            "description": "Current principal settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Put Api V1 Iam Me Settings",
+        "description": "Auto-generated documentation for PUT /api/v1/iam/me/settings.",
+        "operationId": "putApiV1IamMeSettings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrincipalSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Replaced current principal settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Settings root is not an object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Delete Api V1 Iam Me Settings",
+        "description": "Auto-generated documentation for DELETE /api/v1/iam/me/settings.",
+        "operationId": "deleteApiV1IamMeSettings",
+        "responses": {
+          "204": {
+            "description": "Current principal settings reset"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Patch Api V1 Iam Me Settings",
+        "description": "Applies an object-only JSON Merge Patch to the current principal settings. Object values merge recursively; a `null` value removes its key; arrays, strings, numbers, and booleans replace the existing value. An object patch applied to a missing or non-object value starts from an empty object. The document root must be an object. Use PUT, rather than PATCH, when a setting itself must retain a null value.",
+        "operationId": "patchApiV1IamMeSettings",
+        "requestBody": {
+          "description": "The settings patch object.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrincipalSettings"
+              },
+              "example": {
+                "layout": {
+                  "columns": 2,
+                  "sidebar": null
+                },
+                "theme": "dark"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Merged current principal settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalSettings"
+                },
+                "example": {
+                  "layout": {
+                    "columns": 2,
+                    "density": "normal"
+                  },
+                  "theme": "dark"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Settings root is not an object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             }
@@ -8589,7 +8799,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Group"
+                    "$ref": "#/components/schemas/GroupResponse"
                   }
                 }
               }
@@ -8669,6 +8879,284 @@
           },
           "403": {
             "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/principals/{principal_id}/settings": {
+      "get": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Get Api V1 Iam Principals By Principal Id Settings",
+        "description": "Auto-generated documentation for GET /api/v1/iam/principals/{principal_id}/settings.",
+        "operationId": "getApiV1IamPrincipalsByPrincipalIdSettings",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Principal settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Principal not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Put Api V1 Iam Principals By Principal Id Settings",
+        "description": "Auto-generated documentation for PUT /api/v1/iam/principals/{principal_id}/settings.",
+        "operationId": "putApiV1IamPrincipalsByPrincipalIdSettings",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrincipalSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Replaced principal settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Settings root is not an object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Principal not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Delete Api V1 Iam Principals By Principal Id Settings",
+        "description": "Auto-generated documentation for DELETE /api/v1/iam/principals/{principal_id}/settings.",
+        "operationId": "deleteApiV1IamPrincipalsByPrincipalIdSettings",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Principal settings reset"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Principal not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Patch Api V1 Iam Principals By Principal Id Settings",
+        "description": "Applies an object-only JSON Merge Patch to the target principal settings. Object values merge recursively; a `null` value removes its key; arrays, strings, numbers, and booleans replace the existing value. An object patch applied to a missing or non-object value starts from an empty object. The document root must be an object. Use PUT, rather than PATCH, when a setting itself must retain a null value.",
+        "operationId": "patchApiV1IamPrincipalsByPrincipalIdSettings",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The settings patch object.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrincipalSettings"
+              },
+              "example": {
+                "layout": {
+                  "columns": 2,
+                  "sidebar": null
+                },
+                "theme": "dark"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Merged principal settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalSettings"
+                },
+                "example": {
+                  "layout": {
+                    "columns": 2,
+                    "density": "normal"
+                  },
+                  "theme": "dark"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Settings root is not an object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Principal not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -9649,6 +10137,16 @@
               }
             }
           },
+          "403": {
+            "description": "Provider-managed user is read-only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "User not found",
             "content": {
@@ -9718,6 +10216,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Provider-managed user is read-only",
             "content": {
               "application/json": {
                 "schema": {
@@ -13754,7 +14262,9 @@
           "groupname",
           "description",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "identity_scope_id",
+          "managed_by"
         ],
         "properties": {
           "created_at": {
@@ -13764,12 +14274,39 @@
           "description": {
             "type": "string"
           },
+          "external_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "groupname": {
             "type": "string"
           },
           "id": {
             "type": "integer",
             "format": "int32"
+          },
+          "identity_scope_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "last_sync_attempted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_sync_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "managed_by": {
+            "type": "string"
           },
           "updated_at": {
             "type": "string",
@@ -13809,6 +14346,12 @@
         "properties": {
           "groupname": {
             "type": "string"
+          },
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -13824,6 +14367,64 @@
           },
           "permission": {
             "$ref": "#/components/schemas/Permission"
+          }
+        }
+      },
+      "GroupResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "identity_scope",
+          "groupname",
+          "description",
+          "managed_by",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "external_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "groupname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "identity_scope": {
+            "type": "string"
+          },
+          "last_sync_attempted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_sync_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "managed_by": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -15393,6 +15994,12 @@
           "password"
         ],
         "properties": {
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -15401,6 +16008,7 @@
           }
         },
         "example": {
+          "identity_scope": null,
           "name": "alice",
           "password": "correct-horse-battery-staple"
         }
@@ -15673,11 +16281,18 @@
           },
           "groupname": {
             "type": "string"
+          },
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "example": {
           "description": "Operations team",
-          "groupname": "ops"
+          "groupname": "ops",
+          "identity_scope": null
         }
       },
       "NewHubuumClass": {
@@ -15918,6 +16533,12 @@
               "null"
             ]
           },
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -15928,6 +16549,7 @@
         },
         "example": {
           "description": "Production DNS importer",
+          "identity_scope": null,
           "name": "dns-sync",
           "owner_group_id": 1
         }
@@ -15980,6 +16602,12 @@
               "null"
             ]
           },
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -15995,6 +16623,7 @@
         },
         "example": {
           "email": "alice@example.com",
+          "identity_scope": null,
           "name": "alice",
           "password": "correct-horse-battery-staple",
           "proper_name": "Alice Doe"
@@ -16265,10 +16894,20 @@
         "description": "Public representation of a group member (a principal of either kind).",
         "required": [
           "principal_id",
+          "identity_scope",
           "kind",
-          "name"
+          "name",
+          "created_at",
+          "updated_at"
         ],
         "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "identity_scope": {
+            "type": "string"
+          },
           "kind": {
             "type": "string"
           },
@@ -16278,8 +16917,16 @@
           "principal_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
+      },
+      "PrincipalSettings": {
+        "type": "object",
+        "description": "An object-only JSON document containing a principal's local preferences.\n\nValues below the document root may be any JSON type. The private\nrepresentation keeps callers from constructing an invalid non-object root."
       },
       "PrincipalToken": {
         "type": "object",
@@ -16947,6 +17594,7 @@
         "description": "Public response shape, combining the service-account row with its principal\nname (the name lives on `principals`).",
         "required": [
           "id",
+          "identity_scope",
           "name",
           "description",
           "owner_group_id",
@@ -16978,6 +17626,9 @@
           "id": {
             "type": "integer",
             "format": "int32"
+          },
+          "identity_scope": {
+            "type": "string"
           },
           "name": {
             "type": "string"
@@ -17943,6 +18594,9 @@
         "description": "Public representation of a user, including the name resolved from the\nprincipal (the name authority).",
         "required": [
           "id",
+          "identity_scope",
+          "provider_kind",
+          "provider_managed",
           "name",
           "created_at",
           "updated_at"
@@ -17962,6 +18616,23 @@
             "type": "integer",
             "format": "int32"
           },
+          "identity_scope": {
+            "type": "string"
+          },
+          "last_sync_attempted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_sync_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "name": {
             "type": "string"
           },
@@ -17970,6 +18641,12 @@
               "string",
               "null"
             ]
+          },
+          "provider_kind": {
+            "type": "string"
+          },
+          "provider_managed": {
+            "type": "boolean"
           },
           "updated_at": {
             "type": "string",

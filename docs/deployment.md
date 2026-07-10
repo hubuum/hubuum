@@ -37,6 +37,10 @@ sudo ./scripts/install-single-host.sh \
 
 This creates `/opt/hubuum` by default, generates `/opt/hubuum/.env`, writes `compose.yml` and `Caddyfile`, pulls published images, and starts the stack.
 
+The installer also creates an empty `/opt/hubuum/auth.toml` for local-only
+authentication. Use `--auth-config` to point the deployment at an existing
+external-auth TOML file instead.
+
 By default, the installer starts the stack directly with Compose. Pass `--systemd` to also write `/etc/systemd/system/hubuum.service`, enable it, and start the stack through that unit.
 
 Default app images:
@@ -150,6 +154,49 @@ sudo ./scripts/install-single-host.sh \
 
 The database must already exist and be reachable from containers on the host. Avoid `localhost` in the URL unless Postgres is inside the same container; from a container, `localhost` means the API container itself.
 
+## External Authentication Configuration
+
+Pass an absolute host path with `--auth-config` to enable LDAP or another
+configured external identity provider:
+
+```bash
+sudo ./scripts/install-single-host.sh \
+  --web hubuum.example.com \
+  --api hubuum-api.example.com \
+  --email admin@example.com \
+  --auth-config /etc/hubuum/auth.toml
+```
+
+The installer validates that the file exists and is readable, records its
+absolute host path in `/opt/hubuum/.env`, and bind-mounts it read-only as
+`/etc/hubuum/auth.toml` in the API container. The container receives
+`HUBUUM_AUTH_CONFIG_PATH=/etc/hubuum/auth.toml` automatically. The file is not
+copied into the installation directory.
+
+Keep provider credentials readable only by the account administering the
+rootful container engine. For example:
+
+```bash
+sudo install -o root -g root -m 0600 auth.toml /etc/hubuum/auth.toml
+```
+
+Re-running the installer without `--auth-config` preserves the stored host
+path. To use a different file while updating, pass it to the update helper:
+
+```bash
+cd /opt/hubuum
+sudo ./update-single-host.sh --auth-config /etc/hubuum/auth-next.toml
+```
+
+The update helper validates and persists the new path before recreating the API
+container. Editing the currently mounted host file still requires an API
+container restart because auth-provider configuration is loaded at startup.
+Run `update-single-host.sh` without `--auth-config` to restart after such an
+edit.
+
+See [External Authentication](external_auth.md) for the TOML schema and LDAP
+examples.
+
 ## Source Builds
 
 The installer does not clone repositories by default. Use `--build-from-source` only when you need to build local images from Git refs that are not available as published container images:
@@ -191,6 +238,9 @@ sudo ./update-single-host.sh
 ```
 
 For image-based installs, the update command pulls the latest configured images and restarts the stack. For source-build installs, it fetches the source checkouts, rebuilds the local app images, and restarts the stack.
+
+Pass `--auth-config /absolute/host/path.toml` to change the read-only external
+authentication file as part of the same update and restart.
 
 If the systemd unit exists, updates restart through systemd, whose stop/start steps recreate the containers. Otherwise the update tears the stack down and brings it back up (`compose down` then `compose up -d`) so the freshly pulled images are actually picked up; a plain `compose up -d` does not reliably recreate running containers, particularly under Podman.
 
@@ -255,6 +305,7 @@ Common optional parameters:
 - `--dir`: install directory. Default: `/opt/hubuum`.
 - `--mode`: `all` or `backend`. Default: `all`.
 - `--database-url`: existing Postgres URL. If omitted, the installer creates a managed Postgres container.
+- `--auth-config`: absolute path to a host auth-provider TOML file. The API container mounts it read-only at `/etc/hubuum/auth.toml`.
 - `--engine`: `auto`, `docker`, or `podman`. Default: `auto`.
 - `--backend-image`: backend image. Default: `ghcr.io/hubuum/hubuum-server:main`.
 - `--frontend-image`: frontend image. Default: `ghcr.io/hubuum/hubuum-frontend:main`.
@@ -288,6 +339,8 @@ Backend:
 - `HUBUUM_TOKEN_LIFETIME_HOURS=24`
 - `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS=5`
 - `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS=300`
+- `HUBUUM_AUTH_CONFIG_HOST_PATH`: absolute source path on the container host.
+- `HUBUUM_AUTH_CONFIG_PATH=/etc/hubuum/auth.toml`: read-only path inside the API container.
 
 Frontend, all-in-one mode only:
 

@@ -15,6 +15,8 @@ categories = ["web-programming::http-server"]
 
 [workspace]
 members = [
+    "crates/hubuum-auth-core",
+    "crates/hubuum-auth-ldap",
     "crates/hubuum-event-sink-amqp",
     "crates/hubuum-event-sink-email",
     "crates/hubuum-event-sink-valkey",
@@ -54,6 +56,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 hmac = "0.13"
+hubuum-auth-core = { path = "crates/hubuum-auth-core" }
+hubuum-auth-ldap = { path = "crates/hubuum-auth-ldap" }
 hubuum-event-sink-amqp = { path = "crates/hubuum-event-sink-amqp", optional = true }
 hubuum-event-sink-email = { path = "crates/hubuum-event-sink-email", optional = true }
 hubuum-event-sink-valkey = { path = "crates/hubuum-event-sink-valkey", optional = true }
@@ -82,6 +86,7 @@ percent-encoding = "2"
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"], optional = true }
 openssl = { version = "0.10.80", optional = true }
 lru = "0.18.0"
+toml = "0.9"
 
 [dev-dependencies]
 criterion = "0.8.2"

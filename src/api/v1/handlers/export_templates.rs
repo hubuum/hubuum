@@ -7,6 +7,9 @@ use crate::api::response::ApiResponse;
 use crate::can;
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
+use crate::db::traits::history::{
+    export_template_as_of, export_template_history_paginated_with_total_count,
+};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection::user_can_on_any;
@@ -17,13 +20,6 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors, SelfAccessors};
-
-crate::history_db_fns!(
-    export_template_history_paginated_with_total_count,
-    export_template_as_of,
-    crate::schema::export_templates_history,
-    crate::models::ExportTemplateHistory
-);
 
 #[utoipa::path(
     post,

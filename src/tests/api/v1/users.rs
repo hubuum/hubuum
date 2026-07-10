@@ -1,11 +1,14 @@
 #[cfg(test)]
 mod tests {
+    use crate::auth::{ConfiguredLdapScope, sync_external_user};
     use crate::db::traits::ActiveTokens;
     use crate::models::group::NewGroup;
     use crate::models::user::{LoginUser, NewUser, UpdateUser, User, UserID, UserResponse};
-    use crate::models::{Group, PrincipalTokenMetadata};
+    use crate::models::{GroupResponse, PrincipalTokenMetadata};
     use crate::pagination::NEXT_CURSOR_HEADER;
     use actix_web::{http::StatusCode, test};
+    use hubuum_auth_core::{AuthenticatedExternalUser, ExternalUserProfile};
+    use hubuum_auth_ldap::{LdapScopeConfig, LdapSearchScope};
     use rstest::rstest;
 
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
@@ -16,6 +19,42 @@ mod tests {
 
     const USERS_ENDPOINT: &str = "/api/v1/iam/users";
     const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
+
+    fn test_ldap_scope(scope: String) -> ConfiguredLdapScope {
+        ConfiguredLdapScope {
+            ldap: LdapScopeConfig {
+                scope,
+                url: "ldap://ldap.example.org".to_string(),
+                bind_dn: None,
+                bind_password: None,
+                connect_timeout_seconds: 5,
+                operation_timeout_seconds: 10,
+                user_base_dn: "ou=people,dc=example,dc=org".to_string(),
+                user_filter: "(uid={username})".to_string(),
+                user_scope: LdapSearchScope::Subtree,
+                username_attribute: "uid".to_string(),
+                subject_attribute: "dn".to_string(),
+                display_name_attribute: Some("cn".to_string()),
+                email_attribute: Some("mail".to_string()),
+                group_attributes: Vec::new(),
+                group_rules: Vec::new(),
+            },
+            refresh_ttl_seconds: Some(300),
+            max_stale_seconds: Some(3600),
+        }
+    }
+
+    fn external_user(subject: &str, name: &str) -> AuthenticatedExternalUser {
+        AuthenticatedExternalUser {
+            profile: ExternalUserProfile {
+                subject: subject.to_string(),
+                name: name.to_string(),
+                proper_name: Some(format!("{name} Example")),
+                email: Some(format!("{name}@example.org")),
+            },
+            groups: Vec::new(),
+        }
+    }
 
     async fn assert_user_response_matches(
         pool: &crate::db::DbPool,
@@ -115,6 +154,7 @@ mod tests {
         let context = test_context;
 
         let new_user = NewUser {
+            identity_scope: None,
             name: "test_create_user_endpoint".to_string(),
             password: "testpassword".to_string(),
             proper_name: Some("Test Create User".to_string()),
@@ -222,12 +262,57 @@ mod tests {
             .unwrap();
         assert_ne!(stored_user.password, test_user.password);
         LoginUser {
+            identity_scope: None,
             name: test_user.name(&context.pool).await.unwrap(),
             password: "newpassword".to_string(),
         }
         .login(&context.pool)
         .await
         .unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_directory_managed_user_is_read_only(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let identity_scope = context.scoped_name("directory");
+        let username = context.scoped_name("external_read_only_user");
+        let subject = format!("uid={username},ou=people,dc=example,dc=org");
+        let user = sync_external_user(
+            &context.pool,
+            &test_ldap_scope(identity_scope.clone()),
+            external_user(&subject, &username),
+        )
+        .await
+        .unwrap();
+        let user_url = format!("{USERS_ENDPOINT}/{}", user.id);
+
+        let resp = get_request(&context.pool, &context.admin_token, &user_url).await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let returned_user: UserResponse = test::read_body_json(resp).await;
+        assert_eq!(returned_user.identity_scope, identity_scope);
+        assert_eq!(returned_user.provider_kind, "ldap");
+        assert!(returned_user.provider_managed);
+
+        let update = UpdateUser {
+            password: Some("newpassword".to_string()),
+            proper_name: Some("Local Override".to_string()),
+            email: Some("override@example.org".to_string()),
+        };
+        let resp = patch_request(&context.pool, &context.admin_token, &user_url, &update).await;
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{user_url}/anonymize"),
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+
+        let resp = delete_request(&context.pool, &context.admin_token, &user_url).await;
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
     }
 
     #[rstest]
@@ -257,6 +342,7 @@ mod tests {
         let mut created_users = Vec::new();
         for i in 0..3 {
             let user = NewUser {
+                identity_scope: None,
                 name: format!("{prefix}_{i}"),
                 password: "testpassword".to_string(),
                 proper_name: Some(format!("{prefix} Proper {i}")),
@@ -290,6 +376,7 @@ mod tests {
         let prefix = "proper_name_filter";
 
         let matching_user = NewUser {
+            identity_scope: None,
             name: format!("{prefix}_match_username"),
             password: "testpassword".to_string(),
             proper_name: Some(format!("{prefix}_match_display")),
@@ -300,6 +387,7 @@ mod tests {
         .unwrap();
 
         let other_user = NewUser {
+            identity_scope: None,
             name: format!("{prefix}_other_username"),
             password: "testpassword".to_string(),
             proper_name: Some(format!("{prefix}_other_display")),
@@ -344,6 +432,7 @@ mod tests {
         let mut created_users = Vec::new();
         for i in 0..3 {
             let user = NewUser {
+                identity_scope: None,
                 name: format!("{prefix}_{i}"),
                 password: "testpassword".to_string(),
                 proper_name: Some(format!("{prefix} Proper {i}")),
@@ -377,6 +466,7 @@ mod tests {
         for idx in 0..3 {
             created_users.push(
                 NewUser {
+                    identity_scope: None,
                     name: format!("{prefix}_{idx}"),
                     password: "testpassword".to_string(),
                     proper_name: Some(format!("{prefix} Proper {idx}")),
@@ -510,6 +600,7 @@ mod tests {
         let context = test_context;
         let user = create_test_user(&context.pool).await;
         let matching_group = NewGroup {
+            identity_scope: None,
             groupname: format!("filter-user-groups-{}", user.id),
             description: Some("matching group".to_string()),
         }
@@ -517,6 +608,7 @@ mod tests {
         .await
         .unwrap();
         let other_group = NewGroup {
+            identity_scope: None,
             groupname: format!("other-user-groups-{}", user.id),
             description: Some("non-matching group".to_string()),
         }
@@ -543,7 +635,7 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let groups: Vec<crate::models::Group> = test::read_body_json(resp).await;
+        let groups: Vec<GroupResponse> = test::read_body_json(resp).await;
 
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].id, matching_group.id);
@@ -568,6 +660,7 @@ mod tests {
         let user = create_test_user(&context.pool).await;
         let expected_groups = vec![
             NewGroup {
+                identity_scope: None,
                 groupname: format!("pagination-user-groups-a-{}", user.id),
                 description: Some("first group".to_string()),
             }
@@ -575,6 +668,7 @@ mod tests {
             .await
             .unwrap(),
             NewGroup {
+                identity_scope: None,
                 groupname: format!("pagination-user-groups-b-{}", user.id),
                 description: Some("second group".to_string()),
             }
@@ -582,6 +676,7 @@ mod tests {
             .await
             .unwrap(),
             NewGroup {
+                identity_scope: None,
                 groupname: format!("pagination-user-groups-c-{}", user.id),
                 description: Some("third group".to_string()),
             }
@@ -597,7 +692,8 @@ mod tests {
                 .unwrap();
         }
 
-        let (groups, total_count): (Vec<Group>, i64) = assert_paginated_collection_total_count(
+        let (groups, total_count): (Vec<GroupResponse>, i64) =
+            assert_paginated_collection_total_count(
             &context.pool,
             &context.admin_token,
             10,
@@ -611,8 +707,8 @@ mod tests {
                     PRINCIPALS_ENDPOINT, user.id
                 ),
             },
-        )
-        .await;
+            )
+            .await;
 
         assert_eq!(total_count, expected_groups.len() as i64);
         assert_eq!(
@@ -689,6 +785,7 @@ mod tests {
         // Create a throwaway user to anonymize.
         let uname = format!("api_anon_{}", context.scope.scope_id);
         let new_user = crate::models::NewUser {
+            identity_scope: None,
             name: uname.clone(),
             password: "secret".into(),
             proper_name: Some("API Anon".into()),

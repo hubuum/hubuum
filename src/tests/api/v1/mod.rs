@@ -9,6 +9,7 @@ pub mod exports;
 pub mod groups;
 pub mod imports;
 pub mod objects;
+pub mod principal_settings;
 pub mod querying;
 pub mod relations;
 pub mod remote_targets;

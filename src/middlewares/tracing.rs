@@ -90,15 +90,18 @@ where
             .get(&CORRELATION_ID)
             .and_then(|hv| hv.to_str().ok())
             .map(str::to_string);
-        req.extensions_mut()
-            .insert(RequestProvenance::new(request_id, correlation_id.clone()));
-
         let span = span!(Level::INFO, "request", request_id = %request_id_s, correlation_id = ?correlation_id);
 
         let method = req.method().to_string();
         let path = req.path().to_string();
         let client_ip = extract_client_ip(&req, &self.proxy_trust);
         let client_ip_s = client_ip.map(|ip| ip.to_string());
+        req.extensions_mut()
+            .insert(RequestProvenance::new_with_client_ip(
+                request_id,
+                correlation_id.clone(),
+                client_ip,
+            ));
 
         let start_time = Instant::now();
         info!(request_id = %request_id_s, correlation_id = ?correlation_id, message = "Request start", method = &method, path = &path, client_ip = client_ip_s.as_deref());

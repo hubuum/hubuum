@@ -1,4 +1,4 @@
-use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, web};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 use utoipa::ToSchema;
@@ -7,16 +7,18 @@ use crate::api::openapi::{ApiErrorResponse, LoginResponse};
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::db::traits::ActiveTokens;
-use crate::errors::ApiError;
-use crate::extractors::{AccessEventContext, ManagementAccess};
-use crate::models::collection::principal_all_permissions;
-use crate::models::principal::{Principal, PrincipalKind};
-use crate::models::search::parse_query_parameter;
-use crate::models::service_account::{
+use crate::db::traits::service_account::{
     is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
 };
+use crate::errors::ApiError;
+use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
+use crate::models::collection::principal_all_permissions;
+use crate::models::principal::{Principal, PrincipalKind, PrincipalSettings};
+use crate::models::search::parse_query_parameter;
 use crate::models::token::{create_principal_token, revoke_token_by_id_for_principal};
-use crate::models::{Group, Permissions, PrincipalID, PrincipalToken, PrincipalTokenMetadata};
+use crate::models::{
+    Group, GroupResponse, Permissions, PrincipalID, PrincipalToken, PrincipalTokenMetadata,
+};
 use crate::pagination::prepare_db_pagination;
 use crate::traits::{AuthzSubject, GroupAccessors};
 use std::collections::BTreeMap;
@@ -27,7 +29,30 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(list_tokens)
         .service(revoke_token)
         .service(list_principal_groups)
-        .service(list_principal_permissions);
+        .service(list_principal_permissions)
+        .service(get_principal_settings)
+        .service(put_principal_settings)
+        .service(patch_principal_settings)
+        .service(delete_principal_settings);
+}
+
+async fn ensure_can_manage_principal_settings(
+    pool: &DbPool,
+    requestor: &Authenticated,
+    target_principal_id: i32,
+) -> Result<(), ApiError> {
+    if requestor.principal.id == target_principal_id {
+        return Ok(());
+    }
+
+    if requestor.scopes().is_none()
+        && requestor.principal.is_human()
+        && requestor.principal.is_admin(pool).await?
+    {
+        return Ok(());
+    }
+
+    Err(ApiError::NotFound("Principal not found".to_string()))
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -264,7 +289,7 @@ pub async fn revoke_token(
     security(("bearer_auth" = [])),
     params(("principal_id" = i32, Path, description = "Principal id")),
     responses(
-        (status = 200, description = "Groups the principal belongs to", body = [Group]),
+        (status = 200, description = "Groups the principal belongs to", body = [GroupResponse]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse)
     )
@@ -285,7 +310,8 @@ pub async fn list_principal_groups(
     let (groups, total_count) = pid
         .groups_paginated_with_total_count(&pool, &search_params)
         .await?;
-    ApiResponse::paginated(groups, total_count, &params)
+    let response = GroupResponse::from_groups(&pool, groups).await?;
+    ApiResponse::paginated(response, total_count, &params)
 }
 
 /// One group's direct permission row contribution on a collection.
@@ -329,4 +355,126 @@ pub async fn list_principal_permissions(
 
     let export = principal_permissions_response(&pool, &pid).await?;
     Ok(ApiResponse::new(export, StatusCode::OK))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/iam/principals/{principal_id}/settings",
+    tag = "principals",
+    security(("bearer_auth" = [])),
+    params(("principal_id" = i32, Path, description = "Principal id")),
+    responses(
+        (status = 200, description = "Principal settings", body = PrincipalSettings),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Principal not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{principal_id}/settings")]
+pub async fn get_principal_settings(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    principal_id: web::Path<PrincipalID>,
+) -> Result<impl Responder, ApiError> {
+    let principal_id = principal_id.into_inner();
+    ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
+    Ok(ApiResponse::ok(principal_id.settings(&pool).await?))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/v1/iam/principals/{principal_id}/settings",
+    tag = "principals",
+    security(("bearer_auth" = [])),
+    params(("principal_id" = i32, Path, description = "Principal id")),
+    request_body = PrincipalSettings,
+    responses(
+        (status = 200, description = "Replaced principal settings", body = PrincipalSettings),
+        (status = 400, description = "Settings root is not an object", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Principal not found", body = ApiErrorResponse)
+    )
+)]
+#[put("/{principal_id}/settings")]
+pub async fn put_principal_settings(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    principal_id: web::Path<PrincipalID>,
+    settings: web::Json<PrincipalSettings>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let principal_id = principal_id.into_inner();
+    ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
+    let event_context = requestor.event_context(&req);
+    let settings = principal_id
+        .replace_settings(&pool, settings.into_inner(), &event_context)
+        .await?;
+    Ok(ApiResponse::ok(settings))
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/v1/iam/principals/{principal_id}/settings",
+    tag = "principals",
+    security(("bearer_auth" = [])),
+    params(("principal_id" = i32, Path, description = "Principal id")),
+    description = "Applies an object-only JSON Merge Patch to the target principal settings. Object values merge recursively; a `null` value removes its key; arrays, strings, numbers, and booleans replace the existing value. An object patch applied to a missing or non-object value starts from an empty object. The document root must be an object. Use PUT, rather than PATCH, when a setting itself must retain a null value.",
+    request_body(
+        content = PrincipalSettings,
+        description = "The settings patch object.",
+        example = json!({
+            "theme": "dark",
+            "layout": { "sidebar": null, "columns": 2 }
+        })
+    ),
+    responses(
+        (status = 200, description = "Merged principal settings", body = PrincipalSettings, example = json!({
+            "theme": "dark",
+            "layout": { "density": "normal", "columns": 2 }
+        })),
+        (status = 400, description = "Settings root is not an object", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Principal not found", body = ApiErrorResponse)
+    )
+)]
+#[patch("/{principal_id}/settings")]
+pub async fn patch_principal_settings(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    principal_id: web::Path<PrincipalID>,
+    patch: web::Json<PrincipalSettings>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let principal_id = principal_id.into_inner();
+    ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
+    let event_context = requestor.event_context(&req);
+    let settings = principal_id
+        .patch_settings(&pool, patch.into_inner(), &event_context)
+        .await?;
+    Ok(ApiResponse::ok(settings))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/iam/principals/{principal_id}/settings",
+    tag = "principals",
+    security(("bearer_auth" = [])),
+    params(("principal_id" = i32, Path, description = "Principal id")),
+    responses(
+        (status = 204, description = "Principal settings reset"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Principal not found", body = ApiErrorResponse)
+    )
+)]
+#[delete("/{principal_id}/settings")]
+pub async fn delete_principal_settings(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    principal_id: web::Path<PrincipalID>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let principal_id = principal_id.into_inner();
+    ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
+    let event_context = requestor.event_context(&req);
+    principal_id.reset_settings(&pool, &event_context).await?;
+    Ok(ApiResponse::no_content())
 }

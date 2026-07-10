@@ -24,6 +24,7 @@
     DROP TABLE IF EXISTS hubuumobject CASCADE;
     DROP TABLE IF EXISTS hubuumclass CASCADE;
     DROP TABLE IF EXISTS permissions CASCADE;
+    DROP TABLE IF EXISTS group_membership_sources CASCADE;
     DROP TABLE IF EXISTS group_memberships CASCADE;
     DROP TABLE IF EXISTS user_groups CASCADE;
     DROP TABLE IF EXISTS service_accounts CASCADE;
@@ -32,6 +33,7 @@
     DROP TABLE IF EXISTS collections CASCADE;
     DROP TABLE IF EXISTS groups CASCADE;
     DROP TABLE IF EXISTS principals CASCADE;
+    DROP TABLE IF EXISTS identity_scopes CASCADE;
 
     ----------------------
     ---- Functions needed before tables/constraints reference them
@@ -69,24 +71,52 @@
     ---- Identity: principals + subtypes
     ----------------------
 
+    CREATE TABLE identity_scopes (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR NOT NULL UNIQUE,
+        provider_kind VARCHAR NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+    );
+
+    INSERT INTO identity_scopes (id, name, provider_kind)
+    VALUES (1, 'local', 'local');
+
+    SELECT setval('identity_scopes_id_seq', (SELECT MAX(id) FROM identity_scopes));
+
     -- Parent identity table. Both humans and service accounts are principals; a
     -- principal id IS the user/service-account id (class-table inheritance).
     CREATE TABLE principals (
         id SERIAL PRIMARY KEY,
         kind VARCHAR NOT NULL CHECK (kind IN ('human', 'service_account')),
-        name VARCHAR NOT NULL UNIQUE,
+        name VARCHAR NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        identity_scope_id INT NOT NULL DEFAULT 1 REFERENCES identity_scopes(id) ON DELETE RESTRICT,
+        provider_managed BOOLEAN NOT NULL DEFAULT FALSE,
+        settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+        external_subject VARCHAR NULL,
+        last_sync_attempted_at TIMESTAMP NULL,
+        last_sync_success_at TIMESTAMP NULL,
+        CONSTRAINT principals_settings_object CHECK (jsonb_typeof(settings) = 'object'),
         -- Backs the composite (id, kind) FKs on the subtype tables.
-        UNIQUE (id, kind)
+        UNIQUE (id, kind),
+        UNIQUE (identity_scope_id, name)
     );
 
     CREATE TABLE groups (
         id SERIAL PRIMARY KEY,
-        groupname VARCHAR NOT NULL UNIQUE,
+        groupname VARCHAR NOT NULL,
         description VARCHAR NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
-        updated_at TIMESTAMP NOT NULL DEFAULT now()
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        identity_scope_id INT NOT NULL DEFAULT 1 REFERENCES identity_scopes(id) ON DELETE RESTRICT,
+        managed_by VARCHAR NOT NULL DEFAULT 'local',
+        external_key VARCHAR NULL,
+        last_sync_attempted_at TIMESTAMP NULL,
+        last_sync_success_at TIMESTAMP NULL,
+        UNIQUE (identity_scope_id, groupname),
+        UNIQUE (identity_scope_id, external_key)
     );
 
     CREATE TABLE collections (
@@ -118,7 +148,7 @@
     CREATE TABLE users (
         id INT PRIMARY KEY,
         kind VARCHAR NOT NULL DEFAULT 'human' CHECK (kind = 'human'),
-        password VARCHAR NOT NULL,
+        password VARCHAR NULL,
         proper_name VARCHAR NULL,
         email VARCHAR NULL,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
@@ -147,6 +177,26 @@
         PRIMARY KEY (principal_id, group_id),
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE group_membership_sources (
+        principal_id INT NOT NULL,
+        group_id INT NOT NULL,
+        source VARCHAR NOT NULL,
+        source_scope_id INT NOT NULL REFERENCES identity_scopes(id) ON DELETE RESTRICT DEFAULT 1,
+        source_key VARCHAR NOT NULL DEFAULT '',
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now(),
+        PRIMARY KEY (principal_id, group_id, source, source_scope_id, source_key),
+        FOREIGN KEY (principal_id, group_id)
+            REFERENCES group_memberships(principal_id, group_id)
+            ON DELETE CASCADE,
+        FOREIGN KEY (principal_id)
+            REFERENCES principals(id)
+            ON DELETE CASCADE,
+        FOREIGN KEY (group_id)
+            REFERENCES groups(id)
+            ON DELETE CASCADE
     );
 
     CREATE TABLE permissions (
@@ -504,11 +554,19 @@
     ----------------------
 
     ---- Identity, groups, collections
+    CREATE INDEX idx_identity_scopes_name ON identity_scopes(name);
     CREATE INDEX idx_principals_name ON principals(name);
     CREATE INDEX idx_principals_kind ON principals(kind);
+    CREATE INDEX idx_principals_identity_scope_id ON principals(identity_scope_id);
+    CREATE UNIQUE INDEX idx_principals_identity_scope_external_subject
+        ON principals(identity_scope_id, external_subject)
+        WHERE external_subject IS NOT NULL;
     CREATE INDEX idx_groups_groupname ON groups(groupname);
+    CREATE INDEX idx_groups_identity_scope_id ON groups(identity_scope_id);
     CREATE INDEX idx_group_memberships_principal_id ON group_memberships(principal_id);
     CREATE INDEX idx_group_memberships_group_id ON group_memberships(group_id);
+    CREATE INDEX idx_group_membership_sources_principal_scope
+        ON group_membership_sources(principal_id, source_scope_id, source);
     CREATE INDEX idx_service_accounts_owner_group_id ON service_accounts(owner_group_id);
     CREATE INDEX idx_service_accounts_disabled_at ON service_accounts(disabled_at) WHERE disabled_at IS NOT NULL;
     CREATE INDEX idx_collections_name ON collections(name);
@@ -1387,6 +1445,11 @@
     FOR EACH ROW
     EXECUTE FUNCTION enforce_object_relation_order();
 
+    DROP TRIGGER IF EXISTS update_identity_scopes_updated_at ON identity_scopes;
+    CREATE TRIGGER update_identity_scopes_updated_at
+    BEFORE UPDATE ON identity_scopes
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
     DROP TRIGGER IF EXISTS update_principals_updated_at ON principals;
     CREATE TRIGGER update_principals_updated_at
     BEFORE UPDATE ON principals
@@ -1410,6 +1473,11 @@
     DROP TRIGGER IF EXISTS update_group_memberships_updated_at ON group_memberships;
     CREATE TRIGGER update_group_memberships_updated_at
     BEFORE UPDATE ON group_memberships
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+
+    DROP TRIGGER IF EXISTS update_group_membership_sources_updated_at ON group_membership_sources;
+    CREATE TRIGGER update_group_membership_sources_updated_at
+    BEFORE UPDATE ON group_membership_sources
     FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
     DROP TRIGGER IF EXISTS update_collections_updated_at ON collections;

@@ -117,8 +117,20 @@ fn lockout_duration(level: u32, base_seconds: u64, max_seconds: u64) -> Duration
     Duration::from_secs(seconds)
 }
 
-fn user_ip_key(username: &str, ip_label: &str) -> String {
-    format!("u:{}|{}", username.trim().to_ascii_lowercase(), ip_label)
+fn principal_label(identity_scope: &str, username: &str) -> String {
+    format!(
+        "{}/{}",
+        identity_scope.trim().to_ascii_lowercase(),
+        username.trim().to_ascii_lowercase()
+    )
+}
+
+fn user_ip_key(identity_scope: &str, username: &str, ip_label: &str) -> String {
+    format!(
+        "u:{}|{}",
+        principal_label(identity_scope, username),
+        ip_label
+    )
 }
 
 fn ip_label(client_ip: Option<IpAddr>) -> String {
@@ -143,12 +155,13 @@ fn subnet_label(ip: IpAddr, cfg: &LoginRateLimitConfig) -> String {
 /// always applies; the per-IP and per-subnet scopes apply only when a client IP is known
 /// and their thresholds are non-zero (a zero threshold disables that scope).
 fn scopes_for(
+    identity_scope: &str,
     username: &str,
     client_ip: Option<IpAddr>,
     cfg: &LoginRateLimitConfig,
 ) -> Vec<(String, usize)> {
     let mut scopes = vec![(
-        user_ip_key(username, &ip_label(client_ip)),
+        user_ip_key(identity_scope, username, &ip_label(client_ip)),
         cfg.max_attempts,
     )];
 
@@ -206,7 +219,11 @@ pub(crate) fn client_ip_for_request(req: &HttpRequest) -> Option<IpAddr> {
 }
 
 /// Whether the login request is currently throttled by any applicable scope.
-pub(crate) async fn login_is_rate_limited(username: &str, client_ip: Option<IpAddr>) -> bool {
+pub(crate) async fn login_is_rate_limited(
+    identity_scope: &str,
+    username: &str,
+    client_ip: Option<IpAddr>,
+) -> bool {
     let cfg = login_rate_limit_config();
     if !cfg.enabled {
         return false;
@@ -215,14 +232,18 @@ pub(crate) async fn login_is_rate_limited(username: &str, client_ip: Option<IpAd
     let now = Instant::now();
     let guard = LOGIN_ATTEMPTS.lock().await;
 
-    scopes_for(username, client_ip, &cfg)
+    scopes_for(identity_scope, username, client_ip, &cfg)
         .iter()
         .any(|(key, _)| guard.get(key).is_some_and(|state| state.is_locked(now)))
 }
 
 /// Record a failed login attempt across all applicable scopes, applying lockouts with
 /// exponential backoff when a scope crosses its threshold.
-pub(crate) async fn record_login_failure(username: &str, client_ip: Option<IpAddr>) {
+pub(crate) async fn record_login_failure(
+    identity_scope: &str,
+    username: &str,
+    client_ip: Option<IpAddr>,
+) {
     let cfg = login_rate_limit_config();
     if !cfg.enabled {
         return;
@@ -232,7 +253,7 @@ pub(crate) async fn record_login_failure(username: &str, client_ip: Option<IpAdd
     let window = Duration::from_secs(cfg.window_seconds);
     let mut guard = LOGIN_ATTEMPTS.lock().await;
 
-    for (key, threshold) in scopes_for(username, client_ip, &cfg) {
+    for (key, threshold) in scopes_for(identity_scope, username, client_ip, &cfg) {
         if !guard.contains_key(&key) && guard.len() >= MAX_LOGIN_ATTEMPT_KEYS {
             prune_login_attempts_map(&mut guard, now, window);
             if guard.len() >= MAX_LOGIN_ATTEMPT_KEYS {
@@ -248,8 +269,12 @@ pub(crate) async fn record_login_failure(username: &str, client_ip: Option<IpAdd
 /// Clear the per-(user, IP) failure state after a successful login. The per-IP and
 /// per-subnet budgets are intentionally left intact: one user's success must not reset
 /// the spray/distributed counters for the whole host or network.
-pub(crate) async fn clear_login_failures(username: &str, client_ip: Option<IpAddr>) {
-    let key = user_ip_key(username, &ip_label(client_ip));
+pub(crate) async fn clear_login_failures(
+    identity_scope: &str,
+    username: &str,
+    client_ip: Option<IpAddr>,
+) {
+    let key = user_ip_key(identity_scope, username, &ip_label(client_ip));
     LOGIN_ATTEMPTS.lock().await.remove(&key);
 }
 
@@ -439,22 +464,28 @@ mod tests {
         let mut config = cfg();
         config.max_attempts_per_ip = 0;
         config.max_attempts_per_subnet = 0;
-        let only_user = scopes_for("alice", Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), &config);
+        let only_user = scopes_for(
+            "local",
+            "alice",
+            Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            &config,
+        );
         assert_eq!(only_user.len(), 1);
 
-        let no_ip = scopes_for("alice", None, &cfg());
+        let no_ip = scopes_for("local", "alice", None, &cfg());
         assert_eq!(no_ip.len(), 1, "no IP means only the user+IP scope applies");
     }
 
     #[test]
     fn scopes_cover_user_ip_and_subnet_when_enabled() {
         let scopes = scopes_for(
+            "Directory",
             "Alice",
             Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7))),
             &cfg(),
         );
         let keys: Vec<&str> = scopes.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(keys.iter().any(|k| k.starts_with("u:alice|")));
+        assert!(keys.iter().any(|k| k.starts_with("u:directory/alice|")));
         assert!(keys.contains(&"i:198.51.100.7"));
         assert!(keys.contains(&"s:198.51.100.0/24"));
     }

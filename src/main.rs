@@ -1,4 +1,5 @@
 mod api;
+mod auth;
 mod config;
 mod db;
 mod errors;

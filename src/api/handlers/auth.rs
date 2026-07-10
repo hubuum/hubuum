@@ -6,7 +6,7 @@ use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
 use crate::middlewares::rate_limit::{
     clear_login_failures, client_ip_for_request, login_is_rate_limited, record_login_failure,
 };
-use crate::models::{LoginUser, Token, UserID};
+use crate::models::{LOCAL_IDENTITY_SCOPE, LoginUser, Token, UserID};
 use actix_web::{HttpRequest, Responder, get, post, web};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -40,13 +40,18 @@ pub async fn login(
     req_input: web::Json<LoginUser>,
 ) -> Result<impl Responder, ApiError> {
     let login = req_input.into_inner();
+    let identity_scope = login
+        .identity_scope
+        .clone()
+        .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string());
     let name = login.name.clone();
     let client_ip = client_ip_for_request(&req);
     let client_ip_log = client_ip.map(|ip| ip.to_string());
 
-    if login_is_rate_limited(&name, client_ip).await {
+    if login_is_rate_limited(&identity_scope, &name, client_ip).await {
         warn!(
             message = "Login throttled",
+            identity_scope = identity_scope,
             user = name,
             client_ip = client_ip_log.as_deref()
         );
@@ -56,17 +61,17 @@ pub async fn login(
     }
 
     debug!(message = "Login started", user = name);
-    let user = match login.login(&pool).await {
+    let user = match crate::auth::login(&pool, login).await {
         Ok(user) => user,
         Err(e) => {
             if let ApiError::Unauthorized(_) = &e {
-                record_login_failure(&name, client_ip).await;
+                record_login_failure(&identity_scope, &name, client_ip).await;
             }
             return Err(e);
         }
     };
 
-    clear_login_failures(&name, client_ip).await;
+    clear_login_failures(&identity_scope, &name, client_ip).await;
 
     let token_generation_result = user.create_token(&pool).await;
 

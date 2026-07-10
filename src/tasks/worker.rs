@@ -168,7 +168,7 @@ async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), Ap
 
     // Disabled-SA gate: queued service-account tasks must not run once the SA is
     // disabled (mirrors the immediate token-validation rejection).
-    if crate::models::service_account::principal_is_disabled(pool, &principal).await? {
+    if crate::db::traits::service_account::principal_is_disabled(pool, &principal).await? {
         return Err(ApiError::BadRequest(
             "Submitting service account is disabled; task will not run".to_string(),
         ));

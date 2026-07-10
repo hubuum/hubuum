@@ -112,7 +112,11 @@ delivery semantics, operational health, and retention behavior.
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_ADMIN_GROUPNAME` | `admin` | Name of the admin group |
+| `HUBUUM_ADMIN_IDENTITY_SCOPE` | `local` | Identity scope containing the admin group |
+| `HUBUUM_AUTH_CONFIG_PATH` | *(empty)* | Optional TOML file for external auth providers such as LDAP |
 | `HUBUUM_TOKEN_LIFETIME_HOURS` | `24` | Token lifetime in hours |
+
+See [External Authentication](external_auth.md) for LDAP scopes.
 | `HUBUUM_LOGIN_RATE_LIMIT_ENABLED` | `true` | Master switch for login throttling |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed attempts per `(name, IP)` per window |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` | `20` | Max failed attempts per client IP per window (`0` disables) |
@@ -220,6 +224,7 @@ services:
 
 - [Development Setup](development.md) - Git hooks, testing, and development workflow
 - [Authentication & Authorization Model](auth_model.md) - Principals, service accounts, tokens, and scopes
+- [External Authentication](external_auth.md) - Local and LDAP-backed identity scopes
 - [Permissions](permissions.md) - Access control and authorization system
 - [Collection Hierarchy](collection_hierarchy.md) - Recursive collections, inherited permissions, and move rules
 - [Querying](querying.md) - API query syntax and filtering

@@ -5,21 +5,20 @@ use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
+use crate::db::traits::service_account::{
+    DisableServiceAccount, SaveServiceAccount, cancel_pending_tasks_for_principal,
+    count_manageable_service_accounts, is_human_owner_group_member,
+    revoke_all_tokens_for_principal, search_manageable_service_accounts,
+};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, ManagementAccess};
-use crate::models::principal::load_principal_by_id;
 use crate::models::search::parse_query_parameter;
-use crate::models::service_account::{
-    cancel_pending_tasks_for_principal, count_manageable_service_accounts,
-    is_human_owner_group_member, revoke_all_tokens_for_principal,
-    search_manageable_service_accounts,
-};
 use crate::models::{
     NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountResponse,
     ServiceAccountWithName, UpdateServiceAccount,
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
-use crate::traits::AuthzSubject;
+use crate::traits::{AuthzSubject, CanDelete, CanUpdate, SelfAccessors};
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(create_service_account)
@@ -51,8 +50,9 @@ async fn response_for(
     pool: &DbPool,
     sa: &ServiceAccount,
 ) -> Result<ServiceAccountResponse, ApiError> {
-    let name = load_principal_by_id(pool, sa.id).await?.name;
-    Ok(ServiceAccountResponse::from_parts(sa, name))
+    let (identity_scope, name) =
+        crate::db::traits::principal::principal_identity_scope_and_name(pool, sa.id).await?;
+    Ok(ServiceAccountResponse::from_parts(sa, identity_scope, name))
 }
 
 #[utoipa::path(
@@ -168,10 +168,7 @@ pub async fn get_service_account(
     requestor: ManagementAccess,
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
-    let sa = service_account_id
-        .into_inner()
-        .service_account(&pool)
-        .await?;
+    let sa = service_account_id.into_inner().instance(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
     Ok(ApiResponse::new(
         response_for(&pool, &sa).await?,
@@ -202,7 +199,7 @@ pub async fn update_service_account(
     update: web::Json<UpdateServiceAccount>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = id.service_account(&pool).await?;
+    let sa = id.instance(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
 
     let update = update.into_inner();
@@ -222,7 +219,7 @@ pub async fn update_service_account(
     }
 
     let event_context = requestor.event_context(&req);
-    let updated = update.save(id.id(), &pool, &event_context).await?;
+    let updated = update.update(&pool, id.id(), &event_context).await?;
     Ok(ApiResponse::new(
         response_for(&pool, &updated).await?,
         StatusCode::OK,
@@ -250,7 +247,7 @@ pub async fn disable_service_account(
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = id.service_account(&pool).await?;
+    let sa = id.instance(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
 
     let event_context = requestor.event_context(&req);
@@ -292,7 +289,7 @@ pub async fn delete_service_account(
     service_account_id: web::Path<ServiceAccountID>,
 ) -> Result<impl Responder, ApiError> {
     let id = service_account_id.into_inner();
-    let sa = id.service_account(&pool).await?;
+    let sa = id.instance(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
     let event_context = requestor.event_context(&req);
     id.delete(&pool, &event_context).await?;

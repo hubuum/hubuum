@@ -1,0 +1,9 @@
+[package]
+name = "hubuum-auth-core"
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"

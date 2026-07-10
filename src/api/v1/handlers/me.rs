@@ -1,4 +1,4 @@
-use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
+use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, put, routes, web};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -10,9 +10,12 @@ use crate::api::v1::handlers::principals::{
 use crate::db::DbPool;
 use crate::db::traits::ActiveTokens;
 use crate::errors::ApiError;
-use crate::extractors::{Authenticated, ManagementAccess};
+use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
 use crate::models::search::parse_query_parameter;
-use crate::models::{Group, Permissions, PrincipalMemberResponse, PrincipalToken};
+use crate::models::{
+    Group, GroupResponse, Permissions, PrincipalID, PrincipalMemberResponse, PrincipalSettings,
+    PrincipalToken,
+};
 use crate::pagination::prepare_db_pagination;
 use crate::traits::GroupAccessors;
 
@@ -20,7 +23,11 @@ pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(get_me)
         .service(list_my_tokens)
         .service(list_my_groups)
-        .service(list_my_permissions);
+        .service(list_my_permissions)
+        .service(get_my_settings)
+        .service(put_my_settings)
+        .service(patch_my_settings)
+        .service(delete_my_settings);
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -54,7 +61,10 @@ pub struct MeResponse {
 #[routes]
 #[get("")]
 #[get("/")]
-pub async fn get_me(requestor: Authenticated) -> Result<impl Responder, ApiError> {
+pub async fn get_me(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+) -> Result<impl Responder, ApiError> {
     let token = CurrentTokenMetadata {
         id: requestor.token_meta.id,
         name: requestor.token_meta.name,
@@ -68,7 +78,7 @@ pub async fn get_me(requestor: Authenticated) -> Result<impl Responder, ApiError
 
     Ok(ApiResponse::new(
         MeResponse {
-            principal: requestor.principal.into(),
+            principal: PrincipalMemberResponse::from_principal(&pool, requestor.principal).await?,
             token,
         },
         StatusCode::OK,
@@ -113,7 +123,7 @@ pub async fn list_my_tokens(
     tag = "principals",
     security(("bearer_auth" = [])),
     responses(
-        (status = 200, description = "Groups the current principal belongs to", body = [Group]),
+        (status = 200, description = "Groups the current principal belongs to", body = [GroupResponse]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
 )]
@@ -129,7 +139,8 @@ pub async fn list_my_groups(
         .principal
         .groups_paginated_with_total_count(&pool, &search_params)
         .await?;
-    ApiResponse::paginated(groups, total_count, &params)
+    let response = GroupResponse::from_groups(&pool, groups).await?;
+    ApiResponse::paginated(response, total_count, &params)
 }
 
 #[utoipa::path(
@@ -149,4 +160,110 @@ pub async fn list_my_permissions(
 ) -> Result<impl Responder, ApiError> {
     let export = principal_permissions_response(&pool, &requestor.principal).await?;
     Ok(ApiResponse::new(export, StatusCode::OK))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/iam/me/settings",
+    tag = "principals",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Current principal settings", body = PrincipalSettings),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+    )
+)]
+#[get("/settings")]
+pub async fn get_my_settings(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+) -> Result<impl Responder, ApiError> {
+    let principal_id = PrincipalID::new(requestor.principal.id)?;
+    Ok(ApiResponse::ok(principal_id.settings(&pool).await?))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/v1/iam/me/settings",
+    tag = "principals",
+    security(("bearer_auth" = [])),
+    request_body = PrincipalSettings,
+    responses(
+        (status = 200, description = "Replaced current principal settings", body = PrincipalSettings),
+        (status = 400, description = "Settings root is not an object", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+    )
+)]
+#[put("/settings")]
+pub async fn put_my_settings(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    settings: web::Json<PrincipalSettings>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let principal_id = PrincipalID::new(requestor.principal.id)?;
+    let event_context = requestor.event_context(&req);
+    let settings = principal_id
+        .replace_settings(&pool, settings.into_inner(), &event_context)
+        .await?;
+    Ok(ApiResponse::ok(settings))
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/v1/iam/me/settings",
+    tag = "principals",
+    security(("bearer_auth" = [])),
+    description = "Applies an object-only JSON Merge Patch to the current principal settings. Object values merge recursively; a `null` value removes its key; arrays, strings, numbers, and booleans replace the existing value. An object patch applied to a missing or non-object value starts from an empty object. The document root must be an object. Use PUT, rather than PATCH, when a setting itself must retain a null value.",
+    request_body(
+        content = PrincipalSettings,
+        description = "The settings patch object.",
+        example = json!({
+            "theme": "dark",
+            "layout": { "sidebar": null, "columns": 2 }
+        })
+    ),
+    responses(
+        (status = 200, description = "Merged current principal settings", body = PrincipalSettings, example = json!({
+            "theme": "dark",
+            "layout": { "density": "normal", "columns": 2 }
+        })),
+        (status = 400, description = "Settings root is not an object", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+    )
+)]
+#[patch("/settings")]
+pub async fn patch_my_settings(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    patch: web::Json<PrincipalSettings>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let principal_id = PrincipalID::new(requestor.principal.id)?;
+    let event_context = requestor.event_context(&req);
+    let settings = principal_id
+        .patch_settings(&pool, patch.into_inner(), &event_context)
+        .await?;
+    Ok(ApiResponse::ok(settings))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/iam/me/settings",
+    tag = "principals",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 204, description = "Current principal settings reset"),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+    )
+)]
+#[delete("/settings")]
+pub async fn delete_my_settings(
+    pool: web::Data<DbPool>,
+    requestor: Authenticated,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let principal_id = PrincipalID::new(requestor.principal.id)?;
+    let event_context = requestor.event_context(&req);
+    principal_id.reset_settings(&pool, &event_context).await?;
+    Ok(ApiResponse::no_content())
 }

@@ -513,6 +513,7 @@ mod tests {
         let pool = scope.pool.clone();
         let parent = scope.collection_fixture("inherited_parent").await;
         let child_group = NewGroup {
+            identity_scope: None,
             groupname: scope.scoped_name("inherited_child_group"),
             description: Some("Child group".to_string()),
         }
@@ -620,6 +621,7 @@ mod tests {
         let root_id = parent.collection.parent_collection_id.unwrap();
 
         let child_group = NewGroup {
+            identity_scope: None,
             groupname: scope.scoped_name("move_child_group"),
             description: Some("Child group".to_string()),
         }
@@ -637,6 +639,7 @@ mod tests {
         .unwrap();
 
         let grandchild_group = NewGroup {
+            identity_scope: None,
             groupname: scope.scoped_name("move_grandchild_group"),
             description: Some("Grandchild group".to_string()),
         }
@@ -739,6 +742,7 @@ mod tests {
             let group_name = format!("test_list_group_{group_number}");
             groups.push(
                 NewGroup {
+                    identity_scope: None,
                     groupname: group_name.to_string(),
                     description: Some("Test group".to_string()),
                 }
@@ -842,6 +846,7 @@ mod tests {
                 .await;
 
             let group = NewGroup {
+                identity_scope: None,
                 groupname: "test_perm_grant_combinations".to_string(),
                 description: Some("Test group for combinations".to_string()),
             }
@@ -908,6 +913,7 @@ mod tests {
                 .await;
 
             let group = NewGroup {
+                identity_scope: None,
                 groupname: "test_perm_revoke_combinations".to_string(),
                 description: Some("Test group for combinations".to_string()),
             }
@@ -959,6 +965,7 @@ mod tests {
             .await;
 
         let group = NewGroup {
+            identity_scope: None,
             groupname: "test_perm_grant_without_side_effects".to_string(),
             description: Some("Test group for combinations".to_string()),
         }
@@ -1078,6 +1085,7 @@ mod tests {
             .await;
 
         let group = NewGroup {
+            identity_scope: None,
             groupname: "test_template_permissions_set_grant_and_revoke".to_string(),
             description: Some("Template permission controller coverage".to_string()),
         }
@@ -1194,6 +1202,7 @@ mod tests {
             .await;
 
         let delegate_group = NewGroup {
+            identity_scope: None,
             groupname: format!("template_backfill_delegate_{}", collection.collection.id),
             description: Some("Template backfill delegate group".to_string()),
         }
@@ -1202,6 +1211,7 @@ mod tests {
         .unwrap();
 
         let non_delegate_group = NewGroup {
+            identity_scope: None,
             groupname: format!(
                 "template_backfill_non_delegate_{}",
                 collection.collection.id

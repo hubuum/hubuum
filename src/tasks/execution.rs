@@ -481,9 +481,13 @@ pub(super) fn execute_planned_item(
                 input.collection_ref.as_deref(),
                 input.collection_key.as_ref(),
             )?;
-            let group =
-                lookup_group_by_name_db(conn, &input.group_key.groupname)?.ok_or_else(|| {
-                    ApiError::NotFound(format!("Group '{}' not found", input.group_key.groupname))
+            let identity_scope = input.group_key.identity_scope_name();
+            let group = lookup_group_by_name_db(conn, identity_scope, &input.group_key.groupname)?
+                .ok_or_else(|| {
+                    ApiError::NotFound(format!(
+                        "Group '{}/{}' not found",
+                        identity_scope, input.group_key.groupname
+                    ))
                 })?;
             apply_permissions_db(
                 conn,

@@ -175,6 +175,18 @@ diesel::table! {
 }
 
 diesel::table! {
+    group_membership_sources (principal_id, group_id, source, source_scope_id, source_key) {
+        principal_id -> Int4,
+        group_id -> Int4,
+        source -> Varchar,
+        source_scope_id -> Int4,
+        source_key -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     group_memberships (principal_id, group_id) {
         principal_id -> Int4,
         group_id -> Int4,
@@ -190,6 +202,11 @@ diesel::table! {
         description -> Varchar,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        identity_scope_id -> Int4,
+        managed_by -> Varchar,
+        external_key -> Nullable<Varchar>,
+        last_sync_attempted_at -> Nullable<Timestamp>,
+        last_sync_success_at -> Nullable<Timestamp>,
     }
 }
 
@@ -322,6 +339,16 @@ diesel::table! {
 }
 
 diesel::table! {
+    identity_scopes (id) {
+        id -> Int4,
+        name -> Varchar,
+        provider_kind -> Varchar,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     import_task_results (id) {
         id -> Int4,
         task_id -> Int4,
@@ -384,6 +411,12 @@ diesel::table! {
         name -> Varchar,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        identity_scope_id -> Int4,
+        provider_managed -> Bool,
+        settings -> Jsonb,
+        external_subject -> Nullable<Varchar>,
+        last_sync_attempted_at -> Nullable<Timestamp>,
+        last_sync_success_at -> Nullable<Timestamp>,
     }
 }
 
@@ -517,7 +550,7 @@ diesel::table! {
     users (id) {
         id -> Int4,
         kind -> Varchar,
-        password -> Varchar,
+        password -> Nullable<Varchar>,
         proper_name -> Nullable<Varchar>,
         email -> Nullable<Varchar>,
         created_at -> Timestamp,
@@ -533,8 +566,12 @@ diesel::joinable!(event_subscriptions -> event_sinks (sink_id));
 diesel::joinable!(export_task_outputs -> tasks (task_id));
 diesel::joinable!(export_templates -> collections (collection_id));
 diesel::joinable!(export_templates -> hubuumclass (class_id));
+diesel::joinable!(group_membership_sources -> groups (group_id));
+diesel::joinable!(group_membership_sources -> identity_scopes (source_scope_id));
+diesel::joinable!(group_membership_sources -> principals (principal_id));
 diesel::joinable!(group_memberships -> groups (group_id));
 diesel::joinable!(group_memberships -> principals (principal_id));
+diesel::joinable!(groups -> identity_scopes (identity_scope_id));
 diesel::joinable!(hubuumclass -> collections (collection_id));
 diesel::joinable!(hubuumobject -> collections (collection_id));
 diesel::joinable!(hubuumobject -> hubuumclass (hubuum_class_id));
@@ -542,6 +579,7 @@ diesel::joinable!(hubuumobject_relation -> hubuumclass_relation (class_relation_
 diesel::joinable!(import_task_results -> tasks (task_id));
 diesel::joinable!(permissions -> collections (collection_id));
 diesel::joinable!(permissions -> groups (group_id));
+diesel::joinable!(principals -> identity_scopes (identity_scope_id));
 diesel::joinable!(remote_call_results -> remote_targets (target_id));
 diesel::joinable!(remote_call_results -> tasks (task_id));
 diesel::joinable!(remote_targets -> collections (collection_id));
@@ -562,6 +600,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     export_task_outputs,
     export_templates,
     export_templates_history,
+    group_membership_sources,
     group_memberships,
     groups,
     hubuumclass,
@@ -573,6 +612,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     hubuumobject_history,
     hubuumobject_relation,
     hubuumobject_relation_history,
+    identity_scopes,
     import_task_results,
     permissions,
     principals,

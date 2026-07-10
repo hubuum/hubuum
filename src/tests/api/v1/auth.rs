@@ -45,6 +45,7 @@ mod tests {
 
         // Test wrong password
         let login_info = web::Form(LoginUser {
+            identity_scope: None,
             name: new_user.name(&pool).await.unwrap(),
             password: "wrongpassword".to_string(),
         });
@@ -64,6 +65,7 @@ mod tests {
         );
 
         let login_info_ok = web::Form(LoginUser {
+            identity_scope: None,
             name: new_user.name(&pool).await.unwrap(),
             password: "testpassword".to_string(),
         });
@@ -156,6 +158,7 @@ mod tests {
         .await;
 
         let login_info = web::Form(LoginUser {
+            identity_scope: None,
             name: "nosuchuser".to_string(),
             password: "nosuchpassword".to_string(),
         });
@@ -500,6 +503,7 @@ mod tests {
 
         for _ in 0..max_attempts {
             let login_info = web::Form(LoginUser {
+                identity_scope: None,
                 name: "forwarded-ip-user".to_string(),
                 password: "wrongpassword".to_string(),
             });
@@ -518,6 +522,7 @@ mod tests {
         // The throttled bucket is keyed to the resolved client 198.51.100.10; a different
         // genuine client behind the same proxy is not affected.
         let other_client_login = web::Form(LoginUser {
+            identity_scope: None,
             name: "forwarded-ip-user".to_string(),
             password: "wrongpassword".to_string(),
         });
@@ -558,6 +563,7 @@ mod tests {
 
         for attempt in 0..max_attempts {
             let login_info = web::Form(LoginUser {
+                identity_scope: None,
                 name: "spoof-victim".to_string(),
                 password: "wrongpassword".to_string(),
             });
@@ -574,6 +580,7 @@ mod tests {
         }
 
         let login_info = web::Form(LoginUser {
+            identity_scope: None,
             name: "spoof-victim".to_string(),
             password: "wrongpassword".to_string(),
         });
@@ -615,6 +622,7 @@ mod tests {
         // Each distinct username keeps its own (user, ip) bucket at a single failure.
         for attempt in 0..per_ip {
             let login_info = web::Form(LoginUser {
+                identity_scope: None,
                 name: format!("spray-user-{attempt}"),
                 password: "wrongpassword".to_string(),
             });
@@ -632,6 +640,7 @@ mod tests {
 
         // A brand-new username from the same source IP is now throttled by the per-IP cap.
         let login_info = web::Form(LoginUser {
+            identity_scope: None,
             name: "spray-user-final".to_string(),
             password: "wrongpassword".to_string(),
         });
@@ -666,6 +675,7 @@ mod tests {
 
         for _ in 0..max_attempts {
             let login_info = web::Form(LoginUser {
+                identity_scope: None,
                 name: "throttle-user".to_string(),
                 password: "wrongpassword".to_string(),
             });
@@ -680,6 +690,7 @@ mod tests {
         }
 
         let login_info = web::Form(LoginUser {
+            identity_scope: None,
             name: "throttle-user".to_string(),
             password: "wrongpassword".to_string(),
         });
@@ -693,6 +704,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 
         let other_user_login = web::Form(LoginUser {
+            identity_scope: None,
             name: "other-throttle-user".to_string(),
             password: "wrongpassword".to_string(),
         });

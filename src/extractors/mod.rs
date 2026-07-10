@@ -1,6 +1,7 @@
+use crate::db::DbPool;
 use crate::db::traits::Status;
 use crate::db::traits::authz::{AuthzSubject, load_token_scopes};
-use crate::db::{DbPool, with_connection};
+use crate::db::traits::principal::load_principal_with_user;
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
 use crate::models::permissions::Permissions;
@@ -9,7 +10,6 @@ use crate::models::token::{PrincipalToken, Token};
 use crate::models::user::User;
 
 use actix_web::{FromRequest, HttpMessage, HttpRequest, dev::Payload, web::Data};
-use diesel::prelude::*;
 use futures_util::future::{self, FutureExt};
 use std::pin::Pin;
 use tracing::debug;
@@ -135,6 +135,7 @@ async fn build_authenticated_from_meta(
     token: Token,
     token_meta: PrincipalToken,
 ) -> Result<Authenticated, ApiError> {
+    crate::auth::refresh_principal_if_needed(pool, token_meta.principal_id).await?;
     let principal = load_principal_by_id(pool, token_meta.principal_id).await?;
     let scopes = if token_meta.scoped {
         Some(load_token_scopes(pool, token_meta.id).await?)
@@ -175,6 +176,8 @@ async fn human_unscoped_user_from_meta(
         ));
     }
 
+    crate::auth::refresh_principal_if_needed(pool, token_meta.principal_id).await?;
+
     // Single round trip: fetch the principal and (when human) its `users` row
     // together, rather than a separate principal load followed by a user load.
     let (principal, user) = load_principal_with_user(pool, token_meta.principal_id).await?;
@@ -192,25 +195,8 @@ async fn human_unscoped_user(pool: &DbPool, token: &Token) -> Result<User, ApiEr
     human_unscoped_user_from_meta(pool, token_meta).await
 }
 
-/// Load a principal and, when it is human, its `users` row in one left-joined
-/// query. A service account simply has no `users` row, so the user is `None`.
-async fn load_principal_with_user(
-    pool: &DbPool,
-    principal_id: i32,
-) -> Result<(Principal, Option<User>), ApiError> {
-    use crate::schema::{principals, users};
-
-    with_connection(pool, |conn| {
-        principals::table
-            .left_join(users::table.on(users::id.eq(principals::id)))
-            .filter(principals::id.eq(principal_id))
-            .select((Principal::as_select(), Option::<User>::as_select()))
-            .first::<(Principal, Option<User>)>(conn)
-    })
-}
-
-/// Resolve the self-target principal id from the path. Principal routes use
-/// `principal_id`; user routes use `user_id`.
+/// Resolve the self-target principal id from the path (`principal_id` preferred,
+/// `user_id` accepted for not-yet-renamed routes).
 fn self_target_id(path: &actix_web::dev::Path<actix_web::dev::Url>) -> Result<i32, ApiError> {
     if let Ok(id) = path.query("principal_id").parse::<i32>() {
         return Ok(id);

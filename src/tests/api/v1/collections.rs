@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::models::{
-        Collection, Group, GroupPermission, NewCollectionWithAssignee, NewGroup, Permission,
-        Permissions, UpdateCollection,
+        Collection, GroupPermission, GroupResponse, NewCollectionWithAssignee, NewGroup,
+        Permission, Permissions, UpdateCollection,
     };
 
     use crate::pagination::NEXT_CURSOR_HEADER;
@@ -630,6 +630,7 @@ mod tests {
             .await;
 
         let group_one = NewGroup {
+            identity_scope: None,
             groupname: format!(
                 "test_collection_permissions_sorted_{}_a",
                 collection_fixture.collection.id
@@ -643,6 +644,7 @@ mod tests {
         .await
         .unwrap();
         let group_two = NewGroup {
+            identity_scope: None,
             groupname: format!(
                 "test_collection_permissions_sorted_{}_b",
                 collection_fixture.collection.id
@@ -720,6 +722,7 @@ mod tests {
             .collection_fixture("collection_permissions_total_count")
             .await;
         let group_one = NewGroup {
+            identity_scope: None,
             groupname: format!(
                 "collection-total-count-group-a-{}",
                 collection_fixture.collection.id
@@ -730,6 +733,7 @@ mod tests {
         .await
         .unwrap();
         let group_two = NewGroup {
+            identity_scope: None,
             groupname: format!(
                 "collection-total-count-group-b-{}",
                 collection_fixture.collection.id
@@ -740,6 +744,7 @@ mod tests {
         .await
         .unwrap();
         let group_three = NewGroup {
+            identity_scope: None,
             groupname: format!(
                 "collection-total-count-group-c-{}",
                 collection_fixture.collection.id
@@ -808,7 +813,8 @@ mod tests {
         assert_eq!(user_permissions_total, 2);
         assert_eq!(user_permissions.len(), 2);
 
-        let (groups, groups_total): (Vec<Group>, i64) = assert_paginated_collection_total_count(
+        let (groups, groups_total): (Vec<GroupResponse>, i64) =
+            assert_paginated_collection_total_count(
             &context.pool,
             &context.admin_token,
             10,
@@ -822,8 +828,8 @@ mod tests {
                     collection_fixture.collection.id
                 ),
             },
-        )
-        .await;
+            )
+            .await;
         assert_eq!(groups_total, 3);
         assert_eq!(groups.len(), 3);
 

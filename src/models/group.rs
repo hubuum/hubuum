@@ -2,7 +2,7 @@
 
 use crate::db::traits::group::{
     DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord,
-    SavePrincipalGroupRecord, UpdateGroupRecord,
+    SavePrincipalGroupRecord, UpdateGroupRecord, group_identity_scope_name,
 };
 use crate::errors::ApiError;
 use crate::events::EventContext;
@@ -84,6 +84,103 @@ pub struct Group {
     pub description: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub identity_scope_id: i32,
+    pub managed_by: String,
+    pub external_key: Option<String>,
+    pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
+    pub last_sync_success_at: Option<chrono::NaiveDateTime>,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
+pub struct GroupResponse {
+    pub id: i32,
+    pub identity_scope: String,
+    pub groupname: String,
+    pub description: String,
+    pub managed_by: String,
+    pub external_key: Option<String>,
+    pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
+    pub last_sync_success_at: Option<chrono::NaiveDateTime>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+}
+
+impl GroupResponse {
+    pub fn from_parts(group: &Group, identity_scope: String) -> Self {
+        Self {
+            id: group.id,
+            identity_scope,
+            groupname: group.groupname.clone(),
+            description: group.description.clone(),
+            managed_by: group.managed_by.clone(),
+            external_key: group.external_key.clone(),
+            last_sync_attempted_at: group.last_sync_attempted_at,
+            last_sync_success_at: group.last_sync_success_at,
+            created_at: group.created_at,
+            updated_at: group.updated_at,
+        }
+    }
+
+    pub async fn from_groups<C>(backend: &C, groups: Vec<Group>) -> Result<Vec<Self>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let scope_ids = groups
+            .iter()
+            .map(|group| group.identity_scope_id)
+            .collect::<Vec<_>>();
+        let scope_names =
+            crate::db::traits::identity::identity_scope_names_by_ids(backend.db_pool(), &scope_ids)
+                .await?;
+
+        groups
+            .into_iter()
+            .map(|group| {
+                let identity_scope = scope_names
+                    .get(&group.identity_scope_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        ApiError::InternalServerError(format!(
+                            "Identity scope '{}' was not resolved",
+                            group.identity_scope_id
+                        ))
+                    })?;
+                Ok(Self::from_parts(&group, identity_scope))
+            })
+            .collect()
+    }
+}
+
+impl CursorPaginated for GroupResponse {
+    fn supports_sort(field: &FilterField) -> bool {
+        Group::supports_sort(field)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id as i64),
+            FilterField::Name | FilterField::Groupname => {
+                CursorValue::String(self.groupname.clone())
+            }
+            FilterField::Description => CursorValue::String(self.description.clone()),
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for groups",
+                    field
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        Group::default_sort()
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Group::tie_breaker_sort()
+    }
 }
 
 impl IdAccessor for Group {
@@ -99,6 +196,14 @@ impl InstanceAdapter<Group> for Group {
 }
 
 impl Group {
+    pub async fn to_response<C>(&self, backend: &C) -> Result<GroupResponse, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let identity_scope = group_identity_scope_name(backend.db_pool(), self.id).await?;
+        Ok(GroupResponse::from_parts(self, identity_scope))
+    }
+
     pub async fn members<C>(&self, backend: &C) -> Result<Vec<Principal>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -234,10 +339,10 @@ impl Group {
     }
 }
 
-#[derive(Deserialize, Serialize, Insertable, Debug, ToSchema)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 #[schema(example = new_group_example)]
-#[diesel(table_name = groups)]
 pub struct NewGroup {
+    pub identity_scope: Option<String>,
     pub groupname: String,
     pub description: Option<String>,
 }
@@ -245,6 +350,7 @@ pub struct NewGroup {
 impl NewGroup {
     pub async fn new(groupname: &str, description: Option<&str>) -> Self {
         NewGroup {
+            identity_scope: None,
             groupname: groupname.to_string(),
             description: description.map(|s| s.to_string()),
         }
@@ -318,6 +424,7 @@ impl UpdateGroup {
 #[allow(dead_code)]
 fn new_group_example() -> NewGroup {
     NewGroup {
+        identity_scope: None,
         groupname: "ops".to_string(),
         description: Some("Operations team".to_string()),
     }

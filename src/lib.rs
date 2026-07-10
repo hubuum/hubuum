@@ -1,6 +1,7 @@
 #![allow(async_fn_in_trait)]
 
 pub mod api;
+pub mod auth;
 pub mod config;
 pub mod db;
 pub mod errors;
