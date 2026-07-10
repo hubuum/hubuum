@@ -10,6 +10,14 @@
 - Regenerate OpenAPI after endpoint or schema changes before considering the change complete.
 - Markdown lint must pass for all `*.md` files. Run it locally with `npx markdownlint-cli2 --config .markdownlint.json "**/*.md" "!target"` before considering documentation changes complete. Every fenced code block must declare a language (use `text` for plain ASCII/diagrams), and tables must use a single, consistent column style (MD060).
 
+## Container Builds
+
+- The Docker dependency-cache stage copies workspace manifests explicitly. Whenever `[workspace].members`, a workspace crate manifest, `Cargo.lock`, Docker build features, `Dockerfile`, or `entrypoint.sh` changes, treat the production container as an affected build target.
+- When adding or removing a workspace member, update the manifest-only `COPY` entries in `Dockerfile` in the same change. A normal host `cargo build` is not a substitute because it can see files that are absent from Docker's dependency-cache stage.
+- Run the fast parity regression test first: `cargo test --bin hubuum-server dockerfile_copies_every_workspace_manifest --locked`. It requires the Dockerfile's workspace-manifest `COPY` set to exactly match Cargo's workspace member set.
+- Then build the real production image with the feature combination used for the full published container: `docker build --build-arg 'CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release' --tag hubuum-server:verify .`.
+- A container-affecting change is not complete until both the parity test and the real Docker build pass. Keep the pull-request container-build CI check enabled so the restricted Docker build context is exercised before merge.
+
 ## Architecture
 
 - Keep public domain behavior in `src/models/*` and `src/traits/*`.
