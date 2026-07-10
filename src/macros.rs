@@ -204,7 +204,7 @@ macro_rules! numeric_search {
     ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator};
+        use $crate::models::search::{DataType, Operator, ParsedQueryParamExt as _};
 
         let (op_pre, _) = $operator.op_and_neg();
         if op_pre == Operator::IsNull {
@@ -319,7 +319,7 @@ macro_rules! date_search {
         use diesel::dsl::not;
         use $crate::db::prelude::*;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator};
+        use $crate::models::search::{DataType, Operator, ParsedQueryParamExt as _};
 
         let (op_pre, _) = $operator.op_and_neg();
         if op_pre == Operator::IsNull {
@@ -420,7 +420,7 @@ macro_rules! array_search {
         use diesel::dsl::not;
         use $crate::db::prelude::*;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator};
+        use $crate::models::search::{DataType, Operator, ParsedQueryParamExt as _};
 
         let (op_pre, _) = $operator.op_and_neg();
         if op_pre == Operator::IsNull {
@@ -593,7 +593,7 @@ macro_rules! boolean_search {
     ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
         use $crate::errors::ApiError;
-        use $crate::models::search::{DataType, Operator};
+        use $crate::models::search::{DataType, Operator, ParsedQueryParamExt as _};
 
         let (op_pre, _) = $operator.op_and_neg();
         if op_pre == Operator::IsNull {
@@ -632,6 +632,8 @@ macro_rules! boolean_search {
 /// A null check search macro for is_null operator on any field type
 macro_rules! is_null_search {
     ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
+        use $crate::models::search::ParsedQueryParamExt as _;
+
         let is_null_value = $param.value_as_boolean()?;
         let (_, is_null_negated) = $operator.op_and_neg();
         let should_be_null = is_null_value != is_null_negated;

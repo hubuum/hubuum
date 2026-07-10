@@ -2,7 +2,7 @@ use super::*;
 use crate::db::traits::authz::scope_allows;
 use crate::models::RelatedObjectForRootRow;
 use crate::models::permissions::PermissionFilter;
-use crate::models::search::SQLValue;
+use crate::models::search::{ParsedQueryParamExt, SQLValue};
 use crate::traits::PrincipalIdAccessor;
 use crate::traits::{CursorPaginated, CursorSqlMapping};
 use crate::utilities::extensions::CustomStringExtensions;

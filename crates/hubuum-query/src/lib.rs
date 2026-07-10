@@ -217,6 +217,43 @@ pub struct ParsedQueryParam {
     pub value: String,
 }
 
+impl ParsedQueryParam {
+    pub fn new(
+        field: &str,
+        operator: Option<SearchOperator>,
+        value: &str,
+    ) -> Result<Self, QueryError> {
+        Ok(Self {
+            field: FilterField::from_str(field)?,
+            operator: operator.unwrap_or(SearchOperator::Equals { is_negated: false }),
+            value: value.to_string(),
+        })
+    }
+
+    pub fn is_permission(&self) -> bool {
+        self.field == FilterField::Permissions
+    }
+
+    pub fn is_collection(&self) -> bool {
+        self.field == FilterField::Collections
+    }
+
+    pub fn is_json_schema(&self) -> bool {
+        self.field == FilterField::JsonSchema
+    }
+
+    pub fn is_json_data(&self) -> bool {
+        matches!(
+            self.field,
+            FilterField::JsonData | FilterField::JsonDataFrom | FilterField::JsonDataTo
+        )
+    }
+
+    pub fn is_json(&self) -> bool {
+        self.is_json_schema() || self.is_json_data()
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Operator {
     Equals,
@@ -276,6 +313,30 @@ impl fmt::Display for Operator {
             Operator::IsNull => "is_null",
         };
         f.write_str(op)
+    }
+}
+
+impl Operator {
+    pub fn is_ip_operator(&self) -> bool {
+        matches!(
+            self,
+            Operator::WithinNetwork
+                | Operator::ContainsNetwork
+                | Operator::ContainsIp
+                | Operator::OverlapsNetwork
+                | Operator::InetEquals
+        )
+    }
+
+    pub fn is_json_structure_operator(&self) -> bool {
+        matches!(
+            self,
+            Operator::In
+                | Operator::All
+                | Operator::ArrayLength
+                | Operator::HasKey
+                | Operator::IsNull
+        )
     }
 }
 
@@ -588,7 +649,7 @@ pub fn get_jsonb_field_type_from_value_and_operator(
     }
 }
 
-fn get_sql_mapped_type_from_value(
+pub fn get_sql_mapped_type_from_value(
     value: &str,
     accepted_types: &[SQLMappedType],
 ) -> Option<SQLMappedType> {

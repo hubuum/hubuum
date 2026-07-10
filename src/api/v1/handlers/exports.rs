@@ -1,4 +1,4 @@
-use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
+use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
 
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
@@ -6,10 +6,43 @@ use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
-use crate::exports::{render_export_task_output, submit_export_task};
+use crate::exports::submit_export_task;
 use crate::extractors::Authenticated;
-use crate::models::{ExportJsonResponse, ExportOutputLookup, ExportRequest, TaskID, TaskResponse};
+use crate::models::{
+    ExportContentType, ExportJsonResponse, ExportMeta, ExportOutputLookup, ExportRequest,
+    ExportTaskOutputRecord, ExportWarning, TaskID, TaskResponse,
+};
 use crate::tasks::{ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker};
+
+const EXPORT_WARNINGS_HEADER: &str = "X-Hubuum-Export-Warnings";
+const EXPORT_TRUNCATED_HEADER: &str = "X-Hubuum-Export-Truncated";
+
+fn render_export_task_output(output: ExportTaskOutputRecord) -> Result<HttpResponse, ApiError> {
+    let content_type = ExportContentType::from_mime(&output.content_type)?;
+    let _meta: ExportMeta = serde_json::from_value(output.meta_json)?;
+    let warnings: Vec<ExportWarning> = serde_json::from_value(output.warnings_json)?;
+    let mut response = HttpResponse::build(StatusCode::OK);
+    response.insert_header((EXPORT_WARNINGS_HEADER, warnings.len().to_string()));
+    response.insert_header((EXPORT_TRUNCATED_HEADER, output.truncated.to_string()));
+
+    match content_type {
+        ExportContentType::ApplicationJson => {
+            let body: ExportJsonResponse =
+                serde_json::from_value(output.json_output.ok_or_else(|| {
+                    ApiError::InternalServerError(
+                        "Stored export JSON output is missing".to_string(),
+                    )
+                })?)?;
+            Ok(response.json(body))
+        }
+        ExportContentType::TextPlain | ExportContentType::TextHtml | ExportContentType::TextCsv => {
+            response.content_type(content_type.as_mime());
+            Ok(response.body(output.text_output.ok_or_else(|| {
+                ApiError::InternalServerError("Stored export text output is missing".to_string())
+            })?))
+        }
+    }
+}
 
 #[utoipa::path(
     post,
@@ -128,5 +161,63 @@ pub async fn get_export_output(
         ExportOutputLookup::Missing => {
             Err(ApiError::NotFound("Export output not found".to_string()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{ExportScope, ExportScopeKind};
+
+    fn test_timestamp() -> chrono::NaiveDateTime {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc()
+    }
+
+    fn text_export_output(meta_truncated: bool, output_truncated: bool) -> ExportTaskOutputRecord {
+        ExportTaskOutputRecord {
+            id: 1,
+            task_id: 1,
+            template_name: Some("summary".to_string()),
+            content_type: ExportContentType::TextPlain.as_mime().to_string(),
+            json_output: None,
+            text_output: Some("ok".to_string()),
+            meta_json: serde_json::to_value(ExportMeta {
+                count: 1,
+                truncated: meta_truncated,
+                scope: ExportScope {
+                    kind: ExportScopeKind::ObjectsInClass,
+                    class_id: Some(1),
+                    object_id: None,
+                },
+                content_type: ExportContentType::TextPlain,
+            })
+            .unwrap(),
+            warnings_json: serde_json::json!([]),
+            warning_count: 0,
+            truncated: output_truncated,
+            output_expires_at: test_timestamp(),
+            total_duration_ms: 0,
+            query_duration_ms: 0,
+            hydration_duration_ms: 0,
+            render_duration_ms: 0,
+            created_at: test_timestamp(),
+        }
+    }
+
+    #[test]
+    fn text_export_output_headers_use_persisted_truncated_column() {
+        let response = render_export_task_output(text_export_output(false, true)).unwrap();
+
+        assert_eq!(
+            response
+                .headers()
+                .get(EXPORT_TRUNCATED_HEADER)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "true"
+        );
     }
 }

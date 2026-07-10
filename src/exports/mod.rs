@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Instant;
 
-use actix_web::{HttpResponse, http::StatusCode};
 use hubuum_templates::SizeLimitedWriter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -24,10 +23,10 @@ use crate::models::{
     ClassIdSet, CollectionExportTemplates, CollectionID, ExportContentType,
     ExportIncludeRelatedDirection, ExportIncludeRelatedQuery, ExportIncludeRelatedSort,
     ExportJsonResponse, ExportMeta, ExportMissingDataPolicy, ExportRequest, ExportScope,
-    ExportScopeKind, ExportTaskOutputRecord, ExportTemplate, ExportTemplateID, ExportWarning,
-    HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation,
-    HubuumObjectWithPath, NewExportTaskOutputRecord, NewTaskEventRecord, Permissions,
-    RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH, TaskKind, TaskRecord,
+    ExportScopeKind, ExportTemplate, ExportTemplateID, ExportWarning, HubuumClassID,
+    HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath,
+    NewExportTaskOutputRecord, NewTaskEventRecord, Permissions, RELATED_INCLUDE_DEFAULT_LIMIT,
+    RELATED_INCLUDE_DEFAULT_MAX_DEPTH, TaskKind, TaskRecord,
 };
 use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{ensure_task_worker_running, request_hash};
@@ -51,9 +50,6 @@ struct ExportArtifact {
     template_name: Option<String>,
     timings: ExportExecutionTimings,
 }
-
-const EXPORT_WARNINGS_HEADER: &str = "X-Hubuum-Export-Warnings";
-const EXPORT_TRUNCATED_HEADER: &str = "X-Hubuum-Export-Truncated";
 
 struct ExportRuntime {
     export: ExportRequest,
@@ -690,42 +686,6 @@ fn required_template(
             content_type.as_mime()
         ))
     })
-}
-
-pub(crate) fn render_export_task_output(
-    output: ExportTaskOutputRecord,
-) -> Result<HttpResponse, ApiError> {
-    let content_type = ExportContentType::from_mime(&output.content_type)?;
-    let _meta: ExportMeta = serde_json::from_value(output.meta_json)?;
-    let warnings: Vec<ExportWarning> = serde_json::from_value(output.warnings_json)?;
-    let warning_count = warnings.len();
-    let truncated = output.truncated;
-
-    match content_type {
-        ExportContentType::ApplicationJson => {
-            let response: ExportJsonResponse =
-                serde_json::from_value(output.json_output.ok_or_else(|| {
-                    ApiError::InternalServerError(
-                        "Stored export JSON output is missing".to_string(),
-                    )
-                })?)?;
-            let mut http_response = HttpResponse::build(StatusCode::OK);
-            for (key, value) in export_headers(warning_count, truncated) {
-                http_response.insert_header((key, value));
-            }
-            Ok(http_response.json(response))
-        }
-        ExportContentType::TextPlain | ExportContentType::TextHtml | ExportContentType::TextCsv => {
-            let mut response = HttpResponse::build(StatusCode::OK);
-            response.content_type(content_type.as_mime());
-            for (key, value) in export_headers(warning_count, truncated) {
-                response.insert_header((key, value));
-            }
-            Ok(response.body(output.text_output.ok_or_else(|| {
-                ApiError::InternalServerError("Stored export text output is missing".to_string())
-            })?))
-        }
-    }
 }
 
 fn duration_to_millis_i32(duration: std::time::Duration) -> i32 {
@@ -2097,16 +2057,6 @@ fn truncate_items(
     }
 }
 
-fn export_headers(warning_count: usize, truncated: bool) -> HashMap<String, String> {
-    let mut headers = HashMap::new();
-    headers.insert(
-        EXPORT_WARNINGS_HEADER.to_string(),
-        warning_count.to_string(),
-    );
-    headers.insert(EXPORT_TRUNCATED_HEADER.to_string(), truncated.to_string());
-    headers
-}
-
 fn enforce_json_output_limit(
     response: &ExportJsonResponse,
     export: &ExportRequest,
@@ -2138,15 +2088,15 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::models::{
-        ExportContentType, ExportInclude, ExportIncludeRelatedObject, ExportLimits, ExportMeta,
+        ExportContentType, ExportInclude, ExportIncludeRelatedObject, ExportLimits,
         ExportMissingDataPolicy, ExportRelationContext, ExportRequest, ExportScope,
-        ExportScopeKind, ExportTaskOutputRecord, ExportTemplate, ExportTemplateKind,
+        ExportScopeKind, ExportTemplate, ExportTemplateKind,
     };
 
     use super::{
-        EXPORT_TRUNCATED_HEADER, ExportRuntime, HydrationBudget, inferred_relation_alias,
-        normalize_alias_segment, pluralize_alias, render_export_task_output,
-        take_related_within_budget, validate_export_limits, validate_export_submission,
+        ExportRuntime, HydrationBudget, inferred_relation_alias, normalize_alias_segment,
+        pluralize_alias, take_related_within_budget, validate_export_limits,
+        validate_export_submission,
     };
     use crate::errors::ApiError;
 
@@ -2282,40 +2232,6 @@ mod tests {
         }
     }
 
-    fn export_output_record(
-        meta_truncated: bool,
-        output_truncated: bool,
-    ) -> ExportTaskOutputRecord {
-        ExportTaskOutputRecord {
-            id: 1,
-            task_id: 1,
-            template_name: Some("summary".to_string()),
-            content_type: ExportContentType::TextPlain.as_mime().to_string(),
-            json_output: None,
-            text_output: Some("ok".to_string()),
-            meta_json: serde_json::to_value(ExportMeta {
-                count: 1,
-                truncated: meta_truncated,
-                scope: ExportScope {
-                    kind: ExportScopeKind::ObjectsInClass,
-                    class_id: Some(1),
-                    object_id: None,
-                },
-                content_type: ExportContentType::TextPlain,
-            })
-            .unwrap(),
-            warnings_json: serde_json::json!([]),
-            warning_count: 0,
-            truncated: output_truncated,
-            output_expires_at: test_timestamp(),
-            total_duration_ms: 0,
-            query_duration_ms: 0,
-            hydration_duration_ms: 0,
-            render_duration_ms: 0,
-            created_at: test_timestamp(),
-        }
-    }
-
     #[test]
     fn normalizes_relation_alias_segments_predictably() {
         assert_eq!(normalize_alias_segment("Access Policy"), "access_policy");
@@ -2368,21 +2284,6 @@ mod tests {
         let runtime = export_runtime(templated_export_with_include(HashMap::new()));
 
         validate_export_submission(&runtime).unwrap();
-    }
-
-    #[test]
-    fn text_export_output_headers_use_persisted_truncated_column() {
-        let response = render_export_task_output(export_output_record(false, true)).unwrap();
-
-        assert_eq!(
-            response
-                .headers()
-                .get(EXPORT_TRUNCATED_HEADER)
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "true"
-        );
     }
 
     #[test]
