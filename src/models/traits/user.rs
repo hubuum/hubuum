@@ -476,6 +476,7 @@ mod test {
             sort: vec![],
             limit: None,
             cursor: None,
+            include_total: true,
         }
     }
 
@@ -611,6 +612,7 @@ mod test {
                     sort: vec![],
                     limit: None,
                     cursor: None,
+                    include_total: true,
                 },
                 None,
             )

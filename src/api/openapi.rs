@@ -571,10 +571,16 @@ fn add_cursor_pagination_docs(operation: &mut Operation) {
         "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
         Type::String,
     );
+    ensure_query_parameter(
+        parameters,
+        "include_total",
+        "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+        Type::Boolean,
+    );
 
     if let Some(description) = operation.description.as_mut() {
         let pagination_text = format!(
-            " Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `{TOTAL_COUNT_HEADER}` response header, and the next page cursor is returned in the `{NEXT_CURSOR_HEADER}` response header."
+            " Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `{TOTAL_COUNT_HEADER}` response header unless `include_total=false`, and the next page cursor is returned in the `{NEXT_CURSOR_HEADER}` response header."
         );
         if !description.contains(NEXT_CURSOR_HEADER) {
             description.push_str(&pagination_text);
@@ -645,7 +651,7 @@ fn add_total_count_header(response: &mut RefOr<utoipa::openapi::response::Respon
         .or_insert_with(|| {
             let mut header = Header::default();
             header.description = Some(
-                "Exact total number of results matching the current filter set, independent of cursor pagination."
+            "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
                     .to_string(),
             );
             header

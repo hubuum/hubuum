@@ -807,16 +807,17 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     operator: class_param.operator.clone(),
                     value: class_param.value.clone(),
                 };
-                let query_options = QueryOptions {
+                let class_query_options = QueryOptions {
                     filters: vec![qparam],
                     sort: vec![],
                     limit: None,
                     cursor: None,
+                    include_total: true,
                 };
                 let classes = self
                     .search_classes_from_backend_with_admin_status(
                         pool,
-                        query_options,
+                        class_query_options,
                         is_admin,
                         scopes,
                     )
@@ -830,7 +831,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                         user_id = self.principal_id(),
                         result = "No class IDs found, returning empty result"
                     );
-                    return Ok((vec![], 0));
+                    return Ok((
+                        vec![],
+                        crate::pagination::known_count_or_skipped(&query_options, 0),
+                    ));
                 }
 
                 debug!(
@@ -911,12 +915,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
 
         let base_query = build_query()?;
-        let total_count = with_connection(pool, |conn| {
-            base_query
-                .select(class_relation_id)
-                .distinct()
-                .count()
-                .get_result::<i64>(conn)
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
+            with_connection(pool, |conn| {
+                base_query
+                    .select(class_relation_id)
+                    .distinct()
+                    .count()
+                    .get_result::<i64>(conn)
+            })
         })?;
 
         let mut base_query = build_query()?;
@@ -1045,12 +1051,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
 
         let base_query = build_query()?;
-        let total_count = with_connection(pool, |conn| {
-            base_query
-                .select(relation_id)
-                .distinct()
-                .count()
-                .get_result::<i64>(conn)
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
+            with_connection(pool, |conn| {
+                base_query
+                    .select(relation_id)
+                    .distinct()
+                    .count()
+                    .get_result::<i64>(conn)
+            })
         })?;
 
         let mut base_query = build_query()?;
@@ -1238,15 +1246,20 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         )
         .await?
         else {
-            return Ok((vec![], 0));
+            return Ok((
+                vec![],
+                crate::pagination::known_count_or_skipped(&query_options, 0),
+            ));
         };
         let total_count_spec = base_spec.clone().into_count_query("related_classes_count");
         let spec = apply_raw_sql_pagination::<ClassGraphRow>(base_spec, &query_options)?;
 
-        let total_count = with_connection(pool, |conn| {
-            bind_raw_sql_query!(total_count_spec)
-                .get_result::<CountRow>(conn)
-                .map(|row| row.count)
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
+            with_connection(pool, |conn| {
+                bind_raw_sql_query!(total_count_spec)
+                    .get_result::<CountRow>(conn)
+                    .map(|row| row.count)
+            })
         })?;
 
         let query = bind_raw_sql_query!(spec.clone());
@@ -1409,12 +1422,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
 
         let base_query = build_query()?;
-        let total_count = with_connection(pool, |conn| {
-            base_query
-                .select(relation_id)
-                .distinct()
-                .count()
-                .get_result::<i64>(conn)
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
+            with_connection(pool, |conn| {
+                base_query
+                    .select(relation_id)
+                    .distinct()
+                    .count()
+                    .get_result::<i64>(conn)
+            })
         })?;
 
         let mut base_query = build_query()?;
@@ -1563,12 +1578,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
 
         let base_query = build_query()?;
-        let total_count = with_connection(pool, |conn| {
-            base_query
-                .select(relation_id)
-                .distinct()
-                .count()
-                .get_result::<i64>(conn)
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
+            with_connection(pool, |conn| {
+                base_query
+                    .select(relation_id)
+                    .distinct()
+                    .count()
+                    .get_result::<i64>(conn)
+            })
         })?;
 
         let mut base_query = build_query()?;
@@ -1765,15 +1782,20 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         )
         .await?
         else {
-            return Ok((vec![], 0));
+            return Ok((
+                vec![],
+                crate::pagination::known_count_or_skipped(&query_options, 0),
+            ));
         };
         let total_count_spec = base_spec.clone().into_count_query("related_objects_count");
         let spec = apply_raw_sql_pagination::<RelatedObjectGraphRow>(base_spec, &query_options)?;
 
-        let total_count = with_connection(pool, |conn| {
-            bind_raw_sql_query!(total_count_spec)
-                .get_result::<CountRow>(conn)
-                .map(|row| row.count)
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
+            with_connection(pool, |conn| {
+                bind_raw_sql_query!(total_count_spec)
+                    .get_result::<CountRow>(conn)
+                    .map(|row| row.count)
+            })
         })?;
 
         let query = bind_raw_sql_query!(spec.clone());

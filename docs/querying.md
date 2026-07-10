@@ -106,6 +106,7 @@ Parameters:
 - `limit`: maximum number of items to return
 - `sort`: page order
 - `cursor`: opaque token returned by a previous response
+- `include_total`: whether to run the exact count query and return `X-Total-Count`; defaults to `true`
 
 Limits:
 
@@ -115,7 +116,8 @@ Limits:
 Behavior:
 
 - the current page is returned as a JSON array
-- every paginated response includes `X-Total-Count` with the exact number of matching results
+- by default, paginated responses include `X-Total-Count` with the exact number of matching results
+- set `include_total=false` to skip that count query on latency-sensitive requests; `X-Total-Count` is then omitted
 - if another page exists, the response includes `X-Next-Cursor`
 - send that cursor back unchanged to fetch the next page
 - if `X-Next-Cursor` is absent, there is no next page

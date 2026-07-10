@@ -427,7 +427,10 @@ impl ExportTemplate {
         query_options: &QueryOptions,
     ) -> Result<(Vec<ExportTemplate>, i64), ApiError> {
         if allowed_collection_ids.is_empty() {
-            return Ok((Vec::new(), 0));
+            return Ok((
+                Vec::new(),
+                crate::pagination::known_count_or_skipped(query_options, 0),
+            ));
         }
 
         let (rows, total_count) =

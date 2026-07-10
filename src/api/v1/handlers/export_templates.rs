@@ -381,7 +381,7 @@ pub async fn get_template_history(
     let (rows, total_count) =
         export_template_history_paginated_with_total_count(entity_id, &pool, &search_params)
             .await?;
-    if require_history && total_count == 0 {
+    if require_history && rows.is_empty() && params.cursor.is_none() {
         return Err(ApiError::NotFound(format!(
             "template {entity_id} not found"
         )));

@@ -433,7 +433,7 @@ pub async fn get_remote_target_history(
     let search_params = prepare_db_pagination::<crate::models::RemoteTargetHistory>(&params)?;
     let (rows, total_count) =
         remote_target_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
-    if require_history && total_count == 0 {
+    if require_history && rows.is_empty() && params.cursor.is_none() {
         return Err(ApiError::NotFound(format!(
             "remote target {entity_id} not found"
         )));

@@ -671,7 +671,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes",
-        "description": "Auto-generated documentation for GET /api/v1/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1Classes",
         "parameters": [
           {
@@ -700,6 +700,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -716,7 +725,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -1015,7 +1024,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Trailing",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdTrailing",
         "parameters": [
           {
@@ -1054,6 +1063,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -1070,7 +1088,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -1351,7 +1369,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id History",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdHistory",
         "parameters": [
           {
@@ -1390,6 +1408,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -1406,7 +1433,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -1631,7 +1658,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Objects By Object Id Related Objects",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/objects/{object_id}/related/objects. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/objects/{object_id}/related/objects. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdObjectsByObjectIdRelatedObjects",
         "parameters": [
           {
@@ -1698,6 +1725,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -1714,7 +1750,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -1772,7 +1808,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Objects By Object Id Related Relations",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/objects/{object_id}/related/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/objects/{object_id}/related/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdObjectsByObjectIdRelatedRelations",
         "parameters": [
           {
@@ -1821,6 +1857,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -1837,7 +1882,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -1895,7 +1940,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Permissions",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/permissions. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/permissions. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdPermissions",
         "parameters": [
           {
@@ -1934,6 +1979,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -1950,7 +2004,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -1998,7 +2052,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Related Classes",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdRelatedClasses",
         "parameters": [
           {
@@ -2037,6 +2091,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -2053,7 +2116,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -2180,7 +2243,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Related Relations",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/related/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdRelatedRelations",
         "parameters": [
           {
@@ -2219,6 +2282,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -2235,7 +2307,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -3092,7 +3164,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id By Object Id History",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/{object_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/{object_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdByObjectIdHistory",
         "parameters": [
           {
@@ -3141,6 +3213,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -3157,7 +3238,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -3313,7 +3394,7 @@
           "collections"
         ],
         "summary": "Get Api V1 Collections",
-        "description": "Auto-generated documentation for GET /api/v1/collections. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/collections. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1Collections",
         "parameters": [
           {
@@ -3342,6 +3423,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -3358,7 +3448,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -4342,7 +4432,7 @@
           "collections"
         ],
         "summary": "List all groups that have any permissions on a collection",
-        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/has_permissions/{permission}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/has_permissions/{permission}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1CollectionsByCollectionIdHasPermissionsByPermission",
         "parameters": [
           {
@@ -4390,6 +4480,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -4406,7 +4505,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -4454,7 +4553,7 @@
           "collections"
         ],
         "summary": "Get Api V1 Collections By Collection Id History",
-        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1CollectionsByCollectionIdHistory",
         "parameters": [
           {
@@ -4493,6 +4592,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -4509,7 +4617,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -4754,7 +4862,7 @@
           "collections"
         ],
         "summary": "List all groups who have permissions for a collection",
-        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/permissions. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/permissions. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1CollectionsByCollectionIdPermissions",
         "parameters": [
           {
@@ -4793,6 +4901,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -4809,7 +4926,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -5495,7 +5612,7 @@
           "collections"
         ],
         "summary": "List all permissions for a principal on a collection",
-        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/permissions/principal/{principal_id}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/permissions/principal/{principal_id}. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1CollectionsByCollectionIdPermissionsPrincipalByPrincipalId",
         "parameters": [
           {
@@ -5544,6 +5661,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -5560,7 +5686,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -6478,7 +6604,7 @@
           "export-templates"
         ],
         "summary": "Get Api V1 Export Templates",
-        "description": "Auto-generated documentation for GET /api/v1/export-templates. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/export-templates. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ExportTemplates",
         "parameters": [
           {
@@ -6507,6 +6633,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -6523,7 +6658,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -7127,7 +7262,7 @@
           "export-templates"
         ],
         "summary": "Get Api V1 Export Templates By Template Id History",
-        "description": "Auto-generated documentation for GET /api/v1/export-templates/{template_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/export-templates/{template_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ExportTemplatesByTemplateIdHistory",
         "parameters": [
           {
@@ -7166,6 +7301,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -7182,7 +7326,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -7548,7 +7692,7 @@
           "groups"
         ],
         "summary": "Get Api V1 Iam Groups",
-        "description": "Auto-generated documentation for GET /api/v1/iam/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamGroups",
         "parameters": [
           {
@@ -7577,6 +7721,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -7593,7 +7746,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -8068,7 +8221,7 @@
           "groups"
         ],
         "summary": "Get Api V1 Iam Groups By Group Id Members",
-        "description": "Auto-generated documentation for GET /api/v1/iam/groups/{group_id}/members. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/groups/{group_id}/members. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamGroupsByGroupIdMembers",
         "parameters": [
           {
@@ -8107,6 +8260,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -8123,7 +8285,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -8330,7 +8492,7 @@
           "principals"
         ],
         "summary": "Get Api V1 Iam Me Groups",
-        "description": "Auto-generated documentation for GET /api/v1/iam/me/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/me/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamMeGroups",
         "parameters": [
           {
@@ -8359,6 +8521,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -8375,7 +8546,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -8643,7 +8814,7 @@
           "principals"
         ],
         "summary": "Get Api V1 Iam Me Tokens",
-        "description": "Auto-generated documentation for GET /api/v1/iam/me/tokens. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/me/tokens. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamMeTokens",
         "parameters": [
           {
@@ -8672,6 +8843,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -8688,7 +8868,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -8736,7 +8916,7 @@
           "principals"
         ],
         "summary": "Get Api V1 Iam Principals By Principal Id Groups",
-        "description": "Auto-generated documentation for GET /api/v1/iam/principals/{principal_id}/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/principals/{principal_id}/groups. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamPrincipalsByPrincipalIdGroups",
         "parameters": [
           {
@@ -8775,6 +8955,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -8791,7 +8980,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -9179,7 +9368,7 @@
           "principals"
         ],
         "summary": "Get Api V1 Iam Principals By Principal Id Tokens",
-        "description": "Auto-generated documentation for GET /api/v1/iam/principals/{principal_id}/tokens. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/principals/{principal_id}/tokens. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamPrincipalsByPrincipalIdTokens",
         "parameters": [
           {
@@ -9218,6 +9407,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -9234,7 +9432,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -9441,7 +9639,7 @@
           "service-accounts"
         ],
         "summary": "Get Api V1 Iam Service Accounts",
-        "description": "Auto-generated documentation for GET /api/v1/iam/service-accounts. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/service-accounts. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamServiceAccounts",
         "parameters": [
           {
@@ -9470,6 +9668,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -9486,7 +9693,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -9874,7 +10081,7 @@
           "users"
         ],
         "summary": "Get Api V1 Iam Users",
-        "description": "Auto-generated documentation for GET /api/v1/iam/users. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/users. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamUsers",
         "parameters": [
           {
@@ -9903,6 +10110,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -9919,7 +10135,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -10684,7 +10900,7 @@
           "relations"
         ],
         "summary": "Get Api V1 Relations Classes",
-        "description": "Auto-generated documentation for GET /api/v1/relations/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/relations/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1RelationsClasses",
         "parameters": [
           {
@@ -10713,6 +10929,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -10729,7 +10954,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -10951,7 +11176,7 @@
           "relations"
         ],
         "summary": "Get Api V1 Relations Objects",
-        "description": "Auto-generated documentation for GET /api/v1/relations/objects. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/relations/objects. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1RelationsObjects",
         "parameters": [
           {
@@ -10980,6 +11205,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -10996,7 +11230,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -11343,7 +11577,7 @@
           "remote-targets"
         ],
         "summary": "Get Api V1 Remote Targets By Remote Target Id History",
-        "description": "Auto-generated documentation for GET /api/v1/remote-targets/{remote_target_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/remote-targets/{remote_target_id}/history. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1RemoteTargetsByRemoteTargetIdHistory",
         "parameters": [
           {
@@ -11382,6 +11616,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -11398,7 +11641,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {
@@ -12252,7 +12495,7 @@
           "tasks"
         ],
         "summary": "Get Api V1 Tasks",
-        "description": "Auto-generated documentation for GET /api/v1/tasks. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Auto-generated documentation for GET /api/v1/tasks. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1Tasks",
         "parameters": [
           {
@@ -12310,6 +12553,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -12326,7 +12578,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Exact total number of results matching the current filter set, independent of cursor pagination."
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
               }
             },
             "content": {

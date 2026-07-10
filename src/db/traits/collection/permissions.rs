@@ -166,7 +166,9 @@ pub async fn principal_on_paginated_with_total_count_from_backend<
     };
 
     let query = build_query()?;
-    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
+        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
+    })?;
 
     let mut query = build_query()?;
     crate::apply_query_options!(query, query_options, GroupPermission);
@@ -424,7 +426,9 @@ pub async fn groups_can_on_paginated_with_total_count_from_backend(
     };
 
     let query = build_query()?;
-    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
+        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
+    })?;
 
     let mut query = build_query()?;
     crate::apply_query_options!(query, query_options, Group);
@@ -591,7 +595,9 @@ pub async fn groups_on_paginated_with_total_count_from_backend<T: CollectionAcce
     };
 
     let query = build_query()?;
-    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
+        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
+    })?;
 
     let mut query = build_query()?;
     crate::apply_query_options!(query, query_options, GroupPermission);

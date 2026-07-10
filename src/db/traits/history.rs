@@ -37,11 +37,13 @@ macro_rules! history_db_fns {
         ) -> Result<(Vec<$ty>, i64), $crate::errors::ApiError> {
             use diesel::prelude::*;
             use $($schema)::+::dsl::*;
-            let total = $crate::db::with_connection(pool, |conn| {
-                $($schema)::+::table
-                    .filter(id.eq(entity_id))
-                    .count()
-                    .get_result::<i64>(conn)
+            let total = $crate::pagination::exact_count_or_skipped(query_options, || {
+                $crate::db::with_connection(pool, |conn| {
+                    $($schema)::+::table
+                        .filter(id.eq(entity_id))
+                        .count()
+                        .get_result::<i64>(conn)
+                })
             })?;
             let mut query = $($schema)::+::table.into_boxed().filter(id.eq(entity_id));
             $crate::apply_query_options!(query, query_options, $ty);
@@ -106,12 +108,14 @@ pub async fn object_history_paginated_with_total_count(
 ) -> Result<(Vec<crate::models::HubuumObjectHistory>, i64), ApiError> {
     use crate::schema::hubuumobject_history::dsl as history;
 
-    let total = with_connection(pool, |conn| {
-        history::hubuumobject_history
-            .filter(history::id.eq(object_id))
-            .filter(history::hubuum_class_id.eq(class_id))
-            .count()
-            .get_result::<i64>(conn)
+    let total = crate::pagination::exact_count_or_skipped(query_options, || {
+        with_connection(pool, |conn| {
+            history::hubuumobject_history
+                .filter(history::id.eq(object_id))
+                .filter(history::hubuum_class_id.eq(class_id))
+                .count()
+                .get_result::<i64>(conn)
+        })
     })?;
     let mut query = history::hubuumobject_history
         .into_boxed()

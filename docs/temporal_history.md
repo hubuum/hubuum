@@ -389,9 +389,10 @@ Returns all historical versions for a specific entity, ordered newest-first by d
 - `?sort=history_id` - Sort order (default: `history_id` descending for newest-first; ordering is chronological via the monotonic history_id)
 - `?limit=N` - Number of results per page (default: 50, max: 500)
 - `?cursor=<opaque>` - Pagination cursor from `X-Next-Cursor` header
+- `?include_total=false` - Skip the exact count query and omit `X-Total-Count`
 
 **Response Headers:**
-- `X-Total-Count` - Total number of history rows for this entity
+- `X-Total-Count` - Total number of history rows for this entity (omitted when `include_total=false`)
 - `X-Next-Cursor` - Opaque cursor for the next page (omitted on last page)
 
 **Response Body:**

@@ -29,7 +29,9 @@ pub async fn list_events_with_total_count(
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventResponse>, i64), ApiError> {
     let query = build_event_query(accessible_collection_ids, include_collection_less, filters)?;
-    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
+        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
+    })?;
 
     let mut query = build_event_query(accessible_collection_ids, include_collection_less, filters)?;
     apply_query_options!(query, query_options, EventResponse);

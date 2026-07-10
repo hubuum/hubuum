@@ -12,6 +12,26 @@ pub use crate::traits::pagination::{
 
 pub const NEXT_CURSOR_HEADER: &str = "X-Next-Cursor";
 pub const TOTAL_COUNT_HEADER: &str = "X-Total-Count";
+pub const SKIPPED_TOTAL_COUNT: i64 = -1;
+
+pub fn exact_count_or_skipped(
+    query_options: &QueryOptions,
+    count: impl FnOnce() -> Result<i64, ApiError>,
+) -> Result<i64, ApiError> {
+    if query_options.include_total {
+        count()
+    } else {
+        Ok(SKIPPED_TOTAL_COUNT)
+    }
+}
+
+pub fn known_count_or_skipped(query_options: &QueryOptions, count: i64) -> i64 {
+    if query_options.include_total {
+        count
+    } else {
+        SKIPPED_TOTAL_COUNT
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CursorPageRequest {
@@ -130,7 +150,9 @@ pub fn pagination_headers(
     total_count: i64,
 ) -> HashMap<String, String> {
     let mut headers = HashMap::new();
-    headers.insert(TOTAL_COUNT_HEADER.to_string(), total_count.to_string());
+    if total_count != SKIPPED_TOTAL_COUNT {
+        headers.insert(TOTAL_COUNT_HEADER.to_string(), total_count.to_string());
+    }
     if let Some(cursor) = next_cursor.as_ref() {
         headers.insert(NEXT_CURSOR_HEADER.to_string(), cursor.clone());
     }
@@ -533,6 +555,7 @@ mod tests {
                 sort: vec![],
                 limit: Some(2),
                 cursor: None,
+                include_total: true,
             },
         )
         .unwrap();
@@ -552,6 +575,7 @@ mod tests {
             sort: vec![],
             limit: Some(2),
             cursor: first_page.next_cursor.clone(),
+            include_total: true,
         })
         .unwrap();
 
@@ -568,6 +592,7 @@ mod tests {
                 sort: vec![],
                 limit: Some(2),
                 cursor: first_page.next_cursor,
+                include_total: true,
             },
         )
         .unwrap();
@@ -601,6 +626,7 @@ mod tests {
                 }],
                 limit: Some(2),
                 cursor: None,
+                include_total: true,
             },
         )
         .unwrap();
@@ -625,6 +651,7 @@ mod tests {
             }],
             limit: None,
             cursor: None,
+            include_total: true,
         })
         .unwrap();
 
@@ -632,6 +659,25 @@ mod tests {
         assert_eq!(prepared.sort.len(), 2);
         assert_eq!(prepared.sort[0].field, FilterField::Username);
         assert_eq!(prepared.sort[1].field, FilterField::Id);
+    }
+
+    #[test]
+    fn exact_total_count_can_be_skipped() {
+        let options = QueryOptions {
+            filters: vec![],
+            sort: vec![],
+            limit: None,
+            cursor: None,
+            include_total: false,
+        };
+        let count = exact_count_or_skipped(&options, || {
+            panic!("count query must not execute when include_total is false")
+        })
+        .unwrap();
+        assert_eq!(count, SKIPPED_TOTAL_COUNT);
+
+        let headers = pagination_headers(&None, count);
+        assert!(!headers.contains_key(TOTAL_COUNT_HEADER));
     }
 
     #[test]

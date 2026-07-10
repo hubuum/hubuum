@@ -141,12 +141,14 @@ pub trait TaskBackend: TaskIdentifier {
             .unwrap_or(false);
         let cursor_id = decode_task_event_cursor_id(query_options)?;
 
-        let total_count = with_connection(pool, |conn| {
-            events
-                .filter(entity_type.eq(EntityType::Task.as_str()))
-                .filter(entity_id.eq(Some(task_id_value)))
-                .count()
-                .get_result::<i64>(conn)
+        let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
+            with_connection(pool, |conn| {
+                events
+                    .filter(entity_type.eq(EntityType::Task.as_str()))
+                    .filter(entity_id.eq(Some(task_id_value)))
+                    .count()
+                    .get_result::<i64>(conn)
+            })
         })?;
 
         let items = with_connection(pool, |conn| {
@@ -199,11 +201,13 @@ pub trait TaskBackend: TaskIdentifier {
             .unwrap_or(false);
         let cursor_id = decode_int_history_cursor_id(query_options)?;
 
-        let total_count = with_connection(pool, |conn| {
-            import_task_results
-                .filter(task_id.eq(task_id_value))
-                .count()
-                .get_result::<i64>(conn)
+        let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
+            with_connection(pool, |conn| {
+                import_task_results
+                    .filter(task_id.eq(task_id_value))
+                    .count()
+                    .get_result::<i64>(conn)
+            })
         })?;
 
         let items = with_connection(pool, |conn| {
@@ -515,10 +519,12 @@ pub async fn list_tasks_with_total_count(
     status_filter: Option<&str>,
     query_options: &QueryOptions,
 ) -> Result<(Vec<TaskRecord>, i64), ApiError> {
-    let total_count = with_connection(pool, |conn| {
-        build_task_query(submitted_by_filter, kind_filter, status_filter)
-            .count()
-            .get_result::<i64>(conn)
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
+        with_connection(pool, |conn| {
+            build_task_query(submitted_by_filter, kind_filter, status_filter)
+                .count()
+                .get_result::<i64>(conn)
+        })
     })?;
 
     let items = with_connection(pool, |conn| -> Result<Vec<TaskRecord>, ApiError> {
@@ -1109,6 +1115,7 @@ mod tests {
                         sort: Vec::new(),
                         limit: None,
                         cursor: None,
+                        include_total: true,
                     },
                 ),
         )

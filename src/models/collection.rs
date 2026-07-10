@@ -814,6 +814,7 @@ mod tests {
                 sort: vec![],
                 limit: None,
                 cursor: None,
+                include_total: true,
             },
         )
         .await

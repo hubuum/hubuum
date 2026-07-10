@@ -40,6 +40,7 @@ pub fn parse_query_parameter_with_passthrough(
     let mut sort = Vec::new();
     let mut limit = None;
     let mut cursor = None;
+    let mut include_total = None;
     let mut passthrough = HashMap::<String, Vec<String>>::new();
     let passthrough_keys = passthrough_keys.iter().copied().collect::<HashSet<_>>();
 
@@ -50,6 +51,7 @@ pub fn parse_query_parameter_with_passthrough(
                 sort,
                 limit,
                 cursor,
+                include_total: true,
             },
             passthrough,
         ));
@@ -80,6 +82,13 @@ pub fn parse_query_parameter_with_passthrough(
                 cursor = Some(value);
             }
 
+            "include_total" => {
+                if include_total.is_some() {
+                    return Err(ApiError::BadRequest("duplicate include_total".into()));
+                }
+                include_total = Some(value.as_boolean()?);
+            }
+
             // SORT / ORDER BY: e.g. sort=created_at,-name,email.desc
             "sort" | "order_by" => {
                 for piece in value.split(',') {
@@ -107,6 +116,7 @@ pub fn parse_query_parameter_with_passthrough(
             sort,
             limit,
             cursor,
+            include_total: include_total.unwrap_or(true),
         },
         passthrough,
     ))
@@ -213,6 +223,9 @@ pub struct QueryOptions {
     pub sort: Vec<SortParam>,
     pub limit: Option<usize>,
     pub cursor: Option<String>,
+    /// Whether list endpoints should execute an exact count query and return
+    /// `X-Total-Count`. Defaults to true for API compatibility.
+    pub include_total: bool,
 }
 
 /// ## A struct that represents a filter field
@@ -2684,6 +2697,19 @@ mod test {
         assert_eq!(query_options.sort[0].field, FilterField::Id);
         assert!(query_options.sort[0].descending);
         assert_eq!(query_options.cursor, Some("test-cursor".to_string()));
+    }
+
+    #[test]
+    fn parse_query_parameter_supports_total_count_opt_out() {
+        let options = parse_query_parameter("include_total=false").unwrap();
+        assert!(!options.include_total);
+
+        let defaults = parse_query_parameter("").unwrap();
+        assert!(defaults.include_total);
+
+        let duplicate =
+            parse_query_parameter("include_total=true&include_total=false").unwrap_err();
+        assert_eq!(duplicate.to_string(), "duplicate include_total");
     }
 
     #[test]
