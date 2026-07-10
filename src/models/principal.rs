@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::db::DbPool;
+use crate::db::traits::principal::PrincipalSettingsMutation;
 use crate::errors::ApiError;
+use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::principals;
 use crate::traits::BackendContext;
@@ -62,9 +64,104 @@ pub struct Principal {
     pub updated_at: chrono::NaiveDateTime,
     pub identity_scope_id: i32,
     pub provider_managed: bool,
+    #[serde(skip, default = "empty_principal_settings_value")]
+    #[schema(ignore)]
+    settings: serde_json::Value,
     pub external_subject: Option<String>,
     pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
+}
+
+/// An object-only JSON document containing a principal's local preferences.
+///
+/// Values below the document root may be any JSON type. The private
+/// representation keeps callers from constructing an invalid non-object root.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
+#[serde(transparent)]
+#[schema(value_type = Object)]
+pub struct PrincipalSettings(serde_json::Value);
+
+impl PrincipalSettings {
+    pub fn new(value: serde_json::Value) -> Result<Self, ApiError> {
+        if value.is_object() {
+            Ok(Self(value))
+        } else {
+            Err(ApiError::BadRequest(
+                "principal settings must be a JSON object".to_string(),
+            ))
+        }
+    }
+
+    pub fn as_value(&self) -> &serde_json::Value {
+        &self.0
+    }
+
+    /// Apply JSON Merge Patch object semantics to this document.
+    ///
+    /// Object values merge recursively, `null` removes a key, and every other
+    /// value replaces the value currently stored at that key.
+    pub fn merge_patch(mut self, patch: &Self) -> Self {
+        let target = self
+            .0
+            .as_object_mut()
+            .expect("PrincipalSettings always contains an object");
+        let patch = patch
+            .0
+            .as_object()
+            .expect("PrincipalSettings always contains an object");
+        merge_settings_objects(target, patch);
+        self
+    }
+}
+
+impl Default for PrincipalSettings {
+    fn default() -> Self {
+        Self(serde_json::json!({}))
+    }
+}
+
+impl<'de> Deserialize<'de> for PrincipalSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+fn merge_settings_objects(
+    target: &mut serde_json::Map<String, serde_json::Value>,
+    patch: &serde_json::Map<String, serde_json::Value>,
+) {
+    for (key, patch_value) in patch {
+        match patch_value {
+            serde_json::Value::Null => {
+                target.remove(key);
+            }
+            serde_json::Value::Object(patch_object) => {
+                let target_value = target
+                    .entry(key.clone())
+                    .or_insert_with(|| serde_json::json!({}));
+                if !target_value.is_object() {
+                    *target_value = serde_json::json!({});
+                }
+                merge_settings_objects(
+                    target_value
+                        .as_object_mut()
+                        .expect("replacement settings value is an object"),
+                    patch_object,
+                );
+            }
+            _ => {
+                target.insert(key.clone(), patch_value.clone());
+            }
+        }
+    }
+}
+
+fn empty_principal_settings_value() -> serde_json::Value {
+    serde_json::json!({})
 }
 
 impl Principal {
@@ -83,6 +180,15 @@ impl Principal {
 
     pub fn is_provider_managed(&self) -> bool {
         self.provider_managed
+    }
+
+    pub fn settings(&self) -> Result<PrincipalSettings, ApiError> {
+        PrincipalSettings::new(self.settings.clone()).map_err(|_| {
+            ApiError::InternalServerError(format!(
+                "Principal '{}' has invalid settings in the database",
+                self.id
+            ))
+        })
     }
 }
 
@@ -193,6 +299,69 @@ impl PrincipalID {
         C: BackendContext + ?Sized,
     {
         load_principal_by_id(backend.db_pool(), self.id()).await
+    }
+
+    pub async fn settings<C>(&self, backend: &C) -> Result<PrincipalSettings, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        crate::db::traits::principal::load_principal_settings(backend.db_pool(), self.id()).await
+    }
+
+    pub async fn replace_settings<C>(
+        &self,
+        backend: &C,
+        settings: PrincipalSettings,
+        event_context: &EventContext,
+    ) -> Result<PrincipalSettings, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        crate::db::traits::principal::mutate_principal_settings(
+            backend.db_pool(),
+            self.id(),
+            PrincipalSettingsMutation::Replace,
+            settings,
+            event_context,
+        )
+        .await
+    }
+
+    pub async fn patch_settings<C>(
+        &self,
+        backend: &C,
+        patch: PrincipalSettings,
+        event_context: &EventContext,
+    ) -> Result<PrincipalSettings, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        crate::db::traits::principal::mutate_principal_settings(
+            backend.db_pool(),
+            self.id(),
+            PrincipalSettingsMutation::Patch,
+            patch,
+            event_context,
+        )
+        .await
+    }
+
+    pub async fn reset_settings<C>(
+        &self,
+        backend: &C,
+        event_context: &EventContext,
+    ) -> Result<PrincipalSettings, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        crate::db::traits::principal::mutate_principal_settings(
+            backend.db_pool(),
+            self.id(),
+            PrincipalSettingsMutation::Reset,
+            PrincipalSettings::default(),
+            event_context,
+        )
+        .await
     }
 }
 

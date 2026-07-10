@@ -94,9 +94,11 @@
         updated_at TIMESTAMP NOT NULL DEFAULT now(),
         identity_scope_id INT NOT NULL DEFAULT 1 REFERENCES identity_scopes(id) ON DELETE RESTRICT,
         provider_managed BOOLEAN NOT NULL DEFAULT FALSE,
+        settings JSONB NOT NULL DEFAULT '{}'::jsonb,
         external_subject VARCHAR NULL,
         last_sync_attempted_at TIMESTAMP NULL,
         last_sync_success_at TIMESTAMP NULL,
+        CONSTRAINT principals_settings_object CHECK (jsonb_typeof(settings) = 'object'),
         -- Backs the composite (id, kind) FKs on the subtype tables.
         UNIQUE (id, kind),
         UNIQUE (identity_scope_id, name)

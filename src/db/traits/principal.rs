@@ -1,8 +1,12 @@
 use diesel::prelude::*;
 
-use crate::db::{DbPool, with_connection};
+use hubuum_events_core::EventContext;
+use serde_json::json;
+
+use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
-use crate::models::{NewPrincipal, Principal, User};
+use crate::events::{Action, EntityType, NewEvent, emit_event};
+use crate::models::{NewPrincipal, Principal, PrincipalKind, PrincipalSettings, User};
 
 pub trait InsertPrincipalRecord {
     /// Insert the principal row and return it (principal-first id allocation).
@@ -33,6 +37,86 @@ pub async fn load_principal_by_id(
         principals_table
             .filter(id.eq(principal_id_value))
             .first::<Principal>(conn)
+    })
+}
+
+pub async fn load_principal_settings(
+    pool: &DbPool,
+    principal_id_value: i32,
+) -> Result<PrincipalSettings, ApiError> {
+    use crate::schema::principals::dsl::{id, principals as principals_table, settings};
+
+    let value = with_connection(pool, |conn| {
+        principals_table
+            .filter(id.eq(principal_id_value))
+            .select(settings)
+            .first::<serde_json::Value>(conn)
+    })?;
+    stored_principal_settings(principal_id_value, value)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PrincipalSettingsMutation {
+    Replace,
+    Patch,
+    Reset,
+}
+
+pub async fn mutate_principal_settings(
+    pool: &DbPool,
+    principal_id_value: i32,
+    mutation: PrincipalSettingsMutation,
+    input: PrincipalSettings,
+    event_context: &EventContext,
+) -> Result<PrincipalSettings, ApiError> {
+    use crate::schema::principals;
+
+    with_transaction(pool, |conn| -> Result<PrincipalSettings, ApiError> {
+        let (kind, name, stored_before) = principals::table
+            .filter(principals::id.eq(principal_id_value))
+            .select((principals::kind, principals::name, principals::settings))
+            .for_update()
+            .first::<(String, String, serde_json::Value)>(conn)?;
+        let before = stored_principal_settings(principal_id_value, stored_before)?;
+        let after = match mutation {
+            PrincipalSettingsMutation::Replace => input,
+            PrincipalSettingsMutation::Patch => before.clone().merge_patch(&input),
+            PrincipalSettingsMutation::Reset => PrincipalSettings::default(),
+        };
+
+        diesel::update(principals::table.filter(principals::id.eq(principal_id_value)))
+            .set(principals::settings.eq(after.as_value()))
+            .execute(conn)?;
+
+        let entity_type = match PrincipalKind::from_db(&kind)? {
+            PrincipalKind::Human => EntityType::User,
+            PrincipalKind::ServiceAccount => EntityType::ServiceAccount,
+        };
+        let event = NewEvent::new(
+            entity_type,
+            Action::Updated,
+            event_context.actor_kind(),
+            format!("Principal settings for '{name}' updated"),
+        )?
+        .with_context(event_context)
+        .with_entity_id(principal_id_value)
+        .with_entity_name(name)
+        .with_before(json!({ "settings": before }))
+        .with_after(json!({ "settings": after }));
+        emit_event(conn, &event)?;
+
+        Ok(after)
+    })
+}
+
+fn stored_principal_settings(
+    principal_id_value: i32,
+    value: serde_json::Value,
+) -> Result<PrincipalSettings, ApiError> {
+    PrincipalSettings::new(value).map_err(|_| {
+        ApiError::InternalServerError(format!(
+            "Principal '{principal_id_value}' has invalid settings in the database"
+        ))
     })
 }
 

@@ -413,6 +413,7 @@ diesel::table! {
         updated_at -> Timestamp,
         identity_scope_id -> Int4,
         provider_managed -> Bool,
+        settings -> Jsonb,
         external_subject -> Nullable<Varchar>,
         last_sync_attempted_at -> Nullable<Timestamp>,
         last_sync_success_at -> Nullable<Timestamp>,
