@@ -35,6 +35,7 @@ use rustls::pki_types::{CertificateDer, pem::PemObject};
 use rustls::{ClientConfig, RootCertStore};
 use rustls_platform_verifier::BuilderVerifierExt;
 use std::future::Future;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -46,6 +47,43 @@ use crate::utilities::db::DatabaseUrlComponents;
 
 pub type DbConnection = AsyncPgConnection;
 pub type DbPool = Pool<DbConnection>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DatabaseTlsMode {
+    Disable,
+    Verify,
+}
+
+fn database_tls_mode(database_url: &str, host: &str) -> Result<DatabaseTlsMode, String> {
+    let mut explicit_mode = None;
+    if let Some((_, query)) = database_url.split_once('?') {
+        for (key, value) in query
+            .split('&')
+            .filter_map(|parameter| parameter.split_once('='))
+        {
+            if key.eq_ignore_ascii_case("sslmode") && explicit_mode.replace(value).is_some() {
+                return Err("PostgreSQL sslmode must not be repeated".to_string());
+            }
+        }
+    }
+
+    match explicit_mode {
+        Some("disable") => Ok(DatabaseTlsMode::Disable),
+        Some("prefer" | "require") => Ok(DatabaseTlsMode::Verify),
+        Some(mode) => Err(format!(
+            "Unsupported PostgreSQL sslmode '{mode}'; expected disable, prefer, or require"
+        )),
+        None if is_loopback_database_host(host) => Ok(DatabaseTlsMode::Disable),
+        None => Ok(DatabaseTlsMode::Verify),
+    }
+}
+
+fn is_loopback_database_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
 
 fn database_tls_config() -> Result<ClientConfig, diesel::result::ConnectionError> {
     let builder = ClientConfig::builder_with_provider(Arc::new(
@@ -90,6 +128,26 @@ fn database_tls_config() -> Result<ClientConfig, diesel::result::ConnectionError
     }
 
     Ok(builder.with_root_certificates(roots).with_no_client_auth())
+}
+
+async fn establish_database_connection(
+    database_url: &str,
+    tls_config: Option<ClientConfig>,
+) -> Result<DbConnection, diesel::result::ConnectionError> {
+    let connection = if let Some(tls_config) = tls_config {
+        let tls = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
+        let (client, connection) = tokio_postgres::connect(database_url, tls)
+            .await
+            .map_err(|error| diesel::result::ConnectionError::BadConnection(error.to_string()))?;
+        DbConnection::try_from_client_and_connection(client, connection).await?
+    } else {
+        let (client, connection) = tokio_postgres::connect(database_url, tokio_postgres::NoTls)
+            .await
+            .map_err(|error| diesel::result::ConnectionError::BadConnection(error.to_string()))?;
+        DbConnection::try_from_client_and_connection(client, connection).await?
+    };
+
+    Ok(connection)
 }
 
 /// Helper bound used to require that futures returned by higher-ranked async
@@ -422,9 +480,7 @@ fn init_pool_with_timeouts(
     statement_timeout_ms: u64,
     acquire_timeout_ms: u64,
 ) -> DbPool {
-    let database_url_components = DatabaseUrlComponents::new(database_url);
-
-    match database_url_components {
+    let database_host = match DatabaseUrlComponents::new(database_url) {
         Ok(components) => {
             debug!(
                 message = "Database URL parsed.",
@@ -434,33 +490,35 @@ fn init_pool_with_timeouts(
                 port = components.port,
                 database = components.database,
             );
+            components.host
         }
         Err(err) => fatal_error(
             &format!("Failed to parse database URL: {}", err),
             EXIT_CODE_CONFIG_ERROR,
         ),
-    }
+    };
 
-    let mut manager_config = ManagerConfig::<DbConnection>::default();
-    let tls_config = database_tls_config().unwrap_or_else(|error| {
+    let tls_mode = database_tls_mode(database_url, &database_host).unwrap_or_else(|error| {
         fatal_error(
             &format!("Failed to configure database TLS: {error}"),
             EXIT_CODE_CONFIG_ERROR,
         )
     });
+
+    let mut manager_config = ManagerConfig::<DbConnection>::default();
+    let tls_config = match tls_mode {
+        DatabaseTlsMode::Disable => None,
+        DatabaseTlsMode::Verify => Some(database_tls_config().unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Failed to configure database TLS: {error}"),
+                EXIT_CODE_CONFIG_ERROR,
+            )
+        })),
+    };
     manager_config.custom_setup = Box::new(move |url| {
         let tls_config = tls_config.clone();
         async move {
-            // AsyncPgConnection::establish uses NoTls. Constructing it from a
-            // tokio-postgres TLS connection preserves support for the
-            // repository's documented sslmode=require production URLs and
-            // verifies both the certificate chain and database hostname.
-            let tls = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
-            let (client, connection) =
-                tokio_postgres::connect(url, tls).await.map_err(|error| {
-                    diesel::result::ConnectionError::BadConnection(error.to_string())
-                })?;
-            let mut conn = DbConnection::try_from_client_and_connection(client, connection).await?;
+            let mut conn = establish_database_connection(url, tls_config).await?;
 
             if statement_timeout_ms > 0 {
                 diesel::sql_query("SELECT set_config('statement_timeout', $1, false)")
@@ -495,6 +553,7 @@ mod tests {
     use crate::db::prelude::*;
     use diesel::dsl::count_star;
     use diesel::insert_into;
+    use rstest::rstest;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -507,6 +566,68 @@ mod tests {
             .as_nanos();
         let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
         format!("{prefix}_{now}_{counter}")
+    }
+
+    #[rstest]
+    #[case::localhost("localhost")]
+    #[case::ipv4("127.0.0.1")]
+    #[case::ipv6("::1")]
+    fn implicit_loopback_database_urls_disable_tls(#[case] host: &str) {
+        assert_eq!(
+            database_tls_mode("postgres://postgres@localhost/hubuum", host),
+            Ok(DatabaseTlsMode::Disable)
+        );
+    }
+
+    #[rstest]
+    #[case::local_require(
+        "postgres://postgres@localhost/hubuum?sslmode=require",
+        "localhost",
+        DatabaseTlsMode::Verify
+    )]
+    #[case::local_prefer(
+        "postgres://postgres@localhost/hubuum?sslmode=prefer",
+        "localhost",
+        DatabaseTlsMode::Verify
+    )]
+    #[case::remote_disable(
+        "postgres://postgres@db.example.com/hubuum?sslmode=disable",
+        "db.example.com",
+        DatabaseTlsMode::Disable
+    )]
+    #[case::remote_implicit(
+        "postgres://postgres@db.example.com/hubuum",
+        "db.example.com",
+        DatabaseTlsMode::Verify
+    )]
+    fn database_tls_mode_follows_url_and_host(
+        #[case] database_url: &str,
+        #[case] host: &str,
+        #[case] expected: DatabaseTlsMode,
+    ) {
+        assert_eq!(database_tls_mode(database_url, host), Ok(expected));
+    }
+
+    #[test]
+    fn unsupported_database_sslmode_is_rejected() {
+        let error = database_tls_mode(
+            "postgres://postgres@db.example.com/hubuum?sslmode=verify-full",
+            "db.example.com",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("Unsupported PostgreSQL sslmode 'verify-full'"));
+    }
+
+    #[test]
+    fn repeated_database_sslmode_is_rejected() {
+        assert!(matches!(
+            database_tls_mode(
+                "postgres://postgres@db.example.com/hubuum?sslmode=require&sslmode=disable",
+                "db.example.com"
+            ),
+            Err(message) if message == "PostgreSQL sslmode must not be repeated"
+        ));
     }
 
     #[tokio::test]
