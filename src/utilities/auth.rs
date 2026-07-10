@@ -9,8 +9,24 @@ use argon2::{
 
 use rand::{RngExt, distr::Alphanumeric, rng};
 use sha2::{Digest, Sha512};
+use std::sync::LazyLock;
 
 use tracing::debug;
+
+static DUMMY_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
+    hash_password("hubuum-dummy-password-verification-target")
+        .expect("the built-in dummy password must be hashable")
+});
+
+/// Initialize the dummy verifier used to make unknown-user login attempts perform
+/// the same expensive password-hash work as wrong-password attempts.
+pub fn initialize_dummy_password_hash() {
+    LazyLock::force(&DUMMY_PASSWORD_HASH);
+}
+
+pub fn verify_dummy_password(password: &str) -> Result<bool, argon2::Error> {
+    verify_password(password, &DUMMY_PASSWORD_HASH)
+}
 
 /// Hash a plaintext password.
 pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error>> {

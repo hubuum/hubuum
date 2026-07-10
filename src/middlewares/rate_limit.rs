@@ -21,6 +21,8 @@ struct ScopeState {
     attempts: VecDeque<Instant>,
     locked_until: Option<Instant>,
     lockout_level: u32,
+    in_flight: usize,
+    last_activity_at: Option<Instant>,
 }
 
 impl ScopeState {
@@ -72,6 +74,7 @@ impl ScopeState {
         self.prune(now, window);
         self.reset_escalation_if_cooled_off(now, window);
         self.attempts.push_back(now);
+        self.last_activity_at = Some(now);
         if self.attempts.len() >= threshold {
             self.trigger_lockout(now, cfg);
         }
@@ -82,7 +85,7 @@ impl ScopeState {
     /// elapses, so pruning does not discard escalation that `reset_escalation_if_cooled_off`
     /// would otherwise preserve (and reset only after a genuine cool-off).
     fn is_active(&self, now: Instant, window: Duration) -> bool {
-        if !self.attempts.is_empty() || self.is_locked(now) {
+        if !self.attempts.is_empty() || self.is_locked(now) || self.in_flight > 0 {
             return true;
         }
         match self.locked_until {
@@ -95,11 +98,14 @@ impl ScopeState {
     /// the stalest entry for eviction; locked entries sort as "freshest" (their expiry is
     /// in the future) and are therefore protected from premature eviction.
     fn last_activity(&self) -> Option<Instant> {
-        match (self.attempts.back().copied(), self.locked_until) {
-            (Some(attempt), Some(lock)) => Some(attempt.max(lock)),
-            (Some(attempt), None) => Some(attempt),
-            (None, lock) => lock,
-        }
+        [
+            self.attempts.back().copied(),
+            self.locked_until,
+            self.last_activity_at,
+        ]
+        .into_iter()
+        .flatten()
+        .max()
     }
 }
 
@@ -191,9 +197,10 @@ fn prune_login_attempts_map(
     });
 }
 
-fn evict_stalest_login_attempt_key(attempts_by_key: &mut HashMap<String, ScopeState>) {
+fn evict_stalest_login_attempt_key(attempts_by_key: &mut HashMap<String, ScopeState>) -> bool {
     let stalest_key = attempts_by_key
         .iter()
+        .filter(|(_, state)| state.in_flight == 0)
         .filter_map(|(key, state)| state.last_activity().map(|last| (key.clone(), last)))
         .min_by_key(|(_, last)| *last)
         .map(|(key, _)| key);
@@ -204,7 +211,122 @@ fn evict_stalest_login_attempt_key(attempts_by_key: &mut HashMap<String, ScopeSt
             message = "Evicted stalest login limiter entry to enforce key cap",
             max_tracked_keys = MAX_LOGIN_ATTEMPT_KEYS
         );
+        true
+    } else {
+        false
     }
+}
+
+/// Reservation for a login attempt. Applicable scope budgets are reserved before
+/// password verification starts so concurrent requests cannot all pass the limiter
+/// check before any of them records a failure.
+pub(crate) struct LoginAttemptPermit {
+    scopes: Vec<(String, usize)>,
+    user_ip_key: String,
+    enabled: bool,
+}
+
+pub(crate) enum LoginAttemptOutcome {
+    Succeeded,
+    Failed,
+    Aborted,
+}
+
+/// Atomically check every applicable scope and reserve capacity for one login.
+/// Returns `None` when a scope is locked or has enough failures and concurrent
+/// verifications to reach its threshold.
+pub(crate) async fn begin_login_attempt(
+    identity_scope: &str,
+    username: &str,
+    client_ip: Option<IpAddr>,
+) -> Option<LoginAttemptPermit> {
+    let cfg = login_rate_limit_config();
+    let scopes = scopes_for(identity_scope, username, client_ip, &cfg);
+    let user_ip_key = user_ip_key(identity_scope, username, &ip_label(client_ip));
+    if !cfg.enabled {
+        return Some(LoginAttemptPermit {
+            scopes,
+            user_ip_key,
+            enabled: false,
+        });
+    }
+
+    let now = Instant::now();
+    let window = Duration::from_secs(cfg.window_seconds);
+    let mut guard = LOGIN_ATTEMPTS.lock().await;
+    prune_login_attempts_map(&mut guard, now, window);
+
+    let unavailable = scopes.iter().any(|(key, threshold)| {
+        guard.get(key).is_some_and(|state| {
+            state.is_locked(now)
+                || state.attempts.len().saturating_add(state.in_flight) >= *threshold
+        })
+    });
+    if unavailable {
+        return None;
+    }
+
+    let missing_scopes = scopes
+        .iter()
+        .filter(|(key, _)| !guard.contains_key(key))
+        .count();
+    while guard.len().saturating_add(missing_scopes) > MAX_LOGIN_ATTEMPT_KEYS {
+        if !evict_stalest_login_attempt_key(&mut guard) {
+            return None;
+        }
+    }
+
+    for (key, _) in &scopes {
+        let state = guard.entry(key.clone()).or_default();
+        state.in_flight = state.in_flight.saturating_add(1);
+        state.last_activity_at = Some(now);
+    }
+
+    Some(LoginAttemptPermit {
+        scopes,
+        user_ip_key,
+        enabled: true,
+    })
+}
+
+/// Release a login reservation and update all applicable scope budgets in the same
+/// critical section. Internal authentication errors release capacity without counting
+/// as credential failures.
+pub(crate) async fn finish_login_attempt(permit: LoginAttemptPermit, outcome: LoginAttemptOutcome) {
+    if !permit.enabled {
+        return;
+    }
+
+    let cfg = login_rate_limit_config();
+    let now = Instant::now();
+    let window = Duration::from_secs(cfg.window_seconds);
+    let mut guard = LOGIN_ATTEMPTS.lock().await;
+
+    for (key, threshold) in &permit.scopes {
+        if let Some(state) = guard.get_mut(key) {
+            state.in_flight = state.in_flight.saturating_sub(1);
+            state.last_activity_at = Some(now);
+            if matches!(outcome, LoginAttemptOutcome::Failed) {
+                state.register_failure(now, *threshold, &cfg);
+            }
+        }
+    }
+
+    if matches!(outcome, LoginAttemptOutcome::Succeeded) {
+        let should_remove = if let Some(state) = guard.get_mut(&permit.user_ip_key) {
+            state.attempts.clear();
+            state.locked_until = None;
+            state.lockout_level = 0;
+            state.in_flight == 0
+        } else {
+            false
+        };
+        if should_remove {
+            guard.remove(&permit.user_ip_key);
+        }
+    }
+
+    prune_login_attempts_map(&mut guard, now, window);
 }
 
 /// Resolve the trustworthy client IP for a login request, honoring the configured proxy
@@ -218,27 +340,9 @@ pub(crate) fn client_ip_for_request(req: &HttpRequest) -> Option<IpAddr> {
     extract_client_ip_from_http_request(req, &policy)
 }
 
-/// Whether the login request is currently throttled by any applicable scope.
-pub(crate) async fn login_is_rate_limited(
-    identity_scope: &str,
-    username: &str,
-    client_ip: Option<IpAddr>,
-) -> bool {
-    let cfg = login_rate_limit_config();
-    if !cfg.enabled {
-        return false;
-    }
-
-    let now = Instant::now();
-    let guard = LOGIN_ATTEMPTS.lock().await;
-
-    scopes_for(identity_scope, username, client_ip, &cfg)
-        .iter()
-        .any(|(key, _)| guard.get(key).is_some_and(|state| state.is_locked(now)))
-}
-
 /// Record a failed login attempt across all applicable scopes, applying lockouts with
 /// exponential backoff when a scope crosses its threshold.
+#[cfg(test)]
 pub(crate) async fn record_login_failure(
     identity_scope: &str,
     username: &str,
@@ -257,25 +361,13 @@ pub(crate) async fn record_login_failure(
         if !guard.contains_key(&key) && guard.len() >= MAX_LOGIN_ATTEMPT_KEYS {
             prune_login_attempts_map(&mut guard, now, window);
             if guard.len() >= MAX_LOGIN_ATTEMPT_KEYS {
-                evict_stalest_login_attempt_key(&mut guard);
+                let _ = evict_stalest_login_attempt_key(&mut guard);
             }
         }
 
         let state = guard.entry(key).or_default();
         state.register_failure(now, threshold, &cfg);
     }
-}
-
-/// Clear the per-(user, IP) failure state after a successful login. The per-IP and
-/// per-subnet budgets are intentionally left intact: one user's success must not reset
-/// the spray/distributed counters for the whole host or network.
-pub(crate) async fn clear_login_failures(
-    identity_scope: &str,
-    username: &str,
-    client_ip: Option<IpAddr>,
-) {
-    let key = user_ip_key(identity_scope, username, &ip_label(client_ip));
-    LOGIN_ATTEMPTS.lock().await.remove(&key);
 }
 
 /// A point-in-time view of one tracked rate-limit scope, for the admin observability API.
@@ -504,7 +596,7 @@ mod tests {
         locked.trigger_lockout(now, &config);
         map.insert("locked".to_string(), locked);
 
-        evict_stalest_login_attempt_key(&mut map);
+        assert!(evict_stalest_login_attempt_key(&mut map));
 
         assert!(!map.contains_key("stale"));
         assert!(map.contains_key("locked"));
@@ -560,5 +652,37 @@ mod tests {
         assert!(map.contains_key("cooling"));
         assert_eq!(map["cooling"].lockout_level, 2);
         assert!(!map.contains_key("cooled"));
+    }
+
+    #[tokio::test]
+    async fn concurrent_attempts_reserve_capacity_atomically() {
+        let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+        reset_login_rate_limit_for_tests().await;
+        let config = login_rate_limit_config();
+        assert!(config.enabled);
+
+        let mut permits = Vec::new();
+        for _ in 0..config.max_attempts {
+            permits.push(
+                begin_login_attempt("local", "atomic-limit-user", None)
+                    .await
+                    .expect("capacity below the threshold should be reserved"),
+            );
+        }
+        assert!(
+            begin_login_attempt("local", "atomic-limit-user", None)
+                .await
+                .is_none()
+        );
+
+        for permit in permits {
+            finish_login_attempt(permit, LoginAttemptOutcome::Aborted).await;
+        }
+        assert!(
+            begin_login_attempt("local", "atomic-limit-user", None)
+                .await
+                .is_some()
+        );
+        reset_login_rate_limit_for_tests().await;
     }
 }

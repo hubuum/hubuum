@@ -10518,6 +10518,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Too many active import tasks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [

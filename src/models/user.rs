@@ -547,6 +547,13 @@ impl LoginUser {
             match User::get_by_name_in_scope(backend.db_pool(), identity_scope, &self.name).await {
                 Ok(user) => user,
                 Err(_) => {
+                    // Keep unknown-user and wrong-password paths comparable: both execute
+                    // one Argon2 verification before returning the same public error.
+                    let password = self.password.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        crate::utilities::auth::verify_dummy_password(&password)
+                    })
+                    .await;
                     warn!(message = "Login failed (user not found)", user = self.name);
                     return Err(auth_failure());
                 }
@@ -561,19 +568,33 @@ impl LoginUser {
             return Err(auth_failure());
         };
 
-        match crate::utilities::auth::verify_password(plaintext_password, hashed_password) {
-            Ok(true) => Ok(user),
-            Ok(false) => {
+        let plaintext_password = plaintext_password.clone();
+        let hashed_password = hashed_password.clone();
+        let verification = tokio::task::spawn_blocking(move || {
+            crate::utilities::auth::verify_password(&plaintext_password, &hashed_password)
+        })
+        .await;
+
+        match verification {
+            Ok(Ok(true)) => Ok(user),
+            Ok(Ok(false)) => {
                 warn!(
                     message = "Login failed (password mismatch)",
                     user = self.name
                 );
                 Err(auth_failure())
             }
-
-            Err(e) => {
+            Ok(Err(e)) => {
                 error!(
                     message = "Login failed (hashing error)",
+                    user = self.name,
+                    error = e.to_string()
+                );
+                Err(auth_failure())
+            }
+            Err(e) => {
+                error!(
+                    message = "Login failed (password worker error)",
                     user = self.name,
                     error = e.to_string()
                 );

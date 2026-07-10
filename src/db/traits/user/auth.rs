@@ -81,18 +81,22 @@ impl User {
         use crate::schema::principals;
         use crate::schema::users;
 
-        with_connection(pool, |conn| {
+        let pool = pool.clone();
+        let name = name_arg.to_string();
+        let scope = scope_arg.to_string();
+        crate::db::with_connection_async(pool, move |conn| {
             users::table
                 .inner_join(principals::table.on(users::id.eq(principals::id)))
                 .inner_join(
                     identity_scopes::table
                         .on(principals::identity_scope_id.eq(identity_scopes::id)),
                 )
-                .filter(principals::name.eq(name_arg))
-                .filter(identity_scopes::name.eq(scope_arg))
+                .filter(principals::name.eq(name))
+                .filter(identity_scopes::name.eq(scope))
                 .select(users::all_columns)
                 .first::<User>(conn)
         })
+        .await
     }
 
     /// Set a new password for a user.

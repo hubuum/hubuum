@@ -5,6 +5,7 @@ use diesel::PgConnection;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use diesel::r2d2::PooledConnection;
+use std::time::Duration;
 
 use tracing::debug;
 
@@ -134,6 +135,57 @@ where
     with_connection_timeout(pool, ambient_statement_timeout(), f)
 }
 
+/// Run synchronous Diesel work on Tokio's blocking pool so an Actix worker can
+/// continue serving unrelated requests while waiting for a connection or Postgres.
+/// New async request paths should prefer this helper until the Diesel backend is
+/// migrated fully to `diesel-async`.
+pub async fn with_connection_async<F, R, E>(pool: DbPool, f: F) -> Result<R, ApiError>
+where
+    F: FnOnce(&mut PgConnection) -> Result<R, E> + Send + 'static,
+    R: Send + 'static,
+    E: Send + 'static,
+    ApiError: From<E>,
+{
+    let statement_timeout = ambient_statement_timeout();
+    let actor = ambient_actor();
+    if tokio::runtime::Handle::try_current().is_err() {
+        // CLI and unit-test callers may drive these async domain APIs with a
+        // runtime-agnostic executor. There is no Actix worker to protect there.
+        return with_connection_context(&pool, statement_timeout, actor, f);
+    }
+    tokio::task::spawn_blocking(move || with_connection_context(&pool, statement_timeout, actor, f))
+        .await
+        .map_err(|error| {
+            ApiError::InternalServerError(format!("Database blocking task failed: {error}"))
+        })?
+}
+
+fn with_connection_context<F, R, E>(
+    pool: &DbPool,
+    statement_timeout: Option<StatementTimeoutMs>,
+    actor: Option<i32>,
+    f: F,
+) -> Result<R, ApiError>
+where
+    F: FnOnce(&mut PgConnection) -> Result<R, E>,
+    ApiError: From<E>,
+{
+    let mut conn = acquire_connection(pool)?;
+    if statement_timeout.is_none() && actor.is_none() {
+        f(&mut conn).map_err(ApiError::from)
+    } else {
+        conn.transaction::<R, ApiError, _>(|conn| {
+            if let Some(statement_timeout) = statement_timeout {
+                set_local_statement_timeout(conn, statement_timeout)?;
+            }
+            if let Some(actor) = actor {
+                set_local_actor(conn, actor)?;
+            }
+            f(conn).map_err(ApiError::from)
+        })
+    }
+}
+
 /// Return an updated row, or fetch the current row when a temporal no-op trigger
 /// suppressed an unchanged `UPDATE`.
 ///
@@ -182,21 +234,7 @@ where
     F: FnOnce(&mut PgConnection) -> Result<R, E>,
     ApiError: From<E>,
 {
-    let actor = ambient_actor();
-    let mut conn = acquire_connection(pool)?;
-    if statement_timeout.is_none() && actor.is_none() {
-        f(&mut conn).map_err(ApiError::from)
-    } else {
-        conn.transaction::<R, ApiError, _>(|conn| {
-            if let Some(statement_timeout) = statement_timeout {
-                set_local_statement_timeout(conn, statement_timeout)?;
-            }
-            if let Some(actor) = actor {
-                set_local_actor(conn, actor)?;
-            }
-            f(conn).map_err(ApiError::from)
-        })
-    }
+    with_connection_context(pool, statement_timeout, ambient_actor(), f)
 }
 
 /// Run database work inside a SQL transaction on a single pooled connection.
@@ -244,18 +282,43 @@ pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
     // health/auth queries), not just export stages. 0 = disabled.
     let statement_timeout_ms = crate::config::get_config()
         .map(|config| config.db_statement_timeout_ms)
-        .unwrap_or(0);
-    init_pool_with_statement_timeout(database_url, max_size, statement_timeout_ms)
+        .unwrap_or(crate::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+    let acquire_timeout_ms = crate::config::get_config()
+        .map(|config| config.db_pool_acquire_timeout_ms)
+        .unwrap_or(crate::config::DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS);
+    init_pool_with_timeouts(
+        database_url,
+        max_size,
+        statement_timeout_ms,
+        acquire_timeout_ms,
+    )
 }
 
 /// Build a pool with an explicit Postgres `statement_timeout` (in milliseconds)
 /// applied to every connection on acquisition. A value of 0 disables the
 /// timeout. Exposed so tests can exercise the customizer without mutating the
 /// global config.
+// The server binary compiles this module directly as well as through the library;
+// this explicit-timeout constructor is consumed by the admin binary and DB tests.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn init_pool_with_statement_timeout(
     database_url: &str,
     max_size: u32,
     statement_timeout_ms: u64,
+) -> DbPool {
+    init_pool_with_timeouts(
+        database_url,
+        max_size,
+        statement_timeout_ms,
+        crate::config::DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS,
+    )
+}
+
+fn init_pool_with_timeouts(
+    database_url: &str,
+    max_size: u32,
+    statement_timeout_ms: u64,
+    acquire_timeout_ms: u64,
 ) -> DbPool {
     let database_url_components = DatabaseUrlComponents::new(database_url);
 
@@ -278,7 +341,9 @@ pub fn init_pool_with_statement_timeout(
 
     let manager = ConnectionManager::<PgConnection>::new(database_url);
 
-    let mut builder = Pool::builder().max_size(max_size);
+    let mut builder = Pool::builder()
+        .max_size(max_size)
+        .connection_timeout(Duration::from_millis(acquire_timeout_ms));
     if statement_timeout_ms > 0 {
         builder = builder.connection_customizer(Box::new(StatementTimeoutCustomizer {
             statement_timeout_ms,

@@ -18,7 +18,7 @@ use diesel::pg::Pg;
 use diesel::prelude::*;
 use diesel::sql_types::Integer;
 
-use crate::db::{DbPool, with_connection};
+use crate::db::{DbPool, with_connection, with_connection_async};
 use crate::errors::ApiError;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::permissions::Permissions;
@@ -106,7 +106,8 @@ pub trait AuthzSubject: PrincipalIdAccessor {
         use diesel::dsl::{exists, select};
         let pid = self.principal_id();
         let scope = self.admin_identity_scope().await?;
-        let is_in_group = with_connection(pool, |conn| {
+        let group_name = groupname_queried.to_string();
+        let is_in_group = with_connection_async(pool.clone(), move |conn| {
             select(exists(
                 group_memberships::table
                     .inner_join(groups::table)
@@ -115,11 +116,12 @@ pub trait AuthzSubject: PrincipalIdAccessor {
                             .on(groups::identity_scope_id.eq(identity_scopes::id)),
                     )
                     .filter(group_memberships::principal_id.eq(pid))
-                    .filter(groups::groupname.eq(groupname_queried))
+                    .filter(groups::groupname.eq(group_name))
                     .filter(identity_scopes::name.eq(scope)),
             ))
             .get_result(conn)
-        })?;
+        })
+        .await?;
         Ok(is_in_group)
     }
 

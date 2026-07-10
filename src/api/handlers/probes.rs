@@ -5,7 +5,7 @@ use utoipa::ToSchema;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::{DbPool, with_connection};
+use crate::db::{DbPool, with_connection_async};
 use crate::errors::ApiError;
 
 #[derive(Serialize, ToSchema)]
@@ -45,12 +45,11 @@ pub async fn healthz() -> impl Responder {
 )]
 #[get("/readyz")]
 pub async fn readyz(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
-    with_connection(&pool, |conn| {
+    with_connection_async(pool.get_ref().clone(), |conn| {
         diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>("1")).get_result::<i32>(conn)
     })
-    .map_err(|err| {
-        ApiError::ServiceUnavailable(format!("Database readiness check failed: {err}"))
-    })?;
+    .await
+    .map_err(|_| ApiError::ServiceUnavailable("Database is not ready".to_string()))?;
 
     Ok(ApiResponse::new(ProbeResponse::ok("ready"), StatusCode::OK))
 }

@@ -3,6 +3,7 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
+use crate::config::{DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER, get_config};
 use crate::db::DbPool;
 use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot};
 use crate::errors::ApiError;
@@ -26,30 +27,10 @@ async fn find_or_create_import_task(
     request_hash: String,
     total_items: i32,
 ) -> Result<TaskRecord, ApiError> {
-    let request_hash_for_match = request_hash.clone();
-    let matches_request = |task: &TaskRecord| {
-        task.kind == TaskKind::Import.as_str()
-            && task.request_hash.as_deref() == Some(request_hash_for_match.as_str())
-    };
-
-    if let Some(key) = idempotency_key.as_deref()
-        && let Some(existing) = TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
-    {
-        if matches_request(&existing) {
-            return Ok(existing);
-        }
-
-        return Err(ApiError::Conflict(format!(
-            "Idempotency-Key '{key}' is already in use for a different task submission"
-        )));
-    }
-
-    let create_idempotency_key = idempotency_key.clone();
-
-    match (TaskCreateRequest {
+    (TaskCreateRequest {
         kind: TaskKind::Import,
         submitted_by,
-        idempotency_key: create_idempotency_key,
+        idempotency_key,
         request_hash: Some(request_hash),
         request_payload: payload,
         total_items,
@@ -57,25 +38,8 @@ async fn find_or_create_import_task(
         submitted_token_scoped: snapshot.scoped,
         submitted_token_scopes: snapshot.scopes,
     })
-    .create_generic(pool)
+    .create_idempotently_with_active_limit(pool, max_active_import_tasks_per_user())
     .await
-    {
-        Ok(task) => Ok(task),
-        Err(ApiError::Conflict(_)) => {
-            if let Some(key) = idempotency_key.as_deref()
-                && let Some(existing) =
-                    TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
-                && matches_request(&existing)
-            {
-                return Ok(existing);
-            }
-
-            Err(ApiError::Conflict(
-                "Idempotency-Key is already in use for a different task submission".to_string(),
-            ))
-        }
-        Err(err) => Err(err),
-    }
 }
 
 #[utoipa::path(
@@ -88,6 +52,7 @@ async fn find_or_create_import_task(
         (status = 202, description = "Import task accepted", body = TaskResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse),
+        (status = 429, description = "Too many active import tasks", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse)
     )
 )]
@@ -131,6 +96,12 @@ pub async fn create_import(
         response,
         api_locations::task(task.id)?,
     ))
+}
+
+fn max_active_import_tasks_per_user() -> usize {
+    get_config()
+        .map(|config| config.import_max_active_tasks_per_user)
+        .unwrap_or(DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER)
 }
 
 #[utoipa::path(

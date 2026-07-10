@@ -25,6 +25,13 @@ fn bearer_token(req: &ServiceRequest) -> Option<Token> {
     header.strip_prefix("Bearer ").map(|s| Token(s.to_string()))
 }
 
+fn is_public_path(path: &str) -> bool {
+    matches!(path, "/healthz" | "/readyz" | "/api/v0/auth/login")
+        || path.starts_with("/api-doc/")
+        || path == "/swagger-ui"
+        || path.starts_with("/swagger-ui/")
+}
+
 async fn resolve_auth(req: &ServiceRequest) -> ResolvedAuth {
     let token = match bearer_token(req) {
         Some(token) => token,
@@ -47,7 +54,11 @@ pub async fn actor_context(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
 ) -> Result<ServiceResponse<BoxBody>, Error> {
-    let resolved = resolve_auth(&req).await;
+    let resolved = if is_public_path(req.path()) {
+        ResolvedAuth::Missing
+    } else {
+        resolve_auth(&req).await
+    };
     let actor = match &resolved {
         ResolvedAuth::Authenticated { token_meta, .. } => Some(token_meta.principal_id),
         _ => None,
@@ -55,4 +66,25 @@ pub async fn actor_context(
     req.extensions_mut().insert(resolved);
     let res = with_actor_scope(actor, next.call(req)).await?;
     Ok(res.map_into_boxed_body())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_public_path;
+
+    #[test]
+    fn public_paths_skip_authentication_resolution() {
+        for path in [
+            "/healthz",
+            "/readyz",
+            "/api/v0/auth/login",
+            "/api-doc/openapi.json",
+            "/swagger-ui",
+            "/swagger-ui/index.html",
+        ] {
+            assert!(is_public_path(path), "expected {path} to be public");
+        }
+        assert!(!is_public_path("/api/v0/auth/logout"));
+        assert!(!is_public_path("/api/v1/classes"));
+    }
 }

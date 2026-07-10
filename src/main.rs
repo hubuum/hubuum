@@ -103,6 +103,7 @@ async fn main() -> std::io::Result<()> {
         db_pool_size = config.db_pool_size,
     );
 
+    utilities::auth::initialize_dummy_password_hash();
     let pool = init_pool(&config.database_url, config.db_pool_size);
 
     if let Err(e) = utilities::init::init(pool.clone()).await {
@@ -123,15 +124,17 @@ async fn main() -> std::io::Result<()> {
 
     let server = HttpServer::new(move || {
         let app = App::new()
+            .wrap(from_fn(middlewares::actor_context))
+            .wrap(Logger::default())
+            .wrap(middlewares::TracingMiddleware::new_with_trust(
+                proxy_trust.clone(),
+            ))
+            // Actix runs the last registered middleware first. Reject disallowed
+            // clients before bearer-token resolution can touch the database.
             .wrap(middlewares::ClientAllowlistMiddleware::new_with_trust(
                 client_allowlist.clone(),
                 proxy_trust.clone(),
             ))
-            .wrap(middlewares::TracingMiddleware::new_with_trust(
-                proxy_trust.clone(),
-            ))
-            .wrap(Logger::default())
-            .wrap(from_fn(middlewares::actor_context))
             .app_data(Data::new(app_config.clone()))
             .app_data(Data::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))

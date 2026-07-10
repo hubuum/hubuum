@@ -4,6 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use actix_rt::time::sleep;
+use futures_util::StreamExt;
 use tokio::sync::Notify;
 use tracing::{error, info};
 
@@ -30,6 +31,8 @@ static EVENT_DELIVERY_NOTIFICATION_WAKEUPS: AtomicU64 = AtomicU64::new(0);
 static EVENT_DELIVERY_POLL_WAKEUPS: AtomicU64 = AtomicU64::new(0);
 static DEFAULT_SINK_RESOLVER: std::sync::LazyLock<DefaultSinkResolver> =
     std::sync::LazyLock::new(DefaultSinkResolver::default);
+
+const EVENT_DELIVERY_MAX_CONCURRENCY_PER_WORKER: usize = 8;
 
 fn get_event_delivery_notify() -> &'static Notify {
     EVENT_DELIVERY_NOTIFY.get_or_init(Notify::new)
@@ -78,11 +81,14 @@ pub async fn process_event_delivery_batch(
     resolver: &dyn SinkResolver,
 ) -> Result<usize, ApiError> {
     let deliveries = claim_event_deliveries(pool, settings).await?;
-    let mut processed = 0;
-
-    for claimed in deliveries {
-        process_claimed_event_delivery(pool, settings, resolver, claimed).await?;
-        processed += 1;
+    let processed = deliveries.len();
+    let results = futures_util::stream::iter(deliveries)
+        .map(|claimed| process_claimed_event_delivery(pool, settings, resolver, claimed))
+        .buffer_unordered(EVENT_DELIVERY_MAX_CONCURRENCY_PER_WORKER)
+        .collect::<Vec<_>>()
+        .await;
+    for result in results {
+        result?;
     }
 
     Ok(processed)

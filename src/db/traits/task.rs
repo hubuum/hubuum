@@ -2,6 +2,7 @@ use chrono::Utc;
 use diesel::PgConnection;
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Bool};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
 
 use crate::apply_query_options;
@@ -708,20 +709,36 @@ pub(crate) fn executable_task_kind_values() -> [&'static str; 3] {
     ]
 }
 
+static NEXT_TASK_KIND: AtomicUsize = AtomicUsize::new(0);
+
+fn task_kind_claim_order(start: usize) -> [&'static str; 3] {
+    let kinds = executable_task_kind_values();
+    std::array::from_fn(|offset| kinds[(start + offset) % kinds.len()])
+}
+
 pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>, ApiError> {
     use crate::schema::tasks::dsl::{created_at, id, kind, started_at, status, tasks, updated_at};
 
     let record = with_transaction(pool, |conn| -> Result<Option<TaskRecord>, ApiError> {
-        let Some(task_id_value) = tasks
-            .filter(status.eq(TaskStatus::Queued.as_str()))
-            .filter(kind.eq_any(executable_task_kind_values()))
-            .order(created_at.asc())
-            .for_update()
-            .skip_locked()
-            .select(id)
-            .first::<i32>(conn)
-            .optional()?
-        else {
+        let task_kinds = executable_task_kind_values();
+        let first_kind = NEXT_TASK_KIND.fetch_add(1, Ordering::Relaxed) % task_kinds.len();
+        let claim_order = task_kind_claim_order(first_kind);
+        let mut selected_task_id = None;
+        for selected_kind in claim_order {
+            selected_task_id = tasks
+                .filter(status.eq(TaskStatus::Queued.as_str()))
+                .filter(kind.eq(selected_kind))
+                .order(created_at.asc())
+                .for_update()
+                .skip_locked()
+                .select(id)
+                .first::<i32>(conn)
+                .optional()?;
+            if selected_task_id.is_some() {
+                break;
+            }
+        }
+        let Some(task_id_value) = selected_task_id else {
             return Ok(None);
         };
 
@@ -766,38 +783,51 @@ pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>,
 }
 
 impl TaskCreateRequest {
-    /// Queue this task (with its initial "queued" event) in a single transaction.
-    pub async fn create_generic(self, pool: &DbPool) -> Result<TaskRecord, ApiError> {
-        let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
-            insert_queued_task_with_event(conn, self)
-        })?;
-
-        log_task_queued(&task);
-
-        Ok(task)
-    }
-
-    /// Queue this export task, rejecting it with `429` if the submitter already has
-    /// `max_active_export_tasks` queued/validating/running exports. Capacity is checked under a
-    /// per-user advisory lock so concurrent submissions cannot race past the limit.
-    pub async fn create_with_active_export_limit(
+    /// Return an existing task for an identical idempotent submission or create a
+    /// new one under the per-user active-task limit. The post-conflict lookup
+    /// closes the race between concurrent requests carrying the same key.
+    pub async fn create_idempotently_with_active_limit(
         self,
         pool: &DbPool,
-        max_active_export_tasks: usize,
+        max_active_tasks: usize,
     ) -> Result<TaskRecord, ApiError> {
-        self.create_with_active_kind_limit(pool, TaskKind::Export, max_active_export_tasks)
-            .await
-    }
+        let kind = self.kind;
+        let submitted_by = self.submitted_by;
+        let idempotency_key = self.idempotency_key.clone();
+        let request_hash = self.request_hash.clone();
+        let matches_request =
+            |task: &TaskRecord| task.kind == kind.as_str() && task.request_hash == request_hash;
 
-    /// Queue this remote call task, rejecting it with `429` if the submitter already has
-    /// `max_active_remote_call_tasks` queued/validating/running remote calls.
-    pub async fn create_with_active_remote_call_limit(
-        self,
-        pool: &DbPool,
-        max_active_remote_call_tasks: usize,
-    ) -> Result<TaskRecord, ApiError> {
-        self.create_with_active_kind_limit(pool, TaskKind::RemoteCall, max_active_remote_call_tasks)
+        if let Some(key) = idempotency_key.as_deref()
+            && let Some(existing) = TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
+        {
+            if matches_request(&existing) {
+                return Ok(existing);
+            }
+            return Err(ApiError::Conflict(format!(
+                "Idempotency-Key '{key}' is already in use for a different task submission"
+            )));
+        }
+
+        match self
+            .create_with_active_kind_limit(pool, kind, max_active_tasks)
             .await
+        {
+            Ok(task) => Ok(task),
+            Err(ApiError::Conflict(_)) => {
+                if let Some(key) = idempotency_key.as_deref()
+                    && let Some(existing) =
+                        TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
+                    && matches_request(&existing)
+                {
+                    return Ok(existing);
+                }
+                Err(ApiError::Conflict(
+                    "Idempotency-Key is already in use for a different task submission".to_string(),
+                ))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn create_with_active_kind_limit(
@@ -953,7 +983,10 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
-    use super::{TaskBackend, TaskCreateRequest, claim_next_queued_task, task_capacity_lock_key};
+    use super::{
+        TaskBackend, TaskCreateRequest, claim_next_queued_task, task_capacity_lock_key,
+        task_kind_claim_order,
+    };
     use crate::db::traits::user::DeleteUserRecord;
     use crate::db::with_transaction;
     use crate::errors::ApiError;
@@ -984,6 +1017,20 @@ mod tests {
             fallback_key,
             task_capacity_lock_key(user_id, TaskKind::Reindex)
         );
+    }
+
+    #[test]
+    fn task_claim_order_rotates_every_executable_kind_to_the_front() {
+        assert_eq!(
+            task_kind_claim_order(0),
+            [
+                TaskKind::Import.as_str(),
+                TaskKind::Export.as_str(),
+                TaskKind::RemoteCall.as_str(),
+            ]
+        );
+        assert_eq!(task_kind_claim_order(1)[0], TaskKind::Export.as_str());
+        assert_eq!(task_kind_claim_order(2)[0], TaskKind::RemoteCall.as_str());
     }
 
     #[test]
@@ -1124,7 +1171,7 @@ mod tests {
                 request_payload: serde_json::json!({"export": "first"}),
                 total_items: 1,
             }
-            .create_with_active_export_limit(&context.pool, 1),
+            .create_idempotently_with_active_limit(&context.pool, 1),
         )
         .unwrap();
 
@@ -1142,13 +1189,46 @@ mod tests {
                 request_payload: serde_json::json!({"export": "second"}),
                 total_items: 1,
             }
-            .create_with_active_export_limit(&context.pool, 1),
+            .create_idempotently_with_active_limit(&context.pool, 1),
         )
         .unwrap_err();
 
         match error {
             ApiError::TooManyRequests(message) => {
                 assert!(message.contains("Too many active export tasks for user"));
+            }
+            other => panic!("expected TooManyRequests, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_import_task_active_limit_blocks_new_work_for_same_user() {
+        let context = block_on(TestContext::new());
+        let create_request = |suffix: &str| TaskCreateRequest {
+            kind: TaskKind::Import,
+            submitted_by: context.admin_user.id,
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            idempotency_key: Some(context.scoped_name(&format!("import-cap-{suffix}"))),
+            request_hash: Some(context.scoped_name(&format!("import-cap-{suffix}-hash"))),
+            request_payload: serde_json::json!({"import": suffix}),
+            total_items: 1,
+        };
+
+        let first = block_on(
+            create_request("first").create_idempotently_with_active_limit(&context.pool, 1),
+        )
+        .unwrap();
+        assert_eq!(first.status, TaskStatus::Queued.as_str());
+
+        let error = block_on(
+            create_request("second").create_idempotently_with_active_limit(&context.pool, 1),
+        )
+        .unwrap_err();
+        match error {
+            ApiError::TooManyRequests(message) => {
+                assert!(message.contains("Too many active import tasks for user"));
             }
             other => panic!("expected TooManyRequests, got {other:?}"),
         }
@@ -1179,7 +1259,7 @@ mod tests {
                 request_payload: payload.clone(),
                 total_items: 1,
             }
-            .create_with_active_remote_call_limit(&context.pool, 1),
+            .create_idempotently_with_active_limit(&context.pool, 1),
         )
         .unwrap();
 
@@ -1197,7 +1277,7 @@ mod tests {
                 request_payload: payload,
                 total_items: 1,
             }
-            .create_with_active_remote_call_limit(&context.pool, 1),
+            .create_idempotently_with_active_limit(&context.pool, 1),
         )
         .unwrap_err();
 

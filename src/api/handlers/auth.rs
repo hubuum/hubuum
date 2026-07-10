@@ -4,7 +4,7 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
 use crate::middlewares::rate_limit::{
-    clear_login_failures, client_ip_for_request, login_is_rate_limited, record_login_failure,
+    LoginAttemptOutcome, begin_login_attempt, client_ip_for_request, finish_login_attempt,
 };
 use crate::models::{LOCAL_IDENTITY_SCOPE, LoginUser, Token, UserID};
 use actix_web::{HttpRequest, Responder, get, post, web};
@@ -48,7 +48,7 @@ pub async fn login(
     let client_ip = client_ip_for_request(&req);
     let client_ip_log = client_ip.map(|ip| ip.to_string());
 
-    if login_is_rate_limited(&identity_scope, &name, client_ip).await {
+    let Some(login_permit) = begin_login_attempt(&identity_scope, &name, client_ip).await else {
         warn!(
             message = "Login throttled",
             identity_scope = identity_scope,
@@ -58,20 +58,23 @@ pub async fn login(
         return Err(ApiError::TooManyRequests(
             "Too many login attempts. Please try again later.".to_string(),
         ));
-    }
+    };
 
     debug!(message = "Login started", user = name);
     let user = match crate::auth::login(&pool, login).await {
         Ok(user) => user,
         Err(e) => {
-            if let ApiError::Unauthorized(_) = &e {
-                record_login_failure(&identity_scope, &name, client_ip).await;
-            }
+            let outcome = if matches!(e, ApiError::Unauthorized(_)) {
+                LoginAttemptOutcome::Failed
+            } else {
+                LoginAttemptOutcome::Aborted
+            };
+            finish_login_attempt(login_permit, outcome).await;
             return Err(e);
         }
     };
 
-    clear_login_failures(&identity_scope, &name, client_ip).await;
+    finish_login_attempt(login_permit, LoginAttemptOutcome::Succeeded).await;
 
     let token_generation_result = user.create_token(&pool).await;
 

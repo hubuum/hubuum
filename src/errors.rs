@@ -10,6 +10,9 @@ use std::num::ParseIntError;
 
 use tracing::{debug, error};
 
+const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
+const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
+
 // Exit codes for startup/initialization failures.
 // These help shell scripts and orchestration systems determine the failure mode.
 pub const EXIT_CODE_GENERIC_ERROR: i32 = 1; // Non-specific/generic errors
@@ -91,6 +94,30 @@ impl ApiError {
             _ => EXIT_CODE_GENERIC_ERROR,
         }
     }
+
+    /// Message safe to expose over any public transport, including response
+    /// bodies and streaming events.
+    pub fn public_message(&self) -> &str {
+        match self {
+            ApiError::InternalServerError(_)
+            | ApiError::DatabaseError(_)
+            | ApiError::DbConnectionError(_)
+            | ApiError::HashError(_) => PUBLIC_INTERNAL_ERROR,
+            ApiError::ServiceUnavailable(_) => PUBLIC_SERVICE_UNAVAILABLE,
+            ApiError::Unauthorized(message)
+            | ApiError::Forbidden(message)
+            | ApiError::NotAcceptable(message)
+            | ApiError::PayloadTooLarge(message)
+            | ApiError::Conflict(message)
+            | ApiError::TooManyRequests(message)
+            | ApiError::NotFound(message)
+            | ApiError::Gone(message)
+            | ApiError::BadRequest(message)
+            | ApiError::OperatorMismatch(message)
+            | ApiError::InvalidIntegerRange(message)
+            | ApiError::ValidationError(message) => message,
+        }
+    }
 }
 
 impl fmt::Display for ApiError {
@@ -125,8 +152,9 @@ impl ResponseError for ApiError {
             }
             ApiError::TooManyRequests(message) => HttpResponse::TooManyRequests()
                 .json(json!({ "error": "Too Many Requests", "message": message })),
-            ApiError::ServiceUnavailable(message) => HttpResponse::ServiceUnavailable()
-                .json(json!({ "error": "Service Unavailable", "message": message })),
+            ApiError::ServiceUnavailable(_) => HttpResponse::ServiceUnavailable().json(
+                json!({ "error": "Service Unavailable", "message": PUBLIC_SERVICE_UNAVAILABLE }),
+            ),
             ApiError::Forbidden(message) => {
                 HttpResponse::Forbidden().json(json!({ "error": "Forbidden", "message": message }))
             }
@@ -134,16 +162,14 @@ impl ResponseError for ApiError {
                 .json(json!({ "error": "Not Acceptable", "message": message })),
             ApiError::PayloadTooLarge(message) => HttpResponse::PayloadTooLarge()
                 .json(json!({ "error": "Payload Too Large", "message": message })),
-            ApiError::InternalServerError(message) => HttpResponse::InternalServerError()
-                .json(json!({ "error": "Internal Server Error", "message": message })),
+            ApiError::InternalServerError(_)
+            | ApiError::DbConnectionError(_)
+            | ApiError::DatabaseError(_)
+            | ApiError::HashError(_) => HttpResponse::InternalServerError().json(
+                json!({ "error": "Internal Server Error", "message": PUBLIC_INTERNAL_ERROR }),
+            ),
             ApiError::Unauthorized(message) => HttpResponse::Unauthorized()
                 .json(json!({ "error": "Unauthorized", "message": message })),
-            ApiError::DbConnectionError(message) => HttpResponse::InternalServerError()
-                .json(json!({ "error": "Database Connection Error", "message": message })),
-            ApiError::DatabaseError(message) => HttpResponse::InternalServerError()
-                .json(json!({ "error": "Database Error", "message": message })),
-            ApiError::HashError(message) => HttpResponse::InternalServerError()
-                .json(json!({ "error": "Hash Error", "message": message })),
             ApiError::NotFound(message) => {
                 HttpResponse::NotFound().json(json!({ "error": "Not Found", "message": message }))
             }
@@ -398,5 +424,38 @@ mod tests {
             ApiError::ServiceUnavailable("test".to_string()).status_code(),
             StatusCode::SERVICE_UNAVAILABLE
         );
+    }
+
+    #[actix_web::test]
+    async fn internal_error_responses_do_not_expose_details() {
+        use actix_web::body::to_bytes;
+
+        for error in [
+            ApiError::InternalServerError("secret internal path".to_string()),
+            ApiError::DatabaseError("password=database-secret".to_string()),
+            ApiError::DbConnectionError("postgres://user:secret@db/app".to_string()),
+            ApiError::HashError("hash implementation detail".to_string()),
+        ] {
+            let response = error.error_response();
+            let body = to_bytes(response.into_body()).await.unwrap();
+            let body = std::str::from_utf8(&body).unwrap();
+            assert!(body.contains(PUBLIC_INTERNAL_ERROR));
+            assert!(!body.contains("secret"));
+            assert!(!body.contains("implementation detail"));
+        }
+    }
+
+    #[actix_web::test]
+    async fn service_unavailable_response_does_not_expose_details() {
+        use actix_web::body::to_bytes;
+
+        let response = ApiError::ServiceUnavailable(
+            "database host db.internal.example rejected password".to_string(),
+        )
+        .error_response();
+        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert!(body.contains(PUBLIC_SERVICE_UNAVAILABLE));
+        assert!(!body.contains("db.internal.example"));
     }
 }
