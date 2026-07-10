@@ -35,6 +35,8 @@ pub struct LdapScopeConfig {
     #[serde(default)]
     pub group_attributes: Vec<String>,
     #[serde(default)]
+    pub group_filters: Vec<String>,
+    #[serde(default)]
     pub group_rules: Vec<GroupMappingRuleConfig>,
 }
 
@@ -58,6 +60,7 @@ impl fmt::Debug for LdapScopeConfig {
             .field("display_name_attribute", &self.display_name_attribute)
             .field("email_attribute", &self.email_attribute)
             .field("group_attributes", &self.group_attributes)
+            .field("group_filters", &self.group_filters)
             .field("group_rules", &self.group_rules)
             .finish()
     }
@@ -100,6 +103,7 @@ struct GroupMappingRule {
 pub struct LdapIdentityProvider {
     scope_name: IdentityScopeName,
     config: LdapScopeConfig,
+    group_filters: Vec<Regex>,
     rules: Vec<GroupMappingRule>,
     starttls: bool,
 }
@@ -148,6 +152,15 @@ impl LdapIdentityProvider {
                 "ldap bind_dn and bind_password must be configured together".to_string(),
             ));
         }
+        let group_filters = config
+            .group_filters
+            .iter()
+            .map(|filter| {
+                Regex::new(filter).map_err(|e| {
+                    AuthProviderError::Config(format!("invalid ldap group filter '{filter}': {e}"))
+                })
+            })
+            .collect::<Result<Vec<_>, AuthProviderError>>()?;
         let rules = config
             .group_rules
             .iter()
@@ -164,6 +177,7 @@ impl LdapIdentityProvider {
         Ok(Self {
             scope_name,
             config,
+            group_filters,
             rules,
             starttls,
         })
@@ -293,6 +307,14 @@ impl LdapIdentityProvider {
                 continue;
             };
             for value in values {
+                if !self.group_filters.is_empty()
+                    && !self
+                        .group_filters
+                        .iter()
+                        .any(|filter| filter.is_match(value))
+                {
+                    continue;
+                }
                 for rule in &self.rules {
                     if let Some(captures) = rule.pattern.captures(value) {
                         let name = expand_template(&rule.name, &captures);
@@ -474,6 +496,7 @@ mod tests {
             display_name_attribute: None,
             email_attribute: None,
             group_attributes: Vec::new(),
+            group_filters: Vec::new(),
             group_rules: Vec::new(),
         }
     }
@@ -598,5 +621,56 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].key, "example:admin");
         assert_eq!(groups[0].name, "admin");
+    }
+
+    #[test]
+    fn group_filters_include_values_matching_any_configured_regex() {
+        let provider = LdapIdentityProvider::new(LdapScopeConfig {
+            group_attributes: vec!["memberOf".into()],
+            group_filters: vec!["^cn=hubuum-".into(), "^cn=admin,".into()],
+            group_rules: vec![GroupMappingRuleConfig {
+                pattern: "^cn=([^,]+),ou=groups,dc=example,dc=org$".into(),
+                name: "$1".into(),
+                key: None,
+                description: None,
+            }],
+            ..ldap_config("ldap://localhost")
+        })
+        .unwrap();
+        let entry = SearchEntry {
+            dn: "uid=alice,ou=people,dc=example,dc=org".into(),
+            attrs: HashMap::from([(
+                "memberOf".into(),
+                vec![
+                    "cn=admin,ou=groups,dc=example,dc=org".into(),
+                    "cn=hubuum-editors,ou=groups,dc=example,dc=org".into(),
+                    "cn=irrelevant,ou=groups,dc=example,dc=org".into(),
+                ],
+            )]),
+            bin_attrs: HashMap::new(),
+        };
+
+        let groups = provider.groups_from_entry(&entry);
+
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["admin", "hubuum-editors"]
+        );
+    }
+
+    #[test]
+    fn invalid_group_filter_is_rejected_during_construction() {
+        let error = LdapIdentityProvider::new(LdapScopeConfig {
+            group_filters: vec!["[".into()],
+            ..ldap_config("ldaps://localhost")
+        })
+        .err()
+        .unwrap();
+
+        assert!(matches!(&error, AuthProviderError::Config(_)));
+        assert!(error.to_string().contains("invalid ldap group filter '['"));
     }
 }

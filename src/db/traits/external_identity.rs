@@ -149,8 +149,7 @@ pub async fn sync_external_user(
                         .filter(principals::identity_scope_id.eq(scope.id))
                         .filter(principals::name.eq(&profile.name))
                         .first::<Principal>(conn)?;
-                    if principal.provider_managed
-                        && principal.external_subject.as_deref() == Some(profile.subject.as_str())
+                    if principal.provider_managed && principal.kind == PrincipalKind::Human.as_str()
                     {
                         principal
                     } else {
@@ -376,6 +375,45 @@ mod tests {
         })
         .unwrap();
         assert_eq!(principal_count, 1);
+    }
+
+    #[actix_rt::test]
+    async fn sync_external_user_preserves_principal_when_source_subject_changes() {
+        let scope = TestScope::new();
+        let identity_scope = scope.scoped_name("directory");
+        let username = scope.scoped_name("external_alice");
+        let initial_subject = format!("uid={username},ou=people,dc=example,dc=org");
+        let reformatted_subject = format!("UID={username},OU=people,DC=example,DC=org");
+
+        let user = sync_external_user(
+            &scope.pool,
+            &identity_scope,
+            LDAP_PROVIDER_KIND,
+            external_user(&initial_subject, &username, Vec::new()),
+        )
+        .await
+        .unwrap();
+        let synced_after_subject_change = sync_external_user(
+            &scope.pool,
+            &identity_scope,
+            LDAP_PROVIDER_KIND,
+            external_user(&reformatted_subject, &username, Vec::new()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(synced_after_subject_change.id, user.id);
+        let external_subject = with_connection(scope.pool.get_ref(), |conn| {
+            principals::table
+                .find(user.id)
+                .select(principals::external_subject)
+                .first::<Option<String>>(conn)
+        })
+        .unwrap();
+        assert_eq!(
+            external_subject.as_deref(),
+            Some(reformatted_subject.as_str())
+        );
     }
 
     #[actix_rt::test]

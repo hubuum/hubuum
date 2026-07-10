@@ -29,6 +29,7 @@ subject_attribute = "entryUUID"
 display_name_attribute = "cn"
 email_attribute = "mail"
 group_attributes = ["memberOf"]
+group_filters = ["^cn=hubuum-", "^cn=admin,"]
 refresh_ttl_seconds = 300
 max_stale_seconds = 3600
 
@@ -48,7 +49,11 @@ startup.
 
 All group extraction is configuration-driven. Use `group_attributes` and
 `group_rules` to map provider attributes to Hubuum groups; do not hard-code
-directory-specific group formats in code.
+directory-specific group formats in code. The optional `group_filters` list
+filters the raw values read from `group_attributes` before mapping. When the
+list is non-empty, a value must match at least one regular expression to be
+included. Omitting the list or setting it to an empty list preserves all values
+that match a group rule.
 
 ### Multiple LDAP scopes
 
