@@ -37,6 +37,7 @@ mod tests {
                 display_name_attribute: Some("cn".to_string()),
                 email_attribute: Some("mail".to_string()),
                 group_attributes: Vec::new(),
+                group_filters: Vec::new(),
                 group_rules: Vec::new(),
             },
             refresh_ttl_seconds: Some(300),
