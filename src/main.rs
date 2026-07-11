@@ -111,7 +111,6 @@ async fn main() -> std::io::Result<()> {
     let server = HttpServer::new(move || {
         let app = App::new()
             .wrap(from_fn(middlewares::actor_context))
-            .wrap(Logger::default())
             .wrap(middlewares::TracingMiddleware::new_with_trust(
                 proxy_trust.clone(),
             ))
