@@ -60,13 +60,8 @@ mod tests {
             .insert_header(("x-forwarded-for", "192.168.1.10"))
             .to_request();
 
-        let resp = test::try_call_service(&app, req).await;
-        assert!(resp.is_err());
-        let err = resp.unwrap_err();
-        assert_eq!(
-            err.error_response().status(),
-            actix_web::http::StatusCode::FORBIDDEN
-        );
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::FORBIDDEN);
     }
 
     #[actix_web::test]
@@ -89,12 +84,8 @@ mod tests {
             .insert_header(("x-forwarded-for", "10.0.0.42"))
             .to_request();
 
-        let resp = test::try_call_service(&app, req).await;
-        assert!(resp.is_err());
-        assert_eq!(
-            resp.unwrap_err().error_response().status(),
-            actix_web::http::StatusCode::FORBIDDEN
-        );
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::FORBIDDEN);
     }
 
     #[actix_web::test]
@@ -138,8 +129,8 @@ mod tests {
             .insert_header(("x-forwarded-for", "10.0.0.42"))
             .to_request();
 
-        let resp = test::try_call_service(&app, req).await;
-        assert!(resp.is_err());
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::FORBIDDEN);
     }
 
     #[actix_web::test]

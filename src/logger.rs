@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{cell::RefCell, fmt, future::Future};
 
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
@@ -15,6 +15,36 @@ pub struct HubuumLoggingFormat;
 
 impl HubuumLoggingFormat {}
 
+#[derive(Clone, Debug)]
+struct OperationMutationLog {
+    entity_type: EntityType,
+    action: Action,
+    entity_id: Option<i32>,
+    actor_principal_id: Option<i32>,
+    request_id: Option<uuid::Uuid>,
+    correlation_id: Option<String>,
+}
+
+impl OperationMutationLog {
+    fn emit(self) {
+        tracing::info!(
+            message = "operation mutation committed",
+            operation = "mutation_committed",
+            mutation_phase = "committed",
+            entity_type = self.entity_type.as_str(),
+            action = self.action.as_str(),
+            entity_id = self.entity_id,
+            actor_principal_id = self.actor_principal_id,
+            request_id = self.request_id.map(|id| id.to_string()),
+            correlation_id = self.correlation_id.as_deref(),
+        );
+    }
+}
+
+tokio::task_local! {
+    static DEFERRED_OPERATION_MUTATIONS: RefCell<Vec<OperationMutationLog>>;
+}
+
 pub fn init_json_logging(log_level: &str) -> Result<(), String> {
     let filter = EnvFilter::try_new(log_level)
         .map_err(|err| format!("Error parsing log level '{log_level}': {err}"))?;
@@ -30,6 +60,12 @@ pub fn init_json_logging(log_level: &str) -> Result<(), String> {
         .map_err(|err| format!("Failed to initialize logging: {err}"))
 }
 
+pub fn build_git_sha() -> &'static str {
+    option_env!("HUBUUM_BUILD_GIT_SHA")
+        .or(option_env!("GITHUB_SHA"))
+        .unwrap_or("unknown")
+}
+
 pub fn log_operation_mutation(
     entity_type: EntityType,
     action: Action,
@@ -38,17 +74,42 @@ pub fn log_operation_mutation(
     request_id: Option<uuid::Uuid>,
     correlation_id: Option<&str>,
 ) {
-    tracing::info!(
-        message = "operation mutation recorded",
-        operation = "mutation_recorded",
-        mutation_phase = "recorded",
-        entity_type = entity_type.as_str(),
-        action = action.as_str(),
+    let operation = OperationMutationLog {
+        entity_type,
+        action,
         entity_id,
         actor_principal_id,
-        request_id = request_id.map(|id| id.to_string()),
-        correlation_id,
-    );
+        request_id,
+        correlation_id: correlation_id.map(ToOwned::to_owned),
+    };
+    if DEFERRED_OPERATION_MUTATIONS
+        .try_with(|operations| operations.borrow_mut().push(operation.clone()))
+        .is_err()
+    {
+        operation.emit();
+    }
+}
+
+pub(crate) async fn defer_operation_mutation_logs_until_commit<F, R, E>(future: F) -> Result<R, E>
+where
+    F: Future<Output = Result<R, E>>,
+{
+    if DEFERRED_OPERATION_MUTATIONS.try_with(|_| ()).is_ok() {
+        return future.await;
+    }
+
+    DEFERRED_OPERATION_MUTATIONS
+        .scope(RefCell::new(Vec::new()), async move {
+            let result = future.await;
+            let operations = DEFERRED_OPERATION_MUTATIONS.with(RefCell::take);
+            if result.is_ok() {
+                for operation in operations {
+                    operation.emit();
+                }
+            }
+            result
+        })
+        .await
 }
 
 pub fn log_operation_read(
@@ -71,12 +132,14 @@ pub fn log_authorization_grant(
     principal_id: i32,
     permissions: &[Permissions],
     collection_count: Option<usize>,
+    collection_id: Option<i32>,
     reason: &'static str,
 ) {
     if !tracing::enabled!(tracing::Level::DEBUG) {
         return;
     }
 
+    let (action, entity_type) = authorization_operation_fields_for(permissions);
     let permissions = permissions
         .iter()
         .map(ToString::to_string)
@@ -89,6 +152,9 @@ pub fn log_authorization_grant(
         principal_id,
         permissions,
         collection_count,
+        collection_id,
+        action,
+        entity_type,
         reason,
     );
 }
@@ -97,8 +163,10 @@ pub fn log_authorization_denial(
     principal_id: i32,
     permissions: &[Permissions],
     collection_count: Option<usize>,
+    collection_id: Option<i32>,
     reason: &'static str,
 ) {
+    let (action, entity_type) = authorization_operation_fields_for(permissions);
     let permissions = permissions
         .iter()
         .map(ToString::to_string)
@@ -111,8 +179,28 @@ pub fn log_authorization_denial(
         principal_id,
         permissions,
         collection_count,
+        collection_id,
+        action,
+        entity_type,
         reason,
     );
+}
+
+fn authorization_operation_fields_for(
+    permissions: &[Permissions],
+) -> (Option<&'static str>, Option<&'static str>) {
+    let first = permissions.first().copied();
+    let action = first.map(Permissions::operation_action).filter(|action| {
+        permissions
+            .iter()
+            .all(|permission| permission.operation_action() == *action)
+    });
+    let entity_type = first.map(Permissions::entity_type).filter(|entity_type| {
+        permissions
+            .iter()
+            .all(|permission| permission.entity_type() == *entity_type)
+    });
+    (action, entity_type)
 }
 
 fn structured_json_field_name(field_name: &str) -> Option<&'static str> {
@@ -213,13 +301,6 @@ where
         let meta = event.metadata();
         let mut fields = serde_json::Map::new();
 
-        let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        fields.insert("time".to_string(), serde_json::Value::String(timestamp));
-        fields.insert(
-            "severity".to_string(),
-            serde_json::Value::String(meta.level().to_string()),
-        );
-
         if let Some(leaf_span) = ctx.lookup_current() {
             for span in leaf_span.scope().from_root() {
                 let ext = span.extensions();
@@ -238,6 +319,13 @@ where
             fields: &mut fields,
         };
         event.record(&mut visitor);
+
+        let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        fields.insert("time".to_string(), serde_json::Value::String(timestamp));
+        fields.insert(
+            "severity".to_string(),
+            serde_json::Value::String(meta.level().to_string()),
+        );
 
         let line = serde_json::to_string(&fields).map_err(|_| std::fmt::Error)?;
         writer.write_str(&line)?;
@@ -357,7 +445,7 @@ mod tests {
                 "request",
                 request_id = "request-1",
                 correlation_id = "correlation-1",
-                principal = 42
+                principal_id = 42
             );
             let _guard = span.enter();
             info!(message = "inside request");
@@ -366,7 +454,7 @@ mod tests {
         let event = logs.first().expect("log event");
         assert_eq!(event["request_id"], "request-1");
         assert_eq!(event["correlation_id"], "correlation-1");
-        assert_eq!(event["principal"], 42);
+        assert_eq!(event["principal_id"], 42);
         assert_eq!(event["message"], "inside request");
     }
 
@@ -405,8 +493,20 @@ mod tests {
     #[test]
     fn authorization_helpers_log_grant_and_denial_levels() {
         let logs = capture_logs(|| {
-            log_authorization_grant(12, &[Permissions::ReadCollection], Some(1), "permissions");
-            log_authorization_denial(12, &[Permissions::UpdateCollection], Some(1), "permissions");
+            log_authorization_grant(
+                12,
+                &[Permissions::ReadCollection],
+                Some(1),
+                Some(4),
+                "permissions",
+            );
+            log_authorization_denial(
+                12,
+                &[Permissions::UpdateCollection],
+                Some(1),
+                Some(4),
+                "permissions",
+            );
         });
 
         let grant = logs
@@ -417,6 +517,9 @@ mod tests {
         assert_eq!(grant["event_type"], "authorization");
         assert_eq!(grant["principal_id"], 12);
         assert_eq!(grant["permissions"], json!(["ReadCollection"]));
+        assert_eq!(grant["action"], "read");
+        assert_eq!(grant["entity_type"], "collection");
+        assert_eq!(grant["collection_id"], 4);
 
         let denial = logs
             .iter()
@@ -426,6 +529,9 @@ mod tests {
         assert_eq!(denial["event_type"], "authorization");
         assert_eq!(denial["principal_id"], 12);
         assert_eq!(denial["permissions"], json!(["UpdateCollection"]));
+        assert_eq!(denial["action"], "update");
+        assert_eq!(denial["entity_type"], "collection");
+        assert_eq!(denial["collection_id"], 4);
     }
 
     #[test]
@@ -444,9 +550,9 @@ mod tests {
 
         let event = logs.first().expect("operation event");
         assert_eq!(event["severity"], "INFO");
-        assert_eq!(event["message"], "operation mutation recorded");
-        assert_eq!(event["operation"], "mutation_recorded");
-        assert_eq!(event["mutation_phase"], "recorded");
+        assert_eq!(event["message"], "operation mutation committed");
+        assert_eq!(event["operation"], "mutation_committed");
+        assert_eq!(event["mutation_phase"], "committed");
         assert_eq!(event["entity_type"], "collection");
         assert_eq!(event["action"], "created");
         assert_eq!(event["entity_id"], 9);
@@ -484,5 +590,61 @@ mod tests {
         let event: serde_json::Value = serde_json::from_str(line).expect("json log line");
         assert_eq!(event["request_id"], request_id.to_string());
         assert_eq!(event["correlation_id"], "event-correlation");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn deferred_mutation_logs_are_emitted_after_success() {
+        let writer = JsonLogWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(writer.clone())
+                .event_format(HubuumLoggingFormat),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let result: Result<(), ()> = defer_operation_mutation_logs_until_commit(async {
+            log_operation_mutation(
+                EntityType::Collection,
+                Action::Created,
+                Some(9),
+                Some(12),
+                None,
+                None,
+            );
+            Ok(())
+        })
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(writer.output().len(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn deferred_mutation_logs_are_discarded_after_failure() {
+        let writer = JsonLogWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(writer.clone())
+                .event_format(HubuumLoggingFormat),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let result: Result<(), ()> = defer_operation_mutation_logs_until_commit(async {
+            log_operation_mutation(
+                EntityType::Collection,
+                Action::Created,
+                Some(9),
+                Some(12),
+                None,
+                None,
+            );
+            Err(())
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert!(writer.output().is_empty());
     }
 }

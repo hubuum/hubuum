@@ -1,6 +1,6 @@
 use actix_service::{Service, Transform};
 use actix_web::{
-    Error, HttpRequest, dev::ServiceRequest, dev::ServiceResponse, error::ErrorForbidden,
+    Error, HttpRequest, HttpResponse, body::EitherBody, dev::ServiceRequest, dev::ServiceResponse,
     http::header::HeaderMap,
 };
 use futures_util::future::{self, LocalBoxFuture, Ready};
@@ -73,7 +73,7 @@ where
     S::Future: 'static,
     B: 'static,
 {
-    type Response = ServiceResponse<B>;
+    type Response = ServiceResponse<EitherBody<B>>;
     type Error = Error;
     type Transform = ClientAllowlistMiddlewareService<S>;
     type InitError = ();
@@ -99,7 +99,7 @@ where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
     B: 'static,
 {
-    type Response = ServiceResponse<B>;
+    type Response = ServiceResponse<EitherBody<B>>;
     type Error = Error;
     type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -109,20 +109,30 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         if is_probe_path(req.path()) {
-            return Box::pin(self.service.call(req));
+            let fut = self.service.call(req);
+            return Box::pin(async move { fut.await.map(ServiceResponse::map_into_left_body) });
         }
 
         let client_ip = extract_client_ip(&req, &self.proxy_trust);
 
         match client_ip {
-            Some(ip) if self.allowlist.allows(ip) => Box::pin(self.service.call(req)),
+            Some(ip) if self.allowlist.allows(ip) => {
+                let fut = self.service.call(req);
+                Box::pin(async move { fut.await.map(ServiceResponse::map_into_left_body) })
+            }
             Some(ip) => {
                 warn!(message = "Rejected request from disallowed IP", client_ip = %ip);
-                Box::pin(async { Err(ErrorForbidden("Client not allowed")) })
+                let response = req
+                    .into_response(HttpResponse::Forbidden().body("Client not allowed"))
+                    .map_into_right_body();
+                Box::pin(async { Ok(response) })
             }
             None => {
                 warn!(message = "Rejected request with missing client IP");
-                Box::pin(async { Err(ErrorForbidden("Client not allowed")) })
+                let response = req
+                    .into_response(HttpResponse::Forbidden().body("Client not allowed"))
+                    .map_into_right_body();
+                Box::pin(async { Ok(response) })
             }
         }
     }

@@ -24,8 +24,10 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | `HUBUUM_LOG_LEVEL` | `info` | JSON log verbosity (`trace`, `debug`, `info`, `warn`, `error`) |
 | `HUBUUM_ACTIX_WORKERS` | Detected CPU count | Number of Actix worker threads |
 
-Logs are newline-delimited JSON only and are configured through `HUBUUM_LOG_LEVEL`; see
-[Structured Logging](logging.md) for fields and examples.
+Logs are newline-delimited JSON only and are configured through `HUBUUM_LOG_LEVEL`. Release
+builds include their Git SHA in the structured startup event; local builders may set
+`HUBUUM_BUILD_GIT_SHA` at compile time. See [Structured Logging](logging.md) for fields and
+examples.
 
 ### Access Control Configuration
 

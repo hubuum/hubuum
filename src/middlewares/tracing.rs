@@ -1,8 +1,7 @@
 use actix_service::{Service, Transform};
 use actix_web::{
     Error, HttpMessage,
-    dev::ServiceRequest,
-    dev::ServiceResponse,
+    dev::{ServiceRequest, ServiceResponse},
     http::header::{HeaderName, HeaderValue},
 };
 use futures_util::future::{self, LocalBoxFuture, Ready};
@@ -17,9 +16,38 @@ use super::client_allowlist::{ProxyTrust, extract_client_ip};
 
 const CORRELATION_ID: HeaderName = HeaderName::from_static("x-correlation-id");
 const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
+const MAX_CORRELATION_ID_LEN: usize = 128;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CorrelationId(String);
+
+impl CorrelationId {
+    fn from_request(req: &ServiceRequest) -> Result<Option<Self>, &'static str> {
+        let Some(value) = req.headers().get(&CORRELATION_ID) else {
+            return Ok(None);
+        };
+        let value = value
+            .to_str()
+            .map_err(|_| "correlation ID must contain visible ASCII characters")?;
+        if value.is_empty() {
+            return Err("correlation ID must not be empty");
+        }
+        if value.len() > MAX_CORRELATION_ID_LEN {
+            return Err("correlation ID exceeds 128 bytes");
+        }
+        if !value.bytes().all(|byte| byte.is_ascii_graphic()) {
+            return Err("correlation ID must contain visible ASCII characters without whitespace");
+        }
+        Ok(Some(Self(value.to_string())))
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 pub(crate) fn record_principal_on_current_span(principal_id: i32) {
-    Span::current().record("principal", principal_id);
+    Span::current().record("principal_id", principal_id);
 }
 
 fn elapsed_millis(start_time: Instant) -> u64 {
@@ -96,21 +124,24 @@ where
         let request_id = Uuid::new_v4();
         let request_id_s = request_id.to_string();
 
-        // Extract the correlation ID from the request headers, could be None
-        let correlation_id = req
-            .headers()
-            .get(&CORRELATION_ID)
-            .and_then(|hv| hv.to_str().ok())
-            .map(str::to_string);
+        let (correlation_id, invalid_correlation_reason) = match CorrelationId::from_request(&req) {
+            Ok(correlation_id) => (correlation_id, None),
+            Err(reason) => (None, Some(reason)),
+        };
         let span = span!(
             Level::INFO,
             "request",
             request_id = %request_id_s,
             correlation_id = field::Empty,
-            principal = field::Empty
+            principal_id = field::Empty
         );
-        if let Some(correlation_id) = correlation_id.as_deref() {
-            span.record("correlation_id", correlation_id);
+        if let Some(correlation_id) = correlation_id.as_ref() {
+            span.record("correlation_id", correlation_id.as_str());
+        }
+        if let Some(reason) = invalid_correlation_reason {
+            span.in_scope(|| {
+                tracing::warn!(message = "invalid correlation ID ignored", reason);
+            });
         }
 
         let method = req.method().to_string();
@@ -120,12 +151,14 @@ where
         req.extensions_mut()
             .insert(RequestProvenance::new_with_client_ip(
                 request_id,
-                correlation_id.clone(),
+                correlation_id
+                    .as_ref()
+                    .map(|correlation_id| correlation_id.as_str().to_string()),
                 client_ip,
             ));
 
         let start_time = Instant::now();
-        let fut = self.service.call(req);
+        let fut = span.in_scope(|| self.service.call(req));
 
         Box::pin(
             async move {
@@ -133,14 +166,29 @@ where
                     Ok(res) => res,
                     Err(err) => {
                         let elapsed_ms = elapsed_millis(start_time);
-                        error!(
-                            message = "request complete",
-                            method = method.as_str(),
-                            path = path.as_str(),
-                            client_ip = client_ip_s.as_deref(),
-                            elapsed_ms,
-                            error = %err,
-                        );
+                        let status = err.as_response_error().status_code();
+                        let status_code = status.as_u16();
+                        if status.is_server_error() {
+                            error!(
+                                message = "request complete",
+                                method = method.as_str(),
+                                path = path.as_str(),
+                                status = status_code,
+                                client_ip = client_ip_s.as_deref(),
+                                elapsed_ms,
+                                error = %err,
+                            );
+                        } else {
+                            warn!(
+                                message = "request complete",
+                                method = method.as_str(),
+                                path = path.as_str(),
+                                status = status_code,
+                                client_ip = client_ip_s.as_deref(),
+                                elapsed_ms,
+                                error = %err,
+                            );
+                        }
                         return Err(err);
                     }
                 };
@@ -156,6 +204,7 @@ where
                     res.headers_mut().insert(
                         CORRELATION_ID,
                         correlation_id
+                            .as_str()
                             .parse()
                             .unwrap_or_else(|_| HeaderValue::from_static("<failed>")),
                     );

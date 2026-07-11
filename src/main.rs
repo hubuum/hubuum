@@ -27,7 +27,7 @@ use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
 use crate::config::{get_config, token_hash_key_is_ephemeral};
@@ -77,18 +77,6 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
-    debug!(
-        message = "Starting server",
-        bind_ip = %config.bind_ip,
-        port = config.port,
-        ssl = config.tls_cert_path.is_some() && config.tls_key_path.is_some(),
-        log_level = %config.log_level,
-        actix_workers = config.actix_workers,
-        task_workers = config.task_workers,
-        task_poll_interval_ms = config.task_poll_interval_ms,
-        db_pool_size = config.db_pool_size,
-    );
-
     utilities::auth::initialize_dummy_password_hash();
     let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -98,6 +86,18 @@ async fn main() -> std::io::Result<()> {
             EXIT_CODE_INIT_ERROR,
         );
     }
+
+    let active_event_sinks =
+        match db::traits::event_subscription::enabled_event_sink_count(&pool).await {
+            Ok(count) => Some(count),
+            Err(error) => {
+                warn!(
+                    message = "failed to count active event sinks for startup metadata",
+                    error = %error,
+                );
+                None
+            }
+        };
 
     ensure_task_worker_running(pool.clone());
     ensure_event_fanout_worker_running(pool.clone());
@@ -111,13 +111,13 @@ async fn main() -> std::io::Result<()> {
     let server = HttpServer::new(move || {
         let app = App::new()
             .wrap(from_fn(middlewares::actor_context))
-            .wrap(middlewares::TracingMiddleware::new_with_trust(
-                proxy_trust.clone(),
-            ))
             // Actix runs the last registered middleware first. Reject disallowed
             // clients before bearer-token resolution can touch the database.
             .wrap(middlewares::ClientAllowlistMiddleware::new_with_trust(
                 client_allowlist.clone(),
+                proxy_trust.clone(),
+            ))
+            .wrap(middlewares::TracingMiddleware::new_with_trust(
                 proxy_trust.clone(),
             ))
             .app_data(Data::new(app_config.clone()))
@@ -159,11 +159,25 @@ async fn main() -> std::io::Result<()> {
             "TLS key specified but certificate is missing. Please provide both --tls-cert-path and --tls-key-path",
             EXIT_CODE_TLS_ERROR,
         ),
-        _ => {
-            info!("Server binding to http://{}", bind_address);
-            server.bind(bind_address)?
-        }
+        _ => server.bind(&bind_address)?,
     };
+
+    info!(
+        message = "server startup",
+        version = env!("CARGO_PKG_VERSION"),
+        git_sha = logger::build_git_sha(),
+        bind_address = bind_address.as_str(),
+        tls = config.tls_cert_path.is_some() && config.tls_key_path.is_some(),
+        log_format = "json",
+        log_level = config.log_level.as_str(),
+        actix_workers = config.actix_workers,
+        task_workers = config.task_workers,
+        event_fanout_workers = config.event_fanout_workers,
+        event_delivery_workers = config.event_delivery_workers,
+        db_backend = "postgresql",
+        authorization_backend = "database_permissions",
+        active_event_sinks,
+    );
 
     server.workers(config.actix_workers).run().await
 }

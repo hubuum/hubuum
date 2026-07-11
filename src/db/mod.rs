@@ -423,15 +423,17 @@ where
     let statement_timeout = ambient_statement_timeout();
     let actor = ambient_actor();
     let mut conn = acquire_connection(pool).await?;
-    conn.transaction::<R, ApiError, _>(async move |conn| {
-        if let Some(statement_timeout) = statement_timeout {
-            set_local_statement_timeout(conn, statement_timeout).await?;
-        }
-        if let Some(actor) = actor {
-            set_local_actor(conn, actor).await?;
-        }
-        f(conn).await.map_err(ApiError::from)
-    })
+    crate::logger::defer_operation_mutation_logs_until_commit(conn.transaction::<R, ApiError, _>(
+        async move |conn| {
+            if let Some(statement_timeout) = statement_timeout {
+                set_local_statement_timeout(conn, statement_timeout).await?;
+            }
+            if let Some(actor) = actor {
+                set_local_actor(conn, actor).await?;
+            }
+            f(conn).await.map_err(ApiError::from)
+        },
+    ))
     .await
 }
 

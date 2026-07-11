@@ -29,7 +29,6 @@ impl Status<PrincipalToken> for Token {
         };
 
         let token_hash = self.storage_hash();
-        let token_preview = self.obfuscate();
         // Truncate to microseconds: Postgres `timestamp` columns store microsecond
         // resolution, so the value we persist below and reflect back in-memory must
         // be truncated to match what a subsequent read returns. Otherwise the
@@ -57,14 +56,11 @@ impl Status<PrincipalToken> for Token {
         let mut valid_token = match result {
             Ok(Some(valid_token)) => valid_token,
             Ok(None) => {
-                warn!(
-                    "Invalid token {}: not found, revoked, expired, or disabled.",
-                    token_preview
-                );
+                warn!(message = "invalid token", reason = "not_active");
                 return Err(ApiError::Unauthorized("Invalid token".to_string()));
             }
             Err(e) => {
-                warn!("Invalid token {}: {}", token_preview, e);
+                warn!(message = "token validation failed", error = %e);
                 return Err(ApiError::Unauthorized("Invalid token".to_string()));
             }
         };

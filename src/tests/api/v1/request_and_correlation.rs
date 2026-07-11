@@ -8,13 +8,15 @@ mod tests {
         test, web,
     };
     use serde_json::json;
+    use std::str::FromStr;
     use tracing_subscriber::layer::SubscriberExt;
 
+    use crate::config::ClientAllowlist;
     use crate::events::RequestProvenance;
     use crate::logger::{HubuumLoggingFormat, test_support::JsonLogWriter};
-    use crate::middlewares::TracingMiddleware;
     use crate::middlewares::actor_context;
     use crate::middlewares::tracing::record_principal_on_current_span;
+    use crate::middlewares::{ClientAllowlistMiddleware, TracingMiddleware};
     use crate::tests::api_operations::get_request_with_correlation;
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{TestContext, test_context};
@@ -22,15 +24,20 @@ mod tests {
     const ENDPOINT: &str = "/api/v1/classes/";
 
     #[rstest]
-    #[case::with_correlation_id(Some("test-correlation-id"))]
-    #[case::with_empty_correlation_id(Some(""))]
-    #[case::with_long_correlation_id(Some(
-        "test-correlation-id-long with spaces & weird characters"
-    ))]
-    #[case::without_correlation_id(None)]
+    #[case::with_correlation_id(Some("test-correlation-id"), true)]
+    #[case::with_empty_correlation_id(Some(""), false)]
+    #[case::with_whitespace_correlation_id(Some("correlation id"), false)]
+    #[case::with_overlong_correlation_id(
+        Some(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ),
+        false
+    )]
+    #[case::without_correlation_id(None, false)]
     #[actix_web::test]
     async fn test_with_correlation_id(
         #[case] correlation_target: Option<&str>,
+        #[case] echoed: bool,
         #[future(awt)] test_context: TestContext,
     ) {
         let resp = get_request_with_correlation(
@@ -43,14 +50,14 @@ mod tests {
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
 
-        match correlation_target {
-            Some(correlation_id) => {
+        match (correlation_target, echoed) {
+            (Some(correlation_id), true) => {
                 assert_eq!(
                     resp.headers().get("x-correlation-id"),
                     Some(&HeaderValue::from_str(correlation_id).unwrap())
                 );
             }
-            None => {
+            _ => {
                 assert!(resp.headers().get("x-correlation-id").is_none());
             }
         }
@@ -187,7 +194,7 @@ mod tests {
             .iter()
             .find(|event| event["message"] == "request complete")
             .expect("request completion log");
-        assert_eq!(event["principal"], 77);
+        assert_eq!(event["principal_id"], 77);
     }
 
     #[actix_web::test]
@@ -218,6 +225,40 @@ mod tests {
             .iter()
             .find(|event| event["message"] == "request complete")
             .expect("request completion log");
-        assert_eq!(event["principal"], test_context.admin_user.id);
+        assert_eq!(event["principal_id"], test_context.admin_user.id);
+    }
+
+    #[actix_web::test]
+    async fn production_middleware_stack_traces_allowlist_rejections() {
+        let (writer, _guard) = capture_request_logs();
+        let app = test::init_service(
+            App::new()
+                .wrap(actix_web::middleware::from_fn(actor_context))
+                .wrap(ClientAllowlistMiddleware::new(
+                    ClientAllowlist::from_str("10.0.0.0/24").expect("allowlist"),
+                ))
+                .wrap(TracingMiddleware::new())
+                .route("/denied", web::get().to(ok_handler)),
+        )
+        .await;
+
+        let resp = test::TestRequest::get()
+            .uri("/denied")
+            .peer_addr("192.0.2.10:8000".parse().expect("peer address"))
+            .send_request(&app)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        assert!(resp.headers().get("x-request-id").is_some());
+
+        let event = writer
+            .output()
+            .into_iter()
+            .find(|event| event["message"] == "request complete")
+            .expect("request completion log");
+        assert_eq!(event["severity"], "WARN");
+        assert_eq!(event["status"], StatusCode::FORBIDDEN.as_u16());
+        assert_eq!(event["path"], "/denied");
+        assert!(event["request_id"].as_str().is_some());
     }
 }

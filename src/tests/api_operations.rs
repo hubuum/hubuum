@@ -35,12 +35,14 @@ pub async fn get_request_with_correlation(
             .uri(endpoint)
             .send_request(&app)
             .await
+            .map_into_boxed_body()
     } else {
         test::TestRequest::get()
             .insert_header(create_token_header(token))
             .uri(endpoint)
             .send_request(&app)
             .await
+            .map_into_boxed_body()
     }
 }
 
@@ -81,7 +83,10 @@ where
         req = req.insert_header((name, value));
     }
 
-    req.set_json(&content).send_request(&app).await
+    req.set_json(&content)
+        .send_request(&app)
+        .await
+        .map_into_boxed_body()
 }
 
 pub async fn post_request<T>(
@@ -117,6 +122,7 @@ pub async fn delete_request(
         .uri(endpoint)
         .send_request(&app)
         .await
+        .map_into_boxed_body()
 }
 
 pub async fn patch_request<T>(
@@ -145,6 +151,7 @@ where
         .set_json(&content) // Make sure to reference content
         .send_request(&app)
         .await
+        .map_into_boxed_body()
 }
 
 pub async fn put_request<T>(
@@ -173,4 +180,5 @@ where
         .set_json(&content)
         .send_request(&app)
         .await
+        .map_into_boxed_body()
 }

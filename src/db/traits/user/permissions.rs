@@ -37,14 +37,20 @@ pub trait UserPermissions: AuthzSubject {
 
         // Fail-closed scope pre-filter, before the admin bypass.
         if !scope_allows(scopes, &requested) {
-            crate::logger::log_authorization_denial(principal_id, &requested, None, "token_scope");
+            crate::logger::log_authorization_denial(
+                principal_id,
+                &requested,
+                None,
+                None,
+                "token_scope",
+            );
             return Err(ApiError::Forbidden(
                 "Token scope does not permit the requested action".to_string(),
             ));
         }
 
         if AuthzSubject::is_admin(self, pool).await? {
-            crate::logger::log_authorization_grant(principal_id, &requested, None, "admin");
+            crate::logger::log_authorization_grant(principal_id, &requested, None, None, "admin");
             return Ok(());
         }
 
@@ -70,6 +76,9 @@ pub trait UserPermissions: AuthzSubject {
             .try_collect()
             .await?;
         let collection_count = collection_ids.len();
+        let collection_id = (collection_count == 1)
+            .then(|| collection_ids.iter().next().copied())
+            .flatten();
 
         let mut base_query = lookup_table
             .inner_join(closure_table.on(collection_id_field.eq(ancestor_collection_id)))
@@ -97,6 +106,7 @@ pub trait UserPermissions: AuthzSubject {
                 principal_id,
                 &requested,
                 Some(collection_count),
+                collection_id,
                 "permissions",
             );
             Ok(())
@@ -105,6 +115,7 @@ pub trait UserPermissions: AuthzSubject {
                 principal_id,
                 &requested,
                 Some(collection_count),
+                collection_id,
                 "permissions",
             );
             Err(ApiError::Forbidden(

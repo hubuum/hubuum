@@ -452,6 +452,21 @@ pub(crate) async fn list_event_sink_rows_with_total_count(
     Ok((rows, total_count))
 }
 
+pub async fn enabled_event_sink_count(pool: &DbPool) -> Result<i64, ApiError> {
+    use diesel::dsl::count_star;
+
+    use crate::schema::event_sinks::dsl::{enabled, event_sinks};
+
+    with_connection(pool, async |conn| {
+        event_sinks
+            .filter(enabled.eq(true))
+            .select(count_star())
+            .first::<i64>(conn)
+            .await
+    })
+    .await
+}
+
 fn build_event_sink_query(
     query_options: &QueryOptions,
 ) -> Result<crate::schema::event_sinks::BoxedQuery<'static, diesel::pg::Pg>, ApiError> {

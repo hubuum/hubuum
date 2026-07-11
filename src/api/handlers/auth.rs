@@ -113,12 +113,7 @@ pub async fn login(
         }
     };
 
-    debug!(
-        message = "Login successful",
-        name = name,
-        user_id = user.id,
-        token = token.obfuscate()
-    );
+    debug!(message = "Login successful", name = name, user_id = user.id,);
 
     Ok(ApiResponse::ok(LoginResponse::new(token.get_token())))
 }
@@ -141,18 +136,14 @@ pub async fn logout(
 ) -> Result<impl Responder, ApiError> {
     let token = requestor.token;
 
-    debug!(message = "Logging out token.", token = token.obfuscate());
+    debug!(message = "token logout requested");
 
     let result = token.delete(&pool).await;
 
     match result {
         Ok(_) => Ok(ApiResponse::message("Logout successful.")),
         Err(e) => {
-            warn!(
-                message = "Logout failed",
-                token_used = token.obfuscate(),
-                error = e.to_string()
-            );
+            warn!(message = "Logout failed", error = e.to_string());
             Err(ApiError::InternalServerError(
                 "Internal authentication failure".to_string(),
             ))
@@ -188,7 +179,6 @@ pub async fn logout_all(
         Err(e) => {
             warn!(
                 message = "Logout of all tokens failed",
-                token_used = user_access.token.obfuscate(),
                 user_id = user_access.user.id,
                 error = e.to_string()
             );
@@ -218,7 +208,7 @@ pub async fn logout_token(
     token: web::Json<LogoutTokenRequest>,
 ) -> Result<impl Responder, ApiError> {
     let token = Token(token.into_inner().token);
-    debug!(message = "Logging out token {}.", token = token.obfuscate());
+    debug!(message = "administrative token logout requested");
 
     let result = token.delete(&pool).await;
 
@@ -227,8 +217,6 @@ pub async fn logout_token(
         Err(e) => {
             warn!(
                 message = "Logout of token failed",
-                token_used = token.obfuscate(),
-                token_target = user_access.token.obfuscate(),
                 user_id = user_access.user.id,
                 error = e.to_string()
             );
@@ -281,7 +269,6 @@ pub async fn logout_other(
         Err(e) => {
             warn!(
                 message = "Logout of other tokens failed",
-                token_used = admin_access.token.obfuscate(),
                 user_id = admin_access.user.id,
                 error = e.to_string()
             );
@@ -307,7 +294,6 @@ pub async fn validate_token(user_access: Authenticated) -> Result<impl Responder
     debug!(
         message = "Token validation successful",
         principal_id = user_access.principal.id,
-        token = user_access.token.obfuscate()
     );
 
     Ok(ApiResponse::message("Token is valid."))
