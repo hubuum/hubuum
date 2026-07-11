@@ -37,7 +37,10 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body: crate::api::handlers::auth::AuthProvidersResponse =
             test::read_body_json(resp).await;
-        assert_eq!(body.providers.first().map(String::as_str), Some("local"));
+        assert_eq!(
+            body.providers.as_slice().first().map(String::as_str),
+            Some("local")
+        );
         let mut sorted_external = body.providers[1..].to_vec();
         sorted_external.sort_unstable();
         assert_eq!(&body.providers[1..], sorted_external);

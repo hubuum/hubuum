@@ -423,12 +423,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(synced_after_subject_change.id, user.id);
-        let external_subject = with_connection(scope.pool.get_ref(), |conn| {
+        let external_subject = with_connection(scope.pool.get_ref(), async |conn| {
             principals::table
                 .find(user.id)
                 .select(principals::external_subject)
                 .first::<Option<String>>(conn)
+                .await
         })
+        .await
         .unwrap();
         assert_eq!(
             external_subject.as_deref(),
