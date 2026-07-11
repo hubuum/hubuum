@@ -1,8 +1,37 @@
 # Hubuum - A flexible asset management system
 
+[![CI](https://github.com/hubuum/hubuum/actions/workflows/ci.yml/badge.svg)](https://github.com/hubuum/hubuum/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/hubuum/hubuum)](https://github.com/hubuum/hubuum/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 *Hubuum (𒄷𒁍𒌝) in Sumerian translates as “axle” or “wheel assembly”*[^1].
 
 Hubuum is a REST service that provides a shared interface for your resources.
+
+Hubuum `0.0.1` is the first public release. It is suitable for evaluation and early
+deployments, but its API and configuration may change before `1.0.0`. Pin deployments to
+an explicit version instead of using the moving `main` image tag.
+
+## Getting Started
+
+Hubuum requires PostgreSQL. The release is available as pre-built archives for Linux,
+macOS, and Windows, and as a Linux container image for AMD64 and ARM64.
+
+```sh
+docker pull ghcr.io/hubuum/hubuum-server:v0.0.1
+```
+
+- Follow the [quick start guide](docs/quick_start.md) for configuration and first-time
+  administrator setup.
+- Follow the [deployment guide](docs/deployment.md) for Docker or Podman Compose
+  installation.
+- Download native binaries and checksums from
+  [GitHub Releases](https://github.com/hubuum/hubuum/releases).
+- Check a running instance at `/healthz` and `/readyz`.
+
+The default container image includes the `rustls` and OpenSSL TLS backends. A smaller
+`v0.0.1-rustls-only` image is also published. See the
+[release guide](docs/releasing.md#container-images) for the complete tag scheme.
 
 ## Concept
 
@@ -144,6 +173,36 @@ inspecting and releasing throttled scopes), see [docs/login_rate_limiting.md](do
 - All-in-one installs expose both frontend and backend API hostnames; browser frontend flows can still use the frontend BFF routes.
 - Published container images are used by default; local repository cloning/building is opt-in for source builds.
 - Curl-style install, update, stop, and uninstall flows are supported; systemd service installation is opt-in.
+
+## Development
+
+Build the workspace with Cargo:
+
+```sh
+cargo build --all-features --locked
+```
+
+The local test environment is configured through `.env`:
+
+```sh
+source .env && ./run_tests.sh
+cargo clippy --all-targets -- -D warnings
+cargo fmt --all -- --check
+```
+
+See [docs/development.md](docs/development.md) for database setup, Git hooks, and the full
+development workflow.
+
+## Releases
+
+Release notes are maintained in [CHANGELOG.md](CHANGELOG.md). Pushing an annotated
+`vX.Y.Z` tag for a commit that has passed CI on `main` publishes a GitHub Release with
+native archives, SHA-256 checksums, and versioned multi-architecture container images.
+Maintainer instructions are in [docs/releasing.md](docs/releasing.md).
+
+## License
+
+Hubuum is available under the [MIT License](LICENSE).
 
 [^1]: Hubuum is probably a loanword from Akkadian.
 [^2]: [JSON schema](https://json-schema.org) is a powerful tool for validating the structure of JSON data. It allows you to define the expected format of your data, including required fields, data types, and constraints on values.

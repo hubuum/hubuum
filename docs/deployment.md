@@ -230,7 +230,9 @@ Use `--service-name NAME` to install the unit under a different name. Without `-
 
 ## Updates
 
-The installer copies `update-single-host.sh` into the install directory:
+The installer copies `install-single-host.sh`, `update-single-host.sh`,
+`stop-single-host.sh`, and `uninstall-single-host.sh` into the install directory. A curl-based
+installer rerun refreshes all four management scripts before updating the deployment:
 
 ```bash
 cd /opt/hubuum

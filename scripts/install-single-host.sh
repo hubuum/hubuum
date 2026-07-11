@@ -367,20 +367,27 @@ install_management_script() {
   local script_name="$1"
   local local_path="$SCRIPT_DIR/$script_name"
   local dest_path="$INSTALL_DIR/$script_name"
+  local temp_path
 
   if [[ -f "$local_path" && "$local_path" != "$dest_path" ]]; then
     install -m 0755 "$local_path" "$dest_path"
     return 0
-  elif [[ -f "$dest_path" ]]; then
-    chmod 0755 "$dest_path"
-    return 0
   fi
 
   if command -v curl >/dev/null 2>&1; then
-    if curl -fsSL "${SCRIPT_BASE_URL}/${script_name}" -o "$dest_path"; then
-      chmod 0755 "$dest_path"
+    temp_path="$(mktemp "$INSTALL_DIR/.${script_name}.XXXXXX")"
+    if curl -fsSL "${SCRIPT_BASE_URL}/${script_name}" -o "$temp_path"; then
+      install -m 0755 "$temp_path" "$dest_path"
+      rm -f "$temp_path"
       return 0
     fi
+    rm -f "$temp_path"
+  fi
+
+  if [[ -f "$dest_path" ]]; then
+    chmod 0755 "$dest_path"
+    echo "WARNING: could not refresh $script_name; keeping the installed copy" >&2
+    return 0
   fi
 
   echo "WARNING: could not install $script_name; curl is unavailable and no local script was found" >&2
