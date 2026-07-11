@@ -76,6 +76,10 @@
 - Prefer deterministic library-level benchmarks over handlers or database-backed flows.
 - Avoid reading global `CONFIG` from benchmarks; provide config-free helper functions that accept limits or options explicitly.
 
+## Pull Requests And Merges
+
+- When squash-merging a pull request, use its detailed PR description as the squash commit body. Preserve the substantive summary, rationale, behavior notes, and issue references, but remove verification-only sections such as test commands, checklists, and `## Verification` before merging.
+
 ## Change Discipline
 
 - Keep edits scoped to the task at hand.
