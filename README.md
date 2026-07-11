@@ -90,6 +90,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - Remote target actions are documented in [docs/remote_targets.md](docs/remote_targets.md).
 - Event audit and delivery behavior is documented in [docs/events.md](docs/events.md).
 - Temporal history, actor capture, and GDPR anonymization are documented in [docs/temporal_history.md](docs/temporal_history.md).
+- Database pool sizing, observability, and load testing are documented in [docs/performance.md](docs/performance.md).
 
 ### Production Behavior
 

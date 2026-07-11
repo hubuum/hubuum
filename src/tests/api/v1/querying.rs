@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
+    use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test as actix_test};
     use chrono::{NaiveDate, NaiveDateTime};
-    use diesel::prelude::*;
     use rstest::rstest;
 
     use crate::db::with_connection;
@@ -121,19 +121,21 @@ mod tests {
         (collection, class, objects)
     }
 
-    fn set_object_created_at(
+    async fn set_object_created_at(
         context: &TestContext,
         object: &HubuumObject,
         created_at: NaiveDateTime,
     ) {
-        with_connection(&context.pool, |conn| {
+        with_connection(&context.pool, async |conn| {
             diesel::update(hubuumobject.filter(hubuumobject_id.eq(object.id)))
                 .set((
                     object_created_at.eq(created_at),
                     object_updated_at.eq(created_at),
                 ))
                 .execute(conn)
+                .await
         })
+        .await
         .unwrap();
     }
 
@@ -488,7 +490,7 @@ mod tests {
                 .unwrap()
                 .and_hms_opt(0, 0, 0)
                 .unwrap();
-            set_object_created_at(&context, object, created_at);
+            set_object_created_at(&context, object, created_at).await;
         }
 
         let resp = get_request(

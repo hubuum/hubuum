@@ -7,7 +7,7 @@
 //! aggregate queries — which have no single owning instance — stay free functions, as elsewhere in
 //! this module. The model owns the domain<->row conversions and all validation.
 
-use diesel::prelude::*;
+use crate::db::prelude::*;
 
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -53,11 +53,13 @@ impl LoadExportTemplateRecord for ExportTemplateID {
     ) -> Result<ExportTemplateRow, ApiError> {
         use crate::schema::export_templates::dsl::{export_templates, id};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             export_templates
                 .filter(id.eq(self.id()))
                 .first::<ExportTemplateRow>(conn)
+                .await
         })
+        .await
     }
 }
 
@@ -85,11 +87,13 @@ impl SaveExportTemplateRecord for NewExportTemplateRow {
     ) -> Result<ExportTemplateRow, ApiError> {
         use crate::schema::export_templates::dsl::export_templates;
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             diesel::insert_into(export_templates)
                 .values(self)
                 .get_result::<ExportTemplateRow>(conn)
+                .await
         })
+        .await
     }
 
     async fn save_export_template_record(
@@ -103,10 +107,11 @@ impl SaveExportTemplateRecord for NewExportTemplateRow {
 
         use crate::schema::export_templates::dsl::export_templates;
 
-        with_transaction(pool, |conn| -> Result<ExportTemplateRow, ApiError> {
+        with_transaction(pool, async |conn| -> Result<ExportTemplateRow, ApiError> {
             let row = diesel::insert_into(export_templates)
                 .values(self)
-                .get_result::<ExportTemplateRow>(conn)?;
+                .get_result::<ExportTemplateRow>(conn)
+                .await?;
             let event = export_template_event(
                 &row,
                 Action::Created,
@@ -114,9 +119,10 @@ impl SaveExportTemplateRecord for NewExportTemplateRow {
                 format!("Export template '{}' created", row.name()),
             )?
             .with_after(row.audit_snapshot());
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(row)
         })
+        .await
     }
 }
 
@@ -148,15 +154,23 @@ impl UpdateExportTemplateRecord for UpdateExportTemplateRow {
     ) -> Result<ExportTemplateRow, ApiError> {
         use crate::schema::export_templates::dsl::{export_templates, id};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             crate::db::updated_or_current(
                 diesel::update(export_templates.filter(id.eq(template_id)))
                     .set(self)
                     .get_result::<ExportTemplateRow>(conn)
+                    .await
                     .optional(),
-                || export_templates.filter(id.eq(template_id)).first(conn),
+                async || {
+                    export_templates
+                        .filter(id.eq(template_id))
+                        .first(conn)
+                        .await
+                },
             )
+            .await
         })
+        .await
     }
 
     async fn update_export_template_record(
@@ -173,13 +187,15 @@ impl UpdateExportTemplateRecord for UpdateExportTemplateRow {
 
         use crate::schema::export_templates::dsl::{export_templates, id};
 
-        with_transaction(pool, |conn| -> Result<ExportTemplateRow, ApiError> {
+        with_transaction(pool, async |conn| -> Result<ExportTemplateRow, ApiError> {
             let before = export_templates
                 .filter(id.eq(template_id))
-                .first::<ExportTemplateRow>(conn)?;
+                .first::<ExportTemplateRow>(conn)
+                .await?;
             let after = diesel::update(export_templates.filter(id.eq(template_id)))
                 .set(self)
-                .get_result::<ExportTemplateRow>(conn)?;
+                .get_result::<ExportTemplateRow>(conn)
+                .await?;
             let event = export_template_event(
                 &after,
                 Action::Updated,
@@ -188,9 +204,10 @@ impl UpdateExportTemplateRecord for UpdateExportTemplateRow {
             )?
             .with_before(before.audit_snapshot())
             .with_after(after.audit_snapshot());
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(after)
         })
+        .await
     }
 }
 
@@ -219,9 +236,12 @@ impl DeleteExportTemplateRecord for ExportTemplateID {
     ) -> Result<(), ApiError> {
         use crate::schema::export_templates::dsl::{export_templates, id};
 
-        with_connection(pool, |conn| {
-            diesel::delete(export_templates.filter(id.eq(self.id()))).execute(conn)
-        })?;
+        with_connection(pool, async |conn| {
+            diesel::delete(export_templates.filter(id.eq(self.id())))
+                .execute(conn)
+                .await
+        })
+        .await?;
 
         Ok(())
     }
@@ -239,11 +259,14 @@ impl DeleteExportTemplateRecord for ExportTemplateID {
 
         use crate::schema::export_templates::dsl::{export_templates, id};
 
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
             let before = export_templates
                 .filter(id.eq(self.id()))
-                .first::<ExportTemplateRow>(conn)?;
-            diesel::delete(export_templates.filter(id.eq(self.id()))).execute(conn)?;
+                .first::<ExportTemplateRow>(conn)
+                .await?;
+            diesel::delete(export_templates.filter(id.eq(self.id())))
+                .execute(conn)
+                .await?;
             let event = export_template_event(
                 &before,
                 Action::Deleted,
@@ -251,9 +274,10 @@ impl DeleteExportTemplateRecord for ExportTemplateID {
                 format!("Export template '{}' deleted", before.name()),
             )?
             .with_before(before.audit_snapshot());
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(())
         })
+        .await
     }
 }
 
@@ -272,12 +296,14 @@ impl ExportTemplateCollectionLookup for ExportTemplateID {
     ) -> Result<CollectionID, ApiError> {
         use crate::schema::export_templates::dsl::{collection_id, export_templates, id};
 
-        let raw = with_connection(pool, |conn| {
+        let raw = with_connection(pool, async |conn| {
             export_templates
                 .filter(id.eq(self.id()))
                 .select(collection_id)
                 .first::<i32>(conn)
-        })?;
+                .await
+        })
+        .await?;
         CollectionID::new(raw)
     }
 }
@@ -290,24 +316,26 @@ pub(crate) async fn load_rows_in_collection(
 ) -> Result<Vec<ExportTemplateRow>, ApiError> {
     use crate::schema::export_templates::dsl::{collection_id, export_templates, id};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         let mut query = export_templates
             .into_boxed()
             .filter(collection_id.eq(target_collection_id));
         if let Some(exclude_template_id) = exclude_template_id {
             query = query.filter(id.ne(exclude_template_id));
         }
-        query.load::<ExportTemplateRow>(conn)
+        query.load::<ExportTemplateRow>(conn).await
     })
+    .await
 }
 
 /// Load every export-template row.
 pub(crate) async fn load_all_rows(pool: &DbPool) -> Result<Vec<ExportTemplateRow>, ApiError> {
     use crate::schema::export_templates::dsl::export_templates;
 
-    with_connection(pool, |conn| {
-        export_templates.load::<ExportTemplateRow>(conn)
+    with_connection(pool, async |conn| {
+        export_templates.load::<ExportTemplateRow>(conn).await
     })
+    .await
 }
 
 /// Whether a template with `target_name` already exists in the collection, optionally ignoring one
@@ -320,7 +348,7 @@ pub(crate) async fn name_conflict_exists(
 ) -> Result<bool, ApiError> {
     use crate::schema::export_templates::dsl::{collection_id, export_templates, id, name};
 
-    let existing = with_connection(pool, |conn| {
+    let existing = with_connection(pool, async |conn| {
         let mut query = export_templates
             .into_boxed()
             .filter(collection_id.eq(target_collection_id))
@@ -328,8 +356,9 @@ pub(crate) async fn name_conflict_exists(
         if let Some(exclude_template_id) = exclude_template_id {
             query = query.filter(id.ne(exclude_template_id));
         }
-        query.first::<ExportTemplateRow>(conn).optional()
-    })?;
+        query.first::<ExportTemplateRow>(conn).await.optional()
+    })
+    .await?;
 
     Ok(existing.is_some())
 }
@@ -341,13 +370,15 @@ pub(crate) async fn class_collection_id(
 ) -> Result<Option<i32>, ApiError> {
     use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, id};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         hubuumclass
             .filter(id.eq(target_class_id))
             .select(collection_id)
             .first::<i32>(conn)
+            .await
             .optional()
     })
+    .await
 }
 
 /// Build the filtered (but unsorted, unpaginated) query for listing export templates within the
@@ -404,13 +435,20 @@ pub(crate) async fn list_rows_with_total_count(
     query_options: &QueryOptions,
 ) -> Result<(Vec<ExportTemplateRow>, i64), ApiError> {
     let query = build_list_query(allowed_collection_ids, query_options)?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
-    })?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+        with_connection(pool, async |conn| {
+            query.count().get_result::<i64>(conn).await
+        })
+        .await
+    })
+    .await?;
 
     let mut query = build_list_query(allowed_collection_ids, query_options)?;
     crate::apply_query_options!(query, query_options, ExportTemplate);
-    let rows = with_connection(pool, |conn| query.load::<ExportTemplateRow>(conn))?;
+    let rows = with_connection(pool, async |conn| {
+        query.load::<ExportTemplateRow>(conn).await
+    })
+    .await?;
 
     Ok((rows, total_count))
 }

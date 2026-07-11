@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 use serde::Serialize;
 
 use crate::db::{DbPool, with_connection, with_transaction};
@@ -301,8 +301,10 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
             base_query = permission.create_boxed_filter(base_query, true);
         }
 
-        let result: Option<Permission> =
-            with_connection(pool, |conn| base_query.first::<Permission>(conn).optional())?;
+        let result: Option<Permission> = with_connection(pool, async |conn| {
+            base_query.first::<Permission>(conn).await.optional()
+        })
+        .await?;
 
         Ok(result.is_some())
     }
@@ -318,11 +320,12 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
 
         let target_collection_id = self.collection_id(pool).await?.id();
 
-        with_transaction(pool, |conn| -> Result<Permission, ApiError> {
+        with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
             let existing_entry = permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_grant))
                 .first::<Permission>(conn)
+                .await
                 .optional()?;
 
             match existing_entry {
@@ -467,7 +470,8 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                         .filter(collection_id.eq(target_collection_id))
                         .filter(group_id.eq(group_id_for_grant))
                         .set(&update_perm)
-                        .get_result(conn)?)
+                        .get_result(conn)
+                        .await?)
                 }
                 None => {
                     let new_entry = NewPermission {
@@ -525,10 +529,12 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
 
                     Ok(diesel::insert_into(permissions)
                         .values(&new_entry)
-                        .get_result(conn)?)
+                        .get_result(conn)
+                        .await?)
                 }
             }
         })
+        .await
     }
 
     async fn apply_permissions_from_backend(
@@ -555,11 +561,12 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         let target_collection_id = self.collection_id(pool).await?.id();
         let requested = permission_list.iter().copied().collect::<Vec<_>>();
 
-        with_transaction(pool, |conn| -> Result<Permission, ApiError> {
+        with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
             let before = permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_grant))
                 .first::<Permission>(conn)
+                .await
                 .optional()?;
 
             let after = match before {
@@ -570,7 +577,8 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                         .filter(collection_id.eq(target_collection_id))
                         .filter(group_id.eq(group_id_for_grant))
                         .set(&update_perm)
-                        .get_result::<Permission>(conn)?
+                        .get_result::<Permission>(conn)
+                        .await?
                 }
                 None => {
                     let new_entry = new_permission_from_list(
@@ -580,7 +588,8 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                     );
                     diesel::insert_into(permissions)
                         .values(&new_entry)
-                        .get_result::<Permission>(conn)?
+                        .get_result::<Permission>(conn)
+                        .await?
                 }
             };
 
@@ -602,9 +611,10 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
             } else {
                 event
             };
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(after)
         })
+        .await
     }
 
     async fn revoke_permissions_from_backend_without_events(
@@ -617,11 +627,12 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
 
         let target_collection_id = self.collection_id(pool).await?.id();
 
-        with_transaction(pool, |conn| -> Result<Permission, ApiError> {
+        with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
             permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
-                .first::<Permission>(conn)?;
+                .first::<Permission>(conn)
+                .await?;
 
             let mut update_perm = UpdatePermission::default();
             for permission in permission_list.into_iter() {
@@ -726,8 +737,10 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
                 .set(&update_perm)
-                .get_result(conn)?)
+                .get_result(conn)
+                .await?)
         })
+        .await
     }
 
     async fn revoke_permissions_from_backend(
@@ -752,18 +765,20 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         let target_collection_id = self.collection_id(pool).await?.id();
         let requested = permission_list.iter().copied().collect::<Vec<_>>();
 
-        with_transaction(pool, |conn| -> Result<Permission, ApiError> {
+        with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
             let before = permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
-                .first::<Permission>(conn)?;
+                .first::<Permission>(conn)
+                .await?;
 
             let update_perm = update_permission_for_revoke(&permission_list);
             let after = diesel::update(permissions)
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
                 .set(&update_perm)
-                .get_result::<Permission>(conn)?;
+                .get_result::<Permission>(conn)
+                .await?;
 
             let event = permission_event(
                 &after,
@@ -778,9 +793,10 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
             )?
             .with_before(permission_snapshot(&before))
             .with_after(permission_snapshot(&after));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(after)
         })
+        .await
     }
 
     async fn revoke_all_from_backend_without_events(
@@ -791,12 +807,14 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         use crate::schema::permissions::dsl::*;
 
         let collection_id_for_revoke = self.collection_id(pool).await?.id();
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             diesel::delete(permissions)
                 .filter(collection_id.eq(collection_id_for_revoke))
                 .filter(group_id.eq(group_id_for_revoke))
                 .execute(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         Ok(())
     }
@@ -816,17 +834,19 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         use crate::schema::permissions::dsl::*;
 
         let collection_id_for_revoke = self.collection_id(pool).await?.id();
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
             let before = permissions
                 .filter(collection_id.eq(collection_id_for_revoke))
                 .filter(group_id.eq(group_id_for_revoke))
                 .first::<Permission>(conn)
+                .await
                 .optional()?;
 
             diesel::delete(permissions)
                 .filter(collection_id.eq(collection_id_for_revoke))
                 .filter(group_id.eq(group_id_for_revoke))
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
 
             if let Some(before) = before {
                 let requested = before.granted();
@@ -842,11 +862,12 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                     None,
                 )?
                 .with_before(permission_snapshot(&before));
-                emit_event(conn, &event)?;
+                emit_event(conn, &event).await?;
             }
 
             Ok(())
         })
+        .await
     }
 }
 

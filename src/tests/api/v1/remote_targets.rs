@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests {
+    use crate::db::prelude::*;
     use actix_rt::time::sleep;
     use actix_web::{
         http::{StatusCode, header},
         test,
     };
     use base64::Engine;
-    use diesel::prelude::*;
     use futures::join;
     use std::sync::Arc;
     use std::time::Duration;
@@ -344,14 +344,16 @@ mod tests {
         (port, request_rx)
     }
 
-    fn remote_call_result(context: &TestContext, task_id_value: i32) -> RemoteCallResult {
+    async fn remote_call_result(context: &TestContext, task_id_value: i32) -> RemoteCallResult {
         use crate::schema::remote_call_results::dsl::{remote_call_results, task_id};
 
-        with_connection(&context.pool, |conn| {
+        with_connection(&context.pool, async |conn| {
             remote_call_results
                 .filter(task_id.eq(task_id_value))
                 .first::<RemoteCallResult>(conn)
+                .await
         })
+        .await
         .unwrap()
     }
 
@@ -897,7 +899,7 @@ mod tests {
         assert!(request.contains("\"trace\": \"trace-123\""));
         assert!(request.contains("\"force\":true"));
 
-        let result = remote_call_result(&context, task.id);
+        let result = remote_call_result(&context, task.id).await;
         assert!(result.success);
         assert_eq!(result.target_id, Some(target.id));
         assert_eq!(result.subject_type, "object");
@@ -946,7 +948,7 @@ mod tests {
         assert_eq!(finished.status, TaskStatus::Succeeded);
 
         let _request = request_rx.await.unwrap();
-        let result = remote_call_result(&context, task.id);
+        let result = remote_call_result(&context, task.id).await;
         assert!(result.success);
         assert_eq!(
             result.response_body_preview.as_deref(),

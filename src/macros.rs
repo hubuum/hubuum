@@ -102,7 +102,7 @@ macro_rules! can {
 /// `permissions` table.
 macro_rules! apply_permission_filter {
     ($base_query:ident, $permission:expr, $target:expr) => {{
-        use diesel::prelude::*;
+        use $crate::db::prelude::*;
         use $crate::models::Permissions;
         use $crate::schema::permissions;
 
@@ -317,7 +317,7 @@ macro_rules! numeric_search {
 macro_rules! date_search {
     ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
-        use diesel::prelude::*;
+        use $crate::db::prelude::*;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator};
 
@@ -418,7 +418,7 @@ macro_rules! date_search {
 macro_rules! array_search {
     ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
-        use diesel::prelude::*;
+        use $crate::db::prelude::*;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator};
 
@@ -474,7 +474,7 @@ macro_rules! array_search {
 macro_rules! string_search {
     ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
-        use diesel::prelude::*;
+        use $crate::db::prelude::*;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator};
 

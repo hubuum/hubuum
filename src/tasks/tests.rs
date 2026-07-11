@@ -1,6 +1,6 @@
 use chrono::NaiveDate;
-use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
-use futures::executor::block_on;
+use diesel::{ExpressionMethods, QueryDsl};
+use diesel_async::RunQueryDsl;
 
 use super::execution::{execute_import_best_effort, execute_import_strict, execute_planned_item};
 use super::helpers::{
@@ -34,9 +34,9 @@ use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
 use crate::tests::TestContext;
 use crate::traits::CanSave;
 
-#[test]
-fn test_execute_import_strict_rolls_back_on_runtime_failure() {
-    let context = block_on(TestContext::new());
+#[tokio::test]
+async fn test_execute_import_strict_rolls_back_on_runtime_failure() {
+    let context = (TestContext::new()).await;
     let collection = context.scoped_name("strict_rollback_collection");
     let class = context.scoped_name("strict_rollback_class");
     let planned_items = vec![
@@ -75,27 +75,26 @@ fn test_execute_import_strict_rolls_back_on_runtime_failure() {
     ];
 
     let mut accumulator = ExecutionAccumulator::default();
-    let result = block_on(execute_import_strict(
-        &context.pool,
-        1,
-        &planned_items,
-        &mut accumulator,
-    ));
+    let result = (execute_import_strict(&context.pool, 1, &planned_items, &mut accumulator)).await;
     assert!(result.is_err());
 
-    let collection_exists = with_connection(&context.pool, |conn| {
+    let collection_exists = with_connection(&context.pool, async |conn| {
         collections
             .filter(collection_name.eq(&collection))
             .count()
             .get_result::<i64>(conn)
+            .await
     })
+    .await
     .unwrap();
-    let class_exists = with_connection(&context.pool, |conn| {
+    let class_exists = with_connection(&context.pool, async |conn| {
         hubuumclass
             .filter(class_name.eq(&class))
             .count()
             .get_result::<i64>(conn)
+            .await
     })
+    .await
     .unwrap();
 
     assert_eq!(collection_exists, 0);
@@ -103,9 +102,9 @@ fn test_execute_import_strict_rolls_back_on_runtime_failure() {
     assert_eq!(accumulator.processed, 0);
 }
 
-#[test]
-fn test_execute_import_best_effort_keeps_successful_items() {
-    let context = block_on(TestContext::new());
+#[tokio::test]
+async fn test_execute_import_best_effort_keeps_successful_items() {
+    let context = (TestContext::new()).await;
     let collection_one = context.scoped_name("best_effort_collection_one");
     let collection_two = context.scoped_name("best_effort_collection_two");
     let class_bad = context.scoped_name("best_effort_class_bad");
@@ -160,7 +159,7 @@ fn test_execute_import_best_effort_keeps_successful_items() {
     ];
 
     let mut accumulator = ExecutionAccumulator::default();
-    block_on(execute_import_best_effort(
+    (execute_import_best_effort(
         &context.pool,
         1,
         &planned_items,
@@ -171,14 +170,17 @@ fn test_execute_import_best_effort_keeps_successful_items() {
         },
         &mut accumulator,
     ))
+    .await
     .unwrap();
 
-    let collection_count = with_connection(&context.pool, |conn| {
+    let collection_count = with_connection(&context.pool, async |conn| {
         collections
             .filter(collection_name.eq_any([collection_one.clone(), collection_two.clone()]))
             .count()
             .get_result::<i64>(conn)
+            .await
     })
+    .await
     .unwrap();
 
     assert_eq!(collection_count, 2);
@@ -187,9 +189,9 @@ fn test_execute_import_best_effort_keeps_successful_items() {
     assert_eq!(accumulator.failed, 1);
 }
 
-#[test]
-fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
-    let context = block_on(TestContext::new());
+#[tokio::test]
+async fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
+    let context = (TestContext::new()).await;
     let collection_one = context.scoped_name("best_effort_runtime_collection_one");
     let collection_two = context.scoped_name("best_effort_runtime_collection_two");
     let planned_items = vec![
@@ -243,7 +245,7 @@ fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
     ];
 
     let mut accumulator = ExecutionAccumulator::default();
-    block_on(execute_import_best_effort(
+    (execute_import_best_effort(
         &context.pool,
         1,
         &planned_items,
@@ -254,14 +256,17 @@ fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
         },
         &mut accumulator,
     ))
+    .await
     .unwrap();
 
-    let collection_count = with_connection(&context.pool, |conn| {
+    let collection_count = with_connection(&context.pool, async |conn| {
         collections
             .filter(collection_name.eq_any([collection_one.clone(), collection_two.clone()]))
             .count()
             .get_result::<i64>(conn)
+            .await
     })
+    .await
     .unwrap();
 
     assert_eq!(collection_count, 2);
@@ -270,9 +275,9 @@ fn test_execute_import_best_effort_continues_after_non_policy_runtime_error() {
     assert_eq!(accumulator.failed, 1);
 }
 
-#[test]
-fn test_execute_import_strict_preserves_underlying_error_variant() {
-    let context = block_on(TestContext::new());
+#[tokio::test]
+async fn test_execute_import_strict_preserves_underlying_error_variant() {
+    let context = (TestContext::new()).await;
     let planned_items = vec![PlannedItem {
         result: planned_result(
             "collection",
@@ -293,63 +298,59 @@ fn test_execute_import_strict_preserves_underlying_error_variant() {
     }];
 
     let mut accumulator = ExecutionAccumulator::default();
-    let result = block_on(execute_import_strict(
-        &context.pool,
-        1,
-        &planned_items,
-        &mut accumulator,
-    ));
+    let result = (execute_import_strict(&context.pool, 1, &planned_items, &mut accumulator)).await;
 
     assert!(matches!(result, Err(ApiError::NotFound(_))));
 }
 
-#[test]
-fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors() {
-    let context = block_on(TestContext::new());
-    let task = block_on(
-        NewTaskRecord {
-            kind: TaskKind::Import.as_str().to_string(),
-            status: TaskStatus::Queued.as_str().to_string(),
-            submitted_by: Some(context.admin_user.id),
-            submitted_token_id: None,
-            submitted_token_scoped: false,
-            submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(context.scoped_name("missing-payload-task")),
-            request_hash: None,
-            request_payload: None,
-            summary: None,
-            total_items: 1,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        }
-        .create(&context.pool),
-    )
+#[tokio::test]
+async fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors() {
+    let context = (TestContext::new()).await;
+    let task = (NewTaskRecord {
+        kind: TaskKind::Import.as_str().to_string(),
+        status: TaskStatus::Queued.as_str().to_string(),
+        submitted_by: Some(context.admin_user.id),
+        submitted_token_id: None,
+        submitted_token_scoped: false,
+        submitted_token_scopes: serde_json::json!([]),
+        idempotency_key: Some(context.scoped_name("missing-payload-task")),
+        request_hash: None,
+        request_payload: None,
+        summary: None,
+        total_items: 1,
+        processed_items: 0,
+        success_items: 0,
+        failed_items: 0,
+        request_redacted_at: None,
+        started_at: None,
+        finished_at: None,
+    }
+    .create(&context.pool))
+    .await
     .unwrap();
 
     let earliest = NaiveDate::from_ymd_opt(2000, 1, 1)
         .expect("valid date")
         .and_hms_opt(0, 0, 0)
         .expect("valid timestamp");
-    with_connection(&context.pool, |conn| {
+    with_connection(&context.pool, async |conn| {
         diesel::update(tasks.filter(task_id.eq(task.id)))
             .set(created_at.eq(earliest))
             .execute(conn)
+            .await
     })
+    .await
     .unwrap();
 
     for _ in 0..20 {
-        let _ = block_on(process_one_task(&context.pool)).unwrap();
+        let _ = (process_one_task(&context.pool)).await.unwrap();
 
-        let stored = block_on(task.find_record(&context.pool)).unwrap();
+        let stored = (task.find_record(&context.pool)).await.unwrap();
         if stored.status == TaskStatus::Failed.as_str() {
             assert!(stored.finished_at.is_some());
             assert!(stored.request_redacted_at.is_some());
 
-            let (events, _) = block_on(task.list_events_with_total_count(
+            let (events, _) = (task.list_events_with_total_count(
                 &context.pool,
                 &crate::models::search::QueryOptions {
                     filters: Vec::new(),
@@ -359,6 +360,7 @@ fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors()
                     include_total: true,
                 },
             ))
+            .await
             .unwrap();
             let event_types = events
                 .iter()
@@ -370,7 +372,7 @@ fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors()
         }
     }
 
-    let stored = block_on(task.find_record(&context.pool)).unwrap();
+    let stored = (task.find_record(&context.pool)).await.unwrap();
     panic!(
         "Task {} did not reach failed state after repeated processing attempts; current status: {}",
         task.id, stored.status
@@ -409,9 +411,9 @@ fn test_remember_collection_populates_collection_id_index() {
     );
 }
 
-#[test]
-fn test_plan_collection_rejects_duplicate_name_within_request() {
-    let context = block_on(TestContext::new());
+#[tokio::test]
+async fn test_plan_collection_rejects_duplicate_name_within_request() {
+    let context = (TestContext::new()).await;
     let mut state = PlanningState::new();
     let mode = ImportMode {
         atomicity: Some(ImportAtomicity::BestEffort),
@@ -426,37 +428,39 @@ fn test_plan_collection_rejects_duplicate_name_within_request() {
         parent_collection_key: None,
     };
 
-    block_on(plan_collection(
+    (plan_collection(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &input,
     ))
+    .await
     .unwrap();
 
     let duplicate = ImportCollectionInput {
         ref_: Some("collection:two".to_string()),
         ..input
     };
-    let err = block_on(plan_collection(
+    let err = (plan_collection(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &duplicate,
     ))
+    .await
     .unwrap_err();
 
     assert!(matches!(err.kind, FailureKind::Validation));
     assert!(err.message.contains("Duplicate collection name"));
 }
 
-#[test]
-fn test_plan_collection_allows_duplicate_names_under_different_parents() {
-    let context = block_on(TestContext::new());
-    let parent_one = block_on(context.collection_fixture("duplicate_import_parent_one"));
-    let parent_two = block_on(context.collection_fixture("duplicate_import_parent_two"));
+#[tokio::test]
+async fn test_plan_collection_allows_duplicate_names_under_different_parents() {
+    let context = (TestContext::new()).await;
+    let parent_one = (context.collection_fixture("duplicate_import_parent_one")).await;
+    let parent_two = (context.collection_fixture("duplicate_import_parent_two")).await;
     let mut state = PlanningState::new();
     let mode = ImportMode {
         atomicity: Some(ImportAtomicity::BestEffort),
@@ -485,28 +489,30 @@ fn test_plan_collection_allows_duplicate_names_under_different_parents() {
         }),
     };
 
-    block_on(plan_collection(
+    (plan_collection(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &input_one,
     ))
+    .await
     .unwrap();
-    block_on(plan_collection(
+    (plan_collection(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &input_two,
     ))
+    .await
     .unwrap();
 }
 
-#[test]
-fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
-    let context = block_on(TestContext::new());
-    let fixture = block_on(context.collection_fixture("duplicate_virtual_class"));
+#[tokio::test]
+async fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("duplicate_virtual_class")).await;
     let mut state = PlanningState::new();
     remember_collection(
         &mut state,
@@ -535,37 +541,39 @@ fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() {
         collection_key: None,
     };
 
-    block_on(plan_class(
+    (plan_class(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &input,
     ))
+    .await
     .unwrap();
 
     let duplicate = ImportClassInput {
         ref_: Some("class:two".to_string()),
         ..input
     };
-    let err = block_on(plan_class(
+    let err = (plan_class(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &duplicate,
     ))
+    .await
     .unwrap_err();
 
     assert!(matches!(err.kind, FailureKind::Validation));
     assert!(err.message.contains("Duplicate class name"));
 }
 
-#[test]
-fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
-    let context = block_on(TestContext::new());
-    let fixture = block_on(context.collection_fixture("duplicate_virtual_object"));
-    let class = with_connection(&context.pool, |conn| {
+#[tokio::test]
+async fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("duplicate_virtual_object")).await;
+    let class = with_connection(&context.pool, async |conn| {
         create_class_db(
             conn,
             &ImportClassInput {
@@ -582,7 +590,9 @@ fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
             },
             fixture.collection.id,
         )
+        .await
     })
+    .await
     .unwrap();
     let mut state = PlanningState::new();
     remember_class(
@@ -605,37 +615,39 @@ fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object() {
         class_key: None,
     };
 
-    block_on(plan_object(
+    (plan_object(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &input,
     ))
+    .await
     .unwrap();
 
     let duplicate = ImportObjectInput {
         ref_: Some("object:two".to_string()),
         ..input
     };
-    let err = block_on(plan_object(
+    let err = (plan_object(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &duplicate,
     ))
+    .await
     .unwrap_err();
 
     assert!(matches!(err.kind, FailureKind::Validation));
     assert!(err.message.contains("Duplicate object name"));
 }
 
-#[test]
-fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
-    let context = block_on(TestContext::new());
-    let fixture_one = block_on(context.collection_fixture("duplicate_class_ref_one"));
-    let fixture_two = block_on(context.collection_fixture("duplicate_class_ref_two"));
+#[tokio::test]
+async fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
+    let context = (TestContext::new()).await;
+    let fixture_one = (context.collection_fixture("duplicate_class_ref_one")).await;
+    let fixture_two = (context.collection_fixture("duplicate_class_ref_two")).await;
     let mut state = PlanningState::new();
     remember_collection(
         &mut state,
@@ -675,13 +687,14 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
         collection_key: None,
     };
 
-    block_on(plan_class(
+    (plan_class(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &input,
     ))
+    .await
     .unwrap();
 
     let duplicate = ImportClassInput {
@@ -689,24 +702,25 @@ fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
         collection_ref: Some("collection:two".to_string()),
         ..input
     };
-    let err = block_on(plan_class(
+    let err = (plan_class(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &duplicate,
     ))
+    .await
     .unwrap_err();
 
     assert!(matches!(err.kind, FailureKind::Validation));
     assert!(err.message.contains("Duplicate class ref"));
 }
 
-#[test]
-fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
-    let context = block_on(TestContext::new());
-    let fixture = block_on(context.collection_fixture("duplicate_object_ref"));
-    let class_one = with_connection(&context.pool, |conn| {
+#[tokio::test]
+async fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("duplicate_object_ref")).await;
+    let class_one = with_connection(&context.pool, async |conn| {
         create_class_db(
             conn,
             &ImportClassInput {
@@ -723,9 +737,11 @@ fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
             },
             fixture.collection.id,
         )
+        .await
     })
+    .await
     .unwrap();
-    let class_two = with_connection(&context.pool, |conn| {
+    let class_two = with_connection(&context.pool, async |conn| {
         create_class_db(
             conn,
             &ImportClassInput {
@@ -742,7 +758,9 @@ fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
             },
             fixture.collection.id,
         )
+        .await
     })
+    .await
     .unwrap();
     let mut state = PlanningState::new();
     remember_class(
@@ -770,13 +788,14 @@ fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
         class_key: None,
     };
 
-    block_on(plan_object(
+    (plan_object(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &input,
     ))
+    .await
     .unwrap();
 
     let duplicate = ImportObjectInput {
@@ -784,26 +803,27 @@ fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object() {
         class_ref: Some("class:two".to_string()),
         ..input
     };
-    let err = block_on(plan_object(
+    let err = (plan_object(
         &context.pool,
         &context.admin_user,
         &mode,
         &mut state,
         &duplicate,
     ))
+    .await
     .unwrap_err();
 
     assert!(matches!(err.kind, FailureKind::Validation));
     assert!(err.message.contains("Duplicate object ref"));
 }
 
-#[test]
-fn test_resolve_collection_planning_backfills_caches_after_db_lookup() {
-    let context = block_on(TestContext::new());
-    let fixture = block_on(context.collection_fixture("planning_collection_cache"));
+#[tokio::test]
+async fn test_resolve_collection_planning_backfills_caches_after_db_lookup() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("planning_collection_cache")).await;
     let mut state = PlanningState::new();
 
-    let resolved = block_on(resolve_collection_planning(
+    let resolved = (resolve_collection_planning(
         &context.pool,
         &mut state,
         None,
@@ -812,6 +832,7 @@ fn test_resolve_collection_planning_backfills_caches_after_db_lookup() {
             path: None,
         }),
     ))
+    .await
     .unwrap();
 
     assert_eq!(resolved.id, fixture.collection.id);
@@ -835,36 +856,34 @@ fn test_resolve_collection_planning_backfills_caches_after_db_lookup() {
     );
 }
 
-#[test]
-fn test_resolve_collection_planning_rejects_ambiguous_bare_name() {
-    let context = block_on(TestContext::new());
-    let parent_one = block_on(context.collection_fixture("ambiguous_parent_one"));
-    let parent_two = block_on(context.collection_fixture("ambiguous_parent_two"));
+#[tokio::test]
+async fn test_resolve_collection_planning_rejects_ambiguous_bare_name() {
+    let context = (TestContext::new()).await;
+    let parent_one = (context.collection_fixture("ambiguous_parent_one")).await;
+    let parent_two = (context.collection_fixture("ambiguous_parent_two")).await;
     let child_name = context.scoped_name("ambiguous_child");
 
-    block_on(
-        (NewCollectionWithAssignee {
-            name: child_name.clone(),
-            description: "first ambiguous child".to_string(),
-            group_id: parent_one.owner_group.id,
-            parent_collection_id: Some(CollectionID::new(parent_one.collection.id).unwrap()),
-        })
-        .save_without_events(&context.pool),
-    )
+    ((NewCollectionWithAssignee {
+        name: child_name.clone(),
+        description: "first ambiguous child".to_string(),
+        group_id: parent_one.owner_group.id,
+        parent_collection_id: Some(CollectionID::new(parent_one.collection.id).unwrap()),
+    })
+    .save_without_events(&context.pool))
+    .await
     .unwrap();
-    block_on(
-        (NewCollectionWithAssignee {
-            name: child_name.clone(),
-            description: "second ambiguous child".to_string(),
-            group_id: parent_two.owner_group.id,
-            parent_collection_id: Some(CollectionID::new(parent_two.collection.id).unwrap()),
-        })
-        .save_without_events(&context.pool),
-    )
+    ((NewCollectionWithAssignee {
+        name: child_name.clone(),
+        description: "second ambiguous child".to_string(),
+        group_id: parent_two.owner_group.id,
+        parent_collection_id: Some(CollectionID::new(parent_two.collection.id).unwrap()),
+    })
+    .save_without_events(&context.pool))
+    .await
     .unwrap();
 
     let mut state = PlanningState::new();
-    let err = block_on(resolve_collection_planning(
+    let err = (resolve_collection_planning(
         &context.pool,
         &mut state,
         None,
@@ -873,42 +892,41 @@ fn test_resolve_collection_planning_rejects_ambiguous_bare_name() {
             path: None,
         }),
     ))
+    .await
     .unwrap_err();
 
     assert!(err.contains("ambiguous"));
     assert!(err.contains("collection_key.path"));
 }
 
-#[test]
-fn test_resolve_collection_planning_uses_path_to_disambiguate_name() {
-    let context = block_on(TestContext::new());
-    let parent_one = block_on(context.collection_fixture("path_parent_one"));
-    let parent_two = block_on(context.collection_fixture("path_parent_two"));
+#[tokio::test]
+async fn test_resolve_collection_planning_uses_path_to_disambiguate_name() {
+    let context = (TestContext::new()).await;
+    let parent_one = (context.collection_fixture("path_parent_one")).await;
+    let parent_two = (context.collection_fixture("path_parent_two")).await;
     let child_name = context.scoped_name("path_child");
 
-    block_on(
-        (NewCollectionWithAssignee {
-            name: child_name.clone(),
-            description: "first path child".to_string(),
-            group_id: parent_one.owner_group.id,
-            parent_collection_id: Some(CollectionID::new(parent_one.collection.id).unwrap()),
-        })
-        .save_without_events(&context.pool),
-    )
+    ((NewCollectionWithAssignee {
+        name: child_name.clone(),
+        description: "first path child".to_string(),
+        group_id: parent_one.owner_group.id,
+        parent_collection_id: Some(CollectionID::new(parent_one.collection.id).unwrap()),
+    })
+    .save_without_events(&context.pool))
+    .await
     .unwrap();
-    let target_child = block_on(
-        (NewCollectionWithAssignee {
-            name: child_name.clone(),
-            description: "second path child".to_string(),
-            group_id: parent_two.owner_group.id,
-            parent_collection_id: Some(CollectionID::new(parent_two.collection.id).unwrap()),
-        })
-        .save_without_events(&context.pool),
-    )
+    let target_child = ((NewCollectionWithAssignee {
+        name: child_name.clone(),
+        description: "second path child".to_string(),
+        group_id: parent_two.owner_group.id,
+        parent_collection_id: Some(CollectionID::new(parent_two.collection.id).unwrap()),
+    })
+    .save_without_events(&context.pool))
+    .await
     .unwrap();
 
     let mut state = PlanningState::new();
-    let resolved = block_on(resolve_collection_planning(
+    let resolved = (resolve_collection_planning(
         &context.pool,
         &mut state,
         None,
@@ -917,23 +935,22 @@ fn test_resolve_collection_planning_uses_path_to_disambiguate_name() {
             path: Some(vec![parent_two.collection.name.clone(), child_name]),
         }),
     ))
+    .await
     .unwrap();
 
     assert_eq!(resolved.id, target_child.id);
 }
 
-#[test]
-fn test_resolve_collection_by_id_planning_backfills_caches_after_db_lookup() {
-    let context = block_on(TestContext::new());
-    let fixture = block_on(context.collection_fixture("planning_collection_id_cache"));
+#[tokio::test]
+async fn test_resolve_collection_by_id_planning_backfills_caches_after_db_lookup() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("planning_collection_id_cache")).await;
     let mut state = PlanningState::new();
 
-    let resolved = block_on(resolve_collection_by_id_planning(
-        &context.pool,
-        &mut state,
-        fixture.collection.id,
-    ))
-    .unwrap();
+    let resolved =
+        (resolve_collection_by_id_planning(&context.pool, &mut state, fixture.collection.id))
+            .await
+            .unwrap();
 
     assert_eq!(resolved.name, fixture.collection.name);
     assert_eq!(
@@ -956,12 +973,12 @@ fn test_resolve_collection_by_id_planning_backfills_caches_after_db_lookup() {
     );
 }
 
-#[test]
-fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
-    let context = block_on(TestContext::new());
-    let fixture = block_on(context.collection_fixture("planning_class_cache"));
+#[tokio::test]
+async fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("planning_class_cache")).await;
     let class_name_value = context.scoped_name("planning_class_cache_value");
-    let class = with_connection(&context.pool, |conn| {
+    let class = with_connection(&context.pool, async |conn| {
         create_class_db(
             conn,
             &ImportClassInput {
@@ -978,11 +995,13 @@ fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
             },
             fixture.collection.id,
         )
+        .await
     })
+    .await
     .unwrap();
     let mut state = PlanningState::new();
 
-    let resolved = block_on(resolve_class_planning(
+    let resolved = (resolve_class_planning(
         &context.pool,
         &mut state,
         None,
@@ -995,6 +1014,7 @@ fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
             }),
         }),
     ))
+    .await
     .unwrap();
 
     assert_eq!(resolved.id, class.id);
@@ -1008,12 +1028,12 @@ fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
     );
 }
 
-#[test]
-fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
-    let context = block_on(TestContext::new());
-    let fixture = block_on(context.collection_fixture("planning_object_cache"));
+#[tokio::test]
+async fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("planning_object_cache")).await;
     let class_name_value = context.scoped_name("planning_object_cache_class");
-    let class = with_connection(&context.pool, |conn| {
+    let class = with_connection(&context.pool, async |conn| {
         create_class_db(
             conn,
             &ImportClassInput {
@@ -1030,10 +1050,12 @@ fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
             },
             fixture.collection.id,
         )
+        .await
     })
+    .await
     .unwrap();
     let object_name_value = context.scoped_name("planning_object_cache_value");
-    let object = with_connection(&context.pool, |conn| {
+    let object = with_connection(&context.pool, async |conn| {
         create_object_db(
             conn,
             &ImportObjectInput {
@@ -1053,11 +1075,13 @@ fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
             },
             &class,
         )
+        .await
     })
+    .await
     .unwrap();
     let mut state = PlanningState::new();
 
-    let resolved = block_on(resolve_object_planning(
+    let resolved = (resolve_object_planning(
         &context.pool,
         &mut state,
         None,
@@ -1074,6 +1098,7 @@ fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
             }),
         }),
     ))
+    .await
     .unwrap();
 
     assert_eq!(resolved.id, object.id);
@@ -1087,10 +1112,10 @@ fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
     );
 }
 
-#[test]
-fn test_update_collection_refreshes_runtime_ref_for_following_items() {
-    let context = block_on(TestContext::new());
-    let fixture = block_on(context.collection_fixture("update_collection_ref"));
+#[tokio::test]
+async fn test_update_collection_refreshes_runtime_ref_for_following_items() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("update_collection_ref")).await;
     let updated_description = context.scoped_name("updated_collection_description");
     let execution = PlannedExecution::UpdateCollection {
         collection_id: fixture.collection.id,
@@ -1113,14 +1138,15 @@ fn test_update_collection_refreshes_runtime_ref_for_following_items() {
         collection_key: None,
     };
 
-    let result = with_connection(&context.pool, |conn| {
+    let result = with_connection(&context.pool, async |conn| {
         let mut runtime = RuntimeState::default();
-        execute_planned_item(conn, &mut runtime, &execution)?;
+        execute_planned_item(conn, &mut runtime, &execution).await?;
         execute_planned_item(
             conn,
             &mut runtime,
             &PlannedExecution::CreateClass(class_input.clone()),
-        )?;
+        )
+        .await?;
         Ok::<_, ApiError>(
             runtime
                 .collections_by_ref
@@ -1128,6 +1154,7 @@ fn test_update_collection_refreshes_runtime_ref_for_following_items() {
                 .cloned(),
         )
     })
+    .await
     .unwrap();
 
     let collection = result.expect("collection ref should be available after update");
@@ -1135,12 +1162,12 @@ fn test_update_collection_refreshes_runtime_ref_for_following_items() {
     assert_eq!(collection.description, updated_description);
 }
 
-#[test]
-fn test_update_class_refreshes_runtime_ref_for_following_items() {
-    let context = block_on(TestContext::new());
-    let fixture = block_on(context.collection_fixture("update_class_ref"));
+#[tokio::test]
+async fn test_update_class_refreshes_runtime_ref_for_following_items() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("update_class_ref")).await;
     let class_name_value = context.scoped_name("existing_class_for_update");
-    let class = with_connection(&context.pool, |conn| {
+    let class = with_connection(&context.pool, async |conn| {
         create_class_db(
             conn,
             &ImportClassInput {
@@ -1157,7 +1184,9 @@ fn test_update_class_refreshes_runtime_ref_for_following_items() {
             },
             fixture.collection.id,
         )
+        .await
     })
+    .await
     .unwrap();
 
     let execution = PlannedExecution::UpdateClass {
@@ -1185,16 +1214,18 @@ fn test_update_class_refreshes_runtime_ref_for_following_items() {
         class_key: None,
     };
 
-    let result = with_connection(&context.pool, |conn| {
+    let result = with_connection(&context.pool, async |conn| {
         let mut runtime = RuntimeState::default();
-        execute_planned_item(conn, &mut runtime, &execution)?;
+        execute_planned_item(conn, &mut runtime, &execution).await?;
         execute_planned_item(
             conn,
             &mut runtime,
             &PlannedExecution::CreateObject(object_input.clone()),
-        )?;
+        )
+        .await?;
         Ok::<_, ApiError>(runtime.classes_by_ref.get("class:existing").cloned())
     })
+    .await
     .unwrap();
 
     let updated = result.expect("class ref should be available after update");
@@ -1202,10 +1233,10 @@ fn test_update_class_refreshes_runtime_ref_for_following_items() {
     assert_eq!(updated.name, class.name);
 }
 
-#[test]
-fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
-    let context = block_on(TestContext::new());
-    let fixture = block_on(context.collection_fixture("update_class_schema_ref"));
+#[tokio::test]
+async fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("update_class_schema_ref")).await;
     let schema = serde_json::json!({
         "type": "object",
         "required": ["hostname"],
@@ -1214,7 +1245,7 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
         }
     });
     let class_name_value = context.scoped_name("existing_class_with_schema");
-    let class = with_connection(&context.pool, |conn| {
+    let class = with_connection(&context.pool, async |conn| {
         create_class_db(
             conn,
             &ImportClassInput {
@@ -1231,7 +1262,9 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
             },
             fixture.collection.id,
         )
+        .await
     })
+    .await
     .unwrap();
 
     let mut state = PlanningState::new();
@@ -1253,7 +1286,7 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
         permission_policy: Some(ImportPermissionPolicy::Continue),
     };
 
-    block_on(plan_class(
+    (plan_class(
         &context.pool,
         &context.admin_user,
         &mode,
@@ -1268,9 +1301,10 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
             collection_key: None,
         },
     ))
+    .await
     .unwrap();
 
-    let err = block_on(plan_object(
+    let err = (plan_object(
         &context.pool,
         &context.admin_user,
         &mode,
@@ -1284,17 +1318,18 @@ fn test_plan_class_update_preserves_existing_schema_for_following_objects() {
             class_key: None,
         },
     ))
+    .await
     .unwrap_err();
 
     assert!(matches!(err.kind, FailureKind::Validation));
 }
 
-#[test]
-fn test_update_object_refreshes_runtime_ref_for_following_items() {
-    let context = block_on(TestContext::new());
-    let fixture = block_on(context.collection_fixture("update_object_ref"));
+#[tokio::test]
+async fn test_update_object_refreshes_runtime_ref_for_following_items() {
+    let context = (TestContext::new()).await;
+    let fixture = (context.collection_fixture("update_object_ref")).await;
     let class_name_value = context.scoped_name("existing_class_for_object_update");
-    let class = with_connection(&context.pool, |conn| {
+    let class = with_connection(&context.pool, async |conn| {
         create_class_db(
             conn,
             &ImportClassInput {
@@ -1311,11 +1346,13 @@ fn test_update_object_refreshes_runtime_ref_for_following_items() {
             },
             fixture.collection.id,
         )
+        .await
     })
+    .await
     .unwrap();
 
     let object_name_value = context.scoped_name("existing_object_for_update");
-    let object = with_connection(&context.pool, |conn| {
+    let object = with_connection(&context.pool, async |conn| {
         create_object_db(
             conn,
             &ImportObjectInput {
@@ -1335,7 +1372,9 @@ fn test_update_object_refreshes_runtime_ref_for_following_items() {
             },
             &class,
         )
+        .await
     })
+    .await
     .unwrap();
 
     let execution = PlannedExecution::UpdateObject {
@@ -1357,11 +1396,12 @@ fn test_update_object_refreshes_runtime_ref_for_following_items() {
         },
     };
 
-    let resolved = with_connection(&context.pool, |conn| {
+    let resolved = with_connection(&context.pool, async |conn| {
         let mut runtime = RuntimeState::default();
-        execute_planned_item(conn, &mut runtime, &execution)?;
-        resolve_object_runtime(conn, &runtime, Some("object:existing"), None::<&ObjectKey>)
+        execute_planned_item(conn, &mut runtime, &execution).await?;
+        resolve_object_runtime(conn, &runtime, Some("object:existing"), None::<&ObjectKey>).await
     })
+    .await
     .unwrap();
 
     assert_eq!(resolved.id, object.id);
@@ -1456,47 +1496,48 @@ fn test_best_effort_execution_only_aborts_for_matching_policy_failures() {
     ));
 }
 
-#[test]
-fn test_process_one_task_export_failure_marks_single_failed_item() {
-    let context = block_on(TestContext::new());
-    let task = block_on(
-        NewTaskRecord {
-            kind: TaskKind::Export.as_str().to_string(),
-            status: TaskStatus::Queued.as_str().to_string(),
-            submitted_by: Some(context.admin_user.id),
-            submitted_token_id: None,
-            submitted_token_scoped: false,
-            submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(context.scoped_name("unimplemented-export-task")),
-            request_hash: None,
-            request_payload: Some(serde_json::json!({"export": "demo"})),
-            summary: None,
-            total_items: 0,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        }
-        .create(&context.pool),
-    )
+#[tokio::test]
+async fn test_process_one_task_export_failure_marks_single_failed_item() {
+    let context = (TestContext::new()).await;
+    let task = (NewTaskRecord {
+        kind: TaskKind::Export.as_str().to_string(),
+        status: TaskStatus::Queued.as_str().to_string(),
+        submitted_by: Some(context.admin_user.id),
+        submitted_token_id: None,
+        submitted_token_scoped: false,
+        submitted_token_scopes: serde_json::json!([]),
+        idempotency_key: Some(context.scoped_name("unimplemented-export-task")),
+        request_hash: None,
+        request_payload: Some(serde_json::json!({"export": "demo"})),
+        summary: None,
+        total_items: 0,
+        processed_items: 0,
+        success_items: 0,
+        failed_items: 0,
+        request_redacted_at: None,
+        started_at: None,
+        finished_at: None,
+    }
+    .create(&context.pool))
+    .await
     .unwrap();
 
     let earliest = NaiveDate::from_ymd_opt(2000, 1, 1)
         .expect("valid date")
         .and_hms_opt(0, 0, 0)
         .expect("valid timestamp");
-    with_connection(&context.pool, |conn| {
+    with_connection(&context.pool, async |conn| {
         diesel::update(tasks.filter(task_id.eq(task.id)))
             .set(created_at.eq(earliest))
             .execute(conn)
+            .await
     })
+    .await
     .unwrap();
 
     for _ in 0..20 {
-        let _ = block_on(process_one_task(&context.pool)).unwrap();
-        let stored = block_on(task.find_record(&context.pool)).unwrap();
+        let _ = (process_one_task(&context.pool)).await.unwrap();
+        let stored = (task.find_record(&context.pool)).await.unwrap();
         if stored.status == TaskStatus::Failed.as_str() {
             assert_eq!(stored.total_items, 0);
             assert_eq!(stored.processed_items, 1);
@@ -1505,41 +1546,40 @@ fn test_process_one_task_export_failure_marks_single_failed_item() {
         }
     }
 
-    let stored = block_on(task.find_record(&context.pool)).unwrap();
+    let stored = (task.find_record(&context.pool)).await.unwrap();
     panic!(
         "Task {} did not reach failed state after repeated processing attempts; current status: {}",
         task.id, stored.status
     );
 }
 
-#[test]
-fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
-    let context = block_on(TestContext::new());
-    let task = block_on(
-        NewTaskRecord {
-            kind: TaskKind::Import.as_str().to_string(),
-            status: TaskStatus::Queued.as_str().to_string(),
-            submitted_by: Some(context.admin_user.id),
-            submitted_token_id: None,
-            submitted_token_scoped: false,
-            submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(context.scoped_name("fallback-count-task")),
-            request_hash: None,
-            request_payload: Some(serde_json::json!({"version": 1})),
-            summary: None,
-            total_items: 3,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        }
-        .create(&context.pool),
-    )
+#[tokio::test]
+async fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
+    let context = (TestContext::new()).await;
+    let task = (NewTaskRecord {
+        kind: TaskKind::Import.as_str().to_string(),
+        status: TaskStatus::Queued.as_str().to_string(),
+        submitted_by: Some(context.admin_user.id),
+        submitted_token_id: None,
+        submitted_token_scoped: false,
+        submitted_token_scopes: serde_json::json!([]),
+        idempotency_key: Some(context.scoped_name("fallback-count-task")),
+        request_hash: None,
+        request_payload: Some(serde_json::json!({"version": 1})),
+        summary: None,
+        total_items: 3,
+        processed_items: 0,
+        success_items: 0,
+        failed_items: 0,
+        request_redacted_at: None,
+        started_at: None,
+        finished_at: None,
+    }
+    .create(&context.pool))
+    .await
     .unwrap();
 
-    block_on(insert_import_results(
+    (insert_import_results(
         &context.pool,
         &[
             NewImportTaskResultRecord {
@@ -1564,49 +1604,50 @@ fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
             },
         ],
     ))
+    .await
     .unwrap();
 
-    block_on(mark_claimed_task_failed(
+    (mark_claimed_task_failed(
         &context.pool,
         &task,
         &ApiError::InternalServerError("boom".to_string()),
     ))
+    .await
     .unwrap();
 
-    let stored = block_on(task.find_record(&context.pool)).unwrap();
+    let stored = (task.find_record(&context.pool)).await.unwrap();
     assert_eq!(stored.processed_items, 2);
     assert_eq!(stored.success_items, 1);
     assert_eq!(stored.failed_items, 1);
 }
 
-#[test]
-fn test_count_import_results_summary_counts_success_and_failure_rows() {
-    let context = block_on(TestContext::new());
-    let task = block_on(
-        NewTaskRecord {
-            kind: TaskKind::Import.as_str().to_string(),
-            status: TaskStatus::Queued.as_str().to_string(),
-            submitted_by: Some(context.admin_user.id),
-            submitted_token_id: None,
-            submitted_token_scoped: false,
-            submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(context.scoped_name("aggregate-count-task")),
-            request_hash: None,
-            request_payload: Some(serde_json::json!({"version": 1})),
-            summary: None,
-            total_items: 4,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        }
-        .create(&context.pool),
-    )
+#[tokio::test]
+async fn test_count_import_results_summary_counts_success_and_failure_rows() {
+    let context = (TestContext::new()).await;
+    let task = (NewTaskRecord {
+        kind: TaskKind::Import.as_str().to_string(),
+        status: TaskStatus::Queued.as_str().to_string(),
+        submitted_by: Some(context.admin_user.id),
+        submitted_token_id: None,
+        submitted_token_scoped: false,
+        submitted_token_scopes: serde_json::json!([]),
+        idempotency_key: Some(context.scoped_name("aggregate-count-task")),
+        request_hash: None,
+        request_payload: Some(serde_json::json!({"version": 1})),
+        summary: None,
+        total_items: 4,
+        processed_items: 0,
+        success_items: 0,
+        failed_items: 0,
+        request_redacted_at: None,
+        started_at: None,
+        finished_at: None,
+    }
+    .create(&context.pool))
+    .await
     .unwrap();
 
-    block_on(insert_import_results(
+    (insert_import_results(
         &context.pool,
         &[
             NewImportTaskResultRecord {
@@ -1641,9 +1682,10 @@ fn test_count_import_results_summary_counts_success_and_failure_rows() {
             },
         ],
     ))
+    .await
     .unwrap();
 
-    let counts = block_on(task.count_import_results(&context.pool)).unwrap();
+    let counts = (task.count_import_results(&context.pool)).await.unwrap();
 
     assert_eq!(counts.processed, 3);
     assert_eq!(counts.success, 2);

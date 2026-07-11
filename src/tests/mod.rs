@@ -15,8 +15,8 @@ pub mod search;
 pub mod temporal;
 pub mod validation;
 
+use crate::db::prelude::*;
 use actix_web::web;
-use diesel::prelude::*;
 #[cfg(test)]
 use rstest::fixture;
 
@@ -37,10 +37,10 @@ use crate::traits::{CanDelete, CanSave};
 use std::sync::LazyLock;
 use tokio::sync::{Mutex, MutexGuard};
 
-static POOL: LazyLock<DbPool> = LazyLock::new(|| {
+fn new_test_pool() -> DbPool {
     let config = get_config().unwrap();
     init_pool(&config.database_url, 20)
-});
+}
 
 pub type TestMutex = LazyLock<Mutex<()>>;
 pub type TestMutexGuard = MutexGuard<'static, ()>;
@@ -601,11 +601,13 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
         .map(|config| config.admin_groupname.clone())
         .unwrap_or_else(|_| "admin".to_string());
 
-    let result = with_connection(pool, |conn| {
+    let result = with_connection(pool, async |conn| {
         groups
             .filter(groupname.eq(&admin_groupname))
             .first::<Group>(conn)
-    });
+            .await
+    })
+    .await;
 
     if let Ok(group) = result {
         return group;
@@ -622,11 +624,13 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
     if let Err(e) = result {
         match e {
             ApiError::Conflict(_) => {
-                return with_connection(pool, |conn| {
+                return with_connection(pool, async |conn| {
                     groups
                         .filter(groupname.eq(&admin_groupname))
                         .first::<Group>(conn)
+                        .await
                 })
+                .await
                 .expect("Failed to fetch user after conflict");
             }
             _ => panic!("Failed to create admin group: {e:?}"),
@@ -638,13 +642,13 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
 
 pub async fn get_pool_and_config() -> (DbPool, AppConfig) {
     let config = get_config().unwrap();
-    let pool = POOL.clone();
+    let pool = new_test_pool();
 
     (pool, config.clone())
 }
 
 pub async fn setup_pool_and_tokens() -> (DbPool, String, String) {
-    let pool = POOL.clone();
+    let pool = new_test_pool();
     let admin_user = ensure_admin_user(&pool).await;
     let admin_token = admin_user.create_token(&pool).await.unwrap().get_token();
     let normal_user = ensure_normal_user(&pool).await;
@@ -654,7 +658,7 @@ pub async fn setup_pool_and_tokens() -> (DbPool, String, String) {
 }
 
 pub fn get_test_pool() -> web::Data<DbPool> {
-    web::Data::new(POOL.clone())
+    web::Data::new(new_test_pool())
 }
 
 #[cfg(test)]

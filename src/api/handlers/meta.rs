@@ -12,19 +12,52 @@ use actix_web::{Responder, delete, get, http::StatusCode, web};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use diesel::QueryableByName;
-use diesel::RunQueryDsl;
 use diesel::sql_query;
 use diesel::sql_types::{BigInt, Nullable, Timestamp};
+use diesel_async::RunQueryDsl;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 use utoipa::ToSchema;
 
 #[derive(Serialize, Debug, ToSchema)]
 pub struct DbStateResponse {
+    /// Configured maximum number of connections in this process-local pool.
+    max_connections: u32,
+    /// Connections currently managed by this process-local pool.
+    total_connections: u32,
+    /// Remaining capacity: idle connections plus capacity to create connections.
     available_connections: u32,
+    /// Established connections currently waiting in the pool.
     idle_connections: u32,
+    /// Established connections currently checked out of the pool.
+    in_use_connections: u32,
+    /// Connection acquisitions currently waiting to complete.
+    pending_acquisitions: u64,
+    /// Cumulative connection acquisitions started.
+    acquisitions_started: u64,
+    /// Cumulative acquisitions completed without waiting.
+    acquisitions_direct: u64,
+    /// Cumulative acquisitions that waited for a connection.
+    acquisitions_waited: u64,
+    /// Cumulative acquisitions that exceeded the acquisition timeout.
+    acquisitions_timed_out: u64,
+    /// Cumulative time spent waiting for connections, in milliseconds.
+    acquisition_wait_time_ms: u64,
+    /// Cumulative connections established by the pool.
+    connections_created: u64,
+    /// Cumulative connections discarded because they were broken.
+    connections_closed_broken: u64,
+    /// Cumulative connections discarded after checkout validation failed.
+    connections_closed_invalid: u64,
+    /// Cumulative connections closed after reaching their maximum lifetime.
+    connections_closed_max_lifetime: u64,
+    /// Cumulative connections closed after reaching the idle timeout.
+    connections_closed_idle_timeout: u64,
+    /// Active PostgreSQL sessions reported by `pg_stat_activity`.
     active_connections: i64,
+    /// Current database size in bytes.
     db_size: i64,
+    /// Most recent vacuum timestamp among user tables.
     last_vacuum_time: Option<String>,
 }
 
@@ -112,8 +145,6 @@ pub async fn get_db_state(
     pool: web::Data<DbPool>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let state = pool.state();
-
     let query = r#"
         SELECT
           (SELECT count(*) FROM pg_stat_activity WHERE state = 'active') AS active_connections,
@@ -123,7 +154,11 @@ pub async fn get_db_state(
           pg_stat_user_tables;
     "#;
 
-    let results = match with_connection(&pool, |conn| sql_query(query).load::<DbState>(conn)) {
+    let results = match with_connection(&pool, async |conn| {
+        sql_query(query).load::<DbState>(conn).await
+    })
+    .await
+    {
         Ok(results) => results,
         Err(e) => {
             return Err(ApiError::InternalServerError(format!(
@@ -132,15 +167,35 @@ pub async fn get_db_state(
         }
     };
 
-    if let Some(row) = results.first() {
+    if let Some(row) = results.as_slice().first() {
+        let state = pool.state();
+        let max_connections = pool.config().max_size;
+        let in_use_connections = state.connections.saturating_sub(state.idle_connections);
+        let available_connections = max_connections.saturating_sub(in_use_connections);
+        let acquisition_wait_time_ms =
+            u64::try_from(state.statistics.get_wait_time.as_millis()).unwrap_or(u64::MAX);
         debug!(
             message = "DB state requested",
             requestor = requestor.user.id
         );
 
         let response = DbStateResponse {
-            available_connections: state.connections,
+            max_connections,
+            total_connections: state.connections,
+            available_connections,
             idle_connections: state.idle_connections,
+            in_use_connections,
+            pending_acquisitions: state.statistics.pending_gets(),
+            acquisitions_started: state.statistics.get_started,
+            acquisitions_direct: state.statistics.get_direct,
+            acquisitions_waited: state.statistics.get_waited,
+            acquisitions_timed_out: state.statistics.get_timed_out,
+            acquisition_wait_time_ms,
+            connections_created: state.statistics.connections_created,
+            connections_closed_broken: state.statistics.connections_closed_broken,
+            connections_closed_invalid: state.statistics.connections_closed_invalid,
+            connections_closed_max_lifetime: state.statistics.connections_closed_max_lifetime,
+            connections_closed_idle_timeout: state.statistics.connections_closed_idle_timeout,
             active_connections: row.active_connections,
             db_size: row.db_size,
             last_vacuum_time: row.last_vacuum_time.map(|dt| dt.to_string()),
@@ -221,8 +276,11 @@ pub async fn get_task_queue_state(
         FROM tasks;
     "#;
 
-    let results = with_connection(&pool, |conn| sql_query(query).load::<TaskQueueState>(conn))?;
-    let state = results.first().ok_or_else(|| {
+    let results = with_connection(&pool, async |conn| {
+        sql_query(query).load::<TaskQueueState>(conn).await
+    })
+    .await?;
+    let state = results.as_slice().first().ok_or_else(|| {
         ApiError::InternalServerError("Error getting state for the task queue".to_string())
     })?;
 

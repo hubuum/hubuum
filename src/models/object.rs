@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 use diesel::sql_types::{BigInt, Integer, Jsonb, Text, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -186,11 +186,13 @@ pub mod tests {
     pub async fn verify_no_such_object(pool: &DbPool, object_id: i32) {
         use crate::schema::hubuumobject::dsl::*;
 
-        let result = with_connection(pool, |conn| {
+        let result = with_connection(pool, async |conn| {
             hubuumobject
                 .filter(id.eq(object_id))
                 .first::<HubuumObject>(conn)
-        });
+                .await
+        })
+        .await;
 
         match result {
             Ok(_) => panic!("Object {object_id} should not exist"),

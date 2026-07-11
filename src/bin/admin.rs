@@ -1,5 +1,4 @@
 use clap::Parser;
-use diesel::prelude::*;
 use std::collections::BTreeMap;
 use std::process::exit;
 use tracing::warn;
@@ -11,6 +10,7 @@ use hubuum::config::{
     DEFAULT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_EXPORT_TEMPLATE_FUEL,
     DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
 };
+use hubuum::db::prelude::*;
 use hubuum::db::{DbPool, init_pool_with_statement_timeout, with_connection};
 use hubuum::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use hubuum::logger;
@@ -166,9 +166,12 @@ struct TemplateHealthRow {
 }
 
 async fn export_template_health(pool: DbPool) -> Result<(), ApiError> {
-    let outputs = with_connection(&pool, |conn| {
-        export_task_outputs.load::<ExportTaskOutputRecord>(conn)
-    })?;
+    let outputs = with_connection(&pool, async |conn| {
+        export_task_outputs
+            .load::<ExportTaskOutputRecord>(conn)
+            .await
+    })
+    .await?;
 
     if outputs.is_empty() {
         println!("No stored export outputs found.");

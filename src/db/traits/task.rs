@@ -1,6 +1,5 @@
+use crate::db::prelude::*;
 use chrono::Utc;
-use diesel::PgConnection;
-use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Bool};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
@@ -118,9 +117,13 @@ pub trait TaskBackend: TaskIdentifier {
         use crate::schema::tasks::dsl::{id, tasks};
 
         let task_id_value = self.task_id();
-        with_connection(pool, |conn| {
-            tasks.filter(id.eq(task_id_value)).first::<TaskRecord>(conn)
+        with_connection(pool, async |conn| {
+            tasks
+                .filter(id.eq(task_id_value))
+                .first::<TaskRecord>(conn)
+                .await
         })
+        .await
     }
 
     async fn list_events_with_total_count(
@@ -136,22 +139,26 @@ pub trait TaskBackend: TaskIdentifier {
             .unwrap_or(page_limits_or_defaults().0.saturating_add(1));
         let descending = query_options
             .sort
+            .as_slice()
             .first()
             .map(|sort| sort.descending)
             .unwrap_or(false);
         let cursor_id = decode_task_event_cursor_id(query_options)?;
 
-        let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-            with_connection(pool, |conn| {
+        let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+            with_connection(pool, async |conn| {
                 events
                     .filter(entity_type.eq(EntityType::Task.as_str()))
                     .filter(entity_id.eq(Some(task_id_value)))
                     .count()
                     .get_result::<i64>(conn)
+                    .await
             })
-        })?;
+            .await
+        })
+        .await?;
 
-        let items = with_connection(pool, |conn| {
+        let items = with_connection(pool, async |conn| {
             let mut query = events
                 .filter(entity_type.eq(EntityType::Task.as_str()))
                 .filter(entity_id.eq(Some(task_id_value)))
@@ -169,13 +176,16 @@ pub trait TaskBackend: TaskIdentifier {
                     .order(id.desc())
                     .limit(limit as i64)
                     .load::<crate::events::Event>(conn)
+                    .await
             } else {
                 query
                     .order(id.asc())
                     .limit(limit as i64)
                     .load::<crate::events::Event>(conn)
+                    .await
             }
-        })?
+        })
+        .await?
         .into_iter()
         .map(TaskEventRecord::try_from)
         .collect::<Result<Vec<_>, _>>()?;
@@ -196,21 +206,25 @@ pub trait TaskBackend: TaskIdentifier {
             .unwrap_or(page_limits_or_defaults().0.saturating_add(1));
         let descending = query_options
             .sort
+            .as_slice()
             .first()
             .map(|sort| sort.descending)
             .unwrap_or(false);
         let cursor_id = decode_int_history_cursor_id(query_options)?;
 
-        let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-            with_connection(pool, |conn| {
+        let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+            with_connection(pool, async |conn| {
                 import_task_results
                     .filter(task_id.eq(task_id_value))
                     .count()
                     .get_result::<i64>(conn)
+                    .await
             })
-        })?;
+            .await
+        })
+        .await?;
 
-        let items = with_connection(pool, |conn| {
+        let items = with_connection(pool, async |conn| {
             let mut query = import_task_results
                 .filter(task_id.eq(task_id_value))
                 .into_boxed();
@@ -227,13 +241,16 @@ pub trait TaskBackend: TaskIdentifier {
                     .order(id.desc())
                     .limit(limit as i64)
                     .load::<ImportTaskResultRecord>(conn)
+                    .await
             } else {
                 query
                     .order(id.asc())
                     .limit(limit as i64)
                     .load::<ImportTaskResultRecord>(conn)
+                    .await
             }
-        })?;
+        })
+        .await?;
 
         Ok((items, total_count))
     }
@@ -248,12 +265,14 @@ pub trait TaskBackend: TaskIdentifier {
         let now = Utc::now().naive_utc();
         // Fetch without the expiry filter so an expired-but-present row is exported as `Expired`
         // (410) rather than silently looking like a row that never existed (404).
-        let record = with_connection(pool, |conn| {
+        let record = with_connection(pool, async |conn| {
             export_task_outputs
                 .filter(task_id.eq(task_id_value))
                 .first::<ExportTaskOutputRecord>(conn)
+                .await
                 .optional()
-        })?;
+        })
+        .await?;
 
         Ok(match record {
             Some(record) if record.output_expires_at > now => ExportOutputLookup::Available(record),
@@ -272,13 +291,15 @@ pub trait TaskBackend: TaskIdentifier {
 
         let task_id_value = self.task_id();
         let now = Utc::now().naive_utc();
-        let record = with_connection(pool, |conn| {
+        let record = with_connection(pool, async |conn| {
             export_task_outputs
                 .filter(task_id.eq(task_id_value))
                 .select(ExportTaskOutputSummaryRecord::as_select())
                 .first::<ExportTaskOutputSummaryRecord>(conn)
+                .await
                 .optional()
-        })?;
+        })
+        .await?;
 
         Ok(match record {
             Some(record) if record.output_expires_at > now => ExportOutputLookup::Available(record),
@@ -293,18 +314,21 @@ pub trait TaskBackend: TaskIdentifier {
         use crate::schema::import_task_results::dsl::{import_task_results, outcome, task_id};
 
         let task_id_value = self.task_id();
-        with_connection(pool, |conn| -> Result<TaskResultCounts, ApiError> {
+        with_connection(pool, async |conn| -> Result<TaskResultCounts, ApiError> {
             let processed = import_task_results
                 .filter(task_id.eq(task_id_value))
                 .count()
-                .get_result::<i64>(conn)?;
+                .get_result::<i64>(conn)
+                .await?;
             let failed = import_task_results
                 .filter(task_id.eq(task_id_value))
                 .filter(outcome.eq("failed"))
                 .count()
-                .get_result::<i64>(conn)?;
+                .get_result::<i64>(conn)
+                .await?;
             TaskResultCounts::new(processed, processed - failed, failed)
         })
+        .await
     }
 
     async fn update_state(
@@ -319,7 +343,7 @@ pub trait TaskBackend: TaskIdentifier {
 
         let task_id_value = self.task_id();
         let now = Utc::now().naive_utc();
-        let record = with_connection(pool, |conn| {
+        let record = with_connection(pool, async |conn| {
             diesel::update(tasks.filter(id.eq(task_id_value)))
                 .set((
                     status.eq(update.status.as_str()),
@@ -332,7 +356,9 @@ pub trait TaskBackend: TaskIdentifier {
                     updated_at.eq(now),
                 ))
                 .get_result::<TaskRecord>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         info!(
             message = "Task state updated",
@@ -359,9 +385,9 @@ pub trait TaskBackend: TaskIdentifier {
         };
 
         let task_id_value = self.task_id();
-        let record = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
+        let record = with_transaction(pool, async |conn| -> Result<TaskRecord, ApiError> {
             let event_record =
-                emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None)?;
+                emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None).await?;
 
             Ok(diesel::update(tasks.filter(id.eq(task_id_value)))
                 .set((
@@ -376,8 +402,10 @@ pub trait TaskBackend: TaskIdentifier {
                     request_redacted_at.eq(event_record.occurred_at),
                     updated_at.eq(event_record.occurred_at),
                 ))
-                .get_result::<TaskRecord>(conn)?)
-        })?;
+                .get_result::<TaskRecord>(conn)
+                .await?)
+        })
+        .await?;
 
         info!(
             message = "Task reached terminal state",
@@ -409,7 +437,7 @@ pub trait TaskBackend: TaskIdentifier {
         };
 
         let task_id_value = self.task_id();
-        let record = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
+        let record = with_transaction(pool, async |conn| -> Result<TaskRecord, ApiError> {
             // Idempotent so a future requeue / manual re-claim that re-finalizes the same task
             // cannot trip the `export_task_outputs.task_id` UNIQUE constraint and roll back the
             // transaction, which would otherwise leave the task stuck mid-flight.
@@ -417,10 +445,11 @@ pub trait TaskBackend: TaskIdentifier {
                 .values(output)
                 .on_conflict(export_output_task_id)
                 .do_nothing()
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
 
             let event_record =
-                emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None)?;
+                emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None).await?;
 
             Ok(diesel::update(tasks.filter(id.eq(task_id_value)))
                 .set((
@@ -435,8 +464,10 @@ pub trait TaskBackend: TaskIdentifier {
                     request_redacted_at.eq(event_record.occurred_at),
                     updated_at.eq(event_record.occurred_at),
                 ))
-                .get_result::<TaskRecord>(conn)?)
-        })?;
+                .get_result::<TaskRecord>(conn)
+                .await?)
+        })
+        .await?;
 
         info!(
             message = "Export task output stored and task finalized",
@@ -461,11 +492,13 @@ impl NewTaskRecord {
     pub async fn create(self, pool: &DbPool) -> Result<TaskRecord, ApiError> {
         use crate::schema::tasks::dsl::tasks;
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             diesel::insert_into(tasks)
                 .values(&self)
                 .get_result::<TaskRecord>(conn)
+                .await
         })
+        .await
     }
 }
 
@@ -478,13 +511,15 @@ impl TaskRecord {
     ) -> Result<Option<TaskRecord>, ApiError> {
         use crate::schema::tasks::dsl::{idempotency_key, submitted_by, tasks};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             tasks
                 .filter(submitted_by.eq(Some(submitter_id)))
                 .filter(idempotency_key.eq(key))
                 .first::<TaskRecord>(conn)
+                .await
                 .optional()
         })
+        .await
     }
 }
 
@@ -519,19 +554,23 @@ pub async fn list_tasks_with_total_count(
     status_filter: Option<&str>,
     query_options: &QueryOptions,
 ) -> Result<(Vec<TaskRecord>, i64), ApiError> {
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-        with_connection(pool, |conn| {
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+        with_connection(pool, async |conn| {
             build_task_query(submitted_by_filter, kind_filter, status_filter)
                 .count()
                 .get_result::<i64>(conn)
+                .await
         })
-    })?;
+        .await
+    })
+    .await?;
 
-    let items = with_connection(pool, |conn| -> Result<Vec<TaskRecord>, ApiError> {
+    let items = with_connection(pool, async |conn| -> Result<Vec<TaskRecord>, ApiError> {
         let mut query = build_task_query(submitted_by_filter, kind_filter, status_filter);
         apply_query_options!(query, query_options, TaskResponse);
-        Ok(query.load::<TaskRecord>(conn)?)
-    })?;
+        Ok(query.load::<TaskRecord>(conn).await?)
+    })
+    .await?;
 
     Ok((items, total_count))
 }
@@ -549,12 +588,14 @@ pub async fn list_export_task_output_summaries(
     // Return expired-but-present rows too; the caller classifies each against `now` so the
     // `output_expired` flag is consistent with the single-task lookups rather than silently
     // collapsing expired rows into "no output" on the task-list endpoint.
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         export_task_outputs
             .filter(task_id.eq_any(task_ids))
             .select(ExportTaskOutputSummaryRecord::as_select())
             .load(conn)
+            .await
     })
+    .await
 }
 
 pub async fn purge_expired_export_outputs(pool: &DbPool) -> Result<Vec<i32>, ApiError> {
@@ -563,11 +604,12 @@ pub async fn purge_expired_export_outputs(pool: &DbPool) -> Result<Vec<i32>, Api
     };
 
     let now = Utc::now().naive_utc();
-    let expired_task_ids = with_transaction(pool, |conn| {
+    let expired_task_ids = with_transaction(pool, async |conn| {
         let expired_task_ids =
             diesel::delete(export_task_outputs.filter(output_expires_at.le(now)))
                 .returning(task_id)
-                .get_results::<i32>(conn)?;
+                .get_results::<i32>(conn)
+                .await?;
 
         if !expired_task_ids.is_empty() {
             for expired_task_id in &expired_task_ids {
@@ -584,12 +626,14 @@ pub async fn purge_expired_export_outputs(pool: &DbPool) -> Result<Vec<i32>, Api
                     ActorKind::System,
                     None,
                     Some(TaskKind::Export.as_str()),
-                )?;
+                )
+                .await?;
             }
         }
 
         Ok::<_, ApiError>(expired_task_ids)
-    })?;
+    })
+    .await?;
 
     if !expired_task_ids.is_empty() {
         info!(
@@ -670,23 +714,28 @@ fn task_lifecycle_event(
     Ok(lifecycle_event)
 }
 
-fn emit_task_lifecycle_event(
-    conn: &mut PgConnection,
+async fn emit_task_lifecycle_event(
+    conn: &mut crate::db::DbConnection,
     event: &NewTaskEventRecord,
     actor_kind: ActorKind,
     actor_user_id: Option<i32>,
     task_kind: Option<&str>,
 ) -> Result<crate::events::Event, ApiError> {
     let lifecycle_event = task_lifecycle_event(event, actor_kind, actor_user_id, task_kind)?;
-    emit_event(conn, &lifecycle_event).map_err(ApiError::from)
+    emit_event(conn, &lifecycle_event)
+        .await
+        .map_err(ApiError::from)
 }
 
 impl NewTaskEventRecord {
     /// Append this event to its task's history and return the persisted event.
     pub async fn append(self, pool: &DbPool) -> Result<TaskEventRecord, ApiError> {
-        with_connection(pool, |conn| -> Result<TaskEventRecord, ApiError> {
-            emit_task_lifecycle_event(conn, &self, ActorKind::Worker, None, None)?.try_into()
+        with_connection(pool, async |conn| -> Result<TaskEventRecord, ApiError> {
+            emit_task_lifecycle_event(conn, &self, ActorKind::Worker, None, None)
+                .await?
+                .try_into()
         })
+        .await
     }
 }
 
@@ -700,11 +749,13 @@ pub async fn insert_import_results(
         return Ok(0);
     }
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         diesel::insert_into(import_task_results)
             .values(entries)
             .execute(conn)
+            .await
     })
+    .await
 }
 
 pub(crate) fn executable_task_kind_values() -> [&'static str; 3] {
@@ -725,7 +776,7 @@ fn task_kind_claim_order(start: usize) -> [&'static str; 3] {
 pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>, ApiError> {
     use crate::schema::tasks::dsl::{created_at, id, kind, started_at, status, tasks, updated_at};
 
-    let record = with_transaction(pool, |conn| -> Result<Option<TaskRecord>, ApiError> {
+    let record = with_transaction(pool, async |conn| -> Result<Option<TaskRecord>, ApiError> {
         let task_kinds = executable_task_kind_values();
         let first_kind = NEXT_TASK_KIND.fetch_add(1, Ordering::Relaxed) % task_kinds.len();
         let claim_order = task_kind_claim_order(first_kind);
@@ -739,6 +790,7 @@ pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>,
                 .skip_locked()
                 .select(id)
                 .first::<i32>(conn)
+                .await
                 .optional()?;
             if selected_task_id.is_some() {
                 break;
@@ -755,7 +807,8 @@ pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>,
                 started_at.eq(Some(now)),
                 updated_at.eq(now),
             ))
-            .get_result::<TaskRecord>(conn)?;
+            .get_result::<TaskRecord>(conn)
+            .await?;
 
         emit_task_lifecycle_event(
             conn,
@@ -768,10 +821,12 @@ pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>,
             ActorKind::Worker,
             None,
             Some(record.kind.as_str()),
-        )?;
+        )
+        .await?;
 
         Ok(Some(record))
-    })?;
+    })
+    .await?;
 
     if let Some(record) = &record {
         info!(
@@ -851,10 +906,10 @@ impl TaskCreateRequest {
 
         let max_active_tasks = i64::try_from(max_active_tasks).unwrap_or(i64::MAX);
         let submitter_id = self.submitted_by;
-        let task = with_transaction(pool, |conn| -> Result<TaskRecord, ApiError> {
-            acquire_task_capacity_lock(conn, submitter_id, limited_kind)?;
+        let task = with_transaction(pool, async |conn| -> Result<TaskRecord, ApiError> {
+            acquire_task_capacity_lock(conn, submitter_id, limited_kind).await?;
             let active_count =
-                count_active_tasks_for_user_in_transaction(conn, submitter_id, limited_kind)?;
+                count_active_tasks_for_user_in_transaction(conn, submitter_id, limited_kind).await?;
             if active_count >= max_active_tasks {
                 return Err(ApiError::TooManyRequests(format!(
                     "Too many active {} tasks for user ({active_count} >= {max_active_tasks}); wait for queued or running tasks to finish",
@@ -862,8 +917,8 @@ impl TaskCreateRequest {
                 )));
             }
 
-            insert_queued_task_with_event(conn, self)
-        })?;
+            insert_queued_task_with_event(conn, self).await
+        }).await?;
 
         log_task_queued(&task);
 
@@ -871,8 +926,8 @@ impl TaskCreateRequest {
     }
 }
 
-fn insert_queued_task_with_event(
-    conn: &mut PgConnection,
+async fn insert_queued_task_with_event(
+    conn: &mut crate::db::DbConnection,
     request: TaskCreateRequest,
 ) -> Result<TaskRecord, ApiError> {
     use crate::schema::tasks::dsl::tasks;
@@ -899,7 +954,8 @@ fn insert_queued_task_with_event(
             started_at: None,
             finished_at: None,
         })
-        .get_result::<TaskRecord>(conn)?;
+        .get_result::<TaskRecord>(conn)
+        .await?;
 
     emit_task_lifecycle_event(
         conn,
@@ -912,20 +968,22 @@ fn insert_queued_task_with_event(
         ActorKind::User,
         Some(submitted_by),
         Some(task_kind.as_str()),
-    )?;
+    )
+    .await?;
 
     Ok(task)
 }
 
-fn acquire_task_capacity_lock(
-    conn: &mut PgConnection,
+async fn acquire_task_capacity_lock(
+    conn: &mut crate::db::DbConnection,
     submitted_by: i32,
     kind: TaskKind,
 ) -> Result<(), ApiError> {
     let lock_key = task_capacity_lock_key(submitted_by, kind);
     let lock = diesel::sql_query("SELECT TRUE AS locked FROM pg_advisory_xact_lock($1)")
         .bind::<BigInt, _>(lock_key)
-        .get_result::<AdvisoryLockRow>(conn)?;
+        .get_result::<AdvisoryLockRow>(conn)
+        .await?;
     if !lock.locked {
         return Err(ApiError::InternalServerError(
             "Failed to acquire task capacity lock".to_string(),
@@ -947,8 +1005,8 @@ fn task_capacity_lock_key(submitted_by: i32, kind: TaskKind) -> i64 {
     BASE_KEY + (kind_slot * KIND_STRIDE) + i64::from(submitted_by)
 }
 
-fn count_active_tasks_for_user_in_transaction(
-    conn: &mut PgConnection,
+async fn count_active_tasks_for_user_in_transaction(
+    conn: &mut crate::db::DbConnection,
     submitted_by_value: i32,
     task_kind: TaskKind,
 ) -> Result<i64, ApiError> {
@@ -967,6 +1025,7 @@ fn count_active_tasks_for_user_in_transaction(
         .filter(deleted_at.is_null())
         .count()
         .get_result::<i64>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
@@ -984,10 +1043,8 @@ fn log_task_queued(task: &TaskRecord) {
 
 #[cfg(test)]
 mod tests {
-    use diesel::prelude::*;
-    use futures::executor::block_on;
-    use std::sync::mpsc;
-    use std::thread;
+    use crate::db::prelude::*;
+    use tokio::sync::oneshot;
 
     use super::{
         TaskBackend, TaskCreateRequest, claim_next_queued_task, task_capacity_lock_key,
@@ -1025,8 +1082,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn task_claim_order_rotates_every_executable_kind_to_the_front() {
+    #[tokio::test]
+    async fn task_claim_order_rotates_every_executable_kind_to_the_front() {
         assert_eq!(
             task_kind_claim_order(0),
             [
@@ -1039,86 +1096,90 @@ mod tests {
         assert_eq!(task_kind_claim_order(2)[0], TaskKind::RemoteCall.as_str());
     }
 
-    #[test]
-    fn test_claim_next_queued_task_is_safe_under_concurrency() {
-        let context = block_on(TestContext::new());
+    #[tokio::test]
+    async fn test_claim_next_queued_task_is_safe_under_concurrency() {
+        let context = TestContext::new().await;
         let mut created_ids = Vec::new();
         let claim_prefix = context.scoped_name("claim");
 
         for index in 0..3 {
-            let task = block_on(
-                NewTaskRecord {
-                    kind: TaskKind::Import.as_str().to_string(),
-                    status: TaskStatus::Queued.as_str().to_string(),
-                    submitted_by: Some(context.admin_user.id),
-                    submitted_token_id: None,
-                    submitted_token_scoped: false,
-                    submitted_token_scopes: serde_json::json!([]),
-                    idempotency_key: Some(format!("{claim_prefix}-{index}")),
-                    request_hash: None,
-                    request_payload: None,
-                    summary: None,
-                    total_items: 0,
-                    processed_items: 0,
-                    success_items: 0,
-                    failed_items: 0,
-                    request_redacted_at: None,
-                    started_at: None,
-                    finished_at: None,
-                }
-                .create(&context.pool),
-            )
+            let task = NewTaskRecord {
+                kind: TaskKind::Import.as_str().to_string(),
+                status: TaskStatus::Queued.as_str().to_string(),
+                submitted_by: Some(context.admin_user.id),
+                submitted_token_id: None,
+                submitted_token_scoped: false,
+                submitted_token_scopes: serde_json::json!([]),
+                idempotency_key: Some(format!("{claim_prefix}-{index}")),
+                request_hash: None,
+                request_payload: None,
+                summary: None,
+                total_items: 0,
+                processed_items: 0,
+                success_items: 0,
+                failed_items: 0,
+                request_redacted_at: None,
+                started_at: None,
+                finished_at: None,
+            }
+            .create(&context.pool)
+            .await
             .unwrap();
             created_ids.push(task.id);
         }
 
-        let (locked_tx, locked_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
+        let (locked_tx, locked_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
         let pool = context.pool.clone();
         let claim_prefix_for_locker = claim_prefix.clone();
-        let locker = thread::spawn(move || {
+        let locker = tokio::spawn(async move {
             use crate::schema::tasks::dsl::{created_at, id, idempotency_key, status, tasks};
 
-            with_transaction(&pool, |conn| -> Result<(), crate::errors::ApiError> {
-                let locked_id = tasks
-                    .filter(status.eq(TaskStatus::Queued.as_str()))
-                    .filter(idempotency_key.like(format!("{claim_prefix_for_locker}-%")))
-                    .order(created_at.asc())
-                    .for_update()
-                    .select(id)
-                    .first::<i32>(conn)?;
-                locked_tx.send(locked_id).unwrap();
-                release_rx.recv().unwrap();
-                Ok(())
-            })
+            with_transaction(
+                &pool,
+                async move |conn| -> Result<(), crate::errors::ApiError> {
+                    let locked_id = tasks
+                        .filter(status.eq(TaskStatus::Queued.as_str()))
+                        .filter(idempotency_key.like(format!("{claim_prefix_for_locker}-%")))
+                        .order(created_at.asc())
+                        .for_update()
+                        .select(id)
+                        .first::<i32>(conn)
+                        .await?;
+                    locked_tx.send(locked_id).unwrap();
+                    release_rx.await.unwrap();
+                    Ok(())
+                },
+            )
+            .await
             .unwrap();
         });
 
-        let locked_id = locked_rx.recv().unwrap();
-        let claimed = block_on(claim_next_queued_task(&context.pool))
+        let locked_id = locked_rx.await.unwrap();
+        let claimed = claim_next_queued_task(&context.pool)
+            .await
             .unwrap()
             .map(|task| task.id);
         release_tx.send(()).unwrap();
-        locker.join().unwrap();
+        locker.await.unwrap();
 
         assert!(claimed.is_some());
         assert_ne!(claimed.unwrap(), locked_id);
         assert!(created_ids.contains(&locked_id));
 
-        let (claimed_events, _) = block_on(
-            TaskID::new(claimed.unwrap())
-                .unwrap()
-                .list_events_with_total_count(
-                    &context.pool,
-                    &QueryOptions {
-                        filters: Vec::new(),
-                        sort: Vec::new(),
-                        limit: None,
-                        cursor: None,
-                        include_total: true,
-                    },
-                ),
-        )
+        let (claimed_events, _) = (TaskID::new(claimed.unwrap())
+            .unwrap()
+            .list_events_with_total_count(
+                &context.pool,
+                &QueryOptions {
+                    filters: Vec::new(),
+                    sort: Vec::new(),
+                    limit: None,
+                    cursor: None,
+                    include_total: true,
+                },
+            ))
+        .await
         .unwrap();
         assert_eq!(
             claimed_events
@@ -1129,75 +1190,74 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_task_history_survives_user_deletion() {
-        let context = block_on(TestContext::new());
-        let task_owner = block_on(create_test_user(&context.pool));
-        let task = block_on(
-            NewTaskRecord {
-                kind: TaskKind::Import.as_str().to_string(),
-                status: TaskStatus::Succeeded.as_str().to_string(),
-                submitted_by: Some(task_owner.id),
-                submitted_token_id: None,
-                submitted_token_scoped: false,
-                submitted_token_scopes: serde_json::json!([]),
-                idempotency_key: Some(context.scoped_name("deleted-owner-task")),
-                request_hash: None,
-                request_payload: None,
-                summary: Some("completed".to_string()),
-                total_items: 0,
-                processed_items: 0,
-                success_items: 0,
-                failed_items: 0,
-                request_redacted_at: None,
-                started_at: None,
-                finished_at: None,
-            }
-            .create(&context.pool),
-        )
+    #[tokio::test]
+    async fn test_task_history_survives_user_deletion() {
+        let context = (TestContext::new()).await;
+        let task_owner = (create_test_user(&context.pool)).await;
+        let task = (NewTaskRecord {
+            kind: TaskKind::Import.as_str().to_string(),
+            status: TaskStatus::Succeeded.as_str().to_string(),
+            submitted_by: Some(task_owner.id),
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            idempotency_key: Some(context.scoped_name("deleted-owner-task")),
+            request_hash: None,
+            request_payload: None,
+            summary: Some("completed".to_string()),
+            total_items: 0,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            request_redacted_at: None,
+            started_at: None,
+            finished_at: None,
+        }
+        .create(&context.pool))
+        .await
         .unwrap();
 
-        block_on(task_owner.delete_user_record_without_events(&context.pool)).unwrap();
+        (task_owner.delete_user_record_without_events(&context.pool))
+            .await
+            .unwrap();
 
-        let stored = block_on(task.find_record(&context.pool)).unwrap();
+        let stored = (task.find_record(&context.pool)).await.unwrap();
         assert_eq!(stored.submitted_by, None);
     }
 
-    #[test]
-    fn test_export_task_active_limit_blocks_new_work_for_same_user() {
-        let context = block_on(TestContext::new());
-        let first = block_on(
-            TaskCreateRequest {
-                kind: TaskKind::Export,
-                submitted_by: context.admin_user.id,
-                submitted_token_id: None,
-                submitted_token_scoped: false,
-                submitted_token_scopes: serde_json::json!([]),
-                idempotency_key: Some(context.scoped_name("export-cap-first")),
-                request_hash: Some(context.scoped_name("export-cap-first-hash")),
-                request_payload: serde_json::json!({"export": "first"}),
-                total_items: 1,
-            }
-            .create_idempotently_with_active_limit(&context.pool, 1),
-        )
+    #[tokio::test]
+    async fn test_export_task_active_limit_blocks_new_work_for_same_user() {
+        let context = (TestContext::new()).await;
+        let first = (TaskCreateRequest {
+            kind: TaskKind::Export,
+            submitted_by: context.admin_user.id,
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            idempotency_key: Some(context.scoped_name("export-cap-first")),
+            request_hash: Some(context.scoped_name("export-cap-first-hash")),
+            request_payload: serde_json::json!({"export": "first"}),
+            total_items: 1,
+        }
+        .create_idempotently_with_active_limit(&context.pool, 1))
+        .await
         .unwrap();
 
         assert_eq!(first.status, TaskStatus::Queued.as_str());
 
-        let error = block_on(
-            TaskCreateRequest {
-                kind: TaskKind::Export,
-                submitted_by: context.admin_user.id,
-                submitted_token_id: None,
-                submitted_token_scoped: false,
-                submitted_token_scopes: serde_json::json!([]),
-                idempotency_key: Some(context.scoped_name("export-cap-second")),
-                request_hash: Some(context.scoped_name("export-cap-second-hash")),
-                request_payload: serde_json::json!({"export": "second"}),
-                total_items: 1,
-            }
-            .create_idempotently_with_active_limit(&context.pool, 1),
-        )
+        let error = (TaskCreateRequest {
+            kind: TaskKind::Export,
+            submitted_by: context.admin_user.id,
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            idempotency_key: Some(context.scoped_name("export-cap-second")),
+            request_hash: Some(context.scoped_name("export-cap-second-hash")),
+            request_payload: serde_json::json!({"export": "second"}),
+            total_items: 1,
+        }
+        .create_idempotently_with_active_limit(&context.pool, 1))
+        .await
         .unwrap_err();
 
         match error {
@@ -1208,9 +1268,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_import_task_active_limit_blocks_new_work_for_same_user() {
-        let context = block_on(TestContext::new());
+    #[tokio::test]
+    async fn test_import_task_active_limit_blocks_new_work_for_same_user() {
+        let context = (TestContext::new()).await;
         let create_request = |suffix: &str| TaskCreateRequest {
             kind: TaskKind::Import,
             submitted_by: context.admin_user.id,
@@ -1223,15 +1283,15 @@ mod tests {
             total_items: 1,
         };
 
-        let first = block_on(
-            create_request("first").create_idempotently_with_active_limit(&context.pool, 1),
-        )
+        let first = (create_request("first")
+            .create_idempotently_with_active_limit(&context.pool, 1))
+        .await
         .unwrap();
         assert_eq!(first.status, TaskStatus::Queued.as_str());
 
-        let error = block_on(
-            create_request("second").create_idempotently_with_active_limit(&context.pool, 1),
-        )
+        let error = (create_request("second")
+            .create_idempotently_with_active_limit(&context.pool, 1))
+        .await
         .unwrap_err();
         match error {
             ApiError::TooManyRequests(message) => {
@@ -1241,9 +1301,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_remote_call_task_active_limit_blocks_new_work_for_same_user() {
-        let context = block_on(TestContext::new());
+    #[tokio::test]
+    async fn test_remote_call_task_active_limit_blocks_new_work_for_same_user() {
+        let context = (TestContext::new()).await;
         let payload = serde_json::to_value(StoredRemoteCallTaskPayload {
             target_id: RemoteTargetID::new(1).unwrap(),
             subject: RemoteInvocationSubject::Collection {
@@ -1254,38 +1314,36 @@ mod tests {
         })
         .unwrap();
 
-        let first = block_on(
-            TaskCreateRequest {
-                kind: TaskKind::RemoteCall,
-                submitted_by: context.admin_user.id,
-                submitted_token_id: None,
-                submitted_token_scoped: false,
-                submitted_token_scopes: serde_json::json!([]),
-                idempotency_key: Some(context.scoped_name("remote-cap-first")),
-                request_hash: Some(context.scoped_name("remote-cap-first-hash")),
-                request_payload: payload.clone(),
-                total_items: 1,
-            }
-            .create_idempotently_with_active_limit(&context.pool, 1),
-        )
+        let first = (TaskCreateRequest {
+            kind: TaskKind::RemoteCall,
+            submitted_by: context.admin_user.id,
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            idempotency_key: Some(context.scoped_name("remote-cap-first")),
+            request_hash: Some(context.scoped_name("remote-cap-first-hash")),
+            request_payload: payload.clone(),
+            total_items: 1,
+        }
+        .create_idempotently_with_active_limit(&context.pool, 1))
+        .await
         .unwrap();
 
         assert_eq!(first.status, TaskStatus::Queued.as_str());
 
-        let error = block_on(
-            TaskCreateRequest {
-                kind: TaskKind::RemoteCall,
-                submitted_by: context.admin_user.id,
-                submitted_token_id: None,
-                submitted_token_scoped: false,
-                submitted_token_scopes: serde_json::json!([]),
-                idempotency_key: Some(context.scoped_name("remote-cap-second")),
-                request_hash: Some(context.scoped_name("remote-cap-second-hash")),
-                request_payload: payload,
-                total_items: 1,
-            }
-            .create_idempotently_with_active_limit(&context.pool, 1),
-        )
+        let error = (TaskCreateRequest {
+            kind: TaskKind::RemoteCall,
+            submitted_by: context.admin_user.id,
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            idempotency_key: Some(context.scoped_name("remote-cap-second")),
+            request_hash: Some(context.scoped_name("remote-cap-second-hash")),
+            request_payload: payload,
+            total_items: 1,
+        }
+        .create_idempotently_with_active_limit(&context.pool, 1))
+        .await
         .unwrap_err();
 
         match error {

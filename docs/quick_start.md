@@ -47,6 +47,9 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | `HUBUUM_SKIP_MIGRATIONS` | `false` | If true, the container waits for the database but does not run Diesel migrations on startup |
 | `HUBUUM_DB_STATEMENT_TIMEOUT_MS` | `30000` | Pool-global Postgres `statement_timeout` in ms (`0` disables). Cancels any query exceeding it server-side; applies to **all** DB work, not just exports |
 
+See [Database Pool Tuning and Load Testing](performance.md) for connection
+budgeting, pool observability, and a repeatable k6 scenario.
+
 ### Task System Configuration
 
 | Variable | Default | Description |

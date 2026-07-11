@@ -152,6 +152,20 @@ sudo ./scripts/install-single-host.sh \
   --database-url 'postgres://hubuum:secret@postgres.example.com:5432/hubuum?sslmode=require'
 ```
 
+Database TLS behavior follows the URL's `sslmode`:
+
+- `sslmode=disable` uses an unencrypted connection.
+- `sslmode=prefer` verifies the server certificate and hostname when the server
+  offers TLS, but permits plaintext when the server does not support TLS.
+- `sslmode=require` requires TLS and verifies the server certificate and
+  hostname.
+- URLs without `sslmode` disable TLS for `localhost` and IP loopback addresses.
+  Other hosts use the verified `prefer` behavior.
+
+The platform trust store is used by default. Set `PGSSLROOTCERT` to a PEM CA
+bundle for private certificate authorities, or to `system` to explicitly use
+the platform trust store.
+
 The database must already exist and be reachable from containers on the host. Avoid `localhost` in the URL unless Postgres is inside the same container; from a container, `localhost` means the API container itself.
 
 ## External Authentication Configuration

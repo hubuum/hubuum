@@ -1,5 +1,6 @@
 use super::*;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use diesel_async::RunQueryDsl;
 
 fn collection_snapshot(collection: &Collection) -> serde_json::Value {
     serde_json::json!({
@@ -12,18 +13,21 @@ fn collection_snapshot(collection: &Collection) -> serde_json::Value {
     })
 }
 
-pub(crate) fn root_collection_id(conn: &mut diesel::PgConnection) -> Result<i32, ApiError> {
+pub(crate) async fn root_collection_id(
+    conn: &mut crate::db::DbConnection,
+) -> Result<i32, ApiError> {
     use crate::schema::collections::dsl::{collections, id, parent_collection_id};
 
     collections
         .filter(parent_collection_id.is_null())
         .select(id)
         .first::<i32>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
-fn resolve_parent_collection_id(
-    conn: &mut diesel::PgConnection,
+async fn resolve_parent_collection_id(
+    conn: &mut crate::db::DbConnection,
     requested_parent_collection_id: Option<i32>,
 ) -> Result<i32, ApiError> {
     use crate::schema::collections::dsl::{collections, id};
@@ -33,15 +37,16 @@ fn resolve_parent_collection_id(
             collections
                 .filter(id.eq(parent_id))
                 .select(id)
-                .first::<i32>(conn)?;
+                .first::<i32>(conn)
+                .await?;
             Ok(parent_id)
         }
-        None => root_collection_id(conn),
+        None => root_collection_id(conn).await,
     }
 }
 
-fn validate_collection_can_be_deleted(
-    conn: &mut diesel::PgConnection,
+async fn validate_collection_can_be_deleted(
+    conn: &mut crate::db::DbConnection,
     target_collection_id: i32,
 ) -> Result<(), ApiError> {
     use crate::schema::collections::dsl::{collections, id, parent_collection_id};
@@ -49,7 +54,8 @@ fn validate_collection_can_be_deleted(
     let target_parent = collections
         .filter(id.eq(target_collection_id))
         .select(parent_collection_id)
-        .first::<Option<i32>>(conn)?;
+        .first::<Option<i32>>(conn)
+        .await?;
 
     if target_parent.is_none() {
         return Err(ApiError::Conflict(
@@ -60,7 +66,8 @@ fn validate_collection_can_be_deleted(
     let child_count = collections
         .filter(parent_collection_id.eq(target_collection_id))
         .count()
-        .get_result::<i64>(conn)?;
+        .get_result::<i64>(conn)
+        .await?;
 
     if child_count > 0 {
         return Err(ApiError::Conflict(
@@ -71,8 +78,8 @@ fn validate_collection_can_be_deleted(
     Ok(())
 }
 
-pub(crate) fn insert_collection_closure_rows(
-    conn: &mut diesel::PgConnection,
+pub(crate) async fn insert_collection_closure_rows(
+    conn: &mut crate::db::DbConnection,
     target_collection_id: i32,
     parent_id: i32,
 ) -> Result<(), ApiError> {
@@ -86,20 +93,22 @@ pub(crate) fn insert_collection_closure_rows(
     )
     .bind::<diesel::sql_types::Integer, _>(target_collection_id)
     .bind::<diesel::sql_types::Integer, _>(parent_id)
-    .execute(conn)?;
+    .execute(conn)
+    .await?;
 
     Ok(())
 }
 
-pub(crate) fn insert_collection_row_with_closure(
-    conn: &mut diesel::PgConnection,
+pub(crate) async fn insert_collection_row_with_closure(
+    conn: &mut crate::db::DbConnection,
     name_value: &str,
     description_value: &str,
     requested_parent_collection_id: Option<i32>,
 ) -> Result<Collection, ApiError> {
     use crate::schema::collections::dsl::{collections, parent_collection_id};
 
-    let resolved_parent_id = resolve_parent_collection_id(conn, requested_parent_collection_id)?;
+    let resolved_parent_id =
+        resolve_parent_collection_id(conn, requested_parent_collection_id).await?;
 
     let collection = diesel::insert_into(collections)
         .values((
@@ -107,15 +116,16 @@ pub(crate) fn insert_collection_row_with_closure(
             crate::schema::collections::description.eq(description_value),
             parent_collection_id.eq(resolved_parent_id),
         ))
-        .get_result::<Collection>(conn)?;
+        .get_result::<Collection>(conn)
+        .await?;
 
-    insert_collection_closure_rows(conn, collection.id, resolved_parent_id)?;
+    insert_collection_closure_rows(conn, collection.id, resolved_parent_id).await?;
 
     Ok(collection)
 }
 
-fn move_collection_closure_rows(
-    conn: &mut diesel::PgConnection,
+async fn move_collection_closure_rows(
+    conn: &mut crate::db::DbConnection,
     target_collection_id: i32,
     new_parent_collection_id: i32,
 ) -> Result<(), ApiError> {
@@ -137,7 +147,8 @@ fn move_collection_closure_rows(
          )",
     )
     .bind::<diesel::sql_types::Integer, _>(target_collection_id)
-    .execute(conn)?;
+    .execute(conn)
+    .await?;
 
     diesel::sql_query(
         "INSERT INTO collection_closure (ancestor_collection_id, descendant_collection_id, depth)
@@ -150,13 +161,14 @@ fn move_collection_closure_rows(
     )
     .bind::<diesel::sql_types::Integer, _>(target_collection_id)
     .bind::<diesel::sql_types::Integer, _>(new_parent_collection_id)
-    .execute(conn)?;
+    .execute(conn)
+    .await?;
 
     Ok(())
 }
 
-fn insert_collection_for_group(
-    conn: &mut diesel::PgConnection,
+async fn insert_collection_for_group(
+    conn: &mut crate::db::DbConnection,
     new_collection: &NewCollection,
     group_id: i32,
 ) -> Result<Collection, ApiError> {
@@ -167,7 +179,8 @@ fn insert_collection_for_group(
         &new_collection.name,
         &new_collection.description,
         new_collection.parent_collection_id,
-    )?;
+    )
+    .await?;
 
     let group_permission = crate::db::traits::permissions::new_permission_from_list(
         collection.id,
@@ -177,7 +190,8 @@ fn insert_collection_for_group(
 
     diesel::insert_into(permissions)
         .values(&group_permission)
-        .execute(conn)?;
+        .execute(conn)
+        .await?;
 
     Ok(collection)
 }
@@ -217,10 +231,13 @@ impl DeleteCollectionRecord for Collection {
     async fn delete_collection_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::collections::dsl::{collections, id};
 
-        with_connection(pool, |conn| -> Result<_, ApiError> {
-            validate_collection_can_be_deleted(conn, self.id)?;
-            Ok(diesel::delete(collections.filter(id.eq(self.id))).execute(conn)?)
-        })?;
+        with_connection(pool, async |conn| -> Result<_, ApiError> {
+            validate_collection_can_be_deleted(conn, self.id).await?;
+            Ok(diesel::delete(collections.filter(id.eq(self.id)))
+                .execute(conn)
+                .await?)
+        })
+        .await?;
         Ok(())
     }
 
@@ -235,9 +252,11 @@ impl DeleteCollectionRecord for Collection {
 
         use crate::schema::collections::dsl::{collections, id};
 
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
-            validate_collection_can_be_deleted(conn, self.id)?;
-            diesel::delete(collections.filter(id.eq(self.id))).execute(conn)?;
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            validate_collection_can_be_deleted(conn, self.id).await?;
+            diesel::delete(collections.filter(id.eq(self.id)))
+                .execute(conn)
+                .await?;
             let event = collection_event(
                 self,
                 Action::Deleted,
@@ -245,9 +264,10 @@ impl DeleteCollectionRecord for Collection {
                 format!("Collection '{}' deleted", self.name),
             )?
             .with_before(collection_snapshot(self));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(())
         })
+        .await
     }
 }
 
@@ -255,10 +275,13 @@ impl DeleteCollectionRecord for CollectionID {
     async fn delete_collection_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::collections::dsl::{collections, id};
 
-        with_connection(pool, |conn| -> Result<_, ApiError> {
-            validate_collection_can_be_deleted(conn, self.id())?;
-            Ok(diesel::delete(collections.filter(id.eq(self.id()))).execute(conn)?)
-        })?;
+        with_connection(pool, async |conn| -> Result<_, ApiError> {
+            validate_collection_can_be_deleted(conn, self.id()).await?;
+            Ok(diesel::delete(collections.filter(id.eq(self.id())))
+                .execute(conn)
+                .await?)
+        })
+        .await?;
         Ok(())
     }
 
@@ -273,12 +296,15 @@ impl DeleteCollectionRecord for CollectionID {
 
         use crate::schema::collections::dsl::{collections, id};
 
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
             let collection = collections
                 .filter(id.eq(self.id()))
-                .first::<Collection>(conn)?;
-            validate_collection_can_be_deleted(conn, collection.id)?;
-            diesel::delete(collections.filter(id.eq(collection.id))).execute(conn)?;
+                .first::<Collection>(conn)
+                .await?;
+            validate_collection_can_be_deleted(conn, collection.id).await?;
+            diesel::delete(collections.filter(id.eq(collection.id)))
+                .execute(conn)
+                .await?;
             let event = collection_event(
                 &collection,
                 Action::Deleted,
@@ -286,9 +312,10 @@ impl DeleteCollectionRecord for CollectionID {
                 format!("Collection '{}' deleted", collection.name),
             )?
             .with_before(collection_snapshot(&collection));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(())
         })
+        .await
     }
 }
 
@@ -319,16 +346,19 @@ impl UpdateCollectionRecord for UpdateCollection {
     ) -> Result<Collection, ApiError> {
         use crate::schema::collections::dsl::{collections, id};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             crate::db::updated_or_current(
                 diesel::update(collections)
                     .filter(id.eq(collection_id))
                     .set(self)
                     .get_result::<Collection>(conn)
+                    .await
                     .optional(),
-                || collections.filter(id.eq(collection_id)).first(conn),
+                async || collections.filter(id.eq(collection_id)).first(conn).await,
             )
+            .await
         })
+        .await
     }
 
     async fn update_collection_record(
@@ -345,13 +375,15 @@ impl UpdateCollectionRecord for UpdateCollection {
 
         use crate::schema::collections::dsl::{collections, id};
 
-        with_transaction(pool, |conn| -> Result<Collection, ApiError> {
+        with_transaction(pool, async |conn| -> Result<Collection, ApiError> {
             let before = collections
                 .filter(id.eq(collection_id))
-                .first::<Collection>(conn)?;
+                .first::<Collection>(conn)
+                .await?;
             let updated = diesel::update(collections.filter(id.eq(collection_id)))
                 .set(self)
-                .get_result::<Collection>(conn)?;
+                .get_result::<Collection>(conn)
+                .await?;
             let event = collection_event(
                 &updated,
                 Action::Updated,
@@ -360,9 +392,10 @@ impl UpdateCollectionRecord for UpdateCollection {
             )?
             .with_before(collection_snapshot(&before))
             .with_after(collection_snapshot(&updated));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(updated)
         })
+        .await
     }
 }
 
@@ -441,9 +474,10 @@ impl SaveCollectionForGroupRecord for NewCollection {
         pool: &DbPool,
         group_id: i32,
     ) -> Result<Collection, ApiError> {
-        with_transaction(pool, |conn| -> Result<Collection, ApiError> {
-            insert_collection_for_group(conn, self, group_id)
+        with_transaction(pool, async |conn| -> Result<Collection, ApiError> {
+            insert_collection_for_group(conn, self, group_id).await
         })
+        .await
     }
 
     async fn save_collection_for_group_record(
@@ -458,8 +492,8 @@ impl SaveCollectionForGroupRecord for NewCollection {
                 .await;
         };
 
-        with_transaction(pool, |conn| -> Result<Collection, ApiError> {
-            let collection = insert_collection_for_group(conn, self, group_id)?;
+        with_transaction(pool, async |conn| -> Result<Collection, ApiError> {
+            let collection = insert_collection_for_group(conn, self, group_id).await?;
 
             let event = collection_event(
                 &collection,
@@ -469,10 +503,11 @@ impl SaveCollectionForGroupRecord for NewCollection {
             )?
             .with_after(collection_snapshot(&collection))
             .with_metadata(serde_json::json!({ "assignee_group_id": group_id }));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
 
             Ok(collection)
         })
+        .await
     }
 }
 
@@ -483,12 +518,14 @@ pub async fn collection_children_from_backend<T: CollectionAccessors>(
     use crate::schema::collections::dsl::{collections, parent_collection_id};
 
     let target_collection_id = collection_ref.collection_id(pool).await?.id();
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         collections
             .filter(parent_collection_id.eq(target_collection_id))
             .order(crate::schema::collections::name.asc())
             .load::<Collection>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn collection_ancestors_from_backend<T: CollectionAccessors>(
@@ -501,7 +538,7 @@ pub async fn collection_ancestors_from_backend<T: CollectionAccessors>(
     use crate::schema::collections::dsl::{collections, id};
 
     let target_collection_id = collection_ref.collection_id(pool).await?.id();
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         collection_closure
             .inner_join(collections.on(id.eq(ancestor_collection_id)))
             .filter(descendant_collection_id.eq(target_collection_id))
@@ -509,7 +546,9 @@ pub async fn collection_ancestors_from_backend<T: CollectionAccessors>(
             .order(depth.asc())
             .select(collections::all_columns())
             .load::<Collection>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn move_collection_record_from_backend(
@@ -523,10 +562,11 @@ pub async fn move_collection_record_from_backend(
     };
     use crate::schema::collections::dsl::{collections, id, parent_collection_id};
 
-    with_transaction(pool, |conn| -> Result<Collection, ApiError> {
+    with_transaction(pool, async |conn| -> Result<Collection, ApiError> {
         let before = collections
             .filter(id.eq(target_collection_id))
-            .first::<Collection>(conn)?;
+            .first::<Collection>(conn)
+            .await?;
 
         if before.parent_collection_id.is_none() {
             return Err(ApiError::Conflict(
@@ -543,13 +583,15 @@ pub async fn move_collection_record_from_backend(
         collections
             .filter(id.eq(new_parent_collection_id))
             .select(id)
-            .first::<i32>(conn)?;
+            .first::<i32>(conn)
+            .await?;
 
         let new_parent_is_descendant = collection_closure
             .filter(ancestor_collection_id.eq(target_collection_id))
             .filter(descendant_collection_id.eq(new_parent_collection_id))
             .count()
-            .get_result::<i64>(conn)?
+            .get_result::<i64>(conn)
+            .await?
             > 0;
 
         if new_parent_is_descendant {
@@ -560,13 +602,15 @@ pub async fn move_collection_record_from_backend(
 
         diesel::update(collections.filter(id.eq(target_collection_id)))
             .set(parent_collection_id.eq(new_parent_collection_id))
-            .execute(conn)?;
+            .execute(conn)
+            .await?;
 
-        move_collection_closure_rows(conn, target_collection_id, new_parent_collection_id)?;
+        move_collection_closure_rows(conn, target_collection_id, new_parent_collection_id).await?;
 
         let updated = collections
             .filter(id.eq(target_collection_id))
-            .first::<Collection>(conn)?;
+            .first::<Collection>(conn)
+            .await?;
 
         if let Some(context) = context {
             let event = collection_event(
@@ -577,9 +621,10 @@ pub async fn move_collection_record_from_backend(
             )?
             .with_before(collection_snapshot(&before))
             .with_after(collection_snapshot(&updated));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
         }
 
         Ok(updated)
     })
+    .await
 }

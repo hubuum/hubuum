@@ -14,8 +14,9 @@ mod tests {
 
     const EVENTS_ENDPOINT: &str = "/api/v1/events";
 
-    fn emit_test_event(pool: &crate::db::DbPool, event: &NewEvent) -> EventResponse {
-        with_connection(pool, |conn| emit_event(conn, event))
+    async fn emit_test_event(pool: &crate::db::DbPool, event: &NewEvent) -> EventResponse {
+        with_connection(pool, async |conn| emit_event(conn, event).await)
+            .await
             .expect("failed to emit test event")
             .into()
     }
@@ -39,7 +40,8 @@ mod tests {
             .with_collection_id(collection.collection.id)
             .with_entity_id(collection.collection.id)
             .with_entity_name(&collection.collection.name),
-        );
+        )
+        .await;
 
         let resp = get_request(&context.pool, &context.normal_token, EVENTS_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
@@ -101,7 +103,8 @@ mod tests {
             .with_collection_id(collection.collection.id)
             .with_entity_id(collection.collection.id)
             .with_entity_name(&collection.collection.name),
-        );
+        )
+        .await;
         let collection_less_event = emit_test_event(
             &context.pool,
             &NewEvent::new(
@@ -111,7 +114,8 @@ mod tests {
                 "collection-less audit filter test",
             )
             .unwrap(),
-        );
+        )
+        .await;
 
         let endpoint = format!(
             "{EVENTS_ENDPOINT}?entity_type=collection&action=created&collection_id={}",
@@ -171,7 +175,8 @@ mod tests {
             .with_collection_id(collection.collection.id)
             .with_entity_id(collection.collection.id)
             .with_entity_name(&collection.collection.name),
-        );
+        )
+        .await;
         let other_event = emit_test_event(
             &context.pool,
             &NewEvent::new(
@@ -184,7 +189,8 @@ mod tests {
             .with_collection_id(collection.collection.id)
             .with_entity_id(collection.collection.id)
             .with_entity_name("not-the-collection"),
-        );
+        )
+        .await;
 
         let endpoint = format!("/api/v1/collections/{}/events", collection.collection.id);
         let resp = get_request(&context.pool, &context.normal_token, &endpoint).await;
@@ -240,7 +246,8 @@ mod tests {
             .with_metadata(json!({
                 "related_collection_ids": [related_collection.id],
             })),
-        );
+        )
+        .await;
 
         let resp = get_request(&context.pool, &user_token, EVENTS_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;

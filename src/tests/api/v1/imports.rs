@@ -3,7 +3,8 @@ mod tests {
     use actix_rt::time::sleep;
     use actix_web::{http::StatusCode, test};
     use chrono::Utc;
-    use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
+    use diesel::{ExpressionMethods, QueryDsl};
+    use diesel_async::RunQueryDsl;
     use futures::join;
     use rstest::rstest;
     use std::time::Duration;
@@ -221,12 +222,14 @@ mod tests {
             .expect("import should have results");
         assert!(finished_at >= last_result_at);
 
-        let stored_payload = with_connection(&context.pool, |conn| {
+        let stored_payload = with_connection(&context.pool, async |conn| {
             tasks
                 .filter(task_id_field.eq(task.id))
                 .select((request_payload, request_redacted_at))
                 .first::<(Option<serde_json::Value>, Option<chrono::NaiveDateTime>)>(conn)
+                .await
         })
+        .await
         .unwrap();
         assert!(stored_payload.0.is_none());
         assert!(stored_payload.1.is_some());
@@ -728,12 +731,14 @@ mod tests {
         let completed = wait_for_task(&context, task.id, &[TaskStatus::Failed]).await;
         assert_eq!(completed.status, TaskStatus::Failed);
 
-        let description = with_connection(&context.pool, |conn| {
+        let description = with_connection(&context.pool, async |conn| {
             collections
                 .filter(collection_id_field.eq(fixture.collection.id))
                 .select(collection_description)
                 .first::<String>(conn)
+                .await
         })
+        .await
         .unwrap();
         assert_eq!(description, fixture.collection.description);
     }
@@ -770,12 +775,14 @@ mod tests {
         let completed = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
         assert_eq!(completed.status, TaskStatus::Succeeded);
 
-        let description = with_connection(&context.pool, |conn| {
+        let description = with_connection(&context.pool, async |conn| {
             collections
                 .filter(collection_id_field.eq(fixture.collection.id))
                 .select(collection_description)
                 .first::<String>(conn)
+                .await
         })
+        .await
         .unwrap();
         assert_eq!(description, updated_description);
     }
@@ -858,21 +865,25 @@ mod tests {
         .await;
         assert_eq!(completed.status, TaskStatus::PartiallySucceeded);
 
-        let created = with_connection(&context.pool, |conn| {
+        let created = with_connection(&context.pool, async |conn| {
             hubuumclass
                 .filter(class_name_col.eq(&allowed_class))
                 .filter(collection_id.eq(allowed.collection.id))
                 .count()
                 .get_result::<i64>(conn)
+                .await
         })
+        .await
         .unwrap();
-        let blocked = with_connection(&context.pool, |conn| {
+        let blocked = with_connection(&context.pool, async |conn| {
             hubuumclass
                 .filter(class_name_col.eq(&forbidden_class))
                 .filter(collection_id.eq(forbidden.collection.id))
                 .count()
                 .get_result::<i64>(conn)
+                .await
         })
+        .await
         .unwrap();
         assert_eq!(created, 1);
         assert_eq!(blocked, 0);
@@ -978,12 +989,14 @@ mod tests {
         .await;
         assert_eq!(completed.status, TaskStatus::Failed);
 
-        let created = with_connection(&context.pool, |conn| {
+        let created = with_connection(&context.pool, async |conn| {
             hubuumclass
                 .filter(class_name_col.eq_any([allowed_class.clone(), forbidden_class.clone()]))
                 .count()
                 .get_result::<i64>(conn)
+                .await
         })
+        .await
         .unwrap();
         assert_eq!(created, 0);
     }

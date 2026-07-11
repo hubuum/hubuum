@@ -14,12 +14,12 @@ pub const NEXT_CURSOR_HEADER: &str = "X-Next-Cursor";
 pub const TOTAL_COUNT_HEADER: &str = "X-Total-Count";
 pub const SKIPPED_TOTAL_COUNT: i64 = -1;
 
-pub fn exact_count_or_skipped(
+pub async fn exact_count_or_skipped(
     query_options: &QueryOptions,
-    count: impl FnOnce() -> Result<i64, ApiError>,
+    count: impl AsyncFnOnce() -> Result<i64, ApiError>,
 ) -> Result<i64, ApiError> {
     if query_options.include_total {
-        count()
+        count().await
     } else {
         Ok(SKIPPED_TOTAL_COUNT)
     }
@@ -661,8 +661,8 @@ mod tests {
         assert_eq!(prepared.sort[1].field, FilterField::Id);
     }
 
-    #[test]
-    fn exact_total_count_can_be_skipped() {
+    #[tokio::test]
+    async fn exact_total_count_can_be_skipped() {
         let options = QueryOptions {
             filters: vec![],
             sort: vec![],
@@ -670,9 +670,10 @@ mod tests {
             cursor: None,
             include_total: false,
         };
-        let count = exact_count_or_skipped(&options, || {
+        let count = exact_count_or_skipped(&options, async || {
             panic!("count query must not execute when include_total is false")
         })
+        .await
         .unwrap();
         assert_eq!(count, SKIPPED_TOTAL_COUNT);
 

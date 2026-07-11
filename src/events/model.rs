@@ -7,8 +7,8 @@
 //! catalog enums at the Diesel boundary while exposing typed builders; the
 //! [`Event`] read model converts back to the typed enums on demand.
 
+use crate::db::prelude::*;
 use chrono::NaiveDateTime;
-use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;

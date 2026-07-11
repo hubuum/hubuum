@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test};
-    use diesel::prelude::*;
     use serde_json::json;
 
     use crate::db::with_connection;
@@ -50,13 +50,13 @@ mod tests {
         test::read_body_json(resp).await
     }
 
-    fn audit_event_count(
+    async fn audit_event_count(
         context: &TestContext,
         entity_type_value: EntityType,
         action_value: Action,
         entity_id_value: i32,
     ) -> i64 {
-        with_connection(&context.pool, |conn| {
+        with_connection(&context.pool, async |conn| {
             use crate::schema::events::dsl::{action, entity_id, entity_type, events};
 
             events
@@ -65,7 +65,9 @@ mod tests {
                 .filter(entity_id.eq(entity_id_value))
                 .count()
                 .get_result::<i64>(conn)
+                .await
         })
+        .await
         .unwrap()
     }
 
@@ -94,7 +96,7 @@ mod tests {
         let created: EventSink = test::read_body_json(resp).await;
         assert_eq!(created.kind, EventSinkKind::Webhook);
         assert_eq!(
-            audit_event_count(&context, EntityType::EventSink, Action::Created, created.id),
+            audit_event_count(&context, EntityType::EventSink, Action::Created, created.id).await,
             1
         );
 
@@ -134,7 +136,7 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::NO_CONTENT).await;
         assert_eq!(
-            audit_event_count(&context, EntityType::EventSink, Action::Deleted, created.id),
+            audit_event_count(&context, EntityType::EventSink, Action::Deleted, created.id).await,
             1
         );
     }
@@ -178,7 +180,8 @@ mod tests {
                 EntityType::EventSubscription,
                 Action::Created,
                 created.id
-            ),
+            )
+            .await,
             1
         );
 

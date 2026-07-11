@@ -1,5 +1,5 @@
+use crate::db::prelude::*;
 use diesel::dsl::sql;
-use diesel::prelude::*;
 use diesel::sql_types::Bool;
 
 use crate::apply_query_options;
@@ -29,13 +29,17 @@ pub async fn list_events_with_total_count(
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventResponse>, i64), ApiError> {
     let query = build_event_query(accessible_collection_ids, include_collection_less, filters)?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
-    })?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+        with_connection(pool, async |conn| {
+            query.count().get_result::<i64>(conn).await
+        })
+        .await
+    })
+    .await?;
 
     let mut query = build_event_query(accessible_collection_ids, include_collection_less, filters)?;
     apply_query_options!(query, query_options, EventResponse);
-    let rows = with_connection(pool, |conn| query.load::<Event>(conn))?;
+    let rows = with_connection(pool, async |conn| query.load::<Event>(conn).await).await?;
     let rows = rows
         .into_iter()
         .map(|event| {

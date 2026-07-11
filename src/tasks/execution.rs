@@ -292,31 +292,35 @@ pub(super) async fn execute_import_strict(
     planned_items: &[PlannedItem],
     accumulator: &mut ExecutionAccumulator,
 ) -> Result<(), ApiError> {
-    let execution = with_transaction(pool, |conn| -> Result<Vec<PlannedTaskResult>, ApiError> {
-        let mut runtime = RuntimeState::default();
-        let mut completed = Vec::with_capacity(planned_items.len());
+    let execution = with_transaction(
+        pool,
+        async |conn| -> Result<Vec<PlannedTaskResult>, ApiError> {
+            let mut runtime = RuntimeState::default();
+            let mut completed = Vec::with_capacity(planned_items.len());
 
-        for item in planned_items {
-            if let Some(execution) = &item.execution {
-                let identifier = item
-                    .result
-                    .identifier
-                    .clone()
-                    .unwrap_or_else(|| item.result.entity_kind.clone());
-                if let Err(err) = execute_planned_item(conn, &mut runtime, execution) {
-                    error!(
-                        message = "Import execution failed during strict transaction",
-                        identifier = %identifier,
-                        error = %err
-                    );
-                    return Err(err);
+            for item in planned_items {
+                if let Some(execution) = &item.execution {
+                    let identifier = item
+                        .result
+                        .identifier
+                        .clone()
+                        .unwrap_or_else(|| item.result.entity_kind.clone());
+                    if let Err(err) = execute_planned_item(conn, &mut runtime, execution).await {
+                        error!(
+                            message = "Import execution failed during strict transaction",
+                            identifier = %identifier,
+                            error = %err
+                        );
+                        return Err(err);
+                    }
                 }
+                completed.push(item.result.clone());
             }
-            completed.push(item.result.clone());
-        }
 
-        Ok(completed)
-    });
+            Ok(completed)
+        },
+    )
+    .await;
 
     match execution {
         Ok(completed) => {
@@ -341,9 +345,10 @@ pub(super) async fn execute_import_best_effort(
 
     for item in planned_items {
         let result = if let Some(execution) = &item.execution {
-            with_transaction(pool, |conn| {
-                execute_planned_item(conn, &mut runtime, execution)
+            with_transaction(pool, async |conn| {
+                execute_planned_item(conn, &mut runtime, execution).await
             })
+            .await
             .map(|_| ())
         } else {
             Ok(())
@@ -376,15 +381,15 @@ pub(super) async fn execute_import_best_effort(
     Ok(())
 }
 
-pub(super) fn execute_planned_item(
-    conn: &mut diesel::PgConnection,
+pub(super) async fn execute_planned_item(
+    conn: &mut crate::db::DbConnection,
     runtime: &mut RuntimeState,
     execution: &PlannedExecution,
 ) -> Result<(), ApiError> {
     match execution {
         PlannedExecution::CreateCollection(input) => {
-            let parent = resolve_collection_parent_runtime(conn, runtime, input)?;
-            let created = create_collection_db(conn, input, Some(parent.id))?;
+            let parent = resolve_collection_parent_runtime(conn, runtime, input).await?;
+            let created = create_collection_db(conn, input, Some(parent.id)).await?;
             if let Some(reference) = &input.ref_ {
                 runtime
                     .collections_by_ref
@@ -395,7 +400,7 @@ pub(super) fn execute_planned_item(
             collection_id,
             input,
         } => {
-            let updated = update_collection_db(conn, *collection_id, input)?;
+            let updated = update_collection_db(conn, *collection_id, input).await?;
             if let Some(reference) = &input.ref_ {
                 runtime
                     .collections_by_ref
@@ -408,14 +413,15 @@ pub(super) fn execute_planned_item(
                 runtime,
                 input.collection_ref.as_deref(),
                 input.collection_key.as_ref(),
-            )?;
-            let created = create_class_db(conn, input, collection.id)?;
+            )
+            .await?;
+            let created = create_class_db(conn, input, collection.id).await?;
             if let Some(reference) = &input.ref_ {
                 runtime.classes_by_ref.insert(reference.clone(), created);
             }
         }
         PlannedExecution::UpdateClass { class_id, input } => {
-            let updated = update_class_db(conn, *class_id, input)?;
+            let updated = update_class_db(conn, *class_id, input).await?;
             if let Some(reference) = &input.ref_ {
                 runtime.classes_by_ref.insert(reference.clone(), updated);
             }
@@ -426,14 +432,15 @@ pub(super) fn execute_planned_item(
                 runtime,
                 input.class_ref.as_deref(),
                 input.class_key.as_ref(),
-            )?;
-            let created = create_object_db(conn, input, &class)?;
+            )
+            .await?;
+            let created = create_object_db(conn, input, &class).await?;
             if let Some(reference) = &input.ref_ {
                 runtime.objects_by_ref.insert(reference.clone(), created);
             }
         }
         PlannedExecution::UpdateObject { object_id, input } => {
-            let updated = update_object_db(conn, *object_id, input)?;
+            let updated = update_object_db(conn, *object_id, input).await?;
             if let Some(reference) = &input.ref_ {
                 runtime.objects_by_ref.insert(reference.clone(), updated);
             }
@@ -444,20 +451,23 @@ pub(super) fn execute_planned_item(
                 runtime,
                 input.from_class_ref.as_deref(),
                 input.from_class_key.as_ref(),
-            )?;
+            )
+            .await?;
             let to_class = resolve_class_runtime(
                 conn,
                 runtime,
                 input.to_class_ref.as_deref(),
                 input.to_class_key.as_ref(),
-            )?;
+            )
+            .await?;
             create_class_relation_db(
                 conn,
                 from_class.id,
                 to_class.id,
                 input.forward_template_alias.clone(),
                 input.reverse_template_alias.clone(),
-            )?;
+            )
+            .await?;
         }
         PlannedExecution::CreateObjectRelation(input) => {
             let from_object = resolve_object_runtime(
@@ -465,14 +475,16 @@ pub(super) fn execute_planned_item(
                 runtime,
                 input.from_object_ref.as_deref(),
                 input.from_object_key.as_ref(),
-            )?;
+            )
+            .await?;
             let to_object = resolve_object_runtime(
                 conn,
                 runtime,
                 input.to_object_ref.as_deref(),
                 input.to_object_key.as_ref(),
-            )?;
-            create_object_relation_db(conn, &from_object, &to_object)?;
+            )
+            .await?;
+            create_object_relation_db(conn, &from_object, &to_object).await?;
         }
         PlannedExecution::ApplyCollectionPermissions(input) => {
             let collection = resolve_collection_runtime(
@@ -480,9 +492,11 @@ pub(super) fn execute_planned_item(
                 runtime,
                 input.collection_ref.as_deref(),
                 input.collection_key.as_ref(),
-            )?;
+            )
+            .await?;
             let identity_scope = input.group_key.identity_scope_name();
-            let group = lookup_group_by_name_db(conn, identity_scope, &input.group_key.groupname)?
+            let group = lookup_group_by_name_db(conn, identity_scope, &input.group_key.groupname)
+                .await?
                 .ok_or_else(|| {
                     ApiError::NotFound(format!(
                         "Group '{}/{}' not found",
@@ -495,7 +509,8 @@ pub(super) fn execute_planned_item(
                 group.id,
                 &input.permissions,
                 input.replace_existing.unwrap_or(false),
-            )?;
+            )
+            .await?;
         }
     }
 

@@ -1,20 +1,19 @@
-use diesel::prelude::*;
-
 use hubuum_events_core::EventContext;
 use serde_json::json;
 
-use crate::db::{DbPool, with_connection, with_transaction};
+use crate::db::prelude::*;
+use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, NewEvent, emit_event};
 use crate::models::{NewPrincipal, Principal, PrincipalKind, PrincipalSettings, User};
 
 pub trait InsertPrincipalRecord {
     /// Insert the principal row and return it (principal-first id allocation).
-    fn insert(&self, conn: &mut PgConnection) -> Result<Principal, ApiError>;
+    async fn insert(&self, conn: &mut DbConnection) -> Result<Principal, ApiError>;
 }
 
 impl InsertPrincipalRecord for NewPrincipal<'_> {
-    fn insert(&self, conn: &mut PgConnection) -> Result<Principal, ApiError> {
+    async fn insert(&self, conn: &mut DbConnection) -> Result<Principal, ApiError> {
         use crate::schema::principals;
 
         diesel::insert_into(principals::table)
@@ -24,6 +23,7 @@ impl InsertPrincipalRecord for NewPrincipal<'_> {
                 principals::name.eq(self.name),
             ))
             .get_result::<Principal>(conn)
+            .await
             .map_err(ApiError::from)
     }
 }
@@ -33,11 +33,13 @@ pub async fn load_principal_by_id(
     principal_id_value: i32,
 ) -> Result<Principal, ApiError> {
     use crate::schema::principals::dsl::{id, principals as principals_table};
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         principals_table
             .filter(id.eq(principal_id_value))
             .first::<Principal>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn load_principal_settings(
@@ -46,12 +48,14 @@ pub async fn load_principal_settings(
 ) -> Result<PrincipalSettings, ApiError> {
     use crate::schema::principals::dsl::{id, principals as principals_table, settings};
 
-    let value = with_connection(pool, |conn| {
+    let value = with_connection(pool, async |conn| {
         principals_table
             .filter(id.eq(principal_id_value))
             .select(settings)
             .first::<serde_json::Value>(conn)
-    })?;
+            .await
+    })
+    .await?;
     stored_principal_settings(principal_id_value, value)
 }
 
@@ -71,12 +75,13 @@ pub async fn mutate_principal_settings(
 ) -> Result<PrincipalSettings, ApiError> {
     use crate::schema::principals;
 
-    with_transaction(pool, |conn| -> Result<PrincipalSettings, ApiError> {
+    with_transaction(pool, async |conn| -> Result<PrincipalSettings, ApiError> {
         let (kind, name, stored_before) = principals::table
             .filter(principals::id.eq(principal_id_value))
             .select((principals::kind, principals::name, principals::settings))
             .for_update()
-            .first::<(String, String, serde_json::Value)>(conn)?;
+            .first::<(String, String, serde_json::Value)>(conn)
+            .await?;
         let before = stored_principal_settings(principal_id_value, stored_before)?;
         let after = match mutation {
             PrincipalSettingsMutation::Replace => input,
@@ -86,7 +91,8 @@ pub async fn mutate_principal_settings(
 
         diesel::update(principals::table.filter(principals::id.eq(principal_id_value)))
             .set(principals::settings.eq(after.as_value()))
-            .execute(conn)?;
+            .execute(conn)
+            .await?;
 
         let entity_type = match PrincipalKind::from_db(&kind)? {
             PrincipalKind::Human => EntityType::User,
@@ -103,10 +109,11 @@ pub async fn mutate_principal_settings(
         .with_entity_name(name)
         .with_before(json!({ "settings": before }))
         .with_after(json!({ "settings": after }));
-        emit_event(conn, &event)?;
+        emit_event(conn, &event).await?;
 
         Ok(after)
     })
+    .await
 }
 
 fn stored_principal_settings(
@@ -128,13 +135,15 @@ pub async fn load_principal_with_user(
 ) -> Result<(Principal, Option<User>), ApiError> {
     use crate::schema::{principals, users};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         principals::table
             .left_join(users::table.on(users::id.eq(principals::id)))
             .filter(principals::id.eq(principal_id_value))
             .select((Principal::as_select(), Option::<User>::as_select()))
             .first::<(Principal, Option<User>)>(conn)
+            .await
     })
+    .await
 }
 
 pub struct PrincipalIdentityMetadata {
@@ -152,13 +161,15 @@ pub async fn principal_identity_scope_and_name(
 ) -> Result<(String, String), ApiError> {
     use crate::schema::{identity_scopes, principals};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         principals::table
             .inner_join(identity_scopes::table)
             .filter(principals::id.eq(principal_id_value))
             .select((identity_scopes::name, principals::name))
             .first::<(String, String)>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn principal_identity_metadata(
@@ -174,7 +185,7 @@ pub async fn principal_identity_metadata(
         provider_managed,
         last_sync_attempted_at,
         last_sync_success_at,
-    ) = with_connection(pool, |conn| {
+    ) = with_connection(pool, async |conn| {
         principals::table
             .inner_join(identity_scopes::table)
             .filter(principals::id.eq(principal_id_value))
@@ -194,7 +205,9 @@ pub async fn principal_identity_metadata(
                 Option<chrono::NaiveDateTime>,
                 Option<chrono::NaiveDateTime>,
             )>(conn)
-    })?;
+            .await
+    })
+    .await?;
 
     Ok(PrincipalIdentityMetadata {
         identity_scope,

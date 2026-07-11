@@ -1,6 +1,6 @@
 use chrono::NaiveDateTime;
 
-use diesel::prelude::*;
+use crate::db::prelude::*;
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -154,7 +154,7 @@ where
 {
     use crate::db::with_connection;
     use crate::schema::tokens::dsl::{id, principal_id, revoked_at, tokens};
-    with_connection(backend.db_pool(), |conn| {
+    with_connection(backend.db_pool(), async |conn| {
         diesel::update(
             tokens
                 .filter(id.eq(token_id))
@@ -163,7 +163,9 @@ where
         )
         .set(revoked_at.eq(diesel::dsl::now))
         .execute(conn)
+        .await
     })
+    .await
 }
 
 pub async fn revoke_token_by_id_for_principal<C>(
@@ -182,12 +184,13 @@ where
     use crate::db::with_transaction;
     use crate::schema::tokens::dsl::{id, principal_id, revoked_at, tokens};
 
-    with_transaction(backend.db_pool(), |conn| -> Result<usize, ApiError> {
+    with_transaction(backend.db_pool(), async |conn| -> Result<usize, ApiError> {
         let before = tokens
             .filter(id.eq(token_id))
             .filter(principal_id.eq(principal))
             .filter(revoked_at.is_null())
             .first::<PrincipalToken>(conn)
+            .await
             .optional()?;
 
         let updated = diesel::update(
@@ -198,6 +201,7 @@ where
         )
         .set(revoked_at.eq(diesel::dsl::now))
         .get_result::<PrincipalToken>(conn)
+        .await
         .optional()?;
 
         if let (Some(before), Some(after)) = (before, updated) {
@@ -212,12 +216,13 @@ where
             )?
             .with_before(token_snapshot(&before))
             .with_after(token_snapshot(&after));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(1)
         } else {
             Ok(0)
         }
     })
+    .await
 }
 
 /// Create a named/expiring/optionally-scoped token for a principal and return
@@ -273,11 +278,12 @@ where
     let name = name.map(|s| s.to_string());
     let description = description.map(|s| s.to_string());
 
-    with_transaction(backend.db_pool(), |conn| -> Result<(), ApiError> {
+    with_transaction(backend.db_pool(), async |conn| -> Result<(), ApiError> {
         let principal_kind = principals::table
             .filter(principals::id.eq(principal))
             .select(principals::kind)
-            .first::<String>(conn)?;
+            .first::<String>(conn)
+            .await?;
 
         // Lock the SA row in the same transaction as insert so disable-vs-mint
         // races fail closed.
@@ -286,7 +292,8 @@ where
                 .filter(service_accounts::id.eq(principal))
                 .for_update()
                 .select(service_accounts::disabled_at)
-                .first::<Option<chrono::NaiveDateTime>>(conn)?;
+                .first::<Option<chrono::NaiveDateTime>>(conn)
+                .await?;
 
             if disabled_at.is_some() {
                 return Err(ApiError::Conflict(
@@ -304,7 +311,8 @@ where
                 tokens::expires_at.eq(expires_at),
                 tokens::scoped.eq(scoped),
             ))
-            .get_result::<PrincipalToken>(conn)?;
+            .get_result::<PrincipalToken>(conn)
+            .await?;
 
         for permission in &scope_strings {
             diesel::insert_into(crate::schema::token_scopes::table)
@@ -312,7 +320,8 @@ where
                     crate::schema::token_scopes::token_id.eq(token.id),
                     crate::schema::token_scopes::permission.eq(permission),
                 ))
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
         }
         if let Some(context) = context {
             let event = token_event(
@@ -325,10 +334,11 @@ where
                 ),
             )?
             .with_after(token_snapshot(&token));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
         }
         Ok(())
-    })?;
+    })
+    .await?;
 
     Ok(raw)
 }

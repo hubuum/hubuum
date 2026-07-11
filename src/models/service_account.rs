@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

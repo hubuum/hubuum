@@ -6,6 +6,7 @@ use crate::models::search::SQLValue;
 use crate::traits::PrincipalIdAccessor;
 use crate::traits::{CursorPaginated, CursorSqlMapping};
 use crate::utilities::extensions::CustomStringExtensions;
+use diesel_async::RunQueryDsl;
 
 #[derive(diesel::QueryableByName)]
 struct CountRow {
@@ -177,11 +178,13 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         crate::apply_query_options!(base_query, query_options, Collection);
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             base_query
                 .select(collections::all_columns())
                 .load::<Collection>(conn)
+                .await
         })
+        .await
     }
 
     async fn count_collections_from_backend_with_admin_status(
@@ -273,7 +276,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
-        with_connection(pool, |conn| base_query.count().get_result::<i64>(conn))
+        with_connection(pool, async |conn| {
+            base_query.count().get_result::<i64>(conn).await
+        })
+        .await
     }
 
     async fn search_classes_from_backend(
@@ -394,12 +400,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         trace_query!(base_query, "Searching classes");
 
-        let result = with_connection(pool, |conn| {
+        let result = with_connection(pool, async |conn| {
             base_query
                 .select(hubuumclass::all_columns())
                 .distinct()
                 .load::<HubuumClass>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         let collection_map: std::collections::HashMap<i32, Collection> =
             collections.into_iter().map(|n| (n.id, n)).collect();
@@ -478,13 +486,15 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             base_query
                 .select(class_id)
                 .distinct()
                 .count()
                 .get_result::<i64>(conn)
+                .await
         })
+        .await
     }
 
     async fn search_objects_from_backend(
@@ -610,12 +620,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         trace_query!(base_query, "Searching objects");
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             base_query
                 .select(hubuumobject::all_columns())
                 .distinct()
                 .load::<HubuumObject>(conn)
+                .await
         })
+        .await
     }
 
     async fn count_objects_from_backend_with_admin_status(
@@ -694,13 +706,15 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             base_query
                 .select(object_id)
                 .distinct()
                 .count()
                 .get_result::<i64>(conn)
+                .await
         })
+        .await
     }
 
     async fn search_class_relations_from_backend(
@@ -915,27 +929,32 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
 
         let base_query = build_query()?;
-        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
-            with_connection(pool, |conn| {
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, async || {
+            with_connection(pool, async |conn| {
                 base_query
                     .select(class_relation_id)
                     .distinct()
                     .count()
                     .get_result::<i64>(conn)
+                    .await
             })
-        })?;
+            .await
+        })
+        .await?;
 
         let mut base_query = build_query()?;
         crate::apply_query_options!(base_query, query_options, HubuumClassRelation);
 
         trace_query!(base_query, "Searching class relations");
 
-        let items = with_connection(pool, |conn| {
+        let items = with_connection(pool, async |conn| {
             base_query
                 .select(hubuumclass_relation::all_columns())
                 .distinct()
                 .load::<HubuumClassRelation>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         Ok((items, total_count))
     }
@@ -1051,15 +1070,18 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
 
         let base_query = build_query()?;
-        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
-            with_connection(pool, |conn| {
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, async || {
+            with_connection(pool, async |conn| {
                 base_query
                     .select(relation_id)
                     .distinct()
                     .count()
                     .get_result::<i64>(conn)
+                    .await
             })
-        })?;
+            .await
+        })
+        .await?;
 
         let mut base_query = build_query()?;
         crate::apply_query_options!(base_query, query_options, HubuumClassRelation);
@@ -1069,12 +1091,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             "Searching direct class relations touching class"
         );
 
-        let items = with_connection(pool, |conn| {
+        let items = with_connection(pool, async |conn| {
             base_query
                 .select(hubuumclass_relation::all_columns())
                 .distinct()
                 .load::<HubuumClassRelation>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         Ok((items, total_count))
     }
@@ -1144,7 +1168,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         trace_query!(base_query, "Searching class relations among class IDs");
 
-        with_connection(pool, |conn| base_query.load::<HubuumClassRelation>(conn))
+        with_connection(pool, async |conn| {
+            base_query.load::<HubuumClassRelation>(conn).await
+        })
+        .await
     }
 
     async fn search_classes_related_to_from_backend<K>(
@@ -1222,7 +1249,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         );
         trace_query!(query, "Searching related classes");
 
-        with_connection(pool, |conn| query.get_results::<ClassGraphRow>(conn))
+        with_connection(pool, async |conn| {
+            query.get_results::<ClassGraphRow>(conn).await
+        })
+        .await
     }
 
     async fn classes_related_to_page_from_backend_with_admin_status<K>(
@@ -1254,13 +1284,16 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let total_count_spec = base_spec.clone().into_count_query("related_classes_count");
         let spec = apply_raw_sql_pagination::<ClassGraphRow>(base_spec, &query_options)?;
 
-        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
-            with_connection(pool, |conn| {
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, async || {
+            with_connection(pool, async |conn| {
                 bind_raw_sql_query!(total_count_spec)
                     .get_result::<CountRow>(conn)
+                    .await
                     .map(|row| row.count)
             })
-        })?;
+            .await
+        })
+        .await?;
 
         let query = bind_raw_sql_query!(spec.clone());
         debug!(
@@ -1269,7 +1302,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             bind_variables = ?spec.bind_variables
         );
         trace_query!(query, "Searching related classes");
-        let items = with_connection(pool, |conn| query.get_results::<ClassGraphRow>(conn))?;
+        let items = with_connection(pool, async |conn| {
+            query.get_results::<ClassGraphRow>(conn).await
+        })
+        .await?;
 
         Ok((items, total_count))
     }
@@ -1422,27 +1458,32 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
 
         let base_query = build_query()?;
-        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
-            with_connection(pool, |conn| {
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, async || {
+            with_connection(pool, async |conn| {
                 base_query
                     .select(relation_id)
                     .distinct()
                     .count()
                     .get_result::<i64>(conn)
+                    .await
             })
-        })?;
+            .await
+        })
+        .await?;
 
         let mut base_query = build_query()?;
         crate::apply_query_options!(base_query, query_options, HubuumObjectRelation);
 
         trace_query!(base_query, "Searching object relations");
 
-        let items = with_connection(pool, |conn| {
+        let items = with_connection(pool, async |conn| {
             base_query
                 .select(hubuumobject_relation::all_columns())
                 .distinct()
                 .load::<HubuumObjectRelation>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         Ok((items, total_count))
     }
@@ -1578,15 +1619,18 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
 
         let base_query = build_query()?;
-        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
-            with_connection(pool, |conn| {
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, async || {
+            with_connection(pool, async |conn| {
                 base_query
                     .select(relation_id)
                     .distinct()
                     .count()
                     .get_result::<i64>(conn)
+                    .await
             })
-        })?;
+            .await
+        })
+        .await?;
 
         let mut base_query = build_query()?;
         crate::apply_query_options!(base_query, query_options, HubuumObjectRelation);
@@ -1596,12 +1640,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             "Searching direct object relations touching object"
         );
 
-        let items = with_connection(pool, |conn| {
+        let items = with_connection(pool, async |conn| {
             base_query
                 .select(hubuumobject_relation::all_columns())
                 .distinct()
                 .load::<HubuumObjectRelation>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         Ok((items, total_count))
     }
@@ -1678,7 +1724,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         trace_query!(base_query, "Searching object relations among object IDs");
 
-        with_connection(pool, |conn| base_query.load::<HubuumObjectRelation>(conn))
+        with_connection(pool, async |conn| {
+            base_query.load::<HubuumObjectRelation>(conn).await
+        })
+        .await
     }
 
     async fn search_objects_related_to_from_backend<O>(
@@ -1756,9 +1805,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         );
         trace_query!(query, "Searching source-relative related objects");
 
-        with_connection(pool, |conn| {
-            query.get_results::<RelatedObjectGraphRow>(conn)
+        with_connection(pool, async |conn| {
+            query.get_results::<RelatedObjectGraphRow>(conn).await
         })
+        .await
     }
 
     async fn objects_related_to_page_from_backend_with_admin_status<O>(
@@ -1790,13 +1840,16 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let total_count_spec = base_spec.clone().into_count_query("related_objects_count");
         let spec = apply_raw_sql_pagination::<RelatedObjectGraphRow>(base_spec, &query_options)?;
 
-        let total_count = crate::pagination::exact_count_or_skipped(&query_options, || {
-            with_connection(pool, |conn| {
+        let total_count = crate::pagination::exact_count_or_skipped(&query_options, async || {
+            with_connection(pool, async |conn| {
                 bind_raw_sql_query!(total_count_spec)
                     .get_result::<CountRow>(conn)
+                    .await
                     .map(|row| row.count)
             })
-        })?;
+            .await
+        })
+        .await?;
 
         let query = bind_raw_sql_query!(spec.clone());
         debug!(
@@ -1805,9 +1858,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             bind_variables = ?spec.bind_variables
         );
         trace_query!(query, "Searching source-relative related objects");
-        let items = with_connection(pool, |conn| {
-            query.get_results::<RelatedObjectGraphRow>(conn)
-        })?;
+        let items = with_connection(pool, async |conn| {
+            query.get_results::<RelatedObjectGraphRow>(conn).await
+        })
+        .await?;
 
         Ok((items, total_count))
     }
@@ -1891,9 +1945,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         );
         trace_query!(query, "Searching batched related objects");
 
-        with_connection(pool, |conn| {
-            query.get_results::<RelatedObjectIncludeRow>(conn)
+        with_connection(pool, async |conn| {
+            query.get_results::<RelatedObjectIncludeRow>(conn).await
         })
+        .await
     }
 
     async fn bidirectionally_related_objects_for_roots_from_backend(
@@ -1968,9 +2023,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         );
         trace_query!(query, "Searching batched bidirectionally related objects");
 
-        with_connection(pool, |conn| {
-            query.get_results::<RelatedObjectForRootRow>(conn)
+        with_connection(pool, async |conn| {
+            query.get_results::<RelatedObjectForRootRow>(conn).await
         })
+        .await
     }
 }
 
@@ -3188,7 +3244,7 @@ impl User {
 
         trace_query!(base_query, "Searching users");
 
-        let rows = with_connection(pool, |conn| {
+        let rows = with_connection(pool, async |conn| {
             base_query
                 .select((
                     crate::schema::users::all_columns,
@@ -3209,7 +3265,9 @@ impl User {
                     Option<chrono::NaiveDateTime>,
                     Option<chrono::NaiveDateTime>,
                 )>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         Ok(rows
             .into_iter()
@@ -3259,13 +3317,15 @@ impl User {
             }
         }
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             base_query
                 .select(id)
                 .distinct()
                 .count()
                 .get_result::<i64>(conn)
+                .await
         })
+        .await
     }
 
     pub async fn search_groups(
@@ -3316,12 +3376,14 @@ impl User {
 
         trace_query!(base_query, "Searching groups");
 
-        let result = with_connection(pool, |conn| {
+        let result = with_connection(pool, async |conn| {
             base_query
                 .select(groups::all_columns())
                 .distinct()
                 .load::<Group>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         Ok(result)
     }
@@ -3362,12 +3424,14 @@ impl User {
             }
         }
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             base_query
                 .select(id)
                 .distinct()
                 .count()
                 .get_result::<i64>(conn)
+                .await
         })
+        .await
     }
 }

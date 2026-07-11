@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 
 use crate::db::traits::GetClass;
 use crate::db::{DbPool, with_connection, with_transaction};
@@ -40,24 +40,34 @@ fn class_event(
 impl GetClass for HubuumClass {
     async fn class_from_backend(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
-        with_connection(pool, |conn| -> Result<HubuumClass, diesel::result::Error> {
-            let class = hubuumclass
-                .filter(id.eq(self.id))
-                .first::<HubuumClass>(conn)?;
-            Ok(class)
-        })
+        with_connection(
+            pool,
+            async |conn| -> Result<HubuumClass, diesel::result::Error> {
+                let class = hubuumclass
+                    .filter(id.eq(self.id))
+                    .first::<HubuumClass>(conn)
+                    .await?;
+                Ok(class)
+            },
+        )
+        .await
     }
 }
 
 impl GetClass for HubuumClassID {
     async fn class_from_backend(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
-        with_connection(pool, |conn| -> Result<HubuumClass, diesel::result::Error> {
-            let class = hubuumclass
-                .filter(id.eq(self.id()))
-                .first::<HubuumClass>(conn)?;
-            Ok(class)
-        })
+        with_connection(
+            pool,
+            async |conn| -> Result<HubuumClass, diesel::result::Error> {
+                let class = hubuumclass
+                    .filter(id.eq(self.id()))
+                    .first::<HubuumClass>(conn)
+                    .await?;
+                Ok(class)
+            },
+        )
+        .await
     }
 }
 
@@ -69,16 +79,19 @@ impl GetClass<(HubuumClass, HubuumClass)> for HubuumClassRelation {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
         with_connection(
             pool,
-            |conn| -> Result<(HubuumClass, HubuumClass), diesel::result::Error> {
+            async |conn| -> Result<(HubuumClass, HubuumClass), diesel::result::Error> {
                 let from_class = hubuumclass
                     .filter(id.eq(self.from_hubuum_class_id))
-                    .first::<HubuumClass>(conn)?;
+                    .first::<HubuumClass>(conn)
+                    .await?;
                 let to_class = hubuumclass
                     .filter(id.eq(self.to_hubuum_class_id))
-                    .first::<HubuumClass>(conn)?;
+                    .first::<HubuumClass>(conn)
+                    .await?;
                 Ok((from_class, to_class))
             },
         )
+        .await
     }
 }
 
@@ -92,20 +105,24 @@ impl GetClass<(HubuumClass, HubuumClass)> for HubuumClassRelationID {
 
         with_connection(
             pool,
-            |conn| -> Result<(HubuumClass, HubuumClass), diesel::result::Error> {
+            async |conn| -> Result<(HubuumClass, HubuumClass), diesel::result::Error> {
                 let relation = hubuumclass_relation
                     .filter(rel_id.eq(self.id()))
-                    .first::<HubuumClassRelation>(conn)?;
+                    .first::<HubuumClassRelation>(conn)
+                    .await?;
 
                 let from_class = hubuumclass
                     .filter(hid.eq(relation.from_hubuum_class_id))
-                    .first::<HubuumClass>(conn)?;
+                    .first::<HubuumClass>(conn)
+                    .await?;
                 let to_class = hubuumclass
                     .filter(hid.eq(relation.to_hubuum_class_id))
-                    .first::<HubuumClass>(conn)?;
+                    .first::<HubuumClass>(conn)
+                    .await?;
                 Ok((from_class, to_class))
             },
         )
+        .await
     }
 }
 
@@ -118,16 +135,19 @@ impl GetClass<(HubuumClass, HubuumClass)> for NewHubuumClassRelation {
 
         with_connection(
             pool,
-            |conn| -> Result<(HubuumClass, HubuumClass), diesel::result::Error> {
+            async |conn| -> Result<(HubuumClass, HubuumClass), diesel::result::Error> {
                 let from_class = hubuumclass
                     .filter(hid.eq(self.from_hubuum_class_id))
-                    .first::<HubuumClass>(conn)?;
+                    .first::<HubuumClass>(conn)
+                    .await?;
                 let to_class = hubuumclass
                     .filter(hid.eq(self.to_hubuum_class_id))
-                    .first::<HubuumClass>(conn)?;
+                    .first::<HubuumClass>(conn)
+                    .await?;
                 Ok((from_class, to_class))
             },
         )
+        .await
     }
 }
 
@@ -170,11 +190,13 @@ impl CreateClassRecord for NewHubuumClass {
     ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::hubuumclass;
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             diesel::insert_into(hubuumclass)
                 .values(self)
                 .get_result(conn)
+                .await
         })
+        .await
     }
 
     async fn create_class_record(
@@ -188,10 +210,11 @@ impl CreateClassRecord for NewHubuumClass {
 
         use crate::schema::hubuumclass::dsl::hubuumclass;
 
-        with_transaction(pool, |conn| -> Result<HubuumClass, ApiError> {
+        with_transaction(pool, async |conn| -> Result<HubuumClass, ApiError> {
             let class = diesel::insert_into(hubuumclass)
                 .values(self)
-                .get_result::<HubuumClass>(conn)?;
+                .get_result::<HubuumClass>(conn)
+                .await?;
             let event = class_event(
                 &class,
                 Action::Created,
@@ -199,9 +222,10 @@ impl CreateClassRecord for NewHubuumClass {
                 format!("Class '{}' created", class.name),
             )?
             .with_after(class_snapshot(&class));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(class)
         })
+        .await
     }
 }
 
@@ -232,15 +256,18 @@ impl UpdateClassRecord for UpdateHubuumClass {
     ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             crate::db::updated_or_current(
                 diesel::update(hubuumclass.filter(id.eq(class_id)))
                     .set(self)
                     .get_result(conn)
+                    .await
                     .optional(),
-                || hubuumclass.filter(id.eq(class_id)).first(conn),
+                async || hubuumclass.filter(id.eq(class_id)).first(conn).await,
             )
+            .await
         })
+        .await
     }
 
     async fn update_class_record(
@@ -257,13 +284,15 @@ impl UpdateClassRecord for UpdateHubuumClass {
 
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
-        with_transaction(pool, |conn| -> Result<HubuumClass, ApiError> {
+        with_transaction(pool, async |conn| -> Result<HubuumClass, ApiError> {
             let before = hubuumclass
                 .filter(id.eq(class_id))
-                .first::<HubuumClass>(conn)?;
+                .first::<HubuumClass>(conn)
+                .await?;
             let updated = diesel::update(hubuumclass.filter(id.eq(class_id)))
                 .set(self)
-                .get_result::<HubuumClass>(conn)?;
+                .get_result::<HubuumClass>(conn)
+                .await?;
             let event = class_event(
                 &updated,
                 Action::Updated,
@@ -272,9 +301,10 @@ impl UpdateClassRecord for UpdateHubuumClass {
             )?
             .with_before(class_snapshot(&before))
             .with_after(class_snapshot(&updated));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(updated)
         })
+        .await
     }
 }
 
@@ -295,9 +325,12 @@ impl DeleteClassRecord for HubuumClass {
     async fn delete_class_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
-        with_connection(pool, |conn| {
-            diesel::delete(hubuumclass.filter(id.eq(self.id))).execute(conn)
-        })?;
+        with_connection(pool, async |conn| {
+            diesel::delete(hubuumclass.filter(id.eq(self.id)))
+                .execute(conn)
+                .await
+        })
+        .await?;
         Ok(())
     }
 
@@ -312,8 +345,10 @@ impl DeleteClassRecord for HubuumClass {
 
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
-            diesel::delete(hubuumclass.filter(id.eq(self.id))).execute(conn)?;
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            diesel::delete(hubuumclass.filter(id.eq(self.id)))
+                .execute(conn)
+                .await?;
             let event = class_event(
                 self,
                 Action::Deleted,
@@ -321,9 +356,10 @@ impl DeleteClassRecord for HubuumClass {
                 format!("Class '{}' deleted", self.name),
             )?
             .with_before(class_snapshot(self));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(())
         })
+        .await
     }
 }
 
@@ -335,11 +371,13 @@ impl ClassCollectionLookup for HubuumClass {
     async fn lookup_class_collection(&self, pool: &DbPool) -> Result<Collection, ApiError> {
         use crate::schema::collections::dsl::{collections, id};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             collections
                 .filter(id.eq(self.collection_id))
                 .first::<Collection>(conn)
+                .await
         })
+        .await
     }
 }
 
@@ -355,7 +393,10 @@ impl ClassCollectionLookup for HubuumClassID {
 pub async fn total_class_count_from_backend(pool: &DbPool) -> Result<i64, ApiError> {
     use crate::schema::hubuumclass::dsl::*;
 
-    with_connection(pool, |conn| hubuumclass.count().get_result::<i64>(conn))
+    with_connection(pool, async |conn| {
+        hubuumclass.count().get_result::<i64>(conn).await
+    })
+    .await
 }
 
 impl ClassIdSet {
@@ -369,12 +410,14 @@ impl ClassIdSet {
         }
 
         let ids = self.as_slice().to_vec();
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             hubuumclass
                 .filter(id.eq_any(ids))
                 .select((id, name))
                 .load::<(i32, String)>(conn)
+                .await
         })
+        .await
     }
 
     /// Load every class relation that touches a class in this set as either endpoint.
@@ -391,11 +434,13 @@ impl ClassIdSet {
         }
 
         let ids = self.as_slice().to_vec();
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             hubuumclass_relation
                 .filter(from_hubuum_class_id.eq_any(&ids))
                 .or_filter(to_hubuum_class_id.eq_any(&ids))
                 .load::<HubuumClassRelation>(conn)
+                .await
         })
+        .await
     }
 }

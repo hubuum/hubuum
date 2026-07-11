@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use diesel::prelude::*;
+    use crate::db::prelude::*;
     use diesel::sql_types::Text;
     use rstest::rstest;
 
@@ -1061,12 +1061,14 @@ mod tests {
             .unwrap();
         }
 
-        let plan_rows = with_connection(&context.pool, |conn| {
-            conn.transaction::<_, diesel::result::Error, _>(|conn| {
+        let plan_rows = with_connection(&context.pool, async |conn| {
+            conn.transaction::<_, diesel::result::Error, _>(async |conn| {
                 diesel::sql_query("DROP INDEX IF EXISTS idx_hubuumobject_hubuum_class_id")
-                    .execute(conn)?;
+                    .execute(conn)
+                    .await?;
                 diesel::sql_query("DROP INDEX IF EXISTS idx_hubuumobject_collection_id")
-                    .execute(conn)?;
+                    .execute(conn)
+                    .await?;
                 let create_index_sql = format!(
                     "CREATE INDEX IF NOT EXISTS idx_test_json_ip_expression \
                  ON hubuumobject USING GIST ((try_inet(data #>> '{{network,address}}')) inet_ops) \
@@ -1075,9 +1077,13 @@ mod tests {
                  AND try_inet(data #>> '{{network,address}}') IS NOT NULL",
                     class.id, collection.collection.id
                 );
-                diesel::sql_query(create_index_sql).execute(conn)?;
-                diesel::sql_query("ANALYZE hubuumobject").execute(conn)?;
-                diesel::sql_query("SET LOCAL enable_seqscan = off").execute(conn)?;
+                diesel::sql_query(create_index_sql).execute(conn).await?;
+                diesel::sql_query("ANALYZE hubuumobject")
+                    .execute(conn)
+                    .await?;
+                diesel::sql_query("SET LOCAL enable_seqscan = off")
+                    .execute(conn)
+                    .await?;
 
                 let explain_sql = format!(
                     "EXPLAIN SELECT id FROM hubuumobject \
@@ -1087,21 +1093,27 @@ mod tests {
                  AND try_inet(data #>> '{{network,address}}') <<= '10.42.1.0/24'::inet",
                     class.id, collection.collection.id
                 );
-                let plan_rows = diesel::sql_query(explain_sql).load::<ExplainRow>(conn)?;
+                let plan_rows = diesel::sql_query(explain_sql)
+                    .load::<ExplainRow>(conn)
+                    .await?;
 
                 diesel::sql_query(
                     "CREATE INDEX IF NOT EXISTS idx_hubuumobject_hubuum_class_id \
                  ON hubuumobject (hubuum_class_id)",
                 )
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
                 diesel::sql_query(
                     "CREATE INDEX IF NOT EXISTS idx_hubuumobject_collection_id \
                  ON hubuumobject (collection_id)",
                 )
-                .execute(conn)?;
+                .execute(conn)
+                .await?;
                 Ok(plan_rows)
             })
+            .await
         })
+        .await
         .unwrap();
         let plan_text = plan_rows
             .iter()

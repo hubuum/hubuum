@@ -1,8 +1,8 @@
-use actix_web::{App, http::StatusCode, test, web::Data};
+use actix_web::{App, http::StatusCode, test};
 use serde_json::Value;
 
 use crate::api as prod_api;
-use crate::tests::POOL;
+use crate::tests::get_test_pool;
 
 #[actix_web::test]
 async fn test_healthz_returns_ok_without_database_pool() {
@@ -21,7 +21,7 @@ async fn test_healthz_returns_ok_without_database_pool() {
 async fn test_readyz_checks_database_connectivity() {
     let app = test::init_service(
         App::new()
-            .app_data(Data::new(POOL.clone()))
+            .app_data(get_test_pool())
             .configure(prod_api::config),
     )
     .await;

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
+use crate::db::prelude::*;
 use chrono::{Duration, Utc};
-use diesel::prelude::*;
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -38,7 +38,7 @@ pub async fn claim_events_for_fanout(
         return Ok(Vec::new());
     }
 
-    with_transaction(pool, |conn| -> Result<Vec<Event>, ApiError> {
+    with_transaction(pool, async |conn| -> Result<Vec<Event>, ApiError> {
         let now = Utc::now().naive_utc();
         let event_ids = events
             .filter(dispatched_at.is_null())
@@ -52,7 +52,8 @@ pub async fn claim_events_for_fanout(
             .skip_locked()
             .limit(settings.batch_size as i64)
             .select(id)
-            .load::<i64>(conn)?;
+            .load::<i64>(conn)
+            .await?;
 
         if event_ids.is_empty() {
             return Ok(Vec::new());
@@ -65,10 +66,12 @@ pub async fn claim_events_for_fanout(
                 fanout_locked_until.eq(Some(now + lock_timeout)),
                 fanout_claim_token.eq(Some(claim_token)),
             ))
-            .get_results::<Event>(conn)?;
+            .get_results::<Event>(conn)
+            .await?;
 
         Ok(claimed)
     })
+    .await
 }
 
 #[cfg(test)]
@@ -85,18 +88,20 @@ pub async fn fanout_events(pool: &DbPool, event_ids: &[i64]) -> Result<usize, Ap
         return Ok(0);
     }
 
-    with_transaction(pool, |conn| -> Result<usize, ApiError> {
+    with_transaction(pool, async |conn| -> Result<usize, ApiError> {
         let claimed_events = events
             .filter(id.eq_any(event_ids))
             .filter(dispatched_at.is_null())
             .order(id.asc())
-            .load::<Event>(conn)?;
+            .load::<Event>(conn)
+            .await?;
         if claimed_events.is_empty() {
             return Ok(0);
         }
 
         let candidate_collection_ids = candidate_subscription_collection_ids(&claimed_events);
-        let subscriptions = load_enabled_subscriptions(conn, &candidate_collection_ids)?
+        let subscriptions = load_enabled_subscriptions(conn, &candidate_collection_ids)
+            .await?
             .into_iter()
             .map(CompiledEventSubscription::try_from)
             .collect::<Result<Vec<_>, _>>()?;
@@ -105,7 +110,7 @@ pub async fn fanout_events(pool: &DbPool, event_ids: &[i64]) -> Result<usize, Ap
         for event in &claimed_events {
             let envelope = EventEnvelope::from(event.clone());
             let subscription_ids = matching_subscription_ids(&subscriptions, event, &envelope);
-            inserted += insert_delivery_rows(conn, event.id, &subscription_ids)?;
+            inserted += insert_delivery_rows(conn, event.id, &subscription_ids).await?;
             processed_event_ids.push(event.id);
         }
         let now = Utc::now().naive_utc();
@@ -115,17 +120,19 @@ pub async fn fanout_events(pool: &DbPool, event_ids: &[i64]) -> Result<usize, Ap
                 fanout_locked_until.eq::<Option<chrono::NaiveDateTime>>(None),
                 fanout_claim_token.eq::<Option<Uuid>>(None),
             ))
-            .execute(conn)?;
+            .execute(conn)
+            .await?;
         if inserted > 0 {
-            crate::events::notify_event_delivery(conn)?;
+            crate::events::notify_event_delivery(conn).await?;
         }
 
         Ok(inserted)
     })
+    .await
 }
 
-fn load_enabled_subscriptions(
-    conn: &mut PgConnection,
+async fn load_enabled_subscriptions(
+    conn: &mut crate::db::DbConnection,
     collection_ids: &[i32],
 ) -> Result<Vec<crate::models::event_subscription::EventSubscriptionRow>, ApiError> {
     use crate::schema::{event_sinks, event_subscriptions};
@@ -141,6 +148,7 @@ fn load_enabled_subscriptions(
         .filter(event_subscriptions::collection_id.eq_any(collection_ids))
         .select(event_subscriptions::all_columns)
         .load::<crate::models::event_subscription::EventSubscriptionRow>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
@@ -221,8 +229,8 @@ fn subscription_collection_matches_event(
         || envelope.related_collection_ids().contains(&collection_id)
 }
 
-fn insert_delivery_rows(
-    conn: &mut PgConnection,
+async fn insert_delivery_rows(
+    conn: &mut crate::db::DbConnection,
     event_id_value: i64,
     subscription_ids: &[i32],
 ) -> Result<usize, ApiError> {
@@ -250,6 +258,7 @@ fn insert_delivery_rows(
         .on_conflict((event_id, subscription_id))
         .do_nothing()
         .execute(conn)
+        .await
         .map_err(ApiError::from)
 }
 
@@ -260,10 +269,12 @@ pub(crate) async fn count_event_deliveries_for_event(
 ) -> Result<i64, ApiError> {
     use crate::schema::event_deliveries::dsl::{event_deliveries, event_id};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         event_deliveries
             .filter(event_id.eq(event_id_value))
             .count()
             .get_result::<i64>(conn)
+            .await
     })
+    .await
 }

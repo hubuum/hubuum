@@ -1,4 +1,5 @@
 use crate::config::token_lifetime_hours_i32;
+use crate::db::prelude::*;
 use crate::db::traits::ActiveTokens;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
@@ -6,7 +7,6 @@ use crate::models::PrincipalToken;
 use crate::models::search::{FilterField, QueryOptions};
 use crate::traits::PrincipalIdAccessor;
 use diesel::pg::Pg;
-use diesel::prelude::*;
 use diesel::sql_types::{Bool, Nullable};
 
 impl<S> ActiveTokens for S
@@ -76,12 +76,14 @@ async fn active_tokens_by_principal_id(
     let active_after = active_tokens_cutoff();
     let now = chrono::Utc::now().naive_utc();
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         tokens
             .filter(principal_id.eq(principal))
             .filter(active_token_predicate(now, active_after))
             .load::<PrincipalToken>(conn)
+            .await
     })
+    .await
 }
 
 async fn active_tokens_by_principal_id_paginated_with_total_count(
@@ -123,13 +125,20 @@ async fn active_tokens_by_principal_id_paginated_with_total_count(
     };
 
     let base_query = build_query()?;
-    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
-        with_connection(pool, |conn| base_query.count().get_result::<i64>(conn))
-    })?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
+        with_connection(pool, async |conn| {
+            base_query.count().get_result::<i64>(conn).await
+        })
+        .await
+    })
+    .await?;
 
     let mut base_query = build_query()?;
     crate::apply_query_options!(base_query, query_options, PrincipalToken);
-    let items = with_connection(pool, |conn| base_query.load::<PrincipalToken>(conn))?;
+    let items = with_connection(pool, async |conn| {
+        base_query.load::<PrincipalToken>(conn).await
+    })
+    .await?;
 
     Ok((items, total_count))
 }

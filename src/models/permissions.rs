@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 use std::{fmt, fmt::Display, slice};
 
 use serde::{Deserialize, Serialize};
@@ -466,7 +466,7 @@ pub struct UpdatePermission {
 
 #[cfg(test)]
 mod tests {
-    use diesel::prelude::*;
+    use crate::db::prelude::*;
 
     use super::{PermissionFilter, Permissions};
     use crate::schema::permissions::dsl::permissions;

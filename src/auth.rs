@@ -333,7 +333,7 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
                         Ok(()) => Ok(()),
                         Err(AuthProviderRefreshError::Internal(err)) => Err(err),
                         Err(AuthProviderRefreshError::Provider(err)) => {
-                            match mark_external_sync_attempted(pool, principal_id) {
+                            match mark_external_sync_attempted(pool, principal_id).await {
                                 Err(mark_err) => Err(mark_err),
                                 Ok(()) => {
                                     if within_max_stale(

@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 use diesel::sql_query;
 use jsonschema;
 use serde_json;
@@ -48,21 +48,25 @@ impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelationID {
         &self,
         pool: &DbPool,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
+        use crate::db::prelude::*;
         use crate::schema::hubuumobject::dsl as obj;
         use crate::schema::hubuumobject_relation::dsl as obj_rel;
-        use diesel::prelude::*;
 
-        let objects = with_connection(pool, |conn| {
-            obj_rel::hubuumobject_relation
-                .filter(obj_rel::id.eq(self.id()))
-                .inner_join(
-                    obj::hubuumobject.on(obj::id
-                        .eq(obj_rel::from_hubuum_object_id)
-                        .or(obj::id.eq(obj_rel::to_hubuum_object_id))),
-                )
-                .select(obj::hubuumobject::all_columns())
-                .load::<HubuumObject>(conn)
-        })?;
+        let objects = with_connection(pool, async |conn| {
+            diesel_async::RunQueryDsl::load::<HubuumObject>(
+                obj_rel::hubuumobject_relation
+                    .filter(obj_rel::id.eq(self.id()))
+                    .inner_join(
+                        obj::hubuumobject.on(obj::id
+                            .eq(obj_rel::from_hubuum_object_id)
+                            .or(obj::id.eq(obj_rel::to_hubuum_object_id))),
+                    )
+                    .select(obj::hubuumobject::all_columns()),
+                conn,
+            )
+            .await
+        })
+        .await?;
 
         if objects.len() != 2 {
             return Err(ApiError::NotFound(
@@ -80,11 +84,13 @@ impl GetObject<(HubuumObject, HubuumObject)> for NewHubuumObjectRelation {
         pool: &DbPool,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
-        let objects = with_connection(pool, |conn| {
+        let objects = with_connection(pool, async |conn| {
             hubuumobject
                 .filter(id.eq_any(vec![self.from_hubuum_object_id, self.to_hubuum_object_id]))
                 .load::<HubuumObject>(conn)
-        })?;
+                .await
+        })
+        .await?;
 
         if objects.len() != 2 {
             return Err(ApiError::NotFound(
@@ -104,21 +110,25 @@ impl GetObject<(HubuumObject, HubuumObject)> for HubuumObjectRelation {
         &self,
         pool: &DbPool,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
+        use crate::db::prelude::*;
         use crate::schema::hubuumobject::dsl as obj;
         use crate::schema::hubuumobject_relation::dsl as obj_rel;
-        use diesel::prelude::*;
 
-        let objects = with_connection(pool, |conn| {
-            obj_rel::hubuumobject_relation
-                .filter(obj_rel::id.eq(self.id))
-                .inner_join(
-                    obj::hubuumobject.on(obj::id
-                        .eq(obj_rel::from_hubuum_object_id)
-                        .or(obj::id.eq(obj_rel::to_hubuum_object_id))),
-                )
-                .select(obj::hubuumobject::all_columns())
-                .load::<HubuumObject>(conn)
-        })?;
+        let objects = with_connection(pool, async |conn| {
+            diesel_async::RunQueryDsl::load::<HubuumObject>(
+                obj_rel::hubuumobject_relation
+                    .filter(obj_rel::id.eq(self.id))
+                    .inner_join(
+                        obj::hubuumobject.on(obj::id
+                            .eq(obj_rel::from_hubuum_object_id)
+                            .or(obj::id.eq(obj_rel::to_hubuum_object_id))),
+                    )
+                    .select(obj::hubuumobject::all_columns()),
+                conn,
+            )
+            .await
+        })
+        .await?;
 
         if objects.len() != 2 {
             return Err(ApiError::NotFound(
@@ -144,11 +154,13 @@ impl LoadObjectRecord for HubuumObjectID {
     async fn load_object_record(&self, pool: &DbPool) -> Result<HubuumObject, ApiError> {
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             hubuumobject
                 .filter(id.eq(self.id()))
                 .first::<HubuumObject>(conn)
+                .await
         })
+        .await
     }
 }
 
@@ -175,11 +187,13 @@ impl CreateObjectRecord for NewHubuumObject {
     ) -> Result<HubuumObject, ApiError> {
         use crate::schema::hubuumobject::dsl::hubuumobject;
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             diesel::insert_into(hubuumobject)
                 .values(self)
                 .get_result::<HubuumObject>(conn)
+                .await
         })
+        .await
     }
 
     async fn create_object_record(
@@ -193,10 +207,11 @@ impl CreateObjectRecord for NewHubuumObject {
 
         use crate::schema::hubuumobject::dsl::hubuumobject;
 
-        with_transaction(pool, |conn| -> Result<HubuumObject, ApiError> {
+        with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
             let object = diesel::insert_into(hubuumobject)
                 .values(self)
-                .get_result::<HubuumObject>(conn)?;
+                .get_result::<HubuumObject>(conn)
+                .await?;
             let event = object_event(
                 &object,
                 Action::Created,
@@ -204,9 +219,10 @@ impl CreateObjectRecord for NewHubuumObject {
                 format!("Object '{}' created", object.name),
             )?
             .with_after(object_snapshot(&object));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(object)
         })
+        .await
     }
 }
 
@@ -401,16 +417,19 @@ impl UpdateObjectRecord for UpdateHubuumObject {
     ) -> Result<HubuumObject, ApiError> {
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             crate::db::updated_or_current(
                 diesel::update(hubuumobject)
                     .filter(id.eq(object_id))
                     .set(self)
                     .get_result::<HubuumObject>(conn)
+                    .await
                     .optional(),
-                || hubuumobject.filter(id.eq(object_id)).first(conn),
+                async || hubuumobject.filter(id.eq(object_id)).first(conn).await,
             )
+            .await
         })
+        .await
     }
 
     async fn update_object_record(
@@ -427,13 +446,15 @@ impl UpdateObjectRecord for UpdateHubuumObject {
 
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
-        with_transaction(pool, |conn| -> Result<HubuumObject, ApiError> {
+        with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
             let before = hubuumobject
                 .filter(id.eq(object_id))
-                .first::<HubuumObject>(conn)?;
+                .first::<HubuumObject>(conn)
+                .await?;
             let updated = diesel::update(hubuumobject.filter(id.eq(object_id)))
                 .set(self)
-                .get_result::<HubuumObject>(conn)?;
+                .get_result::<HubuumObject>(conn)
+                .await?;
             let event = object_event(
                 &updated,
                 Action::Updated,
@@ -442,9 +463,10 @@ impl UpdateObjectRecord for UpdateHubuumObject {
             )?
             .with_before(object_snapshot(&before))
             .with_after(object_snapshot(&updated));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(updated)
         })
+        .await
     }
 }
 
@@ -465,9 +487,12 @@ impl DeleteObjectRecord for HubuumObject {
     async fn delete_object_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
-        with_connection(pool, |conn| {
-            diesel::delete(hubuumobject.filter(id.eq(self.id))).execute(conn)
-        })?;
+        with_connection(pool, async |conn| {
+            diesel::delete(hubuumobject.filter(id.eq(self.id)))
+                .execute(conn)
+                .await
+        })
+        .await?;
         Ok(())
     }
 
@@ -482,8 +507,10 @@ impl DeleteObjectRecord for HubuumObject {
 
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
-            diesel::delete(hubuumobject.filter(id.eq(self.id))).execute(conn)?;
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            diesel::delete(hubuumobject.filter(id.eq(self.id)))
+                .execute(conn)
+                .await?;
             let event = object_event(
                 self,
                 Action::Deleted,
@@ -491,9 +518,10 @@ impl DeleteObjectRecord for HubuumObject {
                 format!("Object '{}' deleted", self.name),
             )?
             .with_before(object_snapshot(self));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(())
         })
+        .await
     }
 }
 
@@ -505,11 +533,13 @@ impl ObjectCollectionLookup for HubuumObject {
     async fn lookup_object_collection(&self, pool: &DbPool) -> Result<Collection, ApiError> {
         use crate::schema::collections::dsl::{collections, id};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             collections
                 .filter(id.eq(self.collection_id))
                 .first::<Collection>(conn)
+                .await
         })
+        .await
     }
 }
 
@@ -530,11 +560,13 @@ impl ObjectClassLookup for HubuumObject {
     async fn lookup_object_class(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             hubuumclass
                 .filter(id.eq(self.hubuum_class_id))
                 .first::<HubuumClass>(conn)
+                .await
         })
+        .await
     }
 }
 
@@ -550,7 +582,10 @@ impl ObjectClassLookup for HubuumObjectID {
 pub async fn total_object_count_from_backend(pool: &DbPool) -> Result<i64, ApiError> {
     use crate::schema::hubuumobject::dsl::*;
 
-    with_connection(pool, |conn| hubuumobject.count().get_result::<i64>(conn))
+    with_connection(pool, async |conn| {
+        hubuumobject.count().get_result::<i64>(conn).await
+    })
+    .await
 }
 
 pub async fn objects_per_class_count_from_backend(
@@ -558,7 +593,8 @@ pub async fn objects_per_class_count_from_backend(
 ) -> Result<Vec<ObjectsByClass>, ApiError> {
     let raw_query =
         "SELECT hubuum_class_id, COUNT(*) as count FROM hubuumobject GROUP BY hubuum_class_id";
-    with_connection(pool, |conn| {
-        sql_query(raw_query).load::<ObjectsByClass>(conn)
+    with_connection(pool, async |conn| {
+        sql_query(raw_query).load::<ObjectsByClass>(conn).await
     })
+    .await
 }

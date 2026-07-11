@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text};
 
 use crate::config::{
@@ -122,11 +122,11 @@ struct SubscriptionHealthRow {
 pub async fn load_event_delivery_health(
     pool: &DbPool,
 ) -> Result<EventDeliveryHealthResponse, ApiError> {
-    with_connection(pool, |conn| {
-        let fanout = load_fanout_health(conn)?;
-        let delivery = load_delivery_queue_health(conn)?;
-        let sinks = load_sink_health(conn)?;
-        let subscriptions = load_subscription_health(conn)?;
+    with_connection(pool, async |conn| {
+        let fanout = load_fanout_health(conn).await?;
+        let delivery = load_delivery_queue_health(conn).await?;
+        let sinks = load_sink_health(conn).await?;
+        let subscriptions = load_subscription_health(conn).await?;
 
         Ok::<EventDeliveryHealthResponse, ApiError>(EventDeliveryHealthResponse {
             fanout,
@@ -135,9 +135,12 @@ pub async fn load_event_delivery_health(
             subscriptions,
         })
     })
+    .await
 }
 
-fn load_fanout_health(conn: &mut PgConnection) -> Result<EventFanoutHealth, ApiError> {
+async fn load_fanout_health(
+    conn: &mut crate::db::DbConnection,
+) -> Result<EventFanoutHealth, ApiError> {
     let row = diesel::sql_query(
         r#"
         SELECT
@@ -161,7 +164,8 @@ fn load_fanout_health(conn: &mut PgConnection) -> Result<EventFanoutHealth, ApiE
         WHERE dispatched_at IS NULL
         "#,
     )
-    .get_result::<FanoutHealthRow>(conn)?;
+    .get_result::<FanoutHealthRow>(conn)
+    .await?;
 
     Ok(EventFanoutHealth {
         pending_events: row.pending_events,
@@ -172,8 +176,8 @@ fn load_fanout_health(conn: &mut PgConnection) -> Result<EventFanoutHealth, ApiE
     })
 }
 
-fn load_delivery_queue_health(
-    conn: &mut PgConnection,
+async fn load_delivery_queue_health(
+    conn: &mut crate::db::DbConnection,
 ) -> Result<EventDeliveryQueueHealth, ApiError> {
     let row = diesel::sql_query(
         r#"
@@ -210,7 +214,8 @@ fn load_delivery_queue_health(
         FROM event_deliveries
         "#,
     )
-    .get_result::<DeliveryQueueHealthRow>(conn)?;
+    .get_result::<DeliveryQueueHealthRow>(conn)
+    .await?;
 
     Ok(EventDeliveryQueueHealth {
         counts: status_counts(&row),
@@ -220,7 +225,9 @@ fn load_delivery_queue_health(
     })
 }
 
-fn load_sink_health(conn: &mut PgConnection) -> Result<Vec<EventSinkDeliveryHealth>, ApiError> {
+async fn load_sink_health(
+    conn: &mut crate::db::DbConnection,
+) -> Result<Vec<EventSinkDeliveryHealth>, ApiError> {
     let rows = diesel::sql_query(
         r#"
         SELECT
@@ -265,7 +272,8 @@ fn load_sink_health(conn: &mut PgConnection) -> Result<Vec<EventSinkDeliveryHeal
         ORDER BY s.id
         "#,
     )
-    .load::<SinkHealthRow>(conn)?;
+    .load::<SinkHealthRow>(conn)
+    .await?;
 
     Ok(rows
         .into_iter()
@@ -285,8 +293,8 @@ fn load_sink_health(conn: &mut PgConnection) -> Result<Vec<EventSinkDeliveryHeal
         .collect())
 }
 
-fn load_subscription_health(
-    conn: &mut PgConnection,
+async fn load_subscription_health(
+    conn: &mut crate::db::DbConnection,
 ) -> Result<Vec<EventSubscriptionDeliveryHealth>, ApiError> {
     let rows = diesel::sql_query(
         r#"
@@ -335,7 +343,8 @@ fn load_subscription_health(
         ORDER BY sub.id
         "#,
     )
-    .load::<SubscriptionHealthRow>(conn)?;
+    .load::<SubscriptionHealthRow>(conn)
+    .await?;
 
     Ok(rows
         .into_iter()

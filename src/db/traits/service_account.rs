@@ -1,10 +1,9 @@
-use diesel::PgConnection;
-use diesel::prelude::*;
 use serde_json::json;
 
+use crate::db::prelude::*;
 use crate::db::traits::identity::identity_scope_by_name;
 use crate::db::traits::principal::InsertPrincipalRecord;
-use crate::db::{DbPool, with_connection, with_transaction};
+use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
@@ -91,13 +90,14 @@ where
 
     with_transaction(
         backend.db_pool(),
-        |conn| -> Result<ServiceAccount, ApiError> {
+        async |conn| -> Result<ServiceAccount, ApiError> {
             let principal = NewPrincipal {
                 identity_scope_id: local_scope.id,
                 kind: PrincipalKind::ServiceAccount.as_str(),
                 name: &name,
             }
-            .insert(conn)?;
+            .insert(conn)
+            .await?;
 
             let sa = diesel::insert_into(service_accounts::table)
                 .values((
@@ -106,7 +106,8 @@ where
                     service_accounts::owner_group_id.eq(owner_group_id),
                     service_accounts::created_by.eq(created_by),
                 ))
-                .get_result::<ServiceAccount>(conn)?;
+                .get_result::<ServiceAccount>(conn)
+                .await?;
             if let Some(event_context) = event_context {
                 let event = NewEvent::new(
                     EntityType::ServiceAccount,
@@ -129,12 +130,13 @@ where
                     "owner_group_id": sa.owner_group_id,
                     "created_by": created_by,
                 }));
-                emit_event(conn, &event)?;
+                emit_event(conn, &event).await?;
             }
 
             Ok(sa)
         },
     )
+    .await
 }
 
 impl UpdateAdapter for UpdateServiceAccount {
@@ -166,21 +168,23 @@ async fn update_service_account_record(
 ) -> Result<ServiceAccount, ApiError> {
     use crate::schema::service_accounts::dsl::{id, service_accounts as sa_table};
 
-    with_transaction(pool, |conn| -> Result<ServiceAccount, ApiError> {
+    with_transaction(pool, async |conn| -> Result<ServiceAccount, ApiError> {
         let before = if event_context.is_some() {
             Some(
                 sa_table
                     .filter(id.eq(service_account_id))
-                    .first::<ServiceAccount>(conn)?,
+                    .first::<ServiceAccount>(conn)
+                    .await?,
             )
         } else {
             None
         };
         let updated = diesel::update(sa_table.filter(id.eq(service_account_id)))
             .set(update)
-            .get_result::<ServiceAccount>(conn)?;
+            .get_result::<ServiceAccount>(conn)
+            .await?;
         if let Some(event_context) = event_context {
-            let name = load_principal_name_by_id(conn, updated.id)?;
+            let name = load_principal_name_by_id(conn, updated.id).await?;
             let before = before.ok_or_else(|| {
                 ApiError::InternalServerError("missing service account event snapshot".to_string())
             })?;
@@ -198,10 +202,11 @@ async fn update_service_account_record(
             .with_metadata(json!({
                 "owner_group_id": updated.owner_group_id,
             }));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
         }
         Ok(updated)
     })
+    .await
 }
 
 impl InstanceAdapter<ServiceAccount> for ServiceAccountID {
@@ -268,15 +273,17 @@ where
     let sa_id = account_id.id();
     with_transaction(
         backend.db_pool(),
-        |conn| -> Result<ServiceAccount, ApiError> {
+        async |conn| -> Result<ServiceAccount, ApiError> {
             let before = sa_table
                 .filter(id.eq(sa_id))
-                .first::<ServiceAccount>(conn)?;
+                .first::<ServiceAccount>(conn)
+                .await?;
             let disabled = diesel::update(sa_table.filter(id.eq(sa_id)))
                 .set(disabled_at.eq(diesel::dsl::now))
-                .get_result::<ServiceAccount>(conn)?;
+                .get_result::<ServiceAccount>(conn)
+                .await?;
             if let Some(event_context) = event_context {
-                let name = load_principal_name_by_id(conn, disabled.id)?;
+                let name = load_principal_name_by_id(conn, disabled.id).await?;
                 let event = NewEvent::new(
                     EntityType::ServiceAccount,
                     Action::Disabled,
@@ -291,11 +298,12 @@ where
                 .with_metadata(json!({
                     "owner_group_id": disabled.owner_group_id,
                 }));
-                emit_event(conn, &event)?;
+                emit_event(conn, &event).await?;
             }
             Ok(disabled)
         },
     )
+    .await
 }
 
 async fn delete_service_account(
@@ -305,10 +313,10 @@ async fn delete_service_account(
 ) -> Result<(), ApiError> {
     use crate::schema::principals::dsl::{id, principals as principals_table};
     let sa_id = account_id.id();
-    with_transaction(pool, |conn| -> Result<(), ApiError> {
-        let sa = load_service_account_by_id_conn(conn, sa_id)?;
+    with_transaction(pool, async |conn| -> Result<(), ApiError> {
+        let sa = load_service_account_by_id_conn(conn, sa_id).await?;
         if let Some(event_context) = event_context {
-            let name = load_principal_name_by_id(conn, sa_id)?;
+            let name = load_principal_name_by_id(conn, sa_id).await?;
             let event = NewEvent::new(
                 EntityType::ServiceAccount,
                 Action::Deleted,
@@ -322,15 +330,18 @@ async fn delete_service_account(
             .with_metadata(json!({
                 "owner_group_id": sa.owner_group_id,
             }));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
         }
-        diesel::delete(principals_table.filter(id.eq(sa_id))).execute(conn)?;
+        diesel::delete(principals_table.filter(id.eq(sa_id)))
+            .execute(conn)
+            .await?;
         Ok(())
     })
+    .await
 }
 
-fn load_principal_name_by_id(
-    conn: &mut PgConnection,
+async fn load_principal_name_by_id(
+    conn: &mut DbConnection,
     principal_id_value: i32,
 ) -> Result<String, ApiError> {
     use crate::schema::principals::dsl::{id, name, principals};
@@ -339,17 +350,19 @@ fn load_principal_name_by_id(
         .filter(id.eq(principal_id_value))
         .select(name)
         .first::<String>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
-fn load_service_account_by_id_conn(
-    conn: &mut PgConnection,
+async fn load_service_account_by_id_conn(
+    conn: &mut DbConnection,
     service_account_id: i32,
 ) -> Result<ServiceAccount, ApiError> {
     use crate::schema::service_accounts::dsl::{id, service_accounts as sa_table};
     sa_table
         .filter(id.eq(service_account_id))
         .first::<ServiceAccount>(conn)
+        .await
         .map_err(ApiError::from)
 }
 
@@ -374,7 +387,7 @@ pub async fn is_human_owner_group_member(
     use crate::schema::principals;
     use diesel::dsl::{exists, select};
 
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         select(exists(
             group_memberships::table
                 .inner_join(
@@ -385,7 +398,9 @@ pub async fn is_human_owner_group_member(
                 .filter(principals::kind.eq(PrincipalKind::Human.as_str())),
         ))
         .get_result(conn)
+        .await
     })
+    .await
 }
 
 pub async fn principal_is_disabled(pool: &DbPool, principal: &Principal) -> Result<bool, ApiError> {
@@ -402,7 +417,7 @@ pub async fn revoke_all_tokens_for_principal(
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
     use crate::schema::tokens::dsl::{principal_id, revoked_at, tokens};
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         diesel::update(
             tokens
                 .filter(principal_id.eq(principal_id_value))
@@ -410,7 +425,9 @@ pub async fn revoke_all_tokens_for_principal(
         )
         .set(revoked_at.eq(diesel::dsl::now))
         .execute(conn)
+        .await
     })
+    .await
 }
 
 pub async fn cancel_pending_tasks_for_principal(
@@ -418,7 +435,7 @@ pub async fn cancel_pending_tasks_for_principal(
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
     use crate::schema::tasks::dsl::{status, submitted_by, tasks};
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         diesel::update(
             tasks
                 .filter(submitted_by.eq(principal_id_value))
@@ -426,7 +443,9 @@ pub async fn cancel_pending_tasks_for_principal(
         )
         .set(status.eq(TaskStatus::Cancelled.as_str()))
         .execute(conn)
+        .await
     })
+    .await
 }
 
 pub async fn service_accounts_owned_by_group(
@@ -435,13 +454,15 @@ pub async fn service_accounts_owned_by_group(
 ) -> Result<Vec<(i32, String)>, ApiError> {
     use crate::schema::principals;
     use crate::schema::service_accounts;
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         service_accounts::table
             .inner_join(principals::table.on(principals::id.eq(service_accounts::id)))
             .filter(service_accounts::owner_group_id.eq(owner_group))
             .select((service_accounts::id, principals::name))
             .load::<(i32, String)>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn load_service_account_by_id(
@@ -449,11 +470,13 @@ pub async fn load_service_account_by_id(
     service_account_id: i32,
 ) -> Result<ServiceAccount, ApiError> {
     use crate::schema::service_accounts::dsl::{id, service_accounts as sa_table};
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         sa_table
             .filter(id.eq(service_account_id))
             .first::<ServiceAccount>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn search_manageable_service_accounts<S>(
@@ -505,7 +528,7 @@ where
 
     apply_query_options!(base_query, query_options, ServiceAccountWithName);
 
-    let rows = with_connection(pool, |conn| {
+    let rows = with_connection(pool, async |conn| {
         base_query
             .select((
                 ServiceAccount::as_select(),
@@ -513,7 +536,9 @@ where
                 principals::name,
             ))
             .load::<(ServiceAccount, String, String)>(conn)
-    })?;
+            .await
+    })
+    .await?;
 
     Ok(rows
         .into_iter()
@@ -568,5 +593,8 @@ where
         }
     }
 
-    with_connection(pool, |conn| base_query.count().get_result::<i64>(conn))
+    with_connection(pool, async |conn| {
+        base_query.count().get_result::<i64>(conn).await
+    })
+    .await
 }

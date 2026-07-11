@@ -11,8 +11,8 @@ use crate::models::principal_group::NewPrincipalGroup;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::schema::groups;
 
+use crate::db::prelude::*;
 use crate::traits::PrincipalIdAccessor;
-use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

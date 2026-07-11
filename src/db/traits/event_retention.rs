@@ -1,5 +1,5 @@
+use crate::db::prelude::*;
 use chrono::{Duration, NaiveDateTime, Utc};
-use diesel::prelude::*;
 use diesel::sql_types::{Array, BigInt, Timestamp};
 
 use crate::db::{DbPool, with_connection, with_transaction};
@@ -35,21 +35,24 @@ pub async fn select_events_for_retention_purge(
     }
 
     let cutoff = Utc::now().naive_utc() - Duration::days(settings.event_retention_days);
-    let ids = with_connection(pool, |conn| {
-        select_event_ids_for_retention_purge(conn, cutoff, settings.batch_size)
-    })?;
+    let ids = with_connection(pool, async |conn| {
+        select_event_ids_for_retention_purge(conn, cutoff, settings.batch_size).await
+    })
+    .await?;
 
     if ids.is_empty() {
         return Ok(Vec::new());
     }
 
     use crate::schema::events::dsl::{events, id};
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         events
             .filter(id.eq_any(ids))
             .order(id.asc())
             .load::<Event>(conn)
+            .await
     })
+    .await
 }
 
 pub async fn purge_event_retention_batch(
@@ -59,12 +62,12 @@ pub async fn purge_event_retention_batch(
 ) -> Result<EventRetentionPurgeSummary, ApiError> {
     with_transaction(
         pool,
-        |conn| -> Result<EventRetentionPurgeSummary, ApiError> {
+        async |conn| -> Result<EventRetentionPurgeSummary, ApiError> {
             let delivery_cutoff =
                 Utc::now().naive_utc() - Duration::days(settings.delivery_retention_days);
             let purged_terminal_deliveries =
-                purge_terminal_event_deliveries(conn, delivery_cutoff)?;
-            let purged_events = purge_events_by_id(conn, event_ids)?;
+                purge_terminal_event_deliveries(conn, delivery_cutoff).await?;
+            let purged_events = purge_events_by_id(conn, event_ids).await?;
 
             Ok(EventRetentionPurgeSummary {
                 purged_events,
@@ -72,6 +75,7 @@ pub async fn purge_event_retention_batch(
             })
         },
     )
+    .await
 }
 
 #[cfg(test)]
@@ -84,8 +88,8 @@ pub async fn purge_event_retention_without_archive(
     purge_event_retention_batch(pool, settings, &event_ids).await
 }
 
-fn select_event_ids_for_retention_purge(
-    conn: &mut PgConnection,
+async fn select_event_ids_for_retention_purge(
+    conn: &mut crate::db::DbConnection,
     cutoff: NaiveDateTime,
     batch_size: usize,
 ) -> Result<Vec<i64>, diesel::result::Error> {
@@ -106,11 +110,12 @@ fn select_event_ids_for_retention_purge(
     .bind::<Timestamp, _>(cutoff)
     .bind::<BigInt, _>(batch_size as i64)
     .load::<EventIdRow>(conn)
+    .await
     .map(|rows| rows.into_iter().map(|row| row.id).collect())
 }
 
-fn purge_terminal_event_deliveries(
-    conn: &mut PgConnection,
+async fn purge_terminal_event_deliveries(
+    conn: &mut crate::db::DbConnection,
     cutoff: NaiveDateTime,
 ) -> Result<usize, diesel::result::Error> {
     use crate::schema::event_deliveries::dsl::{event_deliveries, status, updated_at};
@@ -124,17 +129,20 @@ fn purge_terminal_event_deliveries(
             ])),
     )
     .execute(conn)
+    .await
 }
 
-fn purge_events_by_id(
-    conn: &mut PgConnection,
+async fn purge_events_by_id(
+    conn: &mut crate::db::DbConnection,
     event_ids: &[i64],
 ) -> Result<usize, diesel::result::Error> {
     if event_ids.is_empty() {
         return Ok(0);
     }
 
-    diesel::sql_query("SELECT set_config('events.allow_purge', 'on', true)").execute(conn)?;
+    diesel::sql_query("SELECT set_config('events.allow_purge', 'on', true)")
+        .execute(conn)
+        .await?;
     diesel::sql_query(
         "DELETE FROM events e
          WHERE e.id = ANY($1)
@@ -148,4 +156,5 @@ fn purge_events_by_id(
     )
     .bind::<Array<BigInt>, _>(event_ids)
     .execute(conn)
+    .await
 }

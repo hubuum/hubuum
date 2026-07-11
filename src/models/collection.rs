@@ -1,4 +1,4 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -707,19 +707,23 @@ mod tests {
         let parent = scope.collection_fixture("protect_root").await;
         let root_id = parent.collection.parent_collection_id.unwrap();
 
-        let delete_result = crate::db::with_connection(&pool, |conn| {
+        let delete_result = crate::db::with_connection(&pool, async |conn| {
             sql_query("DELETE FROM collections WHERE id = $1")
                 .bind::<diesel::sql_types::Integer, _>(root_id)
                 .execute(conn)
-        });
+                .await
+        })
+        .await;
         assert!(delete_result.is_err());
 
-        let reparent_result = crate::db::with_connection(&pool, |conn| {
+        let reparent_result = crate::db::with_connection(&pool, async |conn| {
             sql_query("UPDATE collections SET parent_collection_id = $1 WHERE id = $2")
                 .bind::<diesel::sql_types::Integer, _>(parent.collection.id)
                 .bind::<diesel::sql_types::Integer, _>(root_id)
                 .execute(conn)
-        });
+                .await
+        })
+        .await;
         assert!(reparent_result.is_err());
 
         parent.cleanup().await.unwrap();
@@ -1262,7 +1266,7 @@ mod tests {
         assert!(!non_delegate_before.has_update_template);
         assert!(!non_delegate_before.has_delete_template);
 
-        let mut conn = pool.get().unwrap();
+        let mut conn = pool.get().await.unwrap();
         sql_query(
             "UPDATE permissions
              SET
@@ -1273,6 +1277,7 @@ mod tests {
              WHERE has_delegate_collection = TRUE",
         )
         .execute(&mut conn)
+        .await
         .unwrap();
 
         let delegate_after = group_on(&pool, collection.collection.id, delegate_group.id)

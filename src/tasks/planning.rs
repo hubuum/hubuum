@@ -644,9 +644,10 @@ pub(super) async fn plan_collection(
                 parent_collection_id: collection.parent_collection_id,
             })
         } else {
-            with_connection(pool, |conn| {
-                lookup_existing_collection_for_import_db(conn, parent.id, &input.name)
+            with_connection(pool, async |conn| {
+                lookup_existing_collection_for_import_db(conn, parent.id, &input.name).await
             })
+            .await
             .map_err(|message| PlanningFailure {
                 kind: FailureKind::Runtime,
                 item: planned_result(

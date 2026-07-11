@@ -778,8 +778,8 @@ mod tests {
     #[rstest]
     #[actix_web::test]
     async fn test_api_anonymize_user(#[future(awt)] test_context: TestContext) {
+        use crate::db::prelude::*;
         use crate::db::with_connection;
-        use diesel::prelude::*;
 
         let context = test_context;
 
@@ -805,13 +805,15 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::NO_CONTENT).await;
 
-        let principal_name: String = with_connection(&context.pool, |conn| {
+        let principal_name: String = with_connection(&context.pool, async |conn| {
             use crate::schema::principals::dsl as p;
             p::principals
                 .filter(p::id.eq(new_user.id))
                 .select(p::name)
                 .first(conn)
+                .await
         })
+        .await
         .unwrap();
         assert_eq!(principal_name, format!("anonymized-{}", new_user.id));
     }

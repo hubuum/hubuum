@@ -1,7 +1,7 @@
-use diesel::prelude::*;
+use crate::db::prelude::*;
 
 use crate::db::traits::identity::{identity_scope_by_name, identity_scope_id_by_name_conn};
-use crate::db::{DbPool, with_connection, with_transaction};
+use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::identity::{
@@ -47,33 +47,37 @@ fn user_group_metadata(principal_id: i32, group_id: i32) -> serde_json::Value {
     })
 }
 
-fn insert_effective_membership(
-    conn: &mut PgConnection,
+async fn insert_effective_membership(
+    conn: &mut DbConnection,
     principal: i32,
     group: i32,
 ) -> Result<PrincipalGroup, diesel::result::Error> {
     use crate::schema::group_memberships::dsl::group_memberships;
 
-    diesel::insert_into(group_memberships)
+    let inserted = diesel::insert_into(group_memberships)
         .values((
             crate::schema::group_memberships::principal_id.eq(principal),
             crate::schema::group_memberships::group_id.eq(group),
         ))
         .on_conflict_do_nothing()
         .get_result(conn)
-        .optional()?
-        .map_or_else(|| load_principal_group(conn, principal, group), Ok)
+        .await
+        .optional()?;
+    match inserted {
+        Some(membership) => Ok(membership),
+        None => load_principal_group(conn, principal, group).await,
+    }
 }
 
-fn insert_manual_membership_source(
-    conn: &mut PgConnection,
+async fn insert_manual_membership_source(
+    conn: &mut DbConnection,
     principal: i32,
     group: i32,
 ) -> Result<(), ApiError> {
     use crate::schema::group_membership_sources;
 
-    ensure_group_allows_local_write(conn, group)?;
-    let local_scope_id = identity_scope_id_by_name_conn(conn, LOCAL_IDENTITY_SCOPE)?;
+    ensure_group_allows_local_write(conn, group).await?;
+    let local_scope_id = identity_scope_id_by_name_conn(conn, LOCAL_IDENTITY_SCOPE).await?;
     diesel::insert_into(group_membership_sources::table)
         .values((
             group_membership_sources::principal_id.eq(principal),
@@ -83,19 +87,20 @@ fn insert_manual_membership_source(
             group_membership_sources::source_key.eq(""),
         ))
         .on_conflict_do_nothing()
-        .execute(conn)?;
+        .execute(conn)
+        .await?;
     Ok(())
 }
 
-fn remove_manual_membership_source(
-    conn: &mut PgConnection,
+async fn remove_manual_membership_source(
+    conn: &mut DbConnection,
     principal: i32,
     group: i32,
 ) -> Result<(), ApiError> {
     use crate::schema::{group_membership_sources, group_memberships};
 
-    ensure_group_allows_local_write(conn, group)?;
-    let local_scope_id = identity_scope_id_by_name_conn(conn, LOCAL_IDENTITY_SCOPE)?;
+    ensure_group_allows_local_write(conn, group).await?;
+    let local_scope_id = identity_scope_id_by_name_conn(conn, LOCAL_IDENTITY_SCOPE).await?;
     diesel::delete(
         group_membership_sources::table
             .filter(group_membership_sources::principal_id.eq(principal))
@@ -104,31 +109,38 @@ fn remove_manual_membership_source(
             .filter(group_membership_sources::source_scope_id.eq(local_scope_id))
             .filter(group_membership_sources::source_key.eq("")),
     )
-    .execute(conn)?;
+    .execute(conn)
+    .await?;
 
     let remaining = group_membership_sources::table
         .filter(group_membership_sources::principal_id.eq(principal))
         .filter(group_membership_sources::group_id.eq(group))
         .count()
-        .get_result::<i64>(conn)?;
+        .get_result::<i64>(conn)
+        .await?;
     if remaining == 0 {
         diesel::delete(
             group_memberships::table
                 .filter(group_memberships::principal_id.eq(principal))
                 .filter(group_memberships::group_id.eq(group)),
         )
-        .execute(conn)?;
+        .execute(conn)
+        .await?;
     }
     Ok(())
 }
 
-fn ensure_group_allows_local_write(conn: &mut PgConnection, group: i32) -> Result<(), ApiError> {
+async fn ensure_group_allows_local_write(
+    conn: &mut DbConnection,
+    group: i32,
+) -> Result<(), ApiError> {
     use crate::schema::groups::dsl::{groups, id, managed_by};
 
     let manager = groups
         .filter(id.eq(group))
         .select(managed_by)
-        .first::<String>(conn)?;
+        .first::<String>(conn)
+        .await?;
     if manager != LOCAL_PROVIDER_KIND {
         return Err(ApiError::Forbidden(
             "Provider-managed groups are read-only in Hubuum".to_string(),
@@ -141,9 +153,12 @@ pub trait LoadGroupRecord {
     async fn load_group_record(&self, pool: &DbPool) -> Result<Group, ApiError>;
 }
 
-pub fn count_group_records(pool: &DbPool) -> Result<i64, ApiError> {
+pub async fn count_group_records(pool: &DbPool) -> Result<i64, ApiError> {
     use crate::schema::groups::dsl::groups;
-    with_connection(pool, |conn| groups.count().get_result::<i64>(conn))
+    with_connection(pool, async |conn| {
+        groups.count().get_result::<i64>(conn).await
+    })
+    .await
 }
 
 pub async fn group_identity_scope_name(
@@ -151,22 +166,25 @@ pub async fn group_identity_scope_name(
     group_id_value: i32,
 ) -> Result<String, ApiError> {
     use crate::schema::{groups, identity_scopes};
-    with_connection(pool, |conn| {
+    with_connection(pool, async |conn| {
         groups::table
             .inner_join(identity_scopes::table)
             .filter(groups::id.eq(group_id_value))
             .select(identity_scopes::name)
             .first::<String>(conn)
+            .await
     })
+    .await
 }
 
 impl LoadGroupRecord for GroupID {
     async fn load_group_record(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
-        with_connection(pool, |conn| {
-            groups.filter(id.eq(self.id())).first::<Group>(conn)
+        with_connection(pool, async |conn| {
+            groups.filter(id.eq(self.id())).first::<Group>(conn).await
         })
+        .await
     }
 }
 
@@ -187,10 +205,13 @@ impl DeleteGroupRecord for GroupID {
     async fn delete_group_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
-        with_connection(pool, |conn| -> Result<usize, ApiError> {
-            ensure_group_allows_local_write(conn, self.id())?;
-            Ok(diesel::delete(groups.filter(id.eq(self.id()))).execute(conn)?)
+        with_connection(pool, async |conn| -> Result<usize, ApiError> {
+            ensure_group_allows_local_write(conn, self.id()).await?;
+            Ok(diesel::delete(groups.filter(id.eq(self.id())))
+                .execute(conn)
+                .await?)
         })
+        .await
     }
 
     async fn delete_group_record(
@@ -204,10 +225,12 @@ impl DeleteGroupRecord for GroupID {
 
         use crate::schema::groups::dsl::{groups, id};
 
-        with_transaction(pool, |conn| -> Result<usize, ApiError> {
-            let group = groups.filter(id.eq(self.id())).first::<Group>(conn)?;
-            ensure_group_allows_local_write(conn, group.id)?;
-            let deleted = diesel::delete(groups.filter(id.eq(self.id()))).execute(conn)?;
+        with_transaction(pool, async |conn| -> Result<usize, ApiError> {
+            let group = groups.filter(id.eq(self.id())).first::<Group>(conn).await?;
+            ensure_group_allows_local_write(conn, group.id).await?;
+            let deleted = diesel::delete(groups.filter(id.eq(self.id())))
+                .execute(conn)
+                .await?;
             let event = group_event(
                 &group,
                 Action::Deleted,
@@ -215,9 +238,10 @@ impl DeleteGroupRecord for GroupID {
                 format!("Group '{}' deleted", group.groupname),
             )?
             .with_before(group_snapshot(&group));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(deleted)
         })
+        .await
     }
 }
 
@@ -225,10 +249,13 @@ impl DeleteGroupRecord for Group {
     async fn delete_group_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
-        with_connection(pool, |conn| -> Result<usize, ApiError> {
-            ensure_group_allows_local_write(conn, self.id)?;
-            Ok(diesel::delete(groups.filter(id.eq(self.id))).execute(conn)?)
+        with_connection(pool, async |conn| -> Result<usize, ApiError> {
+            ensure_group_allows_local_write(conn, self.id).await?;
+            Ok(diesel::delete(groups.filter(id.eq(self.id)))
+                .execute(conn)
+                .await?)
         })
+        .await
     }
 
     async fn delete_group_record(
@@ -242,10 +269,12 @@ impl DeleteGroupRecord for Group {
 
         use crate::schema::groups::dsl::{groups, id};
 
-        with_transaction(pool, |conn| -> Result<usize, ApiError> {
-            let before = groups.filter(id.eq(self.id)).first::<Group>(conn)?;
-            ensure_group_allows_local_write(conn, before.id)?;
-            let deleted = diesel::delete(groups.filter(id.eq(self.id))).execute(conn)?;
+        with_transaction(pool, async |conn| -> Result<usize, ApiError> {
+            let before = groups.filter(id.eq(self.id)).first::<Group>(conn).await?;
+            ensure_group_allows_local_write(conn, before.id).await?;
+            let deleted = diesel::delete(groups.filter(id.eq(self.id)))
+                .execute(conn)
+                .await?;
             let event = group_event(
                 &before,
                 Action::Deleted,
@@ -253,9 +282,10 @@ impl DeleteGroupRecord for Group {
                 format!("Group '{}' deleted", before.groupname),
             )?
             .with_before(group_snapshot(&before));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(deleted)
         })
+        .await
     }
 }
 
@@ -289,7 +319,7 @@ impl SaveGroupRecord for NewGroup {
         let scope = identity_scope_by_name(pool, scope_name).await?;
         let description = self.description.clone().unwrap_or_default();
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             diesel::insert_into(groups::table)
                 .values((
                     groups::identity_scope_id.eq(scope.id),
@@ -298,7 +328,9 @@ impl SaveGroupRecord for NewGroup {
                     groups::managed_by.eq(LOCAL_PROVIDER_KIND),
                 ))
                 .get_result::<Group>(conn)
+                .await
         })
+        .await
     }
 
     async fn save_group_record(
@@ -324,7 +356,7 @@ impl SaveGroupRecord for NewGroup {
         let scope = identity_scope_by_name(pool, scope_name).await?;
         let description = self.description.clone().unwrap_or_default();
 
-        with_transaction(pool, |conn| -> Result<Group, ApiError> {
+        with_transaction(pool, async |conn| -> Result<Group, ApiError> {
             let group = diesel::insert_into(groups::table)
                 .values((
                     groups::identity_scope_id.eq(scope.id),
@@ -332,7 +364,8 @@ impl SaveGroupRecord for NewGroup {
                     groups::description.eq(&description),
                     groups::managed_by.eq(LOCAL_PROVIDER_KIND),
                 ))
-                .get_result::<Group>(conn)?;
+                .get_result::<Group>(conn)
+                .await?;
             let event = group_event(
                 &group,
                 Action::Created,
@@ -340,9 +373,10 @@ impl SaveGroupRecord for NewGroup {
                 format!("Group '{}' created", group.groupname),
             )?
             .with_after(group_snapshot(&group));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(group)
         })
+        .await
     }
 }
 
@@ -373,12 +407,14 @@ impl UpdateGroupRecord for UpdateGroup {
     ) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
-        with_connection(pool, |conn| -> Result<Group, ApiError> {
-            ensure_group_allows_local_write(conn, group_id)?;
+        with_connection(pool, async |conn| -> Result<Group, ApiError> {
+            ensure_group_allows_local_write(conn, group_id).await?;
             Ok(diesel::update(groups.filter(id.eq(group_id)))
                 .set(self)
-                .get_result::<Group>(conn)?)
+                .get_result::<Group>(conn)
+                .await?)
         })
+        .await
     }
 
     async fn update_group_record(
@@ -395,12 +431,13 @@ impl UpdateGroupRecord for UpdateGroup {
 
         use crate::schema::groups::dsl::{groups, id};
 
-        with_transaction(pool, |conn| -> Result<Group, ApiError> {
-            let before = groups.filter(id.eq(group_id)).first::<Group>(conn)?;
-            ensure_group_allows_local_write(conn, before.id)?;
+        with_transaction(pool, async |conn| -> Result<Group, ApiError> {
+            let before = groups.filter(id.eq(group_id)).first::<Group>(conn).await?;
+            ensure_group_allows_local_write(conn, before.id).await?;
             let after = diesel::update(groups.filter(id.eq(group_id)))
                 .set(self)
-                .get_result::<Group>(conn)?;
+                .get_result::<Group>(conn)
+                .await?;
             let event = group_event(
                 &after,
                 Action::Updated,
@@ -409,9 +446,10 @@ impl UpdateGroupRecord for UpdateGroup {
             )?
             .with_before(group_snapshot(&before))
             .with_after(group_snapshot(&after));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(after)
         })
+        .await
     }
 }
 
@@ -456,13 +494,15 @@ impl GroupMembersBackend for Group {
         use crate::schema::group_memberships::dsl::{group_id, group_memberships};
         use crate::schema::principals::dsl::principals;
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             group_memberships
                 .filter(group_id.eq(self.id))
                 .inner_join(principals)
                 .select(crate::schema::principals::all_columns)
                 .load::<Principal>(conn)
+                .await
         })
+        .await
     }
 
     async fn load_group_members_paginated(
@@ -499,7 +539,7 @@ impl GroupMembersBackend for Group {
 
         crate::apply_query_options!(base_query, query_options, Principal);
 
-        with_connection(pool, |conn| base_query.load::<Principal>(conn))
+        with_connection(pool, async |conn| base_query.load::<Principal>(conn).await).await
     }
 
     async fn count_group_members_paginated(
@@ -533,7 +573,10 @@ impl GroupMembersBackend for Group {
             }
         }
 
-        with_connection(pool, |conn| base_query.count().get_result::<i64>(conn))
+        with_connection(pool, async |conn| {
+            base_query.count().get_result::<i64>(conn).await
+        })
+        .await
     }
 
     async fn remove_group_member_from_backend_without_events(
@@ -541,10 +584,11 @@ impl GroupMembersBackend for Group {
         member_principal_id: i32,
         pool: &DbPool,
     ) -> Result<(), ApiError> {
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
-            remove_manual_membership_source(conn, member_principal_id, self.id)?;
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            remove_manual_membership_source(conn, member_principal_id, self.id).await?;
             Ok(())
-        })?;
+        })
+        .await?;
         Ok(())
     }
 
@@ -560,9 +604,11 @@ impl GroupMembersBackend for Group {
                 .await;
         };
 
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
-            let membership = load_principal_group(conn, member_principal_id, self.id).optional()?;
-            remove_manual_membership_source(conn, member_principal_id, self.id)?;
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            let membership = load_principal_group(conn, member_principal_id, self.id)
+                .await
+                .optional()?;
+            remove_manual_membership_source(conn, member_principal_id, self.id).await?;
 
             if let Some(membership) = membership {
                 let event = NewEvent::new(
@@ -579,11 +625,12 @@ impl GroupMembersBackend for Group {
                     membership.principal_id,
                     membership.group_id,
                 ));
-                emit_event(conn, &event)?;
+                emit_event(conn, &event).await?;
             }
 
             Ok(())
         })
+        .await
     }
 }
 
@@ -608,11 +655,13 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
         &self,
         pool: &DbPool,
     ) -> Result<PrincipalGroup, ApiError> {
-        with_transaction(pool, |conn| -> Result<PrincipalGroup, ApiError> {
-            let membership = insert_effective_membership(conn, self.principal_id, self.group_id)?;
-            insert_manual_membership_source(conn, self.principal_id, self.group_id)?;
+        with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
+            let membership =
+                insert_effective_membership(conn, self.principal_id, self.group_id).await?;
+            insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
             Ok(membership)
         })
+        .await
     }
 
     async fn save_principal_group_record(
@@ -624,11 +673,13 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
             return self.save_principal_group_record_without_events(pool).await;
         };
 
-        with_transaction(pool, |conn| -> Result<PrincipalGroup, ApiError> {
-            let already_present =
-                load_principal_group(conn, self.principal_id, self.group_id).optional()?;
-            let membership = insert_effective_membership(conn, self.principal_id, self.group_id)?;
-            insert_manual_membership_source(conn, self.principal_id, self.group_id)?;
+        with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
+            let already_present = load_principal_group(conn, self.principal_id, self.group_id)
+                .await
+                .optional()?;
+            let membership =
+                insert_effective_membership(conn, self.principal_id, self.group_id).await?;
+            insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
             match already_present {
                 None => {
                     let event = NewEvent::new(
@@ -645,12 +696,13 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
                         membership.principal_id,
                         membership.group_id,
                     ));
-                    emit_event(conn, &event)?;
+                    emit_event(conn, &event).await?;
                     Ok(membership)
                 }
                 Some(_) => Ok(membership),
             }
         })
+        .await
     }
 }
 
@@ -659,11 +711,13 @@ impl SavePrincipalGroupRecord for PrincipalGroup {
         &self,
         pool: &DbPool,
     ) -> Result<PrincipalGroup, ApiError> {
-        with_transaction(pool, |conn| -> Result<PrincipalGroup, ApiError> {
-            let membership = insert_effective_membership(conn, self.principal_id, self.group_id)?;
-            insert_manual_membership_source(conn, self.principal_id, self.group_id)?;
+        with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
+            let membership =
+                insert_effective_membership(conn, self.principal_id, self.group_id).await?;
+            insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
             Ok(membership)
         })
+        .await
     }
 
     async fn save_principal_group_record(
@@ -675,9 +729,10 @@ impl SavePrincipalGroupRecord for PrincipalGroup {
             return self.save_principal_group_record_without_events(pool).await;
         };
 
-        with_transaction(pool, |conn| -> Result<PrincipalGroup, ApiError> {
-            let membership = insert_effective_membership(conn, self.principal_id, self.group_id)?;
-            insert_manual_membership_source(conn, self.principal_id, self.group_id)?;
+        with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
+            let membership =
+                insert_effective_membership(conn, self.principal_id, self.group_id).await?;
+            insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
             let event = NewEvent::new(
                 EntityType::UserGroup,
                 Action::Added,
@@ -692,14 +747,15 @@ impl SavePrincipalGroupRecord for PrincipalGroup {
                 membership.principal_id,
                 membership.group_id,
             ));
-            emit_event(conn, &event)?;
+            emit_event(conn, &event).await?;
             Ok(membership)
         })
+        .await
     }
 }
 
-fn load_principal_group(
-    conn: &mut PgConnection,
+async fn load_principal_group(
+    conn: &mut crate::db::DbConnection,
     principal: i32,
     group: i32,
 ) -> Result<PrincipalGroup, diesel::result::Error> {
@@ -708,6 +764,7 @@ fn load_principal_group(
         .filter(principal_id.eq(principal))
         .filter(group_id.eq(group))
         .first::<PrincipalGroup>(conn)
+        .await
 }
 
 pub trait DeletePrincipalGroupRecord {
@@ -716,9 +773,10 @@ pub trait DeletePrincipalGroupRecord {
 
 impl DeletePrincipalGroupRecord for PrincipalGroup {
     async fn delete_principal_group_record(&self, pool: &DbPool) -> Result<(), ApiError> {
-        with_transaction(pool, |conn| -> Result<(), ApiError> {
-            remove_manual_membership_source(conn, self.principal_id, self.group_id)
-        })?;
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            remove_manual_membership_source(conn, self.principal_id, self.group_id).await
+        })
+        .await?;
         Ok(())
     }
 }
@@ -731,11 +789,13 @@ impl PrincipalGroupPrincipalLookup for PrincipalGroup {
     async fn load_principal_group_principal(&self, pool: &DbPool) -> Result<Principal, ApiError> {
         use crate::schema::principals::dsl::{id, principals};
 
-        with_connection(pool, |conn| {
+        with_connection(pool, async |conn| {
             principals
                 .filter(id.eq(self.principal_id))
                 .first::<Principal>(conn)
+                .await
         })
+        .await
     }
 }
 
@@ -747,8 +807,12 @@ impl PrincipalGroupGroupLookup for PrincipalGroup {
     async fn load_principal_group_group(&self, pool: &DbPool) -> Result<Group, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
-        with_connection(pool, |conn| {
-            groups.filter(id.eq(self.group_id)).first::<Group>(conn)
+        with_connection(pool, async |conn| {
+            groups
+                .filter(id.eq(self.group_id))
+                .first::<Group>(conn)
+                .await
         })
+        .await
     }
 }

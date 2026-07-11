@@ -15,6 +15,42 @@ mod tests {
 
     const LOGIN_RATE_LIMIT_ENDPOINT: &str = "/api/v0/meta/login-rate-limit";
 
+    #[rstest]
+    #[actix_web::test]
+    async fn test_db_meta_endpoint_returns_consistent_pool_state(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let resp = get_request(&context.pool, &context.admin_token, "/api/v0/meta/db").await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let body: Value = test::read_body_json(resp).await;
+
+        let max = body["max_connections"].as_u64().unwrap();
+        let total = body["total_connections"].as_u64().unwrap();
+        let idle = body["idle_connections"].as_u64().unwrap();
+        let in_use = body["in_use_connections"].as_u64().unwrap();
+        let available = body["available_connections"].as_u64().unwrap();
+        let started = body["acquisitions_started"].as_u64().unwrap();
+        let completed = body["acquisitions_direct"].as_u64().unwrap()
+            + body["acquisitions_waited"].as_u64().unwrap()
+            + body["acquisitions_timed_out"].as_u64().unwrap();
+
+        assert!(max >= total);
+        assert!(total >= idle);
+        assert_eq!(in_use, total - idle);
+        assert_eq!(available, max - in_use);
+        assert_eq!(
+            body["pending_acquisitions"].as_u64().unwrap(),
+            started - completed
+        );
+        assert!(body["acquisition_wait_time_ms"].is_number());
+        assert!(body["connections_created"].is_number());
+        assert!(body["connections_closed_broken"].is_number());
+        assert!(body["connections_closed_invalid"].is_number());
+        assert!(body["connections_closed_max_lifetime"].is_number());
+        assert!(body["connections_closed_idle_timeout"].is_number());
+    }
+
     /// Drive enough failures to lock the `(username, ip)` scope (default threshold is 5).
     async fn lock_user_ip(username: &str, ip: IpAddr) {
         for _ in 0..5 {

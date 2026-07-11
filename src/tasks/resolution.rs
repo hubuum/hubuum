@@ -273,8 +273,8 @@ pub(super) async fn resolve_object_planning(
     }
 }
 
-pub(super) fn resolve_collection_runtime(
-    conn: &mut diesel::PgConnection,
+pub(super) async fn resolve_collection_runtime(
+    conn: &mut crate::db::DbConnection,
     runtime: &RuntimeState,
     reference: Option<&str>,
     key: Option<&CollectionKey>,
@@ -285,20 +285,22 @@ pub(super) fn resolve_collection_runtime(
             .get(reference)
             .cloned()
             .ok_or_else(|| ApiError::BadRequest(format!("Unknown collection ref '{reference}'"))),
-        (None, Some(key)) => lookup_collection_by_key_db(conn, key)?.ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "Collection '{}' not found during execution",
-                collection_key_label(key)
-            ))
-        }),
+        (None, Some(key)) => lookup_collection_by_key_db(conn, key)
+            .await?
+            .ok_or_else(|| {
+                ApiError::NotFound(format!(
+                    "Collection '{}' not found during execution",
+                    collection_key_label(key)
+                ))
+            }),
         _ => Err(ApiError::BadRequest(
             "Exactly one of collection_ref or collection_key must be provided".to_string(),
         )),
     }
 }
 
-pub(super) fn resolve_collection_parent_runtime(
-    conn: &mut diesel::PgConnection,
+pub(super) async fn resolve_collection_parent_runtime(
+    conn: &mut crate::db::DbConnection,
     runtime: &RuntimeState,
     input: &ImportCollectionInput,
 ) -> Result<Collection, ApiError> {
@@ -306,18 +308,20 @@ pub(super) fn resolve_collection_parent_runtime(
         input.parent_collection_ref.as_deref(),
         input.parent_collection_key.as_ref(),
     ) {
-        (None, None) => lookup_root_collection_db(conn),
+        (None, None) => lookup_root_collection_db(conn).await,
         (Some(reference), None) => runtime
             .collections_by_ref
             .get(reference)
             .cloned()
             .ok_or_else(|| ApiError::BadRequest(format!("Unknown collection ref '{reference}'"))),
-        (None, Some(key)) => lookup_collection_by_key_db(conn, key)?.ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "Collection '{}' not found during execution",
-                collection_key_label(key)
-            ))
-        }),
+        (None, Some(key)) => lookup_collection_by_key_db(conn, key)
+            .await?
+            .ok_or_else(|| {
+                ApiError::NotFound(format!(
+                    "Collection '{}' not found during execution",
+                    collection_key_label(key)
+                ))
+            }),
         (Some(_), Some(_)) => Err(ApiError::BadRequest(
             "At most one of parent_collection_ref or parent_collection_key may be provided"
                 .to_string(),
@@ -325,16 +329,16 @@ pub(super) fn resolve_collection_parent_runtime(
     }
 }
 
-pub(super) fn lookup_existing_collection_for_import_db(
-    conn: &mut diesel::PgConnection,
+pub(super) async fn lookup_existing_collection_for_import_db(
+    conn: &mut crate::db::DbConnection,
     parent_collection_id: i32,
     name: &str,
 ) -> Result<Option<Collection>, ApiError> {
-    lookup_collection_child_by_name_db(conn, parent_collection_id, name)
+    lookup_collection_child_by_name_db(conn, parent_collection_id, name).await
 }
 
-pub(super) fn resolve_class_runtime(
-    conn: &mut diesel::PgConnection,
+pub(super) async fn resolve_class_runtime(
+    conn: &mut crate::db::DbConnection,
     runtime: &RuntimeState,
     reference: Option<&str>,
     key: Option<&ClassKey>,
@@ -351,15 +355,16 @@ pub(super) fn resolve_class_runtime(
                 runtime,
                 key.collection_ref.as_deref(),
                 key.collection_key.as_ref(),
-            )?;
-            lookup_class_by_collection_and_name_db(conn, collection.id, &key.name)?.ok_or_else(
-                || {
+            )
+            .await?;
+            lookup_class_by_collection_and_name_db(conn, collection.id, &key.name)
+                .await?
+                .ok_or_else(|| {
                     ApiError::NotFound(format!(
                         "Class '{}' not found in collection '{}' during execution",
                         key.name, collection.name
                     ))
-                },
-            )
+                })
         }
         _ => Err(ApiError::BadRequest(
             "Exactly one of class_ref or class_key must be provided".to_string(),
@@ -367,8 +372,8 @@ pub(super) fn resolve_class_runtime(
     }
 }
 
-pub(super) fn resolve_object_runtime(
-    conn: &mut diesel::PgConnection,
+pub(super) async fn resolve_object_runtime(
+    conn: &mut crate::db::DbConnection,
     runtime: &RuntimeState,
     reference: Option<&str>,
     key: Option<&ObjectKey>,
@@ -385,13 +390,16 @@ pub(super) fn resolve_object_runtime(
                 runtime,
                 key.class_ref.as_deref(),
                 key.class_key.as_ref(),
-            )?;
-            lookup_object_by_class_and_name_db(conn, class.id, &key.name)?.ok_or_else(|| {
-                ApiError::NotFound(format!(
-                    "Object '{}' not found in class '{}' during execution",
-                    key.name, class.name
-                ))
-            })
+            )
+            .await?;
+            lookup_object_by_class_and_name_db(conn, class.id, &key.name)
+                .await?
+                .ok_or_else(|| {
+                    ApiError::NotFound(format!(
+                        "Object '{}' not found in class '{}' during execution",
+                        key.name, class.name
+                    ))
+                })
         }
         _ => Err(ApiError::BadRequest(
             "Exactly one of object_ref or object_key must be provided".to_string(),

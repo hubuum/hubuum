@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test};
-    use diesel::prelude::*;
     use rstest::rstest;
 
     use crate::db::with_connection;
@@ -65,14 +65,16 @@ mod tests {
     async fn database_rejects_non_object_settings() {
         let context = TestContext::new().await;
 
-        let result = with_connection(&context.pool, |conn| {
+        let result = with_connection(&context.pool, async |conn| {
             diesel::update(
                 crate::schema::principals::table
                     .filter(crate::schema::principals::id.eq(context.normal_user.id)),
             )
             .set(crate::schema::principals::settings.eq(serde_json::json!(["invalid"])))
             .execute(conn)
-        });
+            .await
+        })
+        .await;
 
         assert!(matches!(
             result,
@@ -282,14 +284,16 @@ mod tests {
                 (account.id, token)
             }
             SelfCaller::ProviderManagedHuman => {
-                with_connection(&context.pool, |conn| {
+                with_connection(&context.pool, async |conn| {
                     diesel::update(
                         crate::schema::principals::table
                             .filter(crate::schema::principals::id.eq(context.normal_user.id)),
                     )
                     .set(crate::schema::principals::provider_managed.eq(true))
                     .execute(conn)
+                    .await
                 })
+                .await
                 .unwrap();
                 (context.normal_user.id, context.normal_token.clone())
             }
@@ -436,14 +440,16 @@ mod tests {
         };
         assert_eq!(response.status(), expected_status);
 
-        let event = with_connection(&context.pool, |conn| {
+        let event = with_connection(&context.pool, async |conn| {
             crate::schema::events::table
                 .filter(crate::schema::events::entity_type.eq(entity_type.as_str()))
                 .filter(crate::schema::events::entity_id.eq(target_id))
                 .filter(crate::schema::events::action.eq(Action::Updated.as_str()))
                 .order(crate::schema::events::id.desc())
                 .first::<Event>(conn)
+                .await
         })
+        .await
         .unwrap();
 
         assert_eq!(

@@ -12,8 +12,8 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::db::prelude::*;
     use actix_web::{App, http::StatusCode, test, web};
-    use diesel::prelude::*;
     use rstest::rstest;
 
     use crate::api;
@@ -148,7 +148,7 @@ mod tests {
         let user = create_test_user(pool).await;
         let group = create_test_group(pool).await;
 
-        let result = with_connection(pool, |conn| {
+        let result = with_connection(pool, async |conn| {
             diesel::insert_into(crate::schema::service_accounts::table)
                 .values((
                     crate::schema::service_accounts::id.eq(user.id),
@@ -156,7 +156,9 @@ mod tests {
                     crate::schema::service_accounts::owner_group_id.eq(group.id),
                 ))
                 .execute(conn)
-        });
+                .await
+        })
+        .await;
 
         assert!(result.is_err());
     }
@@ -170,14 +172,16 @@ mod tests {
         let group = create_test_group(pool).await;
         let sa: ServiceAccount = create_test_service_account(pool, &group, None).await;
 
-        let result = with_connection(pool, |conn| {
+        let result = with_connection(pool, async |conn| {
             diesel::insert_into(crate::schema::users::table)
                 .values((
                     crate::schema::users::id.eq(sa.id),
                     crate::schema::users::password.eq(Some("x")),
                 ))
                 .execute(conn)
-        });
+                .await
+        })
+        .await;
 
         assert!(result.is_err());
     }
@@ -213,33 +217,41 @@ mod tests {
             .expect("user delete should succeed");
 
         let remaining: i64 = match facet {
-            CascadeFacet::Principal => with_connection(pool, |conn| {
+            CascadeFacet::Principal => with_connection(pool, async |conn| {
                 crate::schema::principals::table
                     .filter(crate::schema::principals::id.eq(pid))
                     .count()
                     .get_result(conn)
+                    .await
             })
+            .await
             .unwrap(),
-            CascadeFacet::UsersRow => with_connection(pool, |conn| {
+            CascadeFacet::UsersRow => with_connection(pool, async |conn| {
                 crate::schema::users::table
                     .filter(crate::schema::users::id.eq(pid))
                     .count()
                     .get_result(conn)
+                    .await
             })
+            .await
             .unwrap(),
-            CascadeFacet::Tokens => with_connection(pool, |conn| {
+            CascadeFacet::Tokens => with_connection(pool, async |conn| {
                 crate::schema::tokens::table
                     .filter(crate::schema::tokens::principal_id.eq(pid))
                     .count()
                     .get_result(conn)
+                    .await
             })
+            .await
             .unwrap(),
-            CascadeFacet::Memberships => with_connection(pool, |conn| {
+            CascadeFacet::Memberships => with_connection(pool, async |conn| {
                 crate::schema::group_memberships::table
                     .filter(crate::schema::group_memberships::principal_id.eq(pid))
                     .count()
                     .get_result(conn)
+                    .await
             })
+            .await
             .unwrap(),
         };
 
@@ -303,12 +315,14 @@ mod tests {
         let hash = raw.storage_hash();
         raw.delete(pool).await.unwrap();
 
-        let revoked_at_value: Option<chrono::NaiveDateTime> = with_connection(pool, |conn| {
+        let revoked_at_value: Option<chrono::NaiveDateTime> = with_connection(pool, async |conn| {
             tokens
                 .filter(token_col.eq(&hash))
                 .select(revoked_at)
                 .first::<Option<chrono::NaiveDateTime>>(conn)
+                .await
         })
+        .await
         .expect("token row should still exist after soft-revoke");
 
         assert!(revoked_at_value.is_some());
@@ -346,12 +360,14 @@ mod tests {
         let returned = raw.is_valid(pool).await.unwrap().last_used_at;
 
         let hash = raw.storage_hash();
-        let persisted: Option<chrono::NaiveDateTime> = with_connection(pool, |conn| {
+        let persisted: Option<chrono::NaiveDateTime> = with_connection(pool, async |conn| {
             tokens
                 .filter(token_col.eq(&hash))
                 .select(last_used_at)
                 .first::<Option<chrono::NaiveDateTime>>(conn)
+                .await
         })
+        .await
         .expect("token row should exist after validation");
 
         assert_eq!(returned, persisted);
@@ -468,12 +484,14 @@ mod tests {
             "precondition: token mint succeeds"
         );
 
-        let scoped_flags: Vec<bool> = with_connection(pool, |conn| {
+        let scoped_flags: Vec<bool> = with_connection(pool, async |conn| {
             tokens
                 .filter(principal_id.eq(sa.id))
                 .select(scoped)
                 .load::<bool>(conn)
+                .await
         })
+        .await
         .unwrap();
 
         assert_eq!(scoped_flags, vec![false]);
@@ -706,14 +724,16 @@ mod tests {
         let other = create_test_service_account(pool, &group, None).await;
 
         service_account_token(pool, &owner, None, None).await;
-        let token_id: i32 = with_connection(pool, |conn| {
+        let token_id: i32 = with_connection(pool, async |conn| {
             use crate::schema::tokens::dsl::{id, principal_id, tokens};
             tokens
                 .filter(principal_id.eq(owner.id))
                 .select(id)
                 .order(id.desc())
                 .first::<i32>(conn)
+                .await
         })
+        .await
         .unwrap();
 
         let path_principal = if use_owning_principal {
@@ -1188,13 +1208,15 @@ mod tests {
             .await
             .unwrap();
 
-        let status: String = with_connection(pool, |conn| {
+        let status: String = with_connection(pool, async |conn| {
             use crate::schema::tasks::dsl::{id, status, tasks};
             tasks
                 .filter(id.eq(task.id))
                 .select(status)
                 .first::<String>(conn)
+                .await
         })
+        .await
         .unwrap();
         assert_eq!(status, TaskStatus::Cancelled.as_str());
     }
@@ -1355,12 +1377,12 @@ mod tests {
 
     const SERVICE_ACCOUNTS_ENDPOINT: &str = "/api/v1/iam/service-accounts";
 
-    fn service_account_audit_event_count(
+    async fn service_account_audit_event_count(
         context: &TestContext,
         action_value: Action,
         service_account_id: i32,
     ) -> i64 {
-        with_connection(&context.pool, |conn| {
+        with_connection(&context.pool, async |conn| {
             use crate::schema::events::dsl::{action, entity_id, entity_type, events};
 
             events
@@ -1369,7 +1391,9 @@ mod tests {
                 .filter(entity_id.eq(service_account_id))
                 .count()
                 .get_result::<i64>(conn)
+                .await
         })
+        .await
         .unwrap()
     }
 
@@ -1393,7 +1417,7 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
         let created: ServiceAccountResponse = test::read_body_json(resp).await;
         assert_eq!(
-            service_account_audit_event_count(&context, Action::Created, created.id),
+            service_account_audit_event_count(&context, Action::Created, created.id).await,
             1
         );
 
@@ -1406,7 +1430,7 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::OK).await;
         assert_eq!(
-            service_account_audit_event_count(&context, Action::Disabled, created.id),
+            service_account_audit_event_count(&context, Action::Disabled, created.id).await,
             1
         );
 
@@ -1418,7 +1442,7 @@ mod tests {
         .await;
         assert_response_status(resp, StatusCode::NO_CONTENT).await;
         assert_eq!(
-            service_account_audit_event_count(&context, Action::Deleted, created.id),
+            service_account_audit_event_count(&context, Action::Deleted, created.id).await,
             1
         );
     }
@@ -1500,13 +1524,15 @@ mod tests {
             .await
             .unwrap();
 
-        let status: String = with_connection(pool, |conn| {
+        let status: String = with_connection(pool, async |conn| {
             use crate::schema::tasks::dsl::{id, status, tasks};
             tasks
                 .filter(id.eq(task.id))
                 .select(status)
                 .first::<String>(conn)
+                .await
         })
+        .await
         .unwrap();
         assert_eq!(status, TaskStatus::Running.as_str());
     }

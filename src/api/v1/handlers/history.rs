@@ -39,7 +39,7 @@ pub fn parse_as_of(query_string: &str) -> Result<DateTime<Utc>, ApiError> {
         crate::models::search::parse_query_parameter_with_passthrough(query_string, &["at"])?;
     let at = passthrough
         .get("at")
-        .and_then(|values| values.first())
+        .and_then(|values| values.as_slice().first())
         .ok_or_else(|| ApiError::BadRequest("missing required 'at' parameter".into()))?;
     DateTime::parse_from_rfc3339(at)
         .map(|dt| dt.with_timezone(&Utc))
