@@ -183,11 +183,11 @@ async fn maybe_cleanup_expired_export_outputs(pool: &DbPool) -> Result<(), ApiEr
         }
     };
 
-    metrics::report_output_cleanup_run();
+    metrics::export_output_cleanup_run();
     match purge_expired_export_outputs(pool).await {
-        Ok(deleted) => metrics::report_output_cleanup_deleted(deleted.len()),
+        Ok(deleted) => metrics::export_output_cleanup_deleted(deleted.len()),
         Err(error) => {
-            metrics::report_output_cleanup_failed();
+            metrics::export_output_cleanup_failed();
             let mut state = cleanup_state().lock().map_err(|_| {
                 ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
             })?;

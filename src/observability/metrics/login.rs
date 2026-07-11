@@ -12,6 +12,14 @@ pub fn login_attempt(outcome: &'static str) {
     }
 }
 
+pub fn login_lockout(scope: &'static str) {
+    if let Some(metrics) = current() {
+        metrics
+            .login_lockouts
+            .add(1, &[KeyValue::new("scope", scope)]);
+    }
+}
+
 pub(super) async fn refresh_login_limiter_gauges(metrics: &Metrics) {
     let snapshots = rate_limit::snapshot().await;
     let locked = snapshots.iter().filter(|entry| entry.locked).count();

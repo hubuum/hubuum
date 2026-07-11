@@ -525,7 +525,7 @@ pub(crate) async fn execute_export_task(
     .await?;
     let query_elapsed = query_start.elapsed();
     timings.query_duration_ms = duration_to_millis_i32(query_elapsed);
-    metrics::report_phase_duration("query", query_elapsed);
+    metrics::export_phase_duration("query", query_elapsed);
     enforce_export_stage_timeout(query_start, "query execution")?;
 
     if relation_hydration
@@ -555,7 +555,7 @@ pub(crate) async fn execute_export_task(
     .await?;
     let hydration_elapsed = hydration_start.elapsed();
     timings.hydration_duration_ms = duration_to_millis_i32(hydration_elapsed);
-    metrics::report_phase_duration("hydration", hydration_elapsed);
+    metrics::export_phase_duration("hydration", hydration_elapsed);
     enforce_export_stage_timeout(hydration_start, "relation hydration")?;
     let template_export = runtime.template.is_some();
     let item_count = if template_export {
@@ -598,33 +598,18 @@ pub(crate) async fn execute_export_task(
     let total_elapsed = total_start.elapsed();
     timings.render_duration_ms = duration_to_millis_i32(render_elapsed);
     timings.total_duration_ms = duration_to_millis_i32(total_elapsed);
-    metrics::report_phase_duration("render", render_elapsed);
-    metrics::report_phase_duration("total", total_elapsed);
+    metrics::export_phase_duration("render", render_elapsed);
+    metrics::export_phase_duration("total", total_elapsed);
     enforce_export_stage_timeout(render_start, "template rendering")?;
     log_export_stage_metrics(task.id, &runtime, timings);
     let artifact = ExportArtifact {
         timings,
         ..artifact
     };
-    metrics::report_result(
-        artifact.meta.scope.kind.as_str(),
-        artifact.content_type.as_mime(),
-        "succeeded",
-    );
-    if artifact.meta.truncated {
-        metrics::report_result(
-            artifact.meta.scope.kind.as_str(),
-            artifact.content_type.as_mime(),
-            "truncated",
-        );
-    }
-    if !artifact.warnings.is_empty() {
-        metrics::report_result(
-            artifact.meta.scope.kind.as_str(),
-            artifact.content_type.as_mime(),
-            "warning",
-        );
-    }
+    let metric_scope = artifact.meta.scope.kind.as_str();
+    let metric_content_type = artifact.content_type.as_mime();
+    let metric_truncated = artifact.meta.truncated;
+    let metric_warning_count = artifact.warnings.len();
 
     NewTaskEventRecord {
         task_id: task.id,
@@ -667,6 +652,14 @@ pub(crate) async fn execute_export_task(
         artifact_to_output_record(task.id, artifact)?,
     )
     .await?;
+
+    metrics::export_completed(metric_scope, metric_content_type);
+    if metric_truncated {
+        metrics::export_truncated(metric_scope, metric_content_type);
+    }
+    if metric_warning_count > 0 {
+        metrics::export_warnings(metric_scope, metric_content_type, metric_warning_count);
+    }
 
     Ok(())
 }

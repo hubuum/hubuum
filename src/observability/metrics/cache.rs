@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use crate::db::traits::metrics::{InventoryMetricsSnapshot, TaskMetricsSnapshot};
+use crate::db::traits::metrics::{
+    EventMetricsSnapshot, InventoryMetricsSnapshot, TaskMetricsSnapshot,
+};
 
 const DB_SCRAPE_CACHE_TTL: Duration = Duration::from_secs(30);
 
@@ -8,6 +10,7 @@ const DB_SCRAPE_CACHE_TTL: Duration = Duration::from_secs(30);
 pub(super) struct ScrapeCache {
     pub(super) inventory: CachedSnapshot<InventoryMetricsSnapshot>,
     pub(super) tasks: CachedSnapshot<TaskMetricsSnapshot>,
+    pub(super) events: CachedSnapshot<EventMetricsSnapshot>,
 }
 
 pub(super) struct CachedSnapshot<T> {

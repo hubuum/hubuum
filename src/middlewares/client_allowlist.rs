@@ -121,6 +121,7 @@ where
                 Box::pin(async move { fut.await.map(ServiceResponse::map_into_left_body) })
             }
             Some(ip) => {
+                crate::observability::metrics::client_allowlist_rejected("disallowed_ip");
                 warn!(message = "Rejected request from disallowed IP", client_ip = %ip);
                 let response = req
                     .into_response(HttpResponse::Forbidden().body("Client not allowed"))
@@ -128,6 +129,7 @@ where
                 Box::pin(async { Ok(response) })
             }
             None => {
+                crate::observability::metrics::client_allowlist_rejected("missing_ip");
                 warn!(message = "Rejected request with missing client IP");
                 let response = req
                     .into_response(HttpResponse::Forbidden().body("Client not allowed"))

@@ -7,6 +7,7 @@ use crate::config::{
     DEFAULT_EVENT_FANOUT_BATCH_SIZE, DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
     DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS, DEFAULT_EVENT_FANOUT_WORKERS, get_config,
 };
+use crate::db::traits::metrics::EventMetricsSnapshot;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::events::{event_delivery_wakeup_stats, event_fanout_wakeup_stats};
@@ -133,6 +134,16 @@ pub async fn load_event_delivery_health(
             delivery,
             sinks,
             subscriptions,
+        })
+    })
+    .await
+}
+
+pub async fn load_event_metrics_snapshot(pool: &DbPool) -> Result<EventMetricsSnapshot, ApiError> {
+    with_connection(pool, async |conn| {
+        Ok::<EventMetricsSnapshot, ApiError>(EventMetricsSnapshot {
+            fanout: load_fanout_health(conn).await?,
+            delivery: load_delivery_queue_health(conn).await?,
         })
     })
     .await

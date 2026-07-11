@@ -5,7 +5,7 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 
 use super::Metrics;
-use super::{db, get, inventory, login, task};
+use super::{db, event, get, inventory, login, task};
 
 pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
     let metrics = get()?;
@@ -28,6 +28,9 @@ pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError>
 async fn refresh_scrape_gauges(metrics: &Metrics, pool: &DbPool) {
     db::refresh_pool_gauges(metrics, pool);
     login::refresh_login_limiter_gauges(metrics).await;
-    inventory::refresh_inventory_gauges(metrics, pool).await;
-    task::refresh_task_gauges(metrics, pool).await;
+    if let Ok(_refresh_guard) = metrics.db_refresh_lock.try_lock() {
+        inventory::refresh_inventory_gauges(metrics, pool).await;
+        task::refresh_task_gauges(metrics, pool).await;
+        event::refresh_event_gauges(metrics, pool).await;
+    }
 }

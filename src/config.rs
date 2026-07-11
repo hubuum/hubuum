@@ -66,6 +66,69 @@ pub const DEFAULT_METRICS_PATH: &str = "/metrics";
 pub const DEFAULT_TRUSTED_PROXY_HOPS: usize = 0;
 pub const DEFAULT_MAX_TRANSITIVE_DEPTH: i32 = 100;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct MetricsPath(String);
+
+impl MetricsPath {
+    pub fn new(path: impl Into<String>) -> Result<Self, String> {
+        let path = path.into();
+        if !path.starts_with('/') || path.len() == 1 {
+            return Err("metrics_path must be an absolute non-root path".to_string());
+        }
+        if path.ends_with('/') || path.contains("//") {
+            return Err("metrics_path must not contain empty path segments".to_string());
+        }
+        if path
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+            || path.contains(['{', '}', '*', '?', '#'])
+        {
+            return Err("metrics_path must be a literal HTTP path".to_string());
+        }
+        if path == "/api"
+            || path.starts_with("/api/")
+            || path == "/swagger-ui"
+            || path.starts_with("/swagger-ui/")
+            || matches!(
+                path.as_str(),
+                "/healthz" | "/readyz" | "/api-doc/openapi.json"
+            )
+        {
+            return Err(format!(
+                "metrics_path '{path}' collides with an existing application route"
+            ));
+        }
+        Ok(Self(path))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for MetricsPath {
+    type Err = String;
+
+    fn from_str(path: &str) -> Result<Self, Self::Err> {
+        Self::new(path)
+    }
+}
+
+impl TryFrom<String> for MetricsPath {
+    type Error = String;
+
+    fn try_from(path: String) -> Result<Self, Self::Error> {
+        Self::new(path)
+    }
+}
+
+impl From<MetricsPath> for String {
+    fn from(path: MetricsPath) -> Self {
+        path.0
+    }
+}
+
 struct TokenHashKeyConfig {
     key: Vec<u8>,
     is_ephemeral: bool,
@@ -645,7 +708,7 @@ pub struct AppConfig {
         env = "HUBUUM_METRICS_PATH",
         default_value = DEFAULT_METRICS_PATH
     )]
-    pub metrics_path: String,
+    pub metrics_path: MetricsPath,
 
     /// Trust proxy IP headers (X-Forwarded-For). If false, use peer address only.
     ///
@@ -990,24 +1053,6 @@ impl AppConfig {
             return Err(ApiError::BadRequest(format!(
                 "default_page_limit ({}) must be less than or equal to max_page_limit ({})",
                 self.default_page_limit, self.max_page_limit
-            )));
-        }
-
-        if !self.metrics_path.starts_with('/') || self.metrics_path.len() == 1 {
-            return Err(ApiError::BadRequest(
-                "metrics_path must be an absolute non-root path".to_string(),
-            ));
-        }
-
-        if self.metrics_path.starts_with("/api/")
-            || matches!(
-                self.metrics_path.as_str(),
-                "/healthz" | "/readyz" | "/api-doc/openapi.json"
-            )
-        {
-            return Err(ApiError::BadRequest(format!(
-                "metrics_path '{}' collides with an existing application route",
-                self.metrics_path
             )));
         }
 
@@ -1420,7 +1465,8 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         metrics_enabled: env_or_default("HUBUUM_METRICS_ENABLED", "true")
             .parse()
             .unwrap_or(DEFAULT_METRICS_ENABLED),
-        metrics_path: env_or_default("HUBUUM_METRICS_PATH", DEFAULT_METRICS_PATH),
+        metrics_path: MetricsPath::new(env_or_default("HUBUUM_METRICS_PATH", DEFAULT_METRICS_PATH))
+            .map_err(ApiError::BadRequest)?,
         trust_ip_headers: env_or_default("HUBUUM_TRUST_IP_HEADERS", "false")
             .parse()
             .unwrap_or(false),
@@ -1598,6 +1644,7 @@ mod tests {
     use std::{env, ffi::OsString};
 
     use clap::Parser;
+    use rstest::rstest;
 
     use super::{
         AppConfig, DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_BATCH_SIZE,
@@ -2463,7 +2510,7 @@ mod tests {
 
         for config in [&parsed, &loaded] {
             assert!(!config.metrics_enabled);
-            assert_eq!(config.metrics_path, "/internal/metrics");
+            assert_eq!(config.metrics_path.as_str(), "/internal/metrics");
         }
     }
 
@@ -2479,22 +2526,48 @@ mod tests {
         );
     }
 
-    #[test]
-    fn metrics_path_must_not_collide_with_existing_routes() {
+    #[rstest]
+    #[case("/api")]
+    #[case("/api/v1/metrics")]
+    #[case("/healthz")]
+    #[case("/readyz")]
+    #[case("/api-doc/openapi.json")]
+    #[case("/swagger-ui")]
+    #[case("/swagger-ui/index.html")]
+    fn metrics_path_must_not_collide_with_existing_routes(#[case] path: &str) {
         let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _path = EnvVarGuard::set("HUBUUM_METRICS_PATH", Some(path));
+        let error = get_config_from_env().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("metrics_path '{path}' collides with an existing application route")
+        );
+    }
 
-        for path in [
-            "/api/v1/metrics",
-            "/healthz",
-            "/readyz",
-            "/api-doc/openapi.json",
-        ] {
-            let _path = EnvVarGuard::set("HUBUUM_METRICS_PATH", Some(path));
-            let error = get_config_from_env().unwrap_err();
-            assert_eq!(
-                error.to_string(),
-                format!("metrics_path '{path}' collides with an existing application route")
-            );
-        }
+    #[rstest]
+    #[case("/{tail}*")]
+    #[case("/metrics/{id}")]
+    #[case("/metrics?format=text")]
+    #[case("/metrics#fragment")]
+    #[case("/metrics path")]
+    fn metrics_path_must_be_literal(#[case] path: &str) {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _path = EnvVarGuard::set("HUBUUM_METRICS_PATH", Some(path));
+        assert_eq!(
+            get_config_from_env().unwrap_err().to_string(),
+            "metrics_path must be a literal HTTP path"
+        );
+    }
+
+    #[rstest]
+    #[case("/internal//metrics")]
+    #[case("/metrics/")]
+    fn metrics_path_must_not_have_empty_segments(#[case] path: &str) {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _path = EnvVarGuard::set("HUBUUM_METRICS_PATH", Some(path));
+        assert_eq!(
+            get_config_from_env().unwrap_err().to_string(),
+            "metrics_path must not contain empty path segments"
+        );
     }
 }

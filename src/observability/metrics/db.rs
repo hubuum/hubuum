@@ -55,7 +55,7 @@ pub fn db_operation_finished(operation: &'static str, duration: Duration, result
 pub(super) fn refresh_pool_gauges(metrics: &Metrics, pool: &DbPool) {
     let state = pool.state();
     metrics.db_pool_connections.record(
-        u64::from(pool.max_size()),
+        u64::from(pool.config().max_size),
         &[KeyValue::new("state", "configured")],
     );
     metrics.db_pool_connections.record(

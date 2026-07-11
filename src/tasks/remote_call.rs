@@ -241,12 +241,13 @@ async fn record_remote_call_failure(
     duration_ms: i32,
     error: OutboundHttpError,
 ) -> Result<RemoteExecutionOutcome, ApiError> {
+    let metric_outcome = remote_error_outcome(&error);
     let api_error = outbound_error_to_api_error(error);
     let message = crate::tasks::helpers::sanitize_error_for_storage(&api_error);
     metrics::remote_call_finished(
         context.method,
         "none",
-        remote_error_outcome(&api_error),
+        metric_outcome,
         std::time::Duration::from_millis(u64::try_from(duration_ms).unwrap_or(0)),
     );
     insert_remote_call_result(
@@ -285,12 +286,23 @@ fn status_family(status_code: u16) -> &'static str {
     }
 }
 
-fn remote_error_outcome(error: &ApiError) -> &'static str {
+fn remote_error_outcome(error: &OutboundHttpError) -> &'static str {
     match error {
-        ApiError::ServiceUnavailable(_) => "timeout",
-        ApiError::Forbidden(_) => "private_target_rejected",
-        ApiError::BadRequest(_) => "validation_rejected",
-        _ => "failure",
+        OutboundHttpError::Timeout => "timeout",
+        OutboundHttpError::DisallowedAddress { .. } => "private_target_rejected",
+        OutboundHttpError::InvalidUrl
+        | OutboundHttpError::NonHttpsUrl
+        | OutboundHttpError::EmbeddedCredentials
+        | OutboundHttpError::MissingHost
+        | OutboundHttpError::MissingKnownPort
+        | OutboundHttpError::InvalidHeaderName { .. }
+        | OutboundHttpError::InvalidHeaderValue { .. } => "validation_rejected",
+        OutboundHttpError::DnsResolution { .. }
+        | OutboundHttpError::EmptyDnsResolution { .. }
+        | OutboundHttpError::ClientBuild(_)
+        | OutboundHttpError::ResponseRead(_)
+        | OutboundHttpError::Connect
+        | OutboundHttpError::Request(_) => "failure",
     }
 }
 
@@ -513,7 +525,60 @@ fn outbound_error_to_bad_request(error: OutboundHttpError) -> ApiError {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use rstest::rstest;
+
     use super::*;
+
+    #[rstest]
+    #[case(OutboundHttpError::Timeout, "timeout")]
+    #[case(
+        OutboundHttpError::DisallowedAddress {
+            host: "internal.example".to_string(),
+            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        },
+        "private_target_rejected"
+    )]
+    #[case(OutboundHttpError::InvalidUrl, "validation_rejected")]
+    #[case(OutboundHttpError::NonHttpsUrl, "validation_rejected")]
+    #[case(OutboundHttpError::EmbeddedCredentials, "validation_rejected")]
+    #[case(OutboundHttpError::MissingHost, "validation_rejected")]
+    #[case(OutboundHttpError::MissingKnownPort, "validation_rejected")]
+    #[case(
+        OutboundHttpError::InvalidHeaderName {
+            name: "bad header".to_string(),
+        },
+        "validation_rejected"
+    )]
+    #[case(
+        OutboundHttpError::InvalidHeaderValue {
+            name: "x-test".to_string(),
+        },
+        "validation_rejected"
+    )]
+    #[case(
+        OutboundHttpError::DnsResolution {
+            host: "missing.example".to_string(),
+        },
+        "failure"
+    )]
+    #[case(
+        OutboundHttpError::EmptyDnsResolution {
+            host: "empty.example".to_string(),
+        },
+        "failure"
+    )]
+    #[case(OutboundHttpError::ClientBuild("client".to_string()), "failure")]
+    #[case(OutboundHttpError::ResponseRead("body".to_string()), "failure")]
+    #[case(OutboundHttpError::Connect, "failure")]
+    #[case(OutboundHttpError::Request("request".to_string()), "failure")]
+    fn remote_errors_use_lossless_metric_outcomes(
+        #[case] error: OutboundHttpError,
+        #[case] expected: &'static str,
+    ) {
+        assert_eq!(remote_error_outcome(&error), expected);
+    }
 
     #[test]
     fn render_template_supports_curated_filters() {

@@ -107,26 +107,51 @@ pub fn init() -> Result<(), ApiError> {
             .with_description("Oldest queued or active task age")
             .with_unit("s")
             .build(),
-        report_output_cleanup_runs: meter
-            .u64_counter("hubuum_report_output_cleanup_runs")
-            .with_description("Report output cleanup runs")
+        export_output_cleanup_runs: meter
+            .u64_counter("hubuum_export_output_cleanup_runs")
+            .with_description("Export output cleanup runs")
             .build(),
-        report_output_cleanup_failures: meter
-            .u64_counter("hubuum_report_output_cleanup_failures")
-            .with_description("Report output cleanup failures")
+        export_output_cleanup_failures: meter
+            .u64_counter("hubuum_export_output_cleanup_failures")
+            .with_description("Export output cleanup failures")
             .build(),
-        report_output_cleanup_deleted: meter
-            .u64_counter("hubuum_report_output_cleanup_deleted")
-            .with_description("Report outputs deleted by cleanup")
+        export_output_cleanup_deleted: meter
+            .u64_counter("hubuum_export_output_cleanup_deleted")
+            .with_description("Export outputs deleted by cleanup")
             .build(),
-        report_duration: meter
-            .f64_histogram("hubuum_report_phase_duration")
-            .with_description("Report phase duration")
+        export_duration: meter
+            .f64_histogram("hubuum_export_phase_duration")
+            .with_description("Export phase duration")
             .with_unit("s")
             .build(),
-        report_results: meter
-            .u64_counter("hubuum_report_results")
-            .with_description("Report result counters")
+        export_completions: meter
+            .u64_counter("hubuum_export_completions")
+            .with_description("Successfully persisted export outputs")
+            .build(),
+        export_truncations: meter
+            .u64_counter("hubuum_export_truncations")
+            .with_description("Successfully persisted truncated exports")
+            .build(),
+        export_warnings: meter
+            .u64_counter("hubuum_export_warnings")
+            .with_description("Warnings on successfully persisted exports")
+            .build(),
+        import_duration: meter
+            .f64_histogram("hubuum_import_phase_duration")
+            .with_description("Import phase duration")
+            .with_unit("s")
+            .build(),
+        import_processed_items: meter
+            .u64_counter("hubuum_import_processed_items")
+            .with_description("Import items processed by terminal tasks")
+            .build(),
+        import_succeeded_items: meter
+            .u64_counter("hubuum_import_succeeded_items")
+            .with_description("Import items completed successfully")
+            .build(),
+        import_failed_items: meter
+            .u64_counter("hubuum_import_failed_items")
+            .with_description("Import items completed with failure")
             .build(),
         remote_call_duration: meter
             .f64_histogram("hubuum_remote_call_duration")
@@ -141,9 +166,38 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_login_attempts")
             .with_description("Login attempts by outcome")
             .build(),
+        login_lockouts: meter
+            .u64_counter("hubuum_login_lockouts")
+            .with_description("Login limiter lockout transitions by scope kind")
+            .build(),
         login_limiter_entries: meter
             .u64_gauge("hubuum_login_limiter_entries")
             .with_description("Login limiter entries")
+            .build(),
+        client_allowlist_rejections: meter
+            .u64_counter("hubuum_client_allowlist_rejections")
+            .with_description("Requests rejected by the client IP allowlist")
+            .build(),
+        event_queue_items: meter
+            .i64_gauge("hubuum_event_queue_items")
+            .with_description("Event fan-out and delivery queue items by state")
+            .build(),
+        event_stale_claims: meter
+            .i64_gauge("hubuum_event_stale_claims")
+            .with_description("Stale event worker claims by queue")
+            .build(),
+        event_oldest_age: meter
+            .f64_gauge("hubuum_event_oldest_age")
+            .with_description("Oldest actionable event item age by queue")
+            .with_unit("s")
+            .build(),
+        event_worker_config: meter
+            .u64_gauge("hubuum_event_worker_config")
+            .with_description("Configured event worker settings")
+            .build(),
+        event_worker_wakeups: meter
+            .u64_gauge("hubuum_event_worker_wakeups")
+            .with_description("Event worker wakeup counters")
             .build(),
         inventory_entities: meter
             .i64_gauge("hubuum_inventory_entities")
@@ -154,6 +208,7 @@ pub fn init() -> Result<(), ApiError> {
             .with_description("Metrics scrape refresh failures by source")
             .build(),
         scrape_cache: Mutex::new(ScrapeCache::default()),
+        db_refresh_lock: tokio::sync::Mutex::new(()),
     };
 
     METRICS
