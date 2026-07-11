@@ -14,13 +14,34 @@
 //! The `dangerous_*` request toggles exist for tightly scoped test/internal
 //! callers and should not be enabled from production paths.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use ipnet::IpNet;
 use reqwest::Url;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+const MAX_CACHED_CLIENTS: usize = 128;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ClientCacheKey {
+    host: String,
+    addresses: Vec<SocketAddr>,
+    accept_invalid_certs: bool,
+}
+
+struct CachedClient {
+    client: reqwest::Client,
+    last_used: u64,
+}
+
+static CLIENT_CACHE: LazyLock<Mutex<HashMap<ClientCacheKey, CachedClient>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static CLIENT_CACHE_CLOCK: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 pub enum OutboundHttpError {
@@ -366,29 +387,25 @@ impl OutboundResponse {
 
 async fn execute(request: OutboundRequest) -> Result<OutboundResponse, OutboundHttpError> {
     let url_parts = validate_outbound_url(&request.url)?;
-    let screened_addrs = screen_host(
+    let mut screened_addrs = screen_host(
         &url_parts.host,
         url_parts.port,
         request.allow_private_targets,
         request.dangerous_allow_localhost,
     )
     .await?;
+    screened_addrs.sort_unstable();
+    screened_addrs.dedup();
 
-    let client_builder = reqwest::Client::builder()
-        .timeout(request.timeout)
-        .redirect(reqwest::redirect::Policy::none())
-        .resolve_to_addrs(&url_parts.host, &screened_addrs);
-    let client_builder = if request.dangerous_accept_invalid_certs {
-        client_builder.danger_accept_invalid_certs(true)
-    } else {
-        client_builder
-    };
-    let client = client_builder
-        .build()
-        .map_err(|error| OutboundHttpError::ClientBuild(error.to_string()))?;
+    let client = cached_client(
+        &url_parts.host,
+        &screened_addrs,
+        request.dangerous_accept_invalid_certs,
+    )?;
 
     let mut request_builder = client
         .request(request.method.as_reqwest(), url_parts.url.clone())
+        .timeout(request.timeout)
         .headers(request.headers.into_inner());
     if let Some(body) = request.body {
         request_builder = request_builder.body(body);
@@ -410,6 +427,54 @@ async fn execute(request: OutboundRequest) -> Result<OutboundResponse, OutboundH
         duration_ms,
         url: url_parts.url.to_string(),
     })
+}
+
+fn cached_client(
+    host: &str,
+    addresses: &[SocketAddr],
+    accept_invalid_certs: bool,
+) -> Result<reqwest::Client, OutboundHttpError> {
+    let key = ClientCacheKey {
+        host: host.to_ascii_lowercase(),
+        addresses: addresses.to_vec(),
+        accept_invalid_certs,
+    };
+    let now = CLIENT_CACHE_CLOCK.fetch_add(1, Ordering::Relaxed);
+    let mut cache = CLIENT_CACHE
+        .lock()
+        .map_err(|_| OutboundHttpError::ClientBuild("client cache lock poisoned".to_string()))?;
+
+    if let Some(entry) = cache.get_mut(&key) {
+        entry.last_used = now;
+        return Ok(entry.client.clone());
+    }
+
+    let mut builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve_to_addrs(host, addresses);
+    if accept_invalid_certs {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+    let client = builder
+        .build()
+        .map_err(|error| OutboundHttpError::ClientBuild(error.to_string()))?;
+
+    if cache.len() >= MAX_CACHED_CLIENTS
+        && let Some(stalest) = cache
+            .iter()
+            .min_by_key(|(_, entry)| entry.last_used)
+            .map(|(key, _)| key.clone())
+    {
+        cache.remove(&stalest);
+    }
+    cache.insert(
+        key,
+        CachedClient {
+            client: client.clone(),
+            last_used: now,
+        },
+    );
+    Ok(client)
 }
 
 async fn read_capped_body(
@@ -541,5 +606,18 @@ mod tests {
         let json = headers_to_json(&headers);
         assert_eq!(json["set-cookie"], "[redacted]");
         assert_eq!(json["x-request-id"], "abc");
+    }
+
+    #[test]
+    fn clients_are_reused_only_for_identical_dns_and_tls_policy() {
+        CLIENT_CACHE.lock().unwrap().clear();
+        let first_addresses = ["93.184.216.34:443".parse().unwrap()];
+
+        cached_client("example.com", &first_addresses, false).unwrap();
+        cached_client("EXAMPLE.COM", &first_addresses, false).unwrap();
+        assert_eq!(CLIENT_CACHE.lock().unwrap().len(), 1);
+
+        cached_client("example.com", &first_addresses, true).unwrap();
+        assert_eq!(CLIENT_CACHE.lock().unwrap().len(), 2);
     }
 }

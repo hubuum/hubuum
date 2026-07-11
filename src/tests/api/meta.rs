@@ -257,6 +257,18 @@ mod tests {
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let body: Value = test::read_body_json(resp).await;
-        assert_eq!(body["tracked_entries"], 0);
+        let entries = body["entries"].as_array().unwrap();
+        let cleared_identifiers = [
+            "meta-clear-user|203.0.113.66",
+            "203.0.113.66",
+            "203.0.113.0/24",
+        ];
+        assert!(
+            entries.iter().all(|entry| {
+                let identifier = entry["identifier"].as_str().unwrap();
+                !cleared_identifiers.contains(&identifier)
+            }),
+            "clear-all should remove every scope created by this test: {entries:?}",
+        );
     }
 }

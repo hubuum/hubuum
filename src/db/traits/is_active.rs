@@ -4,7 +4,7 @@ use tracing::warn;
 
 use crate::db::traits::Status;
 use crate::db::traits::active_tokens::{active_token_predicate, active_tokens_cutoff};
-use crate::db::{DbPool, with_connection};
+use crate::db::{DbPool, with_connection_async};
 use crate::errors::ApiError;
 use crate::models::{PrincipalToken, Token};
 
@@ -39,7 +39,7 @@ impl Status<PrincipalToken> for Token {
         let now = chrono::Utc::now().naive_utc().trunc_subsecs(6);
         let cutoff = active_tokens_cutoff();
 
-        let result = with_connection(pool, |conn| {
+        let result = with_connection_async(pool.clone(), move |conn| {
             tokens
                 .filter(token.eq(&token_hash))
                 .filter(active_token_predicate(now, cutoff))
@@ -50,7 +50,8 @@ impl Status<PrincipalToken> for Token {
                 )))
                 .first::<PrincipalToken>(conn)
                 .optional()
-        });
+        })
+        .await;
 
         let mut valid_token = match result {
             Ok(Some(valid_token)) => valid_token,
@@ -76,11 +77,12 @@ impl Status<PrincipalToken> for Token {
             // Best-effort telemetry: a failure to advance `last_used_at` must
             // never fail an otherwise-valid request.
             let token_id_value = valid_token.id;
-            let updated = with_connection(pool, |conn| {
+            let updated = with_connection_async(pool.clone(), move |conn| {
                 diesel::update(tokens.filter(token_id.eq(token_id_value)))
                     .set(last_used_at.eq(now))
                     .execute(conn)
-            });
+            })
+            .await;
             // Reflect the advance in the returned row (the SELECT above read the
             // prior value), so callers observe an accurate `last_used_at`.
             if updated.is_ok() {

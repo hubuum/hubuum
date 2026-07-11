@@ -206,9 +206,12 @@ async fn get_classes(
 
     debug!(message = "Listing classes", user_id = user.id());
 
-    let total_count = user
-        .count_classes(&pool, count_query_options(&params), requestor.scopes())
-        .await?;
+    let total_count = if params.include_total {
+        user.count_classes(&pool, count_query_options(&params), requestor.scopes())
+            .await?
+    } else {
+        crate::pagination::SKIPPED_TOTAL_COUNT
+    };
     let search_params = prepare_db_pagination::<HubuumClassExpanded>(&params)?;
     let classes = user
         .search_classes(&pool, search_params, requestor.scopes())
@@ -462,19 +465,23 @@ async fn get_class_permissions(
     );
 
     let target_collection_id = class.collection_id(&pool).await?;
-    let count_params = count_query_options(&params);
-    let total_count = crate::models::collection::count_groups_on_paginated(
-        &pool,
-        target_collection_id,
-        vec![
-            Permissions::CreateClass,
-            Permissions::UpdateClass,
-            Permissions::ReadClass,
-            Permissions::DeleteClass,
-        ],
-        &count_params,
-    )
-    .await?;
+    let total_count = if params.include_total {
+        let count_params = count_query_options(&params);
+        crate::models::collection::count_groups_on_paginated(
+            &pool,
+            target_collection_id,
+            vec![
+                Permissions::CreateClass,
+                Permissions::UpdateClass,
+                Permissions::ReadClass,
+                Permissions::DeleteClass,
+            ],
+            &count_params,
+        )
+        .await?
+    } else {
+        crate::pagination::SKIPPED_TOTAL_COUNT
+    };
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
     let permissions = groups_on_paginated(
         &pool,
@@ -826,9 +833,12 @@ async fn get_objects_in_class(
         query = query_string
     );
 
-    let total_count = user
-        .count_objects(&pool, count_query_options(&params), requestor.scopes())
-        .await?;
+    let total_count = if params.include_total {
+        user.count_objects(&pool, count_query_options(&params), requestor.scopes())
+            .await?
+    } else {
+        crate::pagination::SKIPPED_TOTAL_COUNT
+    };
     let search_params = prepare_db_pagination::<HubuumObject>(&params)?;
     let objects = user
         .search_objects(&pool, search_params, requestor.scopes())
@@ -1517,7 +1527,7 @@ async fn get_class_history(
     let search_params = prepare_db_pagination::<crate::models::HubuumClassHistory>(&params)?;
     let (rows, total_count) =
         class_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
-    if require_history && total_count == 0 {
+    if require_history && rows.is_empty() && params.cursor.is_none() {
         return Err(ApiError::NotFound(format!("class {entity_id} not found")));
     }
 
@@ -1651,7 +1661,7 @@ async fn get_object_history(
     let (rows, total_count) =
         object_history_paginated_with_total_count(entity_id, class_id.id(), &pool, &search_params)
             .await?;
-    if require_history && total_count == 0 {
+    if require_history && rows.is_empty() && params.cursor.is_none() {
         return Err(ApiError::NotFound(format!("object {entity_id} not found")));
     }
 

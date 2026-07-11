@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use chrono::NaiveDateTime;
 use diesel::expression::{AppearsOnTable, Expression, SelectableExpression, ValidGrouping};
 use diesel::pg::Pg;
@@ -41,6 +40,7 @@ pub fn parse_query_parameter_with_passthrough(
     let mut sort = Vec::new();
     let mut limit = None;
     let mut cursor = None;
+    let mut include_total = None;
     let mut passthrough = HashMap::<String, Vec<String>>::new();
     let passthrough_keys = passthrough_keys.iter().copied().collect::<HashSet<_>>();
 
@@ -51,6 +51,7 @@ pub fn parse_query_parameter_with_passthrough(
                 sort,
                 limit,
                 cursor,
+                include_total: true,
             },
             passthrough,
         ));
@@ -81,6 +82,13 @@ pub fn parse_query_parameter_with_passthrough(
                 cursor = Some(value);
             }
 
+            "include_total" => {
+                if include_total.is_some() {
+                    return Err(ApiError::BadRequest("duplicate include_total".into()));
+                }
+                include_total = Some(value.as_boolean()?);
+            }
+
             // SORT / ORDER BY: e.g. sort=created_at,-name,email.desc
             "sort" | "order_by" => {
                 for piece in value.split(',') {
@@ -108,6 +116,7 @@ pub fn parse_query_parameter_with_passthrough(
             sort,
             limit,
             cursor,
+            include_total: include_total.unwrap_or(true),
         },
         passthrough,
     ))
@@ -214,6 +223,9 @@ pub struct QueryOptions {
     pub sort: Vec<SortParam>,
     pub limit: Option<usize>,
     pub cursor: Option<String>,
+    /// Whether list endpoints should execute an exact count query and return
+    /// `X-Total-Count`. Defaults to true for API compatibility.
+    pub include_total: bool,
 }
 
 /// ## A struct that represents a filter field
@@ -1000,21 +1012,6 @@ pub trait QueryParamsExt {
     /// * A PermissionsList of Permissions or ApiError::BadRequest if the permissions are invalid
     fn permissions(&self) -> Result<PermissionsList<Permissions>, ApiError>;
 
-    /// ## Get a sorted list of collection ids from a list of parsed query parameters
-    ///
-    /// Iterate over the parsed query parameters and filter out the ones that are collections,
-    /// defined as having the `field` set as "collections". For each value of each parsed query
-    /// parameter, attempt to parse it into a list integers via [`parse_integer_list`].
-    ///
-    /// If the value is not a valid list of integers, return an ApiError::BadRequest.
-    ///
-    /// Note that the result is sorted and that duplicates are removed.
-    ///
-    /// ### Returns
-    ///
-    /// * A vector of integers or ApiError::BadRequest if any of the collection values are invalid
-    fn collections(&self) -> Result<Vec<i32>, ApiError>;
-
     /// ## Get a list of all JSON Schema elements in a list of parsed query parameters
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are JSON Schemas,
@@ -1093,27 +1090,6 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
         }
         Ok(PermissionsList::new(unique_permissions))
     }
-    /// ## Get a sorted list of collection ids from a list of parsed query parameters
-    ///
-    /// Iterate over the parsed query parameters and filter out the ones that are collections,
-    /// defined as having the `field` set as "collections". For each value of a matching parsed query
-    /// parameter, attempt to parse it into a list of integers via [`parse_integer_list`].
-    ///
-    /// If any value is not a valid list of integers, return an ApiError::BadRequest.
-    fn collections(&self) -> Result<Vec<i32>, ApiError> {
-        let mut collection_ids = vec![];
-
-        for p in self.iter() {
-            if p.field == FilterField::Collections {
-                collection_ids.extend(p.value.as_integer()?);
-            }
-        }
-
-        collection_ids.sort_unstable();
-        collection_ids.dedup();
-        Ok(collection_ids)
-    }
-
     /// ## Get a list of all JSON schema entries in a list of parsed query parameters
     ///
     /// Iterate over the parsed query parameters and filter out the ones that are JSON Schemas,
@@ -1235,17 +1211,6 @@ impl Operator {
                 | Operator::ContainsIp
                 | Operator::OverlapsNetwork
                 | Operator::InetEquals
-        )
-    }
-
-    fn is_json_structure_operator(&self) -> bool {
-        matches!(
-            self,
-            Operator::In
-                | Operator::All
-                | Operator::ArrayLength
-                | Operator::HasKey
-                | Operator::IsNull
         )
     }
 }
@@ -1471,13 +1436,6 @@ pub enum SQLMappedType {
     None,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct JsonbFieldType {
-    pub value: String,
-    pub mapping: SQLMappedType,
-    pub operator: Operator,
-}
-
 /// ## Get the type of a field within a JSON schema
 ///
 /// This function takes a JSON schema and a key, and returns the type of the field at that key.
@@ -1540,6 +1498,7 @@ pub struct JsonbFieldType {
 /// * "address,city" -> Some(SQLMappedType::String)
 /// * "address,zip" -> Some(SQLMappedType::Numeric)
 ///
+#[cfg(test)]
 fn get_jsonb_field_type_from_json_schema(
     schema: &serde_json::Value,
     key: &str,
@@ -2738,6 +2697,19 @@ mod test {
         assert_eq!(query_options.sort[0].field, FilterField::Id);
         assert!(query_options.sort[0].descending);
         assert_eq!(query_options.cursor, Some("test-cursor".to_string()));
+    }
+
+    #[test]
+    fn parse_query_parameter_supports_total_count_opt_out() {
+        let options = parse_query_parameter("include_total=false").unwrap();
+        assert!(!options.include_total);
+
+        let defaults = parse_query_parameter("").unwrap();
+        assert!(defaults.include_total);
+
+        let duplicate =
+            parse_query_parameter("include_total=true&include_total=false").unwrap_err();
+        assert_eq!(duplicate.to_string(), "duplicate include_total");
     }
 
     #[test]

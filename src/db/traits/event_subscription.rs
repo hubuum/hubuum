@@ -415,7 +415,9 @@ pub(crate) async fn list_event_sink_rows_with_total_count(
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventSinkRow>, i64), ApiError> {
     let query = build_event_sink_query(query_options)?;
-    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
+        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
+    })?;
     let mut query = build_event_sink_query(query_options)?;
     apply_query_options!(query, query_options, EventSink);
     let rows = with_connection(pool, |conn| query.load::<EventSinkRow>(conn))?;
@@ -452,7 +454,9 @@ pub(crate) async fn list_event_subscription_rows_with_total_count(
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventSubscriptionRow>, i64), ApiError> {
     let base = build_event_subscription_query(collection, query_options)?;
-    let total_count = with_connection(pool, |conn| base.count().get_result::<i64>(conn))?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
+        with_connection(pool, |conn| base.count().get_result::<i64>(conn))
+    })?;
     let mut query = build_event_subscription_query(collection, query_options)?;
     apply_query_options!(query, query_options, EventSubscription);
     let rows = with_connection(pool, |conn| query.load::<EventSubscriptionRow>(conn))?;

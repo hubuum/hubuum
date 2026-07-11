@@ -55,9 +55,12 @@ pub async fn get_collections(
         Err(e) => return Err(e),
     };
 
-    let total_count = user
-        .count_collections(&pool, count_query_options(&params), requestor.scopes())
-        .await?;
+    let total_count = if params.include_total {
+        user.count_collections(&pool, count_query_options(&params), requestor.scopes())
+            .await?
+    } else {
+        crate::pagination::SKIPPED_TOTAL_COUNT
+    };
     let search_params = prepare_db_pagination::<Collection>(&params)?;
     let result = user
         .search_collections(&pool, search_params, requestor.scopes())
@@ -889,7 +892,7 @@ pub async fn get_collection_principal_permissions(
         )
         .await?;
 
-    if total_count == 0 {
+    if permissions.is_empty() && query_options.cursor.is_none() {
         return Err(ApiError::NotFound("No permissions found".to_string()));
     }
 
@@ -1037,7 +1040,7 @@ pub async fn get_collection_history(
     let search_params = prepare_db_pagination::<crate::models::CollectionHistory>(&params)?;
     let (rows, total_count) =
         collection_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
-    if require_history && total_count == 0 {
+    if require_history && rows.is_empty() && params.cursor.is_none() {
         return Err(ApiError::NotFound(format!(
             "collection {entity_id} not found"
         )));

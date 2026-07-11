@@ -358,34 +358,15 @@ async fn find_or_create_remote_call_task(
     payload: serde_json::Value,
 ) -> Result<crate::models::TaskRecord, ApiError> {
     let hash = request_hash(&payload)?;
-    let request_hash_for_match = hash.clone();
-    let matches_request = |task: &crate::models::TaskRecord| {
-        task.kind == TaskKind::RemoteCall.as_str()
-            && task.request_hash.as_deref() == Some(request_hash_for_match.as_str())
-    };
-
-    if let Some(key) = idempotency_key.as_deref()
-        && let Some(existing) =
-            crate::models::TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
-    {
-        if matches_request(&existing) {
-            return Ok(existing);
-        }
-        return Err(ApiError::Conflict(format!(
-            "Idempotency-Key '{key}' is already in use for a different task submission"
-        )));
-    }
 
     info!(
         message = "Creating remote call task",
         submitted_by = submitted_by
     );
-    let create_idempotency_key = idempotency_key.clone();
-
-    match (TaskCreateRequest {
+    (TaskCreateRequest {
         kind: TaskKind::RemoteCall,
         submitted_by,
-        idempotency_key: create_idempotency_key,
+        idempotency_key,
         request_hash: Some(hash),
         request_payload: payload,
         total_items: 1,
@@ -393,25 +374,8 @@ async fn find_or_create_remote_call_task(
         submitted_token_scoped: snapshot.scoped,
         submitted_token_scopes: snapshot.scopes,
     })
-    .create_with_active_remote_call_limit(pool, max_active_remote_call_tasks_per_user())
+    .create_idempotently_with_active_limit(pool, max_active_remote_call_tasks_per_user())
     .await
-    {
-        Ok(task) => Ok(task),
-        Err(ApiError::Conflict(_)) => {
-            if let Some(key) = idempotency_key.as_deref()
-                && let Some(existing) =
-                    crate::models::TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
-                && matches_request(&existing)
-            {
-                return Ok(existing);
-            }
-
-            Err(ApiError::Conflict(
-                "Idempotency-Key is already in use for a different task submission".to_string(),
-            ))
-        }
-        Err(error) => Err(error),
-    }
 }
 
 fn max_active_remote_call_tasks_per_user() -> usize {
@@ -469,7 +433,7 @@ pub async fn get_remote_target_history(
     let search_params = prepare_db_pagination::<crate::models::RemoteTargetHistory>(&params)?;
     let (rows, total_count) =
         remote_target_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
-    if require_history && total_count == 0 {
+    if require_history && rows.is_empty() && params.cursor.is_none() {
         return Err(ApiError::NotFound(format!(
             "remote target {entity_id} not found"
         )));

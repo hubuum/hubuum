@@ -27,6 +27,9 @@ mod tests {
     use crate::db::with_connection;
     use crate::errors::ApiError;
     use crate::events::{Action, EntityType};
+    use crate::middlewares::rate_limit::{
+        LOGIN_RATE_LIMIT_TEST_LOCK, reset_login_rate_limit_for_tests,
+    };
     use crate::models::Collection;
     use crate::models::collection::user_can_on_any;
     use crate::models::principal::load_principal_by_id;
@@ -41,7 +44,7 @@ mod tests {
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{
         TestContext, create_test_group, create_test_service_account, create_test_user,
-        ensure_admin_group, scoped_token, service_account_token,
+        ensure_admin_group, lock_test_mutex, scoped_token, service_account_token,
     };
     use crate::traits::PermissionController;
     use crate::utilities::auth::generate_random_password;
@@ -56,6 +59,8 @@ mod tests {
     /// password-login — the login endpoint returns a generic 401.
     #[actix_web::test]
     async fn test_service_account_cannot_password_login() {
+        let _guard = lock_test_mutex(&LOGIN_RATE_LIMIT_TEST_LOCK).await;
+        reset_login_rate_limit_for_tests().await;
         let context = TestContext::new().await;
         let pool = context.pool.clone();
 

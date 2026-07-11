@@ -17,7 +17,17 @@ use crate::models::{Permission, Permissions};
 use crate::models::traits::GroupAccessors;
 use crate::traits::{BackendContext, CollectionAccessors};
 
-#[derive(Serialize, Deserialize, Queryable, PartialEq, Debug, Clone, Selectable, ToSchema)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Queryable,
+    QueryableByName,
+    PartialEq,
+    Debug,
+    Clone,
+    Selectable,
+    ToSchema,
+)]
 #[diesel(table_name = collections)]
 pub struct Collection {
     pub id: i32,
@@ -804,6 +814,7 @@ mod tests {
                 sort: vec![],
                 limit: None,
                 cursor: None,
+                include_total: true,
             },
         )
         .await

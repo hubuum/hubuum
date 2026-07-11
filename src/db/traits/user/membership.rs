@@ -80,7 +80,9 @@ where
         };
 
         let base_query = build_query()?;
-        let total_count = with_connection(pool, |conn| base_query.count().get_result::<i64>(conn))?;
+        let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
+            with_connection(pool, |conn| base_query.count().get_result::<i64>(conn))
+        })?;
 
         let mut base_query = build_query()?.select(groups::all_columns());
         crate::apply_query_options!(base_query, query_options, Group);

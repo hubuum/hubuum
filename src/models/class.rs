@@ -7,7 +7,7 @@ use crate::errors::ApiError;
 use crate::schema::hubuumclass;
 use crate::traits::BackendContext;
 
-#[derive(Serialize, Deserialize, Queryable, Clone, PartialEq, Debug, ToSchema)]
+#[derive(Serialize, Deserialize, Queryable, QueryableByName, Clone, PartialEq, Debug, ToSchema)]
 #[diesel(table_name = hubuumclass )]
 pub struct HubuumClass {
     pub id: i32,

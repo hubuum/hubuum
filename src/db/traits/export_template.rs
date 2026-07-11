@@ -404,7 +404,9 @@ pub(crate) async fn list_rows_with_total_count(
     query_options: &QueryOptions,
 ) -> Result<(Vec<ExportTemplateRow>, i64), ApiError> {
     let query = build_list_query(allowed_collection_ids, query_options)?;
-    let total_count = with_connection(pool, |conn| query.count().get_result::<i64>(conn))?;
+    let total_count = crate::pagination::exact_count_or_skipped(query_options, || {
+        with_connection(pool, |conn| query.count().get_result::<i64>(conn))
+    })?;
 
     let mut query = build_list_query(allowed_collection_ids, query_options)?;
     crate::apply_query_options!(query, query_options, ExportTemplate);

@@ -43,8 +43,9 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | -------- | ------- | ----------- |
 | `HUBUUM_DATABASE_URL` | `postgres://localhost` | PostgreSQL connection URL |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |
+| `HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS` | `2000` | Maximum wait for a free pooled connection before failing the request |
 | `HUBUUM_SKIP_MIGRATIONS` | `false` | If true, the container waits for the database but does not run Diesel migrations on startup |
-| `HUBUUM_DB_STATEMENT_TIMEOUT_MS` | `0` | Pool-global Postgres `statement_timeout` in ms (`0` disables). Cancels any query exceeding it server-side; applies to **all** DB work, not just exports |
+| `HUBUUM_DB_STATEMENT_TIMEOUT_MS` | `30000` | Pool-global Postgres `statement_timeout` in ms (`0` disables). Cancels any query exceeding it server-side; applies to **all** DB work, not just exports |
 
 ### Task System Configuration
 
@@ -52,6 +53,7 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 | -------- | ------- | ----------- |
 | `HUBUUM_TASK_WORKERS` | About half the detected CPU count, minimum `1` | Number of background task workers |
 | `HUBUUM_TASK_POLL_INTERVAL_MS` | `200` | Idle polling interval for background task workers |
+| `HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running import tasks one user may have at once |
 
 ### Event And Audit Configuration
 

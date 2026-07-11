@@ -40,9 +40,12 @@ pub async fn get_users(
 
     debug!(message = "User list requested", requestor = user.id);
 
-    let total_count = user
-        .count_users(&pool, count_query_options(&params))
-        .await?;
+    let total_count = if params.include_total {
+        user.count_users(&pool, count_query_options(&params))
+            .await?
+    } else {
+        crate::pagination::SKIPPED_TOTAL_COUNT
+    };
     let search_params = prepare_db_pagination::<UserWithName>(&params)?;
     let result = user.search_users(&pool, search_params).await?;
 

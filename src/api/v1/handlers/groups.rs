@@ -52,9 +52,12 @@ pub async fn get_groups(
         params = ?params
     );
 
-    let total_count = user
-        .count_groups(&pool, count_query_options(&params))
-        .await?;
+    let total_count = if params.include_total {
+        user.count_groups(&pool, count_query_options(&params))
+            .await?
+    } else {
+        crate::pagination::SKIPPED_TOTAL_COUNT
+    };
     let search_params = prepare_db_pagination::<Group>(&params)?;
     let groups = user.search_groups(&pool, search_params).await?;
     let result = GroupResponse::from_groups(&pool, groups).await?;
@@ -257,8 +260,12 @@ pub async fn get_group_members(
         requestor = requestor.user.id
     );
 
-    let count_params = count_query_options(&params);
-    let total_count = group.count_members_paginated(&pool, &count_params).await?;
+    let total_count = if params.include_total {
+        let count_params = count_query_options(&params);
+        group.count_members_paginated(&pool, &count_params).await?
+    } else {
+        crate::pagination::SKIPPED_TOTAL_COUNT
+    };
     let search_params = prepare_db_pagination::<Principal>(&params)?;
     let members = group.members_paginated(&pool, &search_params).await?;
 

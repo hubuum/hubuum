@@ -5,7 +5,7 @@ mod tests {
         Permission, Permissions, UpdateCollection,
     };
 
-    use crate::pagination::NEXT_CURSOR_HEADER;
+    use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::tests::api_operations::{
         delete_request, get_request, patch_request, post_request, put_request,
     };
@@ -988,6 +988,34 @@ mod tests {
         CollectionFixture::cleanup_all(&created_collections)
             .await
             .unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_collections_can_skip_exact_total_count(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let created = create_collections(&context, "api_collections_skip_total", 3).await;
+        let ids = created
+            .iter()
+            .map(|fixture| fixture.collection.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{COLLECTION_ENDPOINT}/?id={ids}&limit=2&sort=id&include_total=false"),
+        )
+        .await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        assert!(resp.headers().get(TOTAL_COUNT_HEADER).is_none());
+        assert!(resp.headers().get(NEXT_CURSOR_HEADER).is_some());
+        let page: Vec<Collection> = test::read_body_json(resp).await;
+        assert_eq!(page.len(), 2);
+
+        CollectionFixture::cleanup_all(&created).await.unwrap();
     }
 
     #[rstest]

@@ -130,13 +130,17 @@ pub async fn list_service_accounts(
 
     // Authorization is applied in SQL (admin sees all; otherwise owner-group
     // membership), so this is a single paginated query, not a per-row scan.
-    let total_count = count_manageable_service_accounts(
-        &pool,
-        &requestor.user,
-        is_admin,
-        count_query_options(&params),
-    )
-    .await?;
+    let total_count = if params.include_total {
+        count_manageable_service_accounts(
+            &pool,
+            &requestor.user,
+            is_admin,
+            count_query_options(&params),
+        )
+        .await?
+    } else {
+        crate::pagination::SKIPPED_TOTAL_COUNT
+    };
     let search_params = prepare_db_pagination::<ServiceAccountWithName>(&params)?;
     let accounts =
         search_manageable_service_accounts(&pool, &requestor.user, is_admin, search_params).await?;

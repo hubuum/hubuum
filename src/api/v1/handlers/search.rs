@@ -112,7 +112,7 @@ pub async fn stream_search(
                 events.push(sse_event(
                     "error",
                     &UnifiedSearchErrorEvent {
-                        message: error.to_string(),
+                        message: error.public_message().to_string(),
                     },
                 )?);
 

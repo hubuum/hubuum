@@ -82,6 +82,7 @@ mod test {
                 sort: vec![],
                 limit: None,
                 cursor: None,
+                include_total: true,
             };
 
             let hits = context

@@ -37,6 +37,7 @@ pub const DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE: usize = 1_000;
 pub const DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED: bool = false;
 pub const DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS: i64 = 24 * 7;
 pub const DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS: u64 = 300;
+pub const DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
 pub const DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
 pub const DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
 pub const DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT: usize = 64;
@@ -47,7 +48,8 @@ pub const DEFAULT_EXPORT_STAGE_TIMEOUT_MS: u64 = 10_000;
 pub const DEFAULT_REMOTE_CALL_TIMEOUT_MS: u64 = 10_000;
 pub const DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES: usize = 262_144;
 pub const DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS: bool = false;
-pub const DEFAULT_DB_STATEMENT_TIMEOUT_MS: u64 = 0;
+pub const DEFAULT_DB_STATEMENT_TIMEOUT_MS: u64 = 30_000;
+pub const DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS: u64 = 2_000;
 pub const DEFAULT_EXPORT_DB_STATEMENT_TIMEOUT_MS: u64 = 0;
 pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
 pub const DEFAULT_LOGIN_RATE_LIMIT_ENABLED: bool = true;
@@ -335,6 +337,14 @@ pub struct AppConfig {
     )]
     pub export_output_cleanup_interval_seconds: u64,
 
+    /// Maximum queued/validating/running import tasks one user may have at once.
+    #[clap(
+        long,
+        env = "HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER",
+        default_value_t = DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER
+    )]
+    pub import_max_active_tasks_per_user: usize,
+
     /// Maximum queued/validating/running export tasks one user may have at once.
     #[clap(
         long,
@@ -438,7 +448,7 @@ pub struct AppConfig {
     /// work - exports, imports, admin commands, health/auth queries, and
     /// migrations sharing the pool - not just export stages. Postgres cancels any
     /// statement exceeding it server-side, which frees the connection (a genuine
-    /// in-flight timeout). Disabled by default to preserve existing behavior.
+    /// in-flight timeout).
     #[clap(
         long,
         env = "HUBUUM_DB_STATEMENT_TIMEOUT_MS",
@@ -462,6 +472,14 @@ pub struct AppConfig {
         default_value_t = DEFAULT_EXPORT_DB_STATEMENT_TIMEOUT_MS
     )]
     pub export_db_statement_timeout_ms: u64,
+
+    /// Maximum time to wait for a free database connection from the pool.
+    #[clap(
+        long,
+        env = "HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS",
+        default_value_t = DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS
+    )]
+    pub db_pool_acquire_timeout_ms: u64,
 
     /// Number of DB connections in the pool
     #[clap(long, env = "HUBUUM_DB_POOL_SIZE", default_value_t = 10)]
@@ -792,6 +810,12 @@ impl AppConfig {
             ));
         }
 
+        if self.import_max_active_tasks_per_user == 0 {
+            return Err(ApiError::BadRequest(
+                "import_max_active_tasks_per_user must be greater than 0".to_string(),
+            ));
+        }
+
         if self.export_max_active_tasks_per_user == 0 {
             return Err(ApiError::BadRequest(
                 "export_max_active_tasks_per_user must be greater than 0".to_string(),
@@ -849,6 +873,12 @@ impl AppConfig {
         if self.db_pool_size == 0 {
             return Err(ApiError::BadRequest(
                 "db_pool_size must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.db_pool_acquire_timeout_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "db_pool_acquire_timeout_ms must be greater than 0".to_string(),
             ));
         }
 
@@ -1223,6 +1253,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS),
+        import_max_active_tasks_per_user: env::var("HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER),
         export_max_active_tasks_per_user: env::var("HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -1273,6 +1307,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_EXPORT_DB_STATEMENT_TIMEOUT_MS),
+        db_pool_acquire_timeout_ms: env::var("HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS),
         db_pool_size: env_or_default("HUBUUM_DB_POOL_SIZE", "2")
             .parse()
             .unwrap_or(5),
@@ -1522,16 +1560,17 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        AppConfig, DEFAULT_EVENT_DELIVERY_BATCH_SIZE, DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS,
-        DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS, DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS,
-        DEFAULT_EVENT_DELIVERY_RETENTION_DAYS, DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS,
-        DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS, DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS,
-        DEFAULT_EVENT_DELIVERY_WORKERS, DEFAULT_EVENT_FANOUT_BATCH_SIZE,
-        DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS, DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS,
-        DEFAULT_EVENT_FANOUT_WORKERS, DEFAULT_EVENT_RETENTION_DAYS,
-        DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED, DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE,
-        DEFAULT_EVENT_RETENTION_PURGE_ENABLED, DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS,
-        DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_EXPORT_MAX_OUTPUT_BYTES,
+        AppConfig, DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_BATCH_SIZE,
+        DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS,
+        DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS, DEFAULT_EVENT_DELIVERY_RETENTION_DAYS,
+        DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS, DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS,
+        DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_WORKERS,
+        DEFAULT_EVENT_FANOUT_BATCH_SIZE, DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
+        DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS, DEFAULT_EVENT_FANOUT_WORKERS,
+        DEFAULT_EVENT_RETENTION_DAYS, DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED,
+        DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE, DEFAULT_EVENT_RETENTION_PURGE_ENABLED,
+        DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS, DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER,
+        DEFAULT_EXPORT_MAX_OUTPUT_BYTES, DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER,
         DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
         DEFAULT_PAGE_LIMIT, DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER,
         DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, TEST_ENV_LOCK,
@@ -2037,6 +2076,58 @@ mod tests {
 
         assert_eq!(parsed.export_max_active_tasks_per_user, 7);
         assert_eq!(loaded.export_max_active_tasks_per_user, 7);
+    }
+
+    #[test]
+    fn import_max_active_tasks_per_user_is_loaded_and_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER", Some("7"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+        assert_eq!(parsed.import_max_active_tasks_per_user, 7);
+        assert_eq!(loaded.import_max_active_tasks_per_user, 7);
+
+        drop(_guard);
+        let _guard = EnvVarGuard::set("HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER", None);
+        assert_eq!(
+            get_config_from_env()
+                .unwrap()
+                .import_max_active_tasks_per_user,
+            DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER
+        );
+
+        drop(_guard);
+        let _guard = EnvVarGuard::set("HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER", Some("0"));
+        assert_eq!(
+            get_config_from_env().unwrap_err().to_string(),
+            "import_max_active_tasks_per_user must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn db_pool_acquire_timeout_is_loaded_and_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS", Some("750"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+        assert_eq!(parsed.db_pool_acquire_timeout_ms, 750);
+        assert_eq!(loaded.db_pool_acquire_timeout_ms, 750);
+
+        drop(_guard);
+        let _guard = EnvVarGuard::set("HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS", None);
+        assert_eq!(
+            get_config_from_env().unwrap().db_pool_acquire_timeout_ms,
+            DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS
+        );
+
+        drop(_guard);
+        let _guard = EnvVarGuard::set("HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS", Some("0"));
+        assert_eq!(
+            get_config_from_env().unwrap_err().to_string(),
+            "db_pool_acquire_timeout_ms must be greater than 0"
+        );
     }
 
     #[test]

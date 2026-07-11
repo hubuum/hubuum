@@ -11,6 +11,8 @@ use crate::pagination::{page_limits, validate_page_limit_with_max};
 use crate::traits::BackendContext;
 use crate::utilities::extensions::CustomStringExtensions;
 
+const MAX_UNIFIED_SEARCH_QUERY_LENGTH: usize = 256;
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema, Hash,
 )]
@@ -74,6 +76,10 @@ pub struct UnifiedSearchSpec {
     pub query: String,
     pub search_class_schema: bool,
     pub search_object_data: bool,
+    pub limit_per_kind: usize,
+    pub collection_cursor: Option<UnifiedSearchCursorToken>,
+    pub class_cursor: Option<UnifiedSearchCursorToken>,
+    pub object_cursor: Option<UnifiedSearchCursorToken>,
 }
 
 #[derive(Default)]
@@ -112,6 +118,10 @@ impl From<&UnifiedSearchQuery> for UnifiedSearchSpec {
             query: value.query.clone(),
             search_class_schema: value.search_class_schema,
             search_object_data: value.search_object_data,
+            limit_per_kind: value.limit_per_kind,
+            collection_cursor: value.collection_cursor.clone(),
+            class_cursor: value.class_cursor.clone(),
+            object_cursor: value.object_cursor.clone(),
         }
     }
 }
@@ -204,6 +214,11 @@ fn parse_required_query(value: &str) -> Result<String, ApiError> {
     let trimmed = value.trim().to_string();
     if trimmed.is_empty() {
         return Err(ApiError::BadRequest("q must not be empty".to_string()));
+    }
+    if trimmed.chars().count() > MAX_UNIFIED_SEARCH_QUERY_LENGTH {
+        return Err(ApiError::BadRequest(format!(
+            "q must be at most {MAX_UNIFIED_SEARCH_QUERY_LENGTH} characters"
+        )));
     }
     Ok(trimmed)
 }
@@ -562,32 +577,38 @@ where
     S: crate::traits::Search + ?Sized,
 {
     let search_spec = params.search_spec();
-    let collections = if params.includes(UnifiedSearchKind::Collection) {
-        search_collections(user, backend, params, &search_spec, scopes).await?
-    } else {
-        SearchPage {
-            items: vec![],
-            next: None,
+    let collections_future = async {
+        if params.includes(UnifiedSearchKind::Collection) {
+            search_collections(user, backend, params, &search_spec, scopes).await
+        } else {
+            Ok(SearchPage {
+                items: vec![],
+                next: None,
+            })
         }
     };
-
-    let classes = if params.includes(UnifiedSearchKind::Class) {
-        search_classes(user, backend, params, &search_spec, scopes).await?
-    } else {
-        SearchPage {
-            items: vec![],
-            next: None,
+    let classes_future = async {
+        if params.includes(UnifiedSearchKind::Class) {
+            search_classes(user, backend, params, &search_spec, scopes).await
+        } else {
+            Ok(SearchPage {
+                items: vec![],
+                next: None,
+            })
         }
     };
-
-    let objects = if params.includes(UnifiedSearchKind::Object) {
-        search_objects(user, backend, params, &search_spec, scopes).await?
-    } else {
-        SearchPage {
-            items: vec![],
-            next: None,
+    let objects_future = async {
+        if params.includes(UnifiedSearchKind::Object) {
+            search_objects(user, backend, params, &search_spec, scopes).await
+        } else {
+            Ok(SearchPage {
+                items: vec![],
+                next: None,
+            })
         }
     };
+    let (collections, classes, objects) =
+        tokio::try_join!(collections_future, classes_future, objects_future)?;
 
     Ok(UnifiedSearchResponse {
         query: params.query.clone(),
@@ -708,6 +729,10 @@ mod tests {
                 query: "server".to_string(),
                 search_class_schema: true,
                 search_object_data: true,
+                limit_per_kind: 5,
+                collection_cursor: None,
+                class_cursor: parsed.class_cursor.clone(),
+                object_cursor: None,
             }
         );
     }
@@ -716,6 +741,13 @@ mod tests {
     fn parse_unified_search_rejects_unknown_parameter() {
         let error = parse_unified_search_query("q=server&foo=bar").unwrap_err();
         assert_eq!(error.to_string(), "Invalid query parameter: 'foo'");
+    }
+
+    #[test]
+    fn parse_unified_search_rejects_oversized_query() {
+        let query = "a".repeat(MAX_UNIFIED_SEARCH_QUERY_LENGTH + 1);
+        let error = parse_unified_search_query(&format!("q={query}")).unwrap_err();
+        assert_eq!(error.to_string(), "q must be at most 256 characters");
     }
 
     #[test]

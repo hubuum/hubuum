@@ -437,28 +437,10 @@ async fn find_or_create_export_task(
     payload: serde_json::Value,
     request_hash_value: String,
 ) -> Result<TaskRecord, ApiError> {
-    let request_hash_for_match = request_hash_value.clone();
-    let matches_request = |task: &TaskRecord| {
-        task.kind == TaskKind::Export.as_str()
-            && task.request_hash.as_deref() == Some(request_hash_for_match.as_str())
-    };
-
-    if let Some(key) = idempotency_key.as_deref()
-        && let Some(existing) = TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
-    {
-        if matches_request(&existing) {
-            return Ok(existing);
-        }
-
-        return Err(ApiError::Conflict(format!(
-            "Idempotency-Key '{key}' is already in use for a different task submission"
-        )));
-    }
-
-    match (TaskCreateRequest {
+    (TaskCreateRequest {
         kind: TaskKind::Export,
         submitted_by,
-        idempotency_key: idempotency_key.clone(),
+        idempotency_key,
         request_hash: Some(request_hash_value),
         request_payload: payload,
         total_items: 1,
@@ -466,25 +448,8 @@ async fn find_or_create_export_task(
         submitted_token_scoped: snapshot.scoped,
         submitted_token_scopes: snapshot.scopes,
     })
-    .create_with_active_export_limit(pool, max_active_export_tasks_per_user())
+    .create_idempotently_with_active_limit(pool, max_active_export_tasks_per_user())
     .await
-    {
-        Ok(task) => Ok(task),
-        Err(ApiError::Conflict(_)) => {
-            if let Some(key) = idempotency_key.as_deref()
-                && let Some(existing) =
-                    TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
-                && matches_request(&existing)
-            {
-                return Ok(existing);
-            }
-
-            Err(ApiError::Conflict(
-                "Idempotency-Key is already in use for a different task submission".to_string(),
-            ))
-        }
-        Err(error) => Err(error),
-    }
 }
 
 pub(crate) async fn execute_export_task(

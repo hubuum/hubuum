@@ -356,6 +356,7 @@ fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_errors()
                     sort: Vec::new(),
                     limit: None,
                     cursor: None,
+                    include_total: true,
                 },
             ))
             .unwrap();
