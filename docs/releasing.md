@@ -12,6 +12,21 @@ This repository uses the CI workflow in
 
 ## Scripted release flow
 
+### First release (`v0.0.1`)
+
+The repository is already prepared at version `0.0.1`. Once the release changes are on
+`main` and that commit has a successful CI run:
+
+1. Check out the release commit on a clean local `main` branch.
+2. Run `./scripts/check-release-readiness.sh v0.0.1`.
+3. Run `./scripts/release.sh tag`.
+4. Push the tag with `git push origin v0.0.1`.
+
+Do not tag a different commit while CI is still running: the tag workflow requires the
+exact tagged commit to have a successful `main` CI run.
+
+### Later releases
+
 Use the helper script in [`scripts/release.sh`](../scripts/release.sh):
 
 1. Start from a clean local `main`.
@@ -32,8 +47,11 @@ The helper script:
 Once the tag is pushed, the CI workflow will:
 
 - verify the tagged commit already passed CI on `main`
-- publish GitHub release archives for Linux x86_64 and aarch64
-- publish multi-arch GHCR images for the release tag
+- verify that the tag, `Cargo.toml`, changelog, and OpenAPI versions match
+- publish GitHub release archives and SHA-256 checksums for Linux x86_64, Linux ARM64,
+  Windows x86_64, and macOS ARM64
+- use the matching changelog section as the GitHub Release notes
+- publish AMD64 and ARM64 GHCR images for the release tag
 
 ## Container images
 

@@ -40,6 +40,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Check Docker workspace manifest parity
         run: cargo test --bin hubuum-server dockerfile_copies_every_workspace_manifest --locked
+      - name: Test deployment script refresh
+        run: bash scripts/test-install-script-refresh.sh
       - name: Markdown lint
         uses: DavidAnson/markdownlint-cli2-action@v24
         with:
@@ -539,7 +541,8 @@ jobs:
           mkdir -p dist
           archive_name="hubuum-${{ matrix.platform.os_name }}-all-features-${GITHUB_REF_NAME}.tar.gz"
           tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin
-          shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
+          cd dist
+          shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
       
       - name: Package release archive (Windows)
         if: contains(matrix.platform.os, 'windows')
