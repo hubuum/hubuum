@@ -14,6 +14,7 @@ pub mod querying;
 pub mod relations;
 pub mod remote_targets;
 pub mod request_and_correlation;
+pub mod runtime_config;
 pub mod search;
 pub mod service_accounts;
 pub mod tasks;

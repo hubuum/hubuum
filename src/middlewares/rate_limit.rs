@@ -1,7 +1,7 @@
 use actix_web::{HttpRequest, web};
 use ipnet::{Ipv4Net, Ipv6Net};
 
-use crate::config::{AppConfig, LoginRateLimitConfig, login_rate_limit_config};
+use crate::config::{LoginRateLimitConfig, login_rate_limit_config};
 use crate::middlewares::client_allowlist::{ProxyTrust, extract_client_ip_from_http_request};
 
 #[cfg(test)]
@@ -352,8 +352,8 @@ pub(crate) async fn finish_login_attempt(permit: LoginAttemptPermit, outcome: Lo
 /// trust policy. Returns `None` when no address can be determined.
 pub(crate) fn client_ip_for_request(req: &HttpRequest) -> Option<IpAddr> {
     let policy = req
-        .app_data::<web::Data<AppConfig>>()
-        .map(|config| ProxyTrust::from_config(config))
+        .app_data::<web::Data<ProxyTrust>>()
+        .map(|policy| policy.get_ref().clone())
         .unwrap_or_default();
 
     extract_client_ip_from_http_request(req, &policy)

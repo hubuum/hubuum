@@ -13,11 +13,7 @@ mod tests {
 
     /// Trust forwarded headers behind a single trusted reverse proxy at `203.0.113.1`.
     fn trusts_proxy() -> ProxyTrust {
-        ProxyTrust {
-            trust_headers: true,
-            trusted_proxies: vec![IpNet::from_str("203.0.113.1/32").unwrap()],
-            hops: 0,
-        }
+        ProxyTrust::new(true, vec![IpNet::from_str("203.0.113.1/32").unwrap()], 0)
     }
 
     #[actix_web::test]

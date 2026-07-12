@@ -4,6 +4,7 @@ mod tests {
     use crate::db::prelude::*;
     use crate::db::traits::ActiveTokens;
     use crate::db::{init_pool, with_connection};
+    use crate::middlewares::ProxyTrust;
     use crate::middlewares::rate_limit::{
         LOGIN_RATE_LIMIT_TEST_LOCK, reset_login_rate_limit_for_tests,
     };
@@ -512,6 +513,11 @@ mod tests {
         // Trust forwarded headers, but only behind the known proxy at 203.0.113.1.
         config.trust_ip_headers = true;
         config.trusted_proxies = "203.0.113.1/32".parse().unwrap();
+        let proxy_trust = ProxyTrust::new(
+            config.trust_ip_headers,
+            config.trusted_proxies.nets().to_vec(),
+            config.trusted_proxy_hops,
+        );
         let max_attempts = config.login_rate_limit_max_attempts;
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
@@ -519,7 +525,7 @@ mod tests {
                 .wrap(actix_web::middleware::from_fn(
                     crate::middlewares::actor_context,
                 ))
-                .app_data(Data::new(config.clone()))
+                .app_data(Data::new(proxy_trust))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
@@ -572,6 +578,11 @@ mod tests {
         let mut config = get_config().unwrap();
         config.trust_ip_headers = true;
         config.trusted_proxies = "203.0.113.1/32".parse().unwrap();
+        let proxy_trust = ProxyTrust::new(
+            config.trust_ip_headers,
+            config.trusted_proxies.nets().to_vec(),
+            config.trusted_proxy_hops,
+        );
         let max_attempts = config.login_rate_limit_max_attempts;
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
@@ -579,7 +590,7 @@ mod tests {
                 .wrap(actix_web::middleware::from_fn(
                     crate::middlewares::actor_context,
                 ))
-                .app_data(Data::new(config.clone()))
+                .app_data(Data::new(proxy_trust))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )
@@ -630,6 +641,11 @@ mod tests {
         let mut config = get_config().unwrap();
         config.trust_ip_headers = true;
         config.trusted_proxies = "203.0.113.1/32".parse().unwrap();
+        let proxy_trust = ProxyTrust::new(
+            config.trust_ip_headers,
+            config.trusted_proxies.nets().to_vec(),
+            config.trusted_proxy_hops,
+        );
         let per_ip = config.login_rate_limit_max_attempts_per_ip;
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
@@ -637,7 +653,7 @@ mod tests {
                 .wrap(actix_web::middleware::from_fn(
                     crate::middlewares::actor_context,
                 ))
-                .app_data(Data::new(config.clone()))
+                .app_data(Data::new(proxy_trust))
                 .app_data(Data::new(pool.clone()))
                 .configure(api::config),
         )

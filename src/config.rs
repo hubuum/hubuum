@@ -1,8 +1,11 @@
+pub mod environment;
+pub mod running;
+
 use std::sync::LazyLock;
 #[cfg(test)]
 use std::sync::Mutex;
 #[cfg(not(test))]
-use std::sync::{RwLock, RwLockReadGuard};
+use std::sync::OnceLock;
 
 use clap::{Parser, ValueEnum};
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
@@ -187,7 +190,7 @@ impl TlsBackend {
     }
 }
 
-#[derive(Parser, Debug, Deserialize, Serialize, Clone)]
+#[derive(Parser, Deserialize, Clone)]
 #[command(version = env!("CARGO_PKG_VERSION"), about = "Hubuum server", long_about = None)]
 pub struct AppConfig {
     /// IP address to bind to
@@ -740,6 +743,15 @@ pub struct AppConfig {
     pub client_allowlist: ClientAllowlist,
 }
 
+impl std::fmt::Debug for AppConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("AppConfig")
+            .field(&running::RunningConfig::from(self))
+            .finish()
+    }
+}
+
 fn parse_client_allowlist(s: &str) -> Result<ClientAllowlist, String> {
     ClientAllowlist::from_str(s).map_err(|e| e.to_string())
 }
@@ -1152,14 +1164,15 @@ pub fn login_rate_limit_config() -> LoginRateLimitConfig {
 
     #[cfg(not(test))]
     let config = get_config()
-        .map(|config| LoginRateLimitConfig::from(&*config))
+        .map(LoginRateLimitConfig::from)
         .unwrap_or_default();
 
     config
 }
 
 #[cfg(not(test))]
-fn load_config() -> Result<AppConfig, ApiError> {
+pub fn load_config() -> Result<AppConfig, ApiError> {
+    environment::validate_registry().map_err(ApiError::BadRequest)?;
     match AppConfig::try_parse() {
         Ok(config) => config.validate(),
         Err(error) => match error.kind() {
@@ -1174,16 +1187,29 @@ fn load_config() -> Result<AppConfig, ApiError> {
 }
 
 #[cfg(not(test))]
-pub static CONFIG: LazyLock<RwLock<AppConfig>> = LazyLock::new(|| {
-    let config = load_config().unwrap_or_else(|e| panic!("Invalid application configuration: {e}"));
-    RwLock::new(config)
-});
+static CONFIG: OnceLock<AppConfig> = OnceLock::new();
+
+/// Resolve and install the process configuration before starting async work.
+///
+/// Calling this more than once returns the first installed value. This makes
+/// startup composition explicit while retaining a small compatibility accessor
+/// for code that has not yet received consumer-owned settings.
+#[cfg(not(test))]
+pub fn initialize_config() -> Result<&'static AppConfig, ApiError> {
+    if let Some(config) = CONFIG.get() {
+        return Ok(config);
+    }
+
+    let config = load_config()?;
+    let _ = CONFIG.set(config);
+    CONFIG.get().ok_or_else(|| {
+        ApiError::InternalServerError("Failed to initialize application config".to_string())
+    })
+}
 
 #[cfg(not(test))]
-pub fn get_config() -> Result<RwLockReadGuard<'static, AppConfig>, ApiError> {
-    CONFIG
-        .read()
-        .map_err(|e| ApiError::InternalServerError(format!("Failed to read config: {e}")))
+pub fn get_config() -> Result<&'static AppConfig, ApiError> {
+    initialize_config()
 }
 
 #[cfg(test)]
@@ -1192,6 +1218,8 @@ static TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 #[cfg(test)]
 fn get_config_from_env() -> Result<AppConfig, ApiError> {
     use std::env;
+
+    environment::validate_registry().map_err(ApiError::BadRequest)?;
 
     // Helper function to read an environment variable or return a default value
     fn env_or_default(key: &str, default: &str) -> String {
