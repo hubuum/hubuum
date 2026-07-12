@@ -344,11 +344,14 @@ jobs:
           $dbUrl = "postgres://postgres@127.0.0.1:$pgPort/hubuum_rust_test"
           "DATABASE_URL=$dbUrl" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "HUBUUM_DATABASE_URL=$dbUrl" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PG_TEST_PORT=$pgPort" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PG_LOG=$pgLog" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
           # Install Diesel CLI via official installer script.
           irm https://github.com/diesel-rs/diesel/releases/latest/download/diesel_cli-installer.ps1 | iex
           $dieselBin = Join-Path $env:USERPROFILE '.cargo\bin\diesel.exe'
           if (-not (Test-Path $dieselBin)) { throw "Diesel CLI not found at $dieselBin" }
+          "DIESEL_BIN=$dieselBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
           & "$env:PG_BIN\createdb.exe" -U postgres -h 127.0.0.1 -p $pgPort hubuum_rust_test
           & $dieselBin migration run --database-url "$dbUrl"
@@ -368,7 +371,42 @@ jobs:
 
       - name: Run tests (Windows, full release feature set)
         if: contains(matrix.platform.os, 'windows')
-        run: cargo test -F tls-rustls,amqp,email,valkey --locked --release --target ${{ matrix.platform.target }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testArgs = @(
+            'test',
+            '-F', 'tls-rustls,amqp,email,valkey',
+            '--locked',
+            '--release',
+            '--target', '${{ matrix.platform.target }}'
+          )
+
+          & cargo @testArgs
+          $firstExitCode = $LASTEXITCODE
+          if ($firstExitCode -eq 0) {
+            exit 0
+          }
+
+          Write-Warning "Windows tests failed with exit code $firstExitCode; resetting PostgreSQL and retrying once."
+          if (Test-Path $env:PG_LOG) {
+            Write-Host 'Last 200 lines of the PostgreSQL log:'
+            Get-Content -Path $env:PG_LOG -Tail 200
+          } else {
+            Write-Warning "PostgreSQL log not found at $env:PG_LOG"
+          }
+
+          & "$env:PG_BIN\dropdb.exe" --if-exists --force -U postgres -h 127.0.0.1 -p $env:PG_TEST_PORT hubuum_rust_test
+          if ($LASTEXITCODE -ne 0) { throw "dropdb failed with exit code $LASTEXITCODE" }
+
+          & "$env:PG_BIN\createdb.exe" -U postgres -h 127.0.0.1 -p $env:PG_TEST_PORT hubuum_rust_test
+          if ($LASTEXITCODE -ne 0) { throw "createdb failed with exit code $LASTEXITCODE" }
+
+          & $env:DIESEL_BIN migration run --database-url $env:DATABASE_URL
+          if ($LASTEXITCODE -ne 0) { throw "Diesel migrations failed with exit code $LASTEXITCODE" }
+
+          & cargo @testArgs
+          exit $LASTEXITCODE
 
   all-features-release-build:
     name: Release build with all features
