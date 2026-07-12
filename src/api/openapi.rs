@@ -2,8 +2,13 @@ use crate::api::handlers::{auth, meta, probes};
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::api::v1::handlers::{
     classes, collections, event_deliveries, event_sinks, event_subscriptions, events,
-    export_templates, exports, groups, imports, me, principals, relations, remote_targets, search,
-    service_accounts, tasks, users,
+    export_templates, exports, groups, imports, me, principals, relations, remote_targets,
+    runtime_config, search, service_accounts, tasks, users,
+};
+use crate::config::running::{
+    AuthenticationConfig, ClientAllowlistStatus, DatabaseConfig, EventConfig, ExportConfig,
+    LoginRateLimitConfig as RunningLoginRateLimitConfig, NetworkConfig, PaginationConfig,
+    RemoteCallConfig, RunningConfig, SecretStatus, ServerConfig, TaskConfig, TlsConfig,
 };
 use crate::events::EventResponse;
 use crate::models::{
@@ -57,6 +62,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
     paths(
         probes::healthz,
         probes::readyz,
+        runtime_config::get_running_config,
         meta::get_db_state,
         meta::get_object_and_class_count,
         meta::get_task_queue_state,
@@ -228,6 +234,20 @@ use utoipa::{Modify, OpenApi, ToSchema};
             meta::LoginRateLimitStateResponse,
             meta::ReleaseRateLimitResponse,
             meta::ClearRateLimitResponse,
+            RunningConfig,
+            SecretStatus,
+            ServerConfig,
+            TlsConfig,
+            DatabaseConfig,
+            TaskConfig,
+            EventConfig,
+            ExportConfig,
+            RemoteCallConfig,
+            AuthenticationConfig,
+            RunningLoginRateLimitConfig,
+            PaginationConfig,
+            NetworkConfig,
+            ClientAllowlistStatus,
             ObjectsByClass,
             UserResponse,
             NewUser,
@@ -366,6 +386,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
     ),
     modifiers(&SecurityAddon, &OperationDefaults),
     tags(
+        (name = "admin", description = "Administrative process inspection endpoints"),
         (name = "meta", description = "Meta and database state endpoints"),
         (name = "auth", description = "Authentication and token lifecycle"),
         (name = "users", description = "User management endpoints"),
@@ -844,6 +865,7 @@ mod tests {
             "/api/v0/meta/tasks",
             "/api/v0/meta/login-rate-limit",
             "/api/v0/meta/login-rate-limit/{id}",
+            "/api/v1/admin/config",
             "/api/v1/iam/users",
             "/api/v1/iam/users/{user_id}",
             "/api/v1/iam/users/{user_id}/events",

@@ -697,6 +697,53 @@
         ]
       }
     },
+    "/api/v1/admin/config": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Api V1 Admin Config",
+        "description": "Auto-generated documentation for GET /api/v1/admin/config.",
+        "operationId": "getApiV1AdminConfig",
+        "responses": {
+          "200": {
+            "description": "Effective redacted process configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunningConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes": {
       "get": {
         "tags": [
@@ -12883,6 +12930,40 @@
           }
         }
       },
+      "AuthenticationConfig": {
+        "type": "object",
+        "required": [
+          "token_lifetime_hours",
+          "stable_token_hash_key_configured",
+          "admin_groupname",
+          "provider_config_path",
+          "login_rate_limit"
+        ],
+        "properties": {
+          "admin_groupname": {
+            "type": "string"
+          },
+          "admin_identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "login_rate_limit": {
+            "$ref": "#/components/schemas/LoginRateLimitConfig"
+          },
+          "provider_config_path": {
+            "$ref": "#/components/schemas/SecretStatus"
+          },
+          "stable_token_hash_key_configured": {
+            "type": "boolean"
+          },
+          "token_lifetime_hours": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ClassKey": {
         "type": "object",
         "required": [
@@ -12917,6 +12998,22 @@
         ],
         "properties": {
           "cleared": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ClientAllowlistStatus": {
+        "type": "object",
+        "required": [
+          "allows_any",
+          "network_count"
+        ],
+        "properties": {
+          "allows_any": {
+            "type": "boolean"
+          },
+          "network_count": {
             "type": "integer",
             "minimum": 0
           }
@@ -13145,6 +13242,35 @@
           }
         }
       },
+      "DatabaseConfig": {
+        "type": "object",
+        "required": [
+          "url",
+          "pool_size",
+          "pool_acquire_timeout_ms",
+          "statement_timeout_ms"
+        ],
+        "properties": {
+          "pool_acquire_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pool_size": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "statement_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "url": {
+            "$ref": "#/components/schemas/SecretStatus"
+          }
+        }
+      },
       "DbStateResponse": {
         "type": "object",
         "required": [
@@ -13312,6 +13438,113 @@
           },
           "target_collection": {
             "$ref": "#/components/schemas/Collection"
+          }
+        }
+      },
+      "EventConfig": {
+        "type": "object",
+        "required": [
+          "fanout_workers",
+          "fanout_batch_size",
+          "fanout_poll_interval_ms",
+          "fanout_lock_timeout_ms",
+          "delivery_workers",
+          "delivery_batch_size",
+          "delivery_poll_interval_ms",
+          "delivery_lock_timeout_ms",
+          "delivery_transport_timeout_ms",
+          "delivery_retry_backoff_base_ms",
+          "delivery_retry_backoff_max_ms",
+          "delivery_max_attempts",
+          "retention_purge_enabled",
+          "retention_days",
+          "delivery_retention_days",
+          "retention_purge_interval_seconds",
+          "retention_purge_batch_size",
+          "retention_file_archive_enabled",
+          "retention_archive_path_configured"
+        ],
+        "properties": {
+          "delivery_batch_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "delivery_lock_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "delivery_max_attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "delivery_poll_interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "delivery_retention_days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "delivery_retry_backoff_base_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "delivery_retry_backoff_max_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "delivery_transport_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "delivery_workers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fanout_batch_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fanout_lock_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "fanout_poll_interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "fanout_workers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retention_archive_path_configured": {
+            "type": "boolean"
+          },
+          "retention_days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "retention_file_archive_enabled": {
+            "type": "boolean"
+          },
+          "retention_purge_batch_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retention_purge_enabled": {
+            "type": "boolean"
+          },
+          "retention_purge_interval_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -13955,6 +14188,57 @@
           "poll_wakeups": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ExportConfig": {
+        "type": "object",
+        "required": [
+          "output_retention_hours",
+          "output_cleanup_interval_seconds",
+          "template_recursion_limit",
+          "template_fuel",
+          "template_max_objects",
+          "max_output_bytes",
+          "stage_timeout_ms",
+          "database_statement_timeout_ms"
+        ],
+        "properties": {
+          "database_statement_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "max_output_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_cleanup_interval_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "output_retention_hours": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stage_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "template_fuel": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "template_max_objects": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "template_recursion_limit": {
+            "type": "integer",
             "minimum": 0
           }
         }
@@ -16239,6 +16523,62 @@
           }
         }
       },
+      "LoginRateLimitConfig": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "max_attempts",
+          "max_attempts_per_ip",
+          "max_attempts_per_subnet",
+          "window_seconds",
+          "backoff_base_seconds",
+          "backoff_max_seconds",
+          "subnet_prefix_v4",
+          "subnet_prefix_v6"
+        ],
+        "properties": {
+          "backoff_base_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "backoff_max_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_attempts_per_ip": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_attempts_per_subnet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "subnet_prefix_v4": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "subnet_prefix_v6": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "window_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "LoginRateLimitConfigResponse": {
         "type": "object",
         "description": "Effective login rate-limit configuration, echoed back in the admin state endpoint.",
@@ -16462,6 +16802,31 @@
         },
         "example": {
           "message": "Token is valid."
+        }
+      },
+      "NetworkConfig": {
+        "type": "object",
+        "required": [
+          "trust_ip_headers",
+          "trusted_proxy_hops",
+          "trusted_proxy_networks",
+          "client_allowlist"
+        ],
+        "properties": {
+          "client_allowlist": {
+            "$ref": "#/components/schemas/ClientAllowlistStatus"
+          },
+          "trust_ip_headers": {
+            "type": "boolean"
+          },
+          "trusted_proxy_hops": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "trusted_proxy_networks": {
+            "type": "integer",
+            "minimum": 0
+          }
         }
       },
       "NewCollectionWithAssignee": {
@@ -17084,6 +17449,28 @@
           }
         }
       },
+      "PaginationConfig": {
+        "type": "object",
+        "required": [
+          "default_page_limit",
+          "max_page_limit",
+          "max_transitive_depth"
+        ],
+        "properties": {
+          "default_page_limit": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_page_limit": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_transitive_depth": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "Permission": {
         "type": "object",
         "required": [
@@ -17607,6 +17994,28 @@
           }
         ]
       },
+      "RemoteCallConfig": {
+        "type": "object",
+        "required": [
+          "timeout_ms",
+          "max_response_bytes",
+          "allow_private_targets"
+        ],
+        "properties": {
+          "allow_private_targets": {
+            "type": "boolean"
+          },
+          "max_response_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "RemoteCallResult": {
         "type": "object",
         "required": [
@@ -18000,6 +18409,99 @@
           "object_relation"
         ]
       },
+      "RunningConfig": {
+        "type": "object",
+        "required": [
+          "server",
+          "database",
+          "tasks",
+          "events",
+          "exports",
+          "remote_calls",
+          "authentication",
+          "pagination",
+          "network"
+        ],
+        "properties": {
+          "authentication": {
+            "$ref": "#/components/schemas/AuthenticationConfig"
+          },
+          "database": {
+            "$ref": "#/components/schemas/DatabaseConfig"
+          },
+          "events": {
+            "$ref": "#/components/schemas/EventConfig"
+          },
+          "exports": {
+            "$ref": "#/components/schemas/ExportConfig"
+          },
+          "network": {
+            "$ref": "#/components/schemas/NetworkConfig"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationConfig"
+          },
+          "remote_calls": {
+            "$ref": "#/components/schemas/RemoteCallConfig"
+          },
+          "server": {
+            "$ref": "#/components/schemas/ServerConfig"
+          },
+          "tasks": {
+            "$ref": "#/components/schemas/TaskConfig"
+          }
+        }
+      },
+      "SecretStatus": {
+        "type": "object",
+        "required": [
+          "configured"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Whether a value is configured. The value itself is never returned."
+          }
+        }
+      },
+      "ServerConfig": {
+        "type": "object",
+        "required": [
+          "bind_ip",
+          "bind_port",
+          "log_level",
+          "actix_workers",
+          "metrics_enabled",
+          "metrics_path",
+          "tls"
+        ],
+        "properties": {
+          "actix_workers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bind_ip": {
+            "type": "string"
+          },
+          "bind_port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "log_level": {
+            "type": "string"
+          },
+          "metrics_enabled": {
+            "type": "boolean"
+          },
+          "metrics_path": {
+            "type": "string"
+          },
+          "tls": {
+            "$ref": "#/components/schemas/TlsConfig"
+          }
+        }
+      },
       "ServiceAccountResponse": {
         "type": "object",
         "description": "Public response shape, combining the service-account row with its principal\nname (the name lives on `principals`).",
@@ -18051,6 +18553,39 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "TaskConfig": {
+        "type": "object",
+        "required": [
+          "workers",
+          "poll_interval_ms",
+          "import_max_active_per_user",
+          "export_max_active_per_user",
+          "remote_call_max_active_per_user"
+        ],
+        "properties": {
+          "export_max_active_per_user": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "import_max_active_per_user": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "poll_interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "remote_call_max_active_per_user": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workers": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -18378,6 +18913,35 @@
           "partially_succeeded",
           "cancelled"
         ]
+      },
+      "TlsConfig": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "certificate_path_configured",
+          "private_key_path",
+          "private_key_passphrase"
+        ],
+        "properties": {
+          "backend": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "certificate_path_configured": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "private_key_passphrase": {
+            "$ref": "#/components/schemas/SecretStatus"
+          },
+          "private_key_path": {
+            "$ref": "#/components/schemas/SecretStatus"
+          }
+        }
       },
       "UnifiedSearchBatchResponse": {
         "type": "object",
@@ -19074,6 +19638,10 @@
     }
   },
   "tags": [
+    {
+      "name": "admin",
+      "description": "Administrative process inspection endpoints"
+    },
     {
       "name": "meta",
       "description": "Meta and database state endpoints"

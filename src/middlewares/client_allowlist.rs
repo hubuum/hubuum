@@ -10,7 +10,7 @@ use std::sync::Once;
 use std::task::{Context, Poll};
 use tracing::warn;
 
-use crate::config::{AppConfig, ClientAllowlist};
+use crate::config::ClientAllowlist;
 
 /// Policy for resolving the real client IP from a request that may have traversed
 /// reverse proxies.
@@ -22,9 +22,9 @@ use crate::config::{AppConfig, ClientAllowlist};
 /// connection peer inward, which is the part an attacker cannot forge.
 #[derive(Clone, Debug, Default)]
 pub struct ProxyTrust {
-    pub trust_headers: bool,
-    pub trusted_proxies: Vec<IpNet>,
-    pub hops: usize,
+    trust_headers: bool,
+    trusted_proxies: Vec<IpNet>,
+    hops: usize,
 }
 
 impl ProxyTrust {
@@ -33,12 +33,11 @@ impl ProxyTrust {
         Self::default()
     }
 
-    /// Build the policy from application configuration.
-    pub fn from_config(config: &AppConfig) -> Self {
+    pub fn new(trust_headers: bool, trusted_proxies: Vec<IpNet>, hops: usize) -> Self {
         Self {
-            trust_headers: config.trust_ip_headers,
-            trusted_proxies: config.trusted_proxies.nets().to_vec(),
-            hops: config.trusted_proxy_hops,
+            trust_headers,
+            trusted_proxies,
+            hops,
         }
     }
 }

@@ -49,6 +49,78 @@ use crate::utilities::db::DatabaseUrlComponents;
 pub type DbConnection = AsyncPgConnection;
 pub type DbPool = Pool<DbConnection>;
 
+/// Consumer-owned settings needed to construct the process database pool.
+///
+/// Keeping this type in the database adapter means startup can translate from
+/// env/CLI configuration once, without giving the adapter the whole AppConfig.
+pub struct DatabasePoolSettings {
+    database_url: String,
+    max_size: u32,
+    statement_timeout_ms: u64,
+    acquire_timeout_ms: u64,
+}
+
+impl DatabasePoolSettings {
+    pub fn builder(database_url: impl Into<String>) -> DatabasePoolSettingsBuilder {
+        DatabasePoolSettingsBuilder {
+            database_url: database_url.into(),
+            max_size: None,
+            statement_timeout_ms: 0,
+            acquire_timeout_ms: None,
+        }
+    }
+}
+
+pub struct DatabasePoolSettingsBuilder {
+    database_url: String,
+    max_size: Option<u32>,
+    statement_timeout_ms: u64,
+    acquire_timeout_ms: Option<u64>,
+}
+
+impl DatabasePoolSettingsBuilder {
+    pub fn max_size(mut self, max_size: u32) -> Self {
+        self.max_size = Some(max_size);
+        self
+    }
+
+    pub fn statement_timeout_ms(mut self, statement_timeout_ms: u64) -> Self {
+        self.statement_timeout_ms = statement_timeout_ms;
+        self
+    }
+
+    pub fn acquire_timeout_ms(mut self, acquire_timeout_ms: u64) -> Self {
+        self.acquire_timeout_ms = Some(acquire_timeout_ms);
+        self
+    }
+
+    pub fn build(self) -> Result<DatabasePoolSettings, String> {
+        let max_size = self
+            .max_size
+            .ok_or_else(|| "database pool size is required".to_string())?;
+        let acquire_timeout_ms = self
+            .acquire_timeout_ms
+            .ok_or_else(|| "database pool acquire timeout is required".to_string())?;
+        let database_url = self.database_url;
+        if database_url.trim().is_empty() {
+            return Err("database URL must not be empty".to_string());
+        }
+        if max_size == 0 {
+            return Err("database pool size must be greater than zero".to_string());
+        }
+        if acquire_timeout_ms == 0 {
+            return Err("database pool acquire timeout must be greater than zero".to_string());
+        }
+
+        Ok(DatabasePoolSettings {
+            database_url,
+            max_size,
+            statement_timeout_ms: self.statement_timeout_ms,
+            acquire_timeout_ms,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DatabaseTlsMode {
     Disable,
@@ -481,6 +553,15 @@ pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
     )
 }
 
+pub fn init_pool_with_settings(settings: &DatabasePoolSettings) -> DbPool {
+    init_pool_with_timeouts(
+        &settings.database_url,
+        settings.max_size,
+        settings.statement_timeout_ms,
+        settings.acquire_timeout_ms,
+    )
+}
+
 /// Build a pool with an explicit Postgres `statement_timeout` (in milliseconds)
 /// applied to every connection on acquisition. A value of 0 disables the
 /// timeout. Exposed so tests can exercise the customizer without mutating the
@@ -593,6 +674,34 @@ mod tests {
             .as_nanos();
         let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
         format!("{prefix}_{now}_{counter}")
+    }
+
+    #[rstest]
+    #[case::empty_url("", 1, 100, "database URL must not be empty")]
+    #[case::zero_pool_size(
+        "postgres://localhost/db",
+        0,
+        100,
+        "database pool size must be greater than zero"
+    )]
+    #[case::zero_acquire_timeout(
+        "postgres://localhost/db",
+        1,
+        0,
+        "database pool acquire timeout must be greater than zero"
+    )]
+    fn database_pool_settings_reject_invalid_values(
+        #[case] database_url: &str,
+        #[case] max_size: u32,
+        #[case] acquire_timeout_ms: u64,
+        #[case] expected: &str,
+    ) {
+        let result = DatabasePoolSettings::builder(database_url)
+            .max_size(max_size)
+            .acquire_timeout_ms(acquire_timeout_ms)
+            .build();
+
+        assert_eq!(result.err().as_deref(), Some(expected));
     }
 
     #[rstest]

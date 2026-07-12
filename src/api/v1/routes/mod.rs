@@ -37,6 +37,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(web::scope("/event-sinks").configure(event_sinks::config))
         .service(web::scope("/tasks").configure(tasks::config))
         .service(web::scope("/events").configure(events::config))
+        .service(web::scope("/admin").configure(crate::api::v1::handlers::runtime_config::config))
         .service(web::scope("/export-templates").configure(export_templates::config))
         .service(web::scope("/remote-targets").configure(remote_targets::config))
         .service(web::scope("/relations").configure(relations::config));

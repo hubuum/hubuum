@@ -13,6 +13,7 @@ pub mod me;
 pub mod principals;
 pub mod relations;
 pub mod remote_targets;
+pub mod runtime_config;
 pub mod search;
 pub mod service_accounts;
 pub mod tasks;

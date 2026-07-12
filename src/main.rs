@@ -22,7 +22,7 @@ mod traits;
 mod utilities;
 
 use actix_web::{App, HttpServer, middleware::from_fn, web, web::Data, web::JsonConfig};
-use db::init_pool;
+use db::{DatabasePoolSettings, init_pool_with_settings};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
@@ -31,7 +31,12 @@ use utoipa_swagger_ui::SwaggerUi;
 use tracing::{info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
-use crate::config::{get_config, token_hash_key_is_ephemeral};
+#[cfg(test)]
+use crate::config::get_config;
+#[cfg(not(test))]
+use crate::config::initialize_config;
+use crate::config::running::RunningConfig;
+use crate::config::token_hash_key_is_ephemeral;
 use crate::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_TLS_ERROR, fatal_error,
     json_error_handler,
@@ -52,8 +57,15 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
-    // Clone the config to prevent the mutex from being locked
-    // See https://rust-lang.github.io/rust-clippy/master/index.html#await_holding_lock
+    #[cfg(not(test))]
+    let config = match initialize_config() {
+        Ok(cfg) => cfg.clone(),
+        Err(e) => fatal_error(
+            &format!("Failed to load configuration: {}", e),
+            EXIT_CODE_CONFIG_ERROR,
+        ),
+    };
+    #[cfg(test)]
     let config = match get_config() {
         Ok(cfg) => cfg.clone(),
         Err(e) => fatal_error(
@@ -87,7 +99,13 @@ async fn main() -> std::io::Result<()> {
         );
     }
     utilities::auth::initialize_dummy_password_hash();
-    let pool = init_pool(&config.database_url, config.db_pool_size);
+    let database_settings = DatabasePoolSettings::builder(config.database_url.clone())
+        .max_size(config.db_pool_size)
+        .statement_timeout_ms(config.db_statement_timeout_ms)
+        .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+        .build()
+        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+    let pool = init_pool_with_settings(&database_settings);
 
     if let Err(e) = utilities::init::init(pool.clone()).await {
         fatal_error(
@@ -114,8 +132,12 @@ async fn main() -> std::io::Result<()> {
     ensure_event_retention_worker_running(pool.clone());
 
     let client_allowlist = config.client_allowlist.clone();
-    let proxy_trust = middlewares::ProxyTrust::from_config(&config);
-    let app_config = config.clone();
+    let proxy_trust = middlewares::ProxyTrust::new(
+        config.trust_ip_headers,
+        config.trusted_proxies.nets().to_vec(),
+        config.trusted_proxy_hops,
+    );
+    let running_config = RunningConfig::from(&config);
     let metrics_enabled = config.metrics_enabled;
     let metrics_path = config.metrics_path.clone();
 
@@ -131,7 +153,8 @@ async fn main() -> std::io::Result<()> {
             .wrap(middlewares::TracingMiddleware::new_with_trust(
                 proxy_trust.clone(),
             ))
-            .app_data(Data::new(app_config.clone()))
+            .app_data(Data::new(proxy_trust.clone()))
+            .app_data(Data::new(running_config.clone()))
             .app_data(Data::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .route("/api-doc/openapi.json", web::get().to(openapi_json_handler));
