@@ -46,7 +46,6 @@ pub struct UserAccess {
 
 /// A human admin with a valid, unscoped token.
 pub struct AdminAccess {
-    pub token: Token,
     pub user: User,
 }
 
@@ -61,7 +60,6 @@ pub struct AdminOrSelfAccess {
 /// Per-operation authorization (admin or owner-group) is decided in the handler.
 /// Scoped automation tokens can never manage SAs, users, groups, or credentials.
 pub struct ManagementAccess {
-    pub token: Token,
     pub user: User,
 }
 
@@ -271,7 +269,7 @@ impl FromRequest for ManagementAccess {
                 Some(token_meta) => human_unscoped_user_from_meta(&pool, token_meta).await?,
                 None => human_unscoped_user(&pool, &token).await?,
             };
-            Ok(ManagementAccess { token, user })
+            Ok(ManagementAccess { user })
         }
         .boxed_local()
     }
@@ -297,7 +295,7 @@ impl FromRequest for AdminAccess {
             };
 
             if user.is_admin(&pool).await? {
-                Ok(AdminAccess { token, user })
+                Ok(AdminAccess { user })
             } else {
                 Err(ApiError::Forbidden("Permission denied".to_string()))
             }

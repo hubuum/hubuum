@@ -29,6 +29,16 @@ pub async fn emit_event(
         .values(new_event)
         .get_result::<Event>(conn)
         .await?;
+    if let (Ok(entity_type), Ok(action)) = (event.entity_type(), event.action()) {
+        crate::logger::log_operation_mutation(
+            entity_type,
+            action,
+            event.entity_id,
+            event.actor_user_id,
+            event.request_id,
+            event.correlation_id.as_deref(),
+        );
+    }
     super::notify_event_fanout(conn).await?;
     Ok(event)
 }

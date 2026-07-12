@@ -403,6 +403,7 @@ jobs:
           push: false
           build-args: |
             CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
+            HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -773,6 +774,7 @@ jobs:
             org.opencontainers.image.version=${{ github.ref_name }}
           build-args: |
             CARGO_BUILD_FLAGS=${{ matrix.variant.build_args }} --locked --release
+            HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -868,6 +870,7 @@ jobs:
             org.opencontainers.image.version=${{ github.ref_name }}
           build-args: |
             CARGO_BUILD_FLAGS=${{ matrix.variant.build_args }} --locked --release
+            HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

@@ -74,9 +74,11 @@ RUN awk ' \
     ' Cargo.toml > Cargo.toml.docker && mv Cargo.toml.docker Cargo.toml
 
 # Build the real application (dependencies are cached)
+ARG HUBUUM_BUILD_GIT_SHA="unknown"
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/usr/src/hubuum/target \
+    HUBUUM_BUILD_GIT_SHA="${HUBUUM_BUILD_GIT_SHA}" \
     cargo build ${CARGO_BUILD_FLAGS} --bin hubuum-server --bin hubuum-admin && \
     cp target/release/hubuum-server /tmp/ && \
     cp target/release/hubuum-admin /tmp/

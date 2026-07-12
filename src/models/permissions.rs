@@ -123,6 +123,74 @@ impl Permissions {
             _ => Err(ApiError::BadRequest(format!("Invalid permission: '{s}'"))),
         }
     }
+
+    pub fn operation_action(self) -> &'static str {
+        match self {
+            Self::ReadCollection
+            | Self::ReadClass
+            | Self::ReadObject
+            | Self::ReadClassRelation
+            | Self::ReadObjectRelation
+            | Self::ReadTemplate
+            | Self::ReadRemoteTarget
+            | Self::ReadAudit => "read",
+            Self::CreateClass
+            | Self::CreateObject
+            | Self::CreateClassRelation
+            | Self::CreateObjectRelation
+            | Self::CreateTemplate
+            | Self::CreateRemoteTarget => "create",
+            Self::UpdateCollection
+            | Self::UpdateClass
+            | Self::UpdateObject
+            | Self::UpdateClassRelation
+            | Self::UpdateObjectRelation
+            | Self::UpdateTemplate
+            | Self::UpdateRemoteTarget => "update",
+            Self::DeleteCollection
+            | Self::DeleteClass
+            | Self::DeleteObject
+            | Self::DeleteClassRelation
+            | Self::DeleteObjectRelation
+            | Self::DeleteTemplate
+            | Self::DeleteRemoteTarget => "delete",
+            Self::DelegateCollection => "delegate",
+            Self::ExecuteRemoteTarget => "execute",
+            Self::ManageEventSubscription => "manage",
+        }
+    }
+
+    pub fn entity_type(self) -> &'static str {
+        match self {
+            Self::ReadCollection
+            | Self::UpdateCollection
+            | Self::DeleteCollection
+            | Self::DelegateCollection => "collection",
+            Self::CreateClass | Self::ReadClass | Self::UpdateClass | Self::DeleteClass => "class",
+            Self::CreateObject | Self::ReadObject | Self::UpdateObject | Self::DeleteObject => {
+                "object"
+            }
+            Self::CreateClassRelation
+            | Self::ReadClassRelation
+            | Self::UpdateClassRelation
+            | Self::DeleteClassRelation => "class_relation",
+            Self::CreateObjectRelation
+            | Self::ReadObjectRelation
+            | Self::UpdateObjectRelation
+            | Self::DeleteObjectRelation => "object_relation",
+            Self::ReadTemplate
+            | Self::CreateTemplate
+            | Self::UpdateTemplate
+            | Self::DeleteTemplate => "export_template",
+            Self::ReadRemoteTarget
+            | Self::CreateRemoteTarget
+            | Self::UpdateRemoteTarget
+            | Self::DeleteRemoteTarget
+            | Self::ExecuteRemoteTarget => "remote_target",
+            Self::ReadAudit => "audit_event",
+            Self::ManageEventSubscription => "event_subscription",
+        }
+    }
 }
 impl Display for Permissions {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

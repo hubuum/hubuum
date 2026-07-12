@@ -126,6 +126,12 @@ resolved from the right of the `[X-Forwarded-For..., peer]` hop chain, so attack
 
 - `HUBUUM_TOKEN_LIFETIME_HOURS` controls bearer token lifetime and defaults to `24`.
 
+### Logging
+
+Hubuum writes newline-delimited JSON logs. Set `HUBUUM_LOG_LEVEL` to control verbosity; see
+[docs/logging.md](docs/logging.md) for fields, request correlation, authorization events, and
+`jq` recipes.
+
 ### Login Rate Limiting
 
 Login throttling is layered across three scopes - per `(username, IP)`, per IP, and per

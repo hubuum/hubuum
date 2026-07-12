@@ -16,10 +16,10 @@ pub async fn get_request_with_correlation(
 ) -> actix_web::dev::ServiceResponse {
     let app = test::init_service(
         App::new()
-            .wrap(TracingMiddleware::new())
             .wrap(actix_web::middleware::from_fn(
                 crate::middlewares::actor_context,
             ))
+            .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -35,12 +35,14 @@ pub async fn get_request_with_correlation(
             .uri(endpoint)
             .send_request(&app)
             .await
+            .map_into_boxed_body()
     } else {
         test::TestRequest::get()
             .insert_header(create_token_header(token))
             .uri(endpoint)
             .send_request(&app)
             .await
+            .map_into_boxed_body()
     }
 }
 
@@ -64,10 +66,10 @@ where
 {
     let app = test::init_service(
         App::new()
-            .wrap(TracingMiddleware::new())
             .wrap(actix_web::middleware::from_fn(
                 crate::middlewares::actor_context,
             ))
+            .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -81,7 +83,10 @@ where
         req = req.insert_header((name, value));
     }
 
-    req.set_json(&content).send_request(&app).await
+    req.set_json(&content)
+        .send_request(&app)
+        .await
+        .map_into_boxed_body()
 }
 
 pub async fn post_request<T>(
@@ -103,10 +108,10 @@ pub async fn delete_request(
 ) -> actix_web::dev::ServiceResponse {
     let app = test::init_service(
         App::new()
-            .wrap(TracingMiddleware::new())
             .wrap(actix_web::middleware::from_fn(
                 crate::middlewares::actor_context,
             ))
+            .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -117,6 +122,7 @@ pub async fn delete_request(
         .uri(endpoint)
         .send_request(&app)
         .await
+        .map_into_boxed_body()
 }
 
 pub async fn patch_request<T>(
@@ -130,10 +136,10 @@ where
 {
     let app = test::init_service(
         App::new()
-            .wrap(TracingMiddleware::new())
             .wrap(actix_web::middleware::from_fn(
                 crate::middlewares::actor_context,
             ))
+            .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -145,6 +151,7 @@ where
         .set_json(&content) // Make sure to reference content
         .send_request(&app)
         .await
+        .map_into_boxed_body()
 }
 
 pub async fn put_request<T>(
@@ -158,10 +165,10 @@ where
 {
     let app = test::init_service(
         App::new()
-            .wrap(TracingMiddleware::new())
             .wrap(actix_web::middleware::from_fn(
                 crate::middlewares::actor_context,
             ))
+            .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
             .configure(prod_api::config),
     )
@@ -173,4 +180,5 @@ where
         .set_json(&content)
         .send_request(&app)
         .await
+        .map_into_boxed_body()
 }

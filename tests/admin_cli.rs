@@ -17,6 +17,18 @@ fn admin_help_exposes_reset_password() {
 }
 
 #[test]
+fn invalid_log_level_is_reported_before_logging_is_initialized() {
+    let output = Command::new(admin_binary())
+        .args(["--log-level", "not-a-level"])
+        .output()
+        .expect("hubuum-admin with an invalid log level should run");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Invalid log level: not-a-level"));
+}
+
+#[test]
 fn reset_password_does_not_parse_server_config_arguments() {
     let output = Command::new(admin_binary())
         .args([

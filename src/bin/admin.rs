@@ -1,10 +1,5 @@
 use clap::Parser;
 use std::collections::BTreeMap;
-use std::process::exit;
-use tracing::warn;
-use tracing_subscriber::{
-    filter::EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
-};
 
 use hubuum::config::{
     DEFAULT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_EXPORT_TEMPLATE_FUEL,
@@ -228,23 +223,13 @@ async fn export_template_health(pool: DbPool) -> Result<(), ApiError> {
 }
 
 fn init_logging(log_level: &str) {
-    let filter = if is_valid_log_level(log_level) {
-        EnvFilter::try_new(log_level).unwrap_or_else(|_e| {
-            warn!("Error parsing log level: {}", log_level);
-            exit(EXIT_CODE_CONFIG_ERROR);
-        })
-    } else {
-        warn!("Invalid log level: {}", log_level);
-        exit(EXIT_CODE_CONFIG_ERROR);
-    };
-
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_span_events(FmtSpan::CLOSE)
-                .event_format(logger::HubuumLoggingFormat),
-        )
-        .init();
+    if !is_valid_log_level(log_level) {
+        fatal_error(
+            &format!("Invalid log level: {log_level}"),
+            EXIT_CODE_CONFIG_ERROR,
+        );
+    }
+    if let Err(err) = logger::init_json_logging(log_level) {
+        fatal_error(&err, EXIT_CODE_CONFIG_ERROR);
+    }
 }

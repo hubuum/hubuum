@@ -28,6 +28,8 @@ pub async fn list_events_with_total_count(
     filters: &EventListFilters,
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventResponse>, i64), ApiError> {
+    crate::logger::log_operation_read(filters.entity_type, filters.action, filters.entity_id);
+
     let query = build_event_query(accessible_collection_ids, include_collection_less, filters)?;
     let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
         with_connection(pool, async |conn| {

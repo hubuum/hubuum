@@ -1,15 +1,288 @@
+use std::{cell::RefCell, fmt, future::Future};
+
+use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::FormattedFields;
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use serde::ser::{SerializeMap, Serializer};
-use tracing_serde::AsSerde;
+use crate::events::{Action, EntityType};
+use crate::models::Permissions;
 
 pub struct HubuumLoggingFormat;
 
 impl HubuumLoggingFormat {}
+
+#[derive(Clone, Debug)]
+struct OperationMutationLog {
+    entity_type: EntityType,
+    action: Action,
+    entity_id: Option<i32>,
+    actor_principal_id: Option<i32>,
+    request_id: Option<uuid::Uuid>,
+    correlation_id: Option<String>,
+}
+
+impl OperationMutationLog {
+    fn emit(self) {
+        tracing::info!(
+            message = "operation mutation committed",
+            operation = "mutation_committed",
+            mutation_phase = "committed",
+            entity_type = self.entity_type.as_str(),
+            action = self.action.as_str(),
+            entity_id = self.entity_id,
+            actor_principal_id = self.actor_principal_id,
+            request_id = self.request_id.map(|id| id.to_string()),
+            correlation_id = self.correlation_id.as_deref(),
+        );
+    }
+}
+
+tokio::task_local! {
+    static DEFERRED_OPERATION_MUTATIONS: RefCell<Vec<OperationMutationLog>>;
+}
+
+pub fn init_json_logging(log_level: &str) -> Result<(), String> {
+    let filter = EnvFilter::try_new(log_level)
+        .map_err(|err| format!("Error parsing log level '{log_level}': {err}"))?;
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .event_format(HubuumLoggingFormat),
+        )
+        .try_init()
+        .map_err(|err| format!("Failed to initialize logging: {err}"))
+}
+
+pub fn build_git_sha() -> &'static str {
+    option_env!("HUBUUM_BUILD_GIT_SHA")
+        .or(option_env!("GITHUB_SHA"))
+        .unwrap_or("unknown")
+}
+
+pub fn log_operation_mutation(
+    entity_type: EntityType,
+    action: Action,
+    entity_id: Option<i32>,
+    actor_principal_id: Option<i32>,
+    request_id: Option<uuid::Uuid>,
+    correlation_id: Option<&str>,
+) {
+    let operation = OperationMutationLog {
+        entity_type,
+        action,
+        entity_id,
+        actor_principal_id,
+        request_id,
+        correlation_id: correlation_id.map(ToOwned::to_owned),
+    };
+    if DEFERRED_OPERATION_MUTATIONS
+        .try_with(|operations| operations.borrow_mut().push(operation.clone()))
+        .is_err()
+    {
+        operation.emit();
+    }
+}
+
+pub(crate) async fn defer_operation_mutation_logs_until_commit<F, R, E>(future: F) -> Result<R, E>
+where
+    F: Future<Output = Result<R, E>>,
+{
+    if DEFERRED_OPERATION_MUTATIONS.try_with(|_| ()).is_ok() {
+        return future.await;
+    }
+
+    DEFERRED_OPERATION_MUTATIONS
+        .scope(RefCell::new(Vec::new()), async move {
+            let result = future.await;
+            let operations = DEFERRED_OPERATION_MUTATIONS.with(RefCell::take);
+            if result.is_ok() {
+                for operation in operations {
+                    operation.emit();
+                }
+            }
+            result
+        })
+        .await
+}
+
+pub fn log_operation_read(
+    entity_type: Option<EntityType>,
+    action: Option<Action>,
+    entity_id: Option<i32>,
+) {
+    let entity_type = entity_type.map(EntityType::as_str);
+    let action = action.map(Action::as_str);
+    tracing::debug!(
+        message = "operation read",
+        operation = "read",
+        entity_type,
+        action,
+        entity_id,
+    );
+}
+
+pub fn log_authorization_grant(
+    principal_id: i32,
+    permissions: &[Permissions],
+    collection_count: Option<usize>,
+    collection_id: Option<i32>,
+    reason: &'static str,
+) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
+    }
+
+    let (action, entity_type) = authorization_operation_fields_for(permissions);
+    let permissions = permissions
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let permissions = serde_json::to_string(&permissions).unwrap_or_else(|_| "[]".to_string());
+    tracing::debug!(
+        message = "authorization granted",
+        event_type = "authorization",
+        decision = "grant",
+        principal_id,
+        permissions,
+        collection_count,
+        collection_id,
+        action,
+        entity_type,
+        reason,
+    );
+}
+
+pub fn log_authorization_denial(
+    principal_id: i32,
+    permissions: &[Permissions],
+    collection_count: Option<usize>,
+    collection_id: Option<i32>,
+    reason: &'static str,
+) {
+    let (action, entity_type) = authorization_operation_fields_for(permissions);
+    let permissions = permissions
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let permissions = serde_json::to_string(&permissions).unwrap_or_else(|_| "[]".to_string());
+    tracing::warn!(
+        message = "authorization denied",
+        event_type = "authorization",
+        decision = "deny",
+        principal_id,
+        permissions,
+        collection_count,
+        collection_id,
+        action,
+        entity_type,
+        reason,
+    );
+}
+
+fn authorization_operation_fields_for(
+    permissions: &[Permissions],
+) -> (Option<&'static str>, Option<&'static str>) {
+    let first = permissions.first().copied();
+    let action = first.map(Permissions::operation_action).filter(|action| {
+        permissions
+            .iter()
+            .all(|permission| permission.operation_action() == *action)
+    });
+    let entity_type = first.map(Permissions::entity_type).filter(|entity_type| {
+        permissions
+            .iter()
+            .all(|permission| permission.entity_type() == *entity_type)
+    });
+    (action, entity_type)
+}
+
+fn structured_json_field_name(field_name: &str) -> Option<&'static str> {
+    match field_name {
+        "permissions" => Some("permissions"),
+        _ => None,
+    }
+}
+
+fn json_aware_value(field_name: &str, value: serde_json::Value) -> (String, serde_json::Value) {
+    match (structured_json_field_name(field_name), value.as_str()) {
+        (Some(target_field_name), Some(value)) => match serde_json::from_str(value) {
+            Ok(value) => (target_field_name.to_string(), value),
+            Err(_) => (
+                target_field_name.to_string(),
+                serde_json::Value::String(value.to_string()),
+            ),
+        },
+        (Some(target_field_name), None) => (target_field_name.to_string(), value),
+        (None, _) => (field_name.to_string(), value),
+    }
+}
+
+fn insert_json_aware_value(
+    fields: &mut serde_json::Map<String, serde_json::Value>,
+    field_name: &str,
+    value: serde_json::Value,
+) {
+    let (field_name, value) = json_aware_value(field_name, value);
+    fields.insert(field_name, value);
+}
+
+struct JsonFieldVisitor<'a> {
+    fields: &'a mut serde_json::Map<String, serde_json::Value>,
+}
+
+impl JsonFieldVisitor<'_> {
+    fn record_value(&mut self, field: &Field, value: serde_json::Value) {
+        insert_json_aware_value(self.fields, field.name(), value);
+    }
+
+    fn record_str_entry(&mut self, field: &Field, value: &str) {
+        self.record_value(field, serde_json::Value::String(value.to_string()));
+    }
+}
+
+impl Visit for JsonFieldVisitor<'_> {
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.record_value(field, serde_json::Value::Bool(value));
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.record_value(field, serde_json::Value::Number(value.into()));
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.record_value(field, serde_json::Value::Number(value.into()));
+    }
+
+    fn record_i128(&mut self, field: &Field, value: i128) {
+        self.record_value(field, serde_json::Value::String(value.to_string()));
+    }
+
+    fn record_u128(&mut self, field: &Field, value: u128) {
+        self.record_value(field, serde_json::Value::String(value.to_string()));
+    }
+
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        let value = serde_json::Number::from_f64(value)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(value.to_string()));
+        self.record_value(field, value);
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.record_str_entry(field, value);
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        self.record_value(field, serde_json::Value::String(format!("{value:?}")));
+    }
+}
 
 impl<S, N> FormatEvent<S, N> for HubuumLoggingFormat
 where
@@ -26,116 +299,352 @@ where
         S: Subscriber + for<'a> LookupSpan<'a>,
     {
         let meta = event.metadata();
-
-        let mut s = Vec::<u8>::new();
-        let mut serializer = serde_json::Serializer::new(&mut s);
-        let mut serializer_map = serializer
-            .serialize_map(None)
-            .map_err(|_| std::fmt::Error)?;
-
-        let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        serializer_map
-            .serialize_entry("time", &timestamp)
-            .map_err(|_| std::fmt::Error)?;
-        serializer_map
-            .serialize_entry("severity", &meta.level().as_serde())
-            .map_err(|_| std::fmt::Error)?;
+        let mut fields = serde_json::Map::new();
 
         if let Some(leaf_span) = ctx.lookup_current() {
             for span in leaf_span.scope().from_root() {
                 let ext = span.extensions();
                 if let Some(data) = ext.get::<FormattedFields<N>>()
-                    && let Ok(serde_json::Value::Object(fields)) =
+                    && let Ok(serde_json::Value::Object(span_fields)) =
                         serde_json::from_str::<serde_json::Value>(data)
                 {
-                    for field in fields {
-                        serializer_map
-                            .serialize_entry(&field.0, &field.1)
-                            .map_err(|_| std::fmt::Error)?;
+                    for (field_name, value) in span_fields {
+                        insert_json_aware_value(&mut fields, &field_name, value);
                     }
                 }
             }
         }
 
-        let mut visitor = tracing_serde::SerdeMapVisitor::new(serializer_map);
+        let mut visitor = JsonFieldVisitor {
+            fields: &mut fields,
+        };
         event.record(&mut visitor);
 
-        visitor
-            .take_serializer()
-            .map_err(|_| std::fmt::Error)?
-            .end()
-            .map_err(|_| std::fmt::Error)?;
+        let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        fields.insert("time".to_string(), serde_json::Value::String(timestamp));
+        fields.insert(
+            "severity".to_string(),
+            serde_json::Value::String(meta.level().to_string()),
+        );
 
-        let s_str = std::str::from_utf8(&s).map_err(|_| std::fmt::Error)?;
-        writer.write_str(s_str)?;
+        let line = serde_json::to_string(&fields).map_err(|_| std::fmt::Error)?;
+        writer.write_str(&line)?;
         writeln!(writer)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::io;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    pub(crate) struct JsonLogWriter {
+        lines: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl JsonLogWriter {
+        pub(crate) fn raw_output(&self) -> String {
+            let bytes = self.lines.lock().expect("writer lock").clone();
+            String::from_utf8(bytes).expect("utf8 logs")
+        }
+
+        pub(crate) fn output(&self) -> Vec<serde_json::Value> {
+            self.raw_output()
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("json log line"))
+                .collect()
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for JsonLogWriter {
+        type Writer = JsonLogWriterGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            JsonLogWriterGuard {
+                lines: Arc::clone(&self.lines),
+            }
+        }
+    }
+
+    pub(crate) struct JsonLogWriterGuard {
+        lines: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl io::Write for JsonLogWriterGuard {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.lines
+                .lock()
+                .expect("writer lock")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::info;
-    use tracing_subscriber::fmt::format::FmtSpan;
+    use serde_json::json;
+    use test_support::JsonLogWriter;
+    use tracing::{info, info_span};
     use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
 
-    #[test]
-    fn test_logging_format_handles_simple_event() {
-        // Test that basic logging works without panicking
-        // We use a writer that discards output to avoid polluting test output
+    fn capture_raw_logs(run: impl FnOnce()) -> String {
+        let writer = JsonLogWriter::default();
         let subscriber = tracing_subscriber::registry().with(
             tracing_subscriber::fmt::layer()
                 .json()
-                .with_writer(std::io::sink) // Discard output
-                .with_span_events(FmtSpan::CLOSE)
+                .with_writer(writer.clone())
                 .event_format(HubuumLoggingFormat),
         );
 
-        let _guard = subscriber.set_default();
+        tracing::subscriber::with_default(subscriber, run);
+        writer.raw_output()
+    }
 
-        // This should not panic
-        info!("Test message");
+    fn capture_logs(run: impl FnOnce()) -> Vec<serde_json::Value> {
+        let writer = JsonLogWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(writer.clone())
+                .event_format(HubuumLoggingFormat),
+        );
+
+        tracing::subscriber::with_default(subscriber, run);
+        writer.output()
     }
 
     #[test]
-    fn test_logging_format_handles_event_with_fields() {
-        // Test that logging with structured fields works
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_writer(std::io::sink) // Discard output
-                .with_span_events(FmtSpan::CLOSE)
-                .event_format(HubuumLoggingFormat),
-        );
+    fn logging_format_emits_json_fields() {
+        let logs = capture_logs(|| {
+            info!(
+                message = "Test with fields",
+                user_id = 123,
+                action = "test_action"
+            );
+        });
 
-        let _guard = subscriber.set_default();
+        let event = logs.first().expect("log event");
+        assert_eq!(event["severity"], "INFO");
+        assert_eq!(event["message"], "Test with fields");
+        assert_eq!(event["user_id"], 123);
+        assert_eq!(event["action"], "test_action");
+        assert!(event["time"].as_str().expect("timestamp").ends_with('Z'));
+    }
 
-        // This should not panic even with multiple fields
-        info!(
-            message = "Test with fields",
-            user_id = 123,
-            action = "test_action"
+    #[test]
+    fn logging_format_inherits_span_fields() {
+        let logs = capture_logs(|| {
+            let span = info_span!(
+                "request",
+                request_id = "request-1",
+                correlation_id = "correlation-1",
+                principal_id = 42
+            );
+            let _guard = span.enter();
+            info!(message = "inside request");
+        });
+
+        let event = logs.first().expect("log event");
+        assert_eq!(event["request_id"], "request-1");
+        assert_eq!(event["correlation_id"], "correlation-1");
+        assert_eq!(event["principal_id"], 42);
+        assert_eq!(event["message"], "inside request");
+    }
+
+    #[test]
+    fn logging_format_serializes_explicit_structured_fields_as_json_values() {
+        let logs = capture_logs(|| {
+            info!(
+                message = "structured field",
+                permissions = "[\"ReadCollection\",\"UpdateCollection\"]",
+                unrelated_json = "{\"kept\":\"literal\"}",
+            );
+        });
+
+        let event = logs.first().expect("log event");
+        assert_eq!(
+            event["permissions"],
+            json!(["ReadCollection", "UpdateCollection"])
         );
+        assert_eq!(event["unrelated_json"], "{\"kept\":\"literal\"}");
     }
 
     #[test]
     fn test_logging_format_handles_special_characters() {
-        // Test that special characters don't cause panics
+        let logs = capture_logs(|| {
+            info!(
+                message = "Test with \"quotes\" and \n newlines",
+                path = "/some/path/with\\backslashes"
+            );
+        });
+
+        let event = logs.first().expect("log event");
+        assert_eq!(event["message"], "Test with \"quotes\" and \n newlines");
+        assert_eq!(event["path"], "/some/path/with\\backslashes");
+    }
+
+    #[test]
+    fn authorization_helpers_log_grant_and_denial_levels() {
+        let logs = capture_logs(|| {
+            log_authorization_grant(
+                12,
+                &[Permissions::ReadCollection],
+                Some(1),
+                Some(4),
+                "permissions",
+            );
+            log_authorization_denial(
+                12,
+                &[Permissions::UpdateCollection],
+                Some(1),
+                Some(4),
+                "permissions",
+            );
+        });
+
+        let grant = logs
+            .iter()
+            .find(|event| event["decision"] == "grant")
+            .expect("grant event");
+        assert_eq!(grant["severity"], "DEBUG");
+        assert_eq!(grant["event_type"], "authorization");
+        assert_eq!(grant["principal_id"], 12);
+        assert_eq!(grant["permissions"], json!(["ReadCollection"]));
+        assert_eq!(grant["action"], "read");
+        assert_eq!(grant["entity_type"], "collection");
+        assert_eq!(grant["collection_id"], 4);
+
+        let denial = logs
+            .iter()
+            .find(|event| event["decision"] == "deny")
+            .expect("denial event");
+        assert_eq!(denial["severity"], "WARN");
+        assert_eq!(denial["event_type"], "authorization");
+        assert_eq!(denial["principal_id"], 12);
+        assert_eq!(denial["permissions"], json!(["UpdateCollection"]));
+        assert_eq!(denial["action"], "update");
+        assert_eq!(denial["entity_type"], "collection");
+        assert_eq!(denial["collection_id"], 4);
+    }
+
+    #[test]
+    fn operation_mutation_helper_uses_catalog_labels_without_payloads() {
+        let request_id = uuid::Uuid::new_v4();
+        let logs = capture_logs(|| {
+            log_operation_mutation(
+                EntityType::Collection,
+                Action::Created,
+                Some(9),
+                Some(12),
+                Some(request_id),
+                Some("operation-correlation"),
+            );
+        });
+
+        let event = logs.first().expect("operation event");
+        assert_eq!(event["severity"], "INFO");
+        assert_eq!(event["message"], "operation mutation committed");
+        assert_eq!(event["operation"], "mutation_committed");
+        assert_eq!(event["mutation_phase"], "committed");
+        assert_eq!(event["entity_type"], "collection");
+        assert_eq!(event["action"], "created");
+        assert_eq!(event["entity_id"], 9);
+        assert_eq!(event["actor_principal_id"], 12);
+        assert_eq!(event["request_id"], request_id.to_string());
+        assert_eq!(event["correlation_id"], "operation-correlation");
+        assert!(event.get("before").is_none());
+        assert!(event.get("after").is_none());
+    }
+
+    #[test]
+    fn event_fields_override_span_fields_without_duplicate_json_keys() {
+        let request_id = uuid::Uuid::new_v4();
+        let raw_logs = capture_raw_logs(|| {
+            let span = info_span!(
+                "request",
+                request_id = "span-request",
+                correlation_id = "span-correlation"
+            );
+            let _guard = span.enter();
+            log_operation_mutation(
+                EntityType::Collection,
+                Action::Created,
+                Some(9),
+                Some(12),
+                Some(request_id),
+                Some("event-correlation"),
+            );
+        });
+
+        let line = raw_logs.lines().next().expect("raw log line");
+        assert_eq!(line.matches("\"request_id\"").count(), 1);
+        assert_eq!(line.matches("\"correlation_id\"").count(), 1);
+
+        let event: serde_json::Value = serde_json::from_str(line).expect("json log line");
+        assert_eq!(event["request_id"], request_id.to_string());
+        assert_eq!(event["correlation_id"], "event-correlation");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn deferred_mutation_logs_are_emitted_after_success() {
+        let writer = JsonLogWriter::default();
         let subscriber = tracing_subscriber::registry().with(
             tracing_subscriber::fmt::layer()
                 .json()
-                .with_writer(std::io::sink) // Discard output
-                .with_span_events(FmtSpan::CLOSE)
+                .with_writer(writer.clone())
                 .event_format(HubuumLoggingFormat),
         );
+        let _guard = tracing::subscriber::set_default(subscriber);
 
-        let _guard = subscriber.set_default();
+        let result: Result<(), ()> = defer_operation_mutation_logs_until_commit(async {
+            log_operation_mutation(
+                EntityType::Collection,
+                Action::Created,
+                Some(9),
+                Some(12),
+                None,
+                None,
+            );
+            Ok(())
+        })
+        .await;
 
-        // This should handle various special characters without panicking
-        info!(
-            message = "Test with \"quotes\" and \n newlines",
-            path = "/some/path/with\\backslashes"
+        assert!(result.is_ok());
+        assert_eq!(writer.output().len(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn deferred_mutation_logs_are_discarded_after_failure() {
+        let writer = JsonLogWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(writer.clone())
+                .event_format(HubuumLoggingFormat),
         );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let result: Result<(), ()> = defer_operation_mutation_logs_until_commit(async {
+            log_operation_mutation(
+                EntityType::Collection,
+                Action::Created,
+                Some(9),
+                Some(12),
+                None,
+                None,
+            );
+            Err(())
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert!(writer.output().is_empty());
     }
 }

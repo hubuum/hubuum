@@ -6,6 +6,7 @@ use actix_web::{Error, HttpMessage};
 
 use crate::db::traits::Status;
 use crate::db::{DbPool, with_actor_scope};
+use crate::middlewares::tracing::record_principal_on_current_span;
 use crate::models::token::{PrincipalToken, Token};
 
 /// Outcome of resolving the bearer token once per request. Stored in request
@@ -63,6 +64,9 @@ pub async fn actor_context(
         ResolvedAuth::Authenticated { token_meta, .. } => Some(token_meta.principal_id),
         _ => None,
     };
+    if let Some(principal_id) = actor {
+        record_principal_on_current_span(principal_id);
+    }
     req.extensions_mut().insert(resolved);
     let res = with_actor_scope(actor, next.call(req)).await?;
     Ok(res.map_into_boxed_body())
