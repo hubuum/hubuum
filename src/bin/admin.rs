@@ -1,7 +1,5 @@
 use clap::Parser;
 use std::collections::BTreeMap;
-use std::process::exit;
-use tracing::warn;
 
 use hubuum::config::{
     DEFAULT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_EXPORT_TEMPLATE_FUEL,
@@ -226,11 +224,12 @@ async fn export_template_health(pool: DbPool) -> Result<(), ApiError> {
 
 fn init_logging(log_level: &str) {
     if !is_valid_log_level(log_level) {
-        warn!("Invalid log level: {}", log_level);
-        exit(EXIT_CODE_CONFIG_ERROR);
+        fatal_error(
+            &format!("Invalid log level: {log_level}"),
+            EXIT_CODE_CONFIG_ERROR,
+        );
     }
     if let Err(err) = logger::init_json_logging(log_level) {
-        warn!("{}", err);
-        exit(EXIT_CODE_CONFIG_ERROR);
+        fatal_error(&err, EXIT_CODE_CONFIG_ERROR);
     }
 }
