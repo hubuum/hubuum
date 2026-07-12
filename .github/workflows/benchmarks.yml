@@ -15,6 +15,7 @@ jobs:
     with:
       backend: all
       auto_discover: true
+      auto_detect_moved_benchmarks: true
       criterion_statistic: median
       criterion_cli_args: "--noplot --sample-size 40 --measurement-time 4"
       regression_threshold_pct_iai_callgrind: 3

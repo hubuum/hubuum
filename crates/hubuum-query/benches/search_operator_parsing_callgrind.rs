@@ -1,9 +1,7 @@
-use hubuum::models::search::SearchOperator;
+use hubuum_query::SearchOperator;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 
-// A spread of operator spellings, including negated (`not_` prefixed) variants,
-// covering the string-matching path taken for every filter in a search query.
 const OPERATORS: [&str; 12] = [
     "equals",
     "not_equals",

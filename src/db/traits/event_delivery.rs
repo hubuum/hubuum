@@ -8,7 +8,7 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::Event;
 use crate::models::event_subscription::{EventSinkRow, EventSubscriptionRow};
-use crate::models::search::{FilterField, Operator, QueryOptions};
+use crate::models::search::{FilterField, Operator, ParsedQueryParamExt, QueryOptions};
 use crate::models::{EventDelivery, EventDeliveryID, EventDeliveryStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

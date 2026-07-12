@@ -32,18 +32,24 @@ COPY crates/hubuum-event-sink-webhook/Cargo.toml ./crates/hubuum-event-sink-webh
 COPY crates/hubuum-event-sinks-common/Cargo.toml ./crates/hubuum-event-sinks-common/Cargo.toml
 COPY crates/hubuum-events-core/Cargo.toml ./crates/hubuum-events-core/Cargo.toml
 COPY crates/hubuum-outbound-http/Cargo.toml ./crates/hubuum-outbound-http/Cargo.toml
+COPY crates/hubuum-query/Cargo.toml ./crates/hubuum-query/Cargo.toml
 COPY crates/hubuum-templates/Cargo.toml ./crates/hubuum-templates/Cargo.toml
 COPY migrations ./migrations
 
-# The production image only builds binaries. Strip benchmark targets so Cargo
-# does not require benchmark target files in the Docker build context. Keep
-# [dev-dependencies] intact so Cargo.lock stays in sync and --locked succeeds.
-RUN awk ' \
-    /^\[\[bench\]\]$/ { skip = 1; next } \
-    /^\[\[/ { skip = 0 } \
-    /^\[/ && !/^\[\[/ { skip = 0 } \
-    !skip { print } \
-    ' Cargo.toml > Cargo.toml.docker && mv Cargo.toml.docker Cargo.toml
+# The production image only builds binaries. Strip benchmark targets from every
+# copied manifest so Cargo does not require benchmark files in the Docker build
+# context. Keep [dev-dependencies] intact so Cargo.lock stays in sync and
+# --locked succeeds.
+RUN find . -name Cargo.toml -exec sh -c ' \
+    for manifest do \
+        awk '\'' \
+            /^\[\[bench\]\]$/ { skip = 1; next } \
+            /^\[\[/ { skip = 0 } \
+            /^\[/ && !/^\[\[/ { skip = 0 } \
+            !skip { print } \
+        '\'' "$manifest" > "$manifest.docker" && mv "$manifest.docker" "$manifest"; \
+    done \
+    ' sh {} +
 
 # Build dependencies only (creates dummy project)
 # Use cache mounts to persist cargo registry/git between builds
@@ -63,15 +69,19 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Copy the actual source code
 COPY . .
 
-# COPY restores the repository manifest; prune benchmark targets again before
+# COPY restores the repository manifests; prune benchmark targets again before
 # the real production build so benchmark-only targets stay out of the image
 # build, while keeping [dev-dependencies] so --locked stays satisfied.
-RUN awk ' \
-    /^\[\[bench\]\]$/ { skip = 1; next } \
-    /^\[\[/ { skip = 0 } \
-    /^\[/ && !/^\[\[/ { skip = 0 } \
-    !skip { print } \
-    ' Cargo.toml > Cargo.toml.docker && mv Cargo.toml.docker Cargo.toml
+RUN find . -name Cargo.toml -exec sh -c ' \
+    for manifest do \
+        awk '\'' \
+            /^\[\[bench\]\]$/ { skip = 1; next } \
+            /^\[\[/ { skip = 0 } \
+            /^\[/ && !/^\[\[/ { skip = 0 } \
+            !skip { print } \
+        '\'' "$manifest" > "$manifest.docker" && mv "$manifest.docker" "$manifest"; \
+    done \
+    ' sh {} +
 
 # Build the real application (dependencies are cached)
 ARG HUBUUM_BUILD_GIT_SHA="unknown"

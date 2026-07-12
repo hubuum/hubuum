@@ -3,7 +3,7 @@ use diesel::expression::{AppearsOnTable, Expression, SelectableExpression, Valid
 use diesel::pg::Pg;
 use diesel::query_builder::{AstPass, QueryFragment, QueryId};
 use diesel::result::QueryResult;
-use diesel::sql_types::{Bool, Float8, Integer, Text, Timestamp};
+use diesel::sql_types::{Bool, Integer, Text, Timestamp};
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -11,13 +11,20 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use tracing::debug;
 
+pub use hubuum_query::{
+    DataType, FilterField, Operator, ParsedQueryParam, QueryOptions, SQLMappedType, SearchOperator,
+    SortParam, StatementTimeoutMs, get_jsonb_field_type_from_value_and_operator,
+};
+#[cfg(test)]
+use hubuum_query::{get_jsonb_field_type_from_json_schema, get_sql_mapped_type_from_value};
+
 use crate::errors::ApiError;
 use crate::models::permissions::{Permissions, PermissionsList};
 use crate::pagination::validate_page_limit;
 use crate::traits::SelfAccessors;
 use crate::utilities::extensions::CustomStringExtensions;
 
-use super::HubuumClassID;
+use super::{HubuumClass, HubuumClassID};
 
 /// ## Parse a query string into search parameters
 ///
@@ -36,222 +43,21 @@ pub fn parse_query_parameter_with_passthrough(
     qs: &str,
     passthrough_keys: &[&str],
 ) -> Result<(QueryOptions, HashMap<String, Vec<String>>), ApiError> {
-    let mut filters = Vec::new();
-    let mut sort = Vec::new();
-    let mut limit = None;
-    let mut cursor = None;
-    let mut include_total = None;
-    let mut passthrough = HashMap::<String, Vec<String>>::new();
-    let passthrough_keys = passthrough_keys.iter().copied().collect::<HashSet<_>>();
+    let (mut query_options, passthrough) =
+        hubuum_query::parse_query_parameter_with_passthrough(qs, passthrough_keys)?;
+    query_options.limit = query_options.limit.map(validate_page_limit).transpose()?;
+    Ok((query_options, passthrough))
+}
 
-    if qs.is_empty() {
-        return Ok((
-            QueryOptions {
-                filters,
-                sort,
-                limit,
-                cursor,
-                include_total: true,
-            },
-            passthrough,
-        ));
-    }
-
-    for (key, value) in decode_query_parameter_pairs(qs)? {
-        if passthrough_keys.contains(key.as_str()) {
-            passthrough.entry(key).or_default().push(value);
-            continue;
-        }
-
-        match key.as_str() {
-            // LIMIT: e.g. limit=10, for limiting the number of results
-            "limit" => {
-                if limit.is_some() {
-                    return Err(ApiError::BadRequest("duplicate limit".into()));
-                }
-                let parsed_limit = value
-                    .parse::<usize>()
-                    .map_err(|e| ApiError::BadRequest(format!("bad limit: {e}")))?;
-                limit = Some(validate_page_limit(parsed_limit)?);
-            }
-
-            "cursor" => {
-                if cursor.is_some() {
-                    return Err(ApiError::BadRequest("duplicate cursor".into()));
-                }
-                cursor = Some(value);
-            }
-
-            "include_total" => {
-                if include_total.is_some() {
-                    return Err(ApiError::BadRequest("duplicate include_total".into()));
-                }
-                include_total = Some(value.as_boolean()?);
-            }
-
-            // SORT / ORDER BY: e.g. sort=created_at,-name,email.desc
-            "sort" | "order_by" => {
-                for piece in value.split(',') {
-                    let descending = piece.starts_with('-') || piece.ends_with(".desc");
-                    let field_name = piece
-                        .trim_start_matches('-')
-                        .trim_end_matches(".asc")
-                        .trim_end_matches(".desc");
-                    let field = FilterField::from_str(field_name)?;
-                    sort.push(SortParam { field, descending });
-                }
-            }
-
-            // FILTER: e.g. field__op=value
-            _ => {
-                let param = parse_single_filter(&key, &value)?;
-                filters.push(param);
+impl From<hubuum_query::QueryError> for ApiError {
+    fn from(error: hubuum_query::QueryError) -> Self {
+        match error {
+            hubuum_query::QueryError::BadRequest(message) => ApiError::BadRequest(message),
+            hubuum_query::QueryError::InvalidIntegerRange(message) => {
+                ApiError::InvalidIntegerRange(message)
             }
         }
     }
-
-    Ok((
-        QueryOptions {
-            filters,
-            sort,
-            limit,
-            cursor,
-            include_total: include_total.unwrap_or(true),
-        },
-        passthrough,
-    ))
-}
-
-fn decode_query_parameter_pairs(qs: &str) -> Result<Vec<(String, String)>, ApiError> {
-    let mut pairs = Vec::new();
-
-    for chunk in qs.split('&') {
-        let parts: Vec<_> = chunk.splitn(2, '=').collect();
-        if parts.len() != 2 {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid query parameter: '{chunk}'"
-            )));
-        }
-
-        let key = decode_query_component(parts[0], chunk, "key")?;
-        let value = decode_query_component(parts[1], chunk, "value")?;
-
-        pairs.push((key, value));
-    }
-
-    Ok(pairs)
-}
-
-fn decode_query_component(raw: &str, chunk: &str, component: &str) -> Result<String, ApiError> {
-    // `percent_decode().decode_utf8()` returns a borrowing Cow when there are no
-    // `%` escapes, so the common case allocates at most once via `into_owned()`.
-    // Only the `+` -> space pre-pass needs its own allocation, so skip it when
-    // there is no `+` to avoid the unconditional `replace` allocation.
-    let decoded = if raw.contains('+') {
-        let form_encoded = raw.replace('+', " ");
-        percent_encoding::percent_decode(form_encoded.as_bytes())
-            .decode_utf8()
-            .map(|value| value.into_owned())
-    } else {
-        percent_encoding::percent_decode(raw.as_bytes())
-            .decode_utf8()
-            .map(|value| value.into_owned())
-    };
-
-    decoded.map_err(|e| {
-        ApiError::BadRequest(format!(
-            "Invalid query parameter: '{chunk}', invalid {component}: {e}",
-        ))
-    })
-}
-
-fn parse_single_filter(key: &str, value: &str) -> Result<ParsedQueryParam, ApiError> {
-    let field_and_op: Vec<&str> = key.splitn(2, "__").collect();
-    let value = value.to_string();
-    let field = field_and_op[0].to_string();
-
-    if value.is_empty() {
-        return Err(ApiError::BadRequest(format!(
-            "Invalid query parameter: '{key}', no value",
-        )));
-    }
-
-    let operator = if field_and_op.len() == 1 {
-        SearchOperator::new_from_string("equals")?
-    } else {
-        SearchOperator::new_from_string(field_and_op[1])?
-    };
-
-    let parsed_query_param = ParsedQueryParam {
-        field: FilterField::from_str(&field)?,
-        operator,
-        value,
-    };
-
-    Ok(parsed_query_param)
-}
-
-/// ## A per-query Postgres `statement_timeout`, in milliseconds.
-///
-/// A validated, *positive* timeout: the only way to construct one is
-/// [`StatementTimeoutMs::new`], which returns `None` for `0` (the "disabled"
-/// value), so a `StatementTimeoutMs` value always represents a meaningful budget.
-/// Callers thread `Option<StatementTimeoutMs>`, where `None` means "no
-/// per-query override" (the connection's pool-global timeout applies, if any).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StatementTimeoutMs(u64);
-
-impl StatementTimeoutMs {
-    /// Build a timeout from a raw millisecond value. `0` is treated as
-    /// "disabled" and yields `None`; any positive value yields `Some`.
-    pub fn new(milliseconds: u64) -> Option<Self> {
-        (milliseconds > 0).then_some(Self(milliseconds))
-    }
-
-    /// The timeout in milliseconds (always greater than zero).
-    pub fn as_millis(self) -> u64 {
-        self.0
-    }
-}
-
-/// ## A struct that represents a set of query options
-///
-/// This struct holds a list of filters, a list of sort parameters, and a limit on the number of results.
-#[derive(Debug, Clone, PartialEq)]
-pub struct QueryOptions {
-    pub filters: Vec<ParsedQueryParam>,
-    pub sort: Vec<SortParam>,
-    pub limit: Option<usize>,
-    pub cursor: Option<String>,
-    /// Whether list endpoints should execute an exact count query and return
-    /// `X-Total-Count`. Defaults to true for API compatibility.
-    pub include_total: bool,
-}
-
-/// ## A struct that represents a filter field
-#[derive(Debug, Clone, PartialEq)]
-pub struct SortParam {
-    pub field: FilterField,
-    pub descending: bool,
-}
-
-/// ## A struct that represents a parsed query parameter
-///  
-/// This struct holds a field, operator, and values for a search.
-///
-/// The field is the name of the field to search on, the operator is the type of search to perform,
-/// and the value is the value to search for.
-///
-/// The reason the data in this struct is stored as strings is because it is parsed from a query
-/// string, which is always a string. Parsing the data into the correct types is done in the
-/// functions that use this struct as they have some context about the data based on the type of
-/// the field involved. This may or may not involve parsing the data into a different type, such as
-/// parsing the value into an integer, a date, or a permission.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ParsedQueryParam {
-    pub field: FilterField,
-    pub operator: SearchOperator,
-    pub value: String,
 }
 
 /// ## A struct that represents a SQL query component.
@@ -338,7 +144,6 @@ impl<GB> ValidGrouping<GB> for JsonSqlPredicate {
 fn bind_sql_value<'b>(out: &mut AstPass<'_, 'b, Pg>, value: &'b SQLValue) -> QueryResult<()> {
     match value {
         SQLValue::String(value) => out.push_bind_param::<Text, _>(value),
-        SQLValue::Float(value) => out.push_bind_param::<Float8, _>(value),
         SQLValue::Integer(value) => out.push_bind_param::<Integer, _>(value),
         SQLValue::Date(value) => out.push_bind_param::<Timestamp, _>(value),
         SQLValue::Boolean(value) => out.push_bind_param::<Bool, _>(value),
@@ -352,13 +157,12 @@ fn bind_sql_value<'b>(out: &mut AstPass<'_, 'b, Pg>, value: &'b SQLValue) -> Que
 #[derive(Debug, Clone, PartialEq)]
 pub enum SQLValue {
     String(String),
-    Float(f64),
     Integer(i32),
     Date(NaiveDateTime),
     Boolean(bool),
 }
 
-impl QueryOptions {
+pub trait QueryOptionsExt {
     /// ## Ensure that a filter is present in the query options
     ///
     /// This function checks if a filter with the given field and identifier is
@@ -374,7 +178,20 @@ impl QueryOptions {
     /// ### Returns
     ///
     /// * None
-    pub fn ensure_filter<I, T>(
+    fn ensure_filter<I, T>(
+        &mut self,
+        field: FilterField,
+        operator: SearchOperator,
+        identifier: &I,
+    ) -> bool
+    where
+        I: SelfAccessors<T>;
+
+    fn ensure_filter_exact(&mut self, field: FilterField, identifier: &HubuumClassID) -> bool;
+}
+
+impl QueryOptionsExt for QueryOptions {
+    fn ensure_filter<I, T>(
         &mut self,
         field: FilterField,
         operator: SearchOperator,
@@ -400,75 +217,22 @@ impl QueryOptions {
     /// ### Returns
     ///
     /// * bool - true if the filter was added, false if it already existed
-    pub fn ensure_filter_exact(&mut self, field: FilterField, identifier: &HubuumClassID) -> bool {
-        self.filters.ensure_filter(
+    fn ensure_filter_exact(&mut self, field: FilterField, identifier: &HubuumClassID) -> bool {
+        self.ensure_filter::<_, HubuumClass>(
             field,
             SearchOperator::Equals { is_negated: false },
-            &identifier.id().to_string(),
+            identifier,
         )
     }
 }
 
-impl ParsedQueryParam {
-    /// ## Create a new ParsedQueryParam
-    ///
-    /// Note:
-    ///   * If no operator is provided, the default is "equals".
-    ///   * For permissions the operator is always "equals" and the value is "true".
-    ///
-    /// ### Arguments
-    ///
-    /// * `field` - The name of the field to search on
-    /// * `operator` - The type of search to perform
-    /// * `value` - The value to search for
-    ///
-    /// ### Returns
-    ///
-    /// * A new ParsedQueryParam instance
-    pub fn new(
-        field: &str,
-        operator: Option<SearchOperator>,
-        value: &str,
-    ) -> Result<Self, ApiError> {
-        let operator = operator.unwrap_or(SearchOperator::Equals { is_negated: false });
-
-        Ok(ParsedQueryParam {
-            field: FilterField::from_str(field)?,
-            operator,
-            value: value.to_string(),
-        })
-    }
-
-    pub fn is_permission(&self) -> bool {
-        self.field == FilterField::Permissions
-    }
-
-    pub fn is_collection(&self) -> bool {
-        self.field == FilterField::Collections
-    }
-
-    pub fn is_json_schema(&self) -> bool {
-        self.field == FilterField::JsonSchema
-    }
-
-    pub fn is_json_data(&self) -> bool {
-        self.field == FilterField::JsonData
-            || self.field == FilterField::JsonDataFrom
-            || self.field == FilterField::JsonDataTo
-    }
-
-    pub fn is_json(&self) -> bool {
-        self.is_json_schema() || self.is_json_data()
-    }
-
+pub trait ParsedQueryParamExt {
     /// ## Coerce the value into a Permissions enum
     ///
     /// ### Returns
     ///
     /// * A Permissions enum or ApiError::BadRequest if the value is invalid
-    pub fn value_as_permission(&self) -> Result<Permissions, ApiError> {
-        self.value.as_permission()
-    }
+    fn value_as_permission(&self) -> Result<Permissions, ApiError>;
 
     /// ## Coerce the value into a list of integers
     ///
@@ -477,9 +241,7 @@ impl ParsedQueryParam {
     /// ### Returns
     ///
     /// * A vector of integers or ApiError::BadRequest if the value is invalid
-    pub fn value_as_integer(&self) -> Result<Vec<i32>, ApiError> {
-        self.value.as_integer()
-    }
+    fn value_as_integer(&self) -> Result<Vec<i32>, ApiError>;
 
     /// ## Coerce the value into a list of dates
     ///
@@ -489,9 +251,7 @@ impl ParsedQueryParam {
     /// ### Returns
     ///
     /// * A vector of NaiveDateTime or ApiError::BadRequest if the value is invalid
-    pub fn value_as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
-        self.value.as_date()
-    }
+    fn value_as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError>;
 
     /// ## Coerce the value into a boolean
     ///
@@ -500,9 +260,7 @@ impl ParsedQueryParam {
     /// ### Returns
     ///
     /// * A boolean or ApiError::BadRequest if the value is invalid
-    pub fn value_as_boolean(&self) -> Result<bool, ApiError> {
-        self.value.as_boolean()
-    }
+    fn value_as_boolean(&self) -> Result<bool, ApiError>;
 
     /// ## Coerce the entire ParsedQueryParam into a JSONB SQLComponent
     ///
@@ -525,19 +283,121 @@ impl ParsedQueryParam {
     /// * A SQLComponent or:
     ///   * ApiError::InternalServerError if the field is not JSONB
     ///   * ApiError::BadRequest if the value is not a key=value pair
-    pub fn as_json_sql(&self) -> Result<SQLComponent, ApiError> {
+    fn as_json_sql(&self) -> Result<SQLComponent, ApiError>;
+
+    fn as_json_predicate(&self) -> Result<JsonSqlPredicate, ApiError>;
+
+    fn as_json_sql_for_field_expr(&self, jsonb_field_expr: &str) -> Result<SQLComponent, ApiError>;
+}
+
+trait ParsedQueryParamSqlExt {
+    fn as_json_ip_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError>;
+
+    fn as_json_is_null_sql(
+        &self,
+        jsonb_field_expr: &str,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError>;
+
+    fn as_json_has_key_sql(
+        &self,
+        jsonb_field_expr: &str,
+        path: &str,
+        key_name: &str,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError>;
+
+    fn as_json_in_sql(
+        &self,
+        jsonb_field_expr: &str,
+        field_expr: &str,
+        path: &str,
+        value: &str,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError>;
+
+    fn as_json_all_sql(
+        &self,
+        jsonb_field_expr: &str,
+        path: &str,
+        value: &str,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError>;
+
+    fn as_json_array_length_sql(
+        &self,
+        jsonb_field_expr: &str,
+        path: &str,
+        value: &str,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError>;
+
+    fn as_json_numeric_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError>;
+
+    fn as_json_date_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError>;
+
+    fn as_json_boolean_sql(
+        &self,
+        field_expr: &str,
+        value: &str,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError>;
+
+    fn as_json_cast_sql(
+        &self,
+        lhs_expr: &str,
+        bind_variables: Vec<SQLValue>,
+        op: Operator,
+        negated: bool,
+    ) -> Result<SQLComponent, ApiError>;
+}
+
+impl ParsedQueryParamExt for ParsedQueryParam {
+    fn value_as_permission(&self) -> Result<Permissions, ApiError> {
+        self.value.as_permission()
+    }
+
+    fn value_as_integer(&self) -> Result<Vec<i32>, ApiError> {
+        self.value.as_integer()
+    }
+
+    fn value_as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {
+        self.value.as_date()
+    }
+
+    fn value_as_boolean(&self) -> Result<bool, ApiError> {
+        self.value.as_boolean()
+    }
+
+    fn as_json_sql(&self) -> Result<SQLComponent, ApiError> {
         let field = self.field.clone();
         self.as_json_sql_for_field_expr(field.table_field())
     }
 
-    pub fn as_json_predicate(&self) -> Result<JsonSqlPredicate, ApiError> {
+    fn as_json_predicate(&self) -> Result<JsonSqlPredicate, ApiError> {
         self.as_json_sql()?.into_predicate()
     }
 
-    pub fn as_json_sql_for_field_expr(
-        &self,
-        jsonb_field_expr: &str,
-    ) -> Result<SQLComponent, ApiError> {
+    fn as_json_sql_for_field_expr(&self, jsonb_field_expr: &str) -> Result<SQLComponent, ApiError> {
         if !self.is_json() {
             return Err(ApiError::InternalServerError(format!(
                 "Attempt to filter '{}' as JSON!",
@@ -680,7 +540,9 @@ impl ParsedQueryParam {
             bind_variables,
         })
     }
+}
 
+impl ParsedQueryParamSqlExt for ParsedQueryParam {
     fn as_json_ip_sql(
         &self,
         field_expr: &str,
@@ -1138,480 +1000,6 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
 }
 
 /// Operators
-///
-/// These are operators without metadata, just their names.
-#[derive(Debug, PartialEq, Clone)]
-pub enum Operator {
-    Equals,
-    IEquals,
-    Contains,
-    IContains,
-    StartsWith,
-    IStartsWith,
-    EndsWith,
-    IEndsWith,
-    Like,
-    Regex,
-    Gt,
-    Gte,
-    Lt,
-    Lte,
-    Between,
-    WithinNetwork,
-    ContainsNetwork,
-    ContainsIp,
-    OverlapsNetwork,
-    InetEquals,
-    In,
-    All,
-    ArrayLength,
-    HasKey,
-    IsNull,
-}
-
-impl std::fmt::Display for Operator {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let op = match self {
-            Operator::Equals => "equals",
-            Operator::IEquals => "iequals",
-            Operator::Contains => "contains",
-            Operator::IContains => "icontains",
-            Operator::StartsWith => "startswith",
-            Operator::IStartsWith => "istartswith",
-            Operator::EndsWith => "endswith",
-            Operator::IEndsWith => "iendswith",
-            Operator::Like => "like",
-            Operator::Regex => "regex",
-            Operator::Gt => "gt",
-            Operator::Gte => "gte",
-            Operator::Lt => "lt",
-            Operator::Lte => "lte",
-            Operator::Between => "between",
-            Operator::WithinNetwork => "within_network",
-            Operator::ContainsNetwork => "contains_network",
-            Operator::ContainsIp => "contains_ip",
-            Operator::OverlapsNetwork => "overlaps_network",
-            Operator::InetEquals => "inet_equals",
-            Operator::In => "in",
-            Operator::All => "all",
-            Operator::ArrayLength => "array_length",
-            Operator::HasKey => "has_key",
-            Operator::IsNull => "is_null",
-        };
-        write!(f, "{op}")
-    }
-}
-
-impl Operator {
-    fn is_ip_operator(&self) -> bool {
-        matches!(
-            self,
-            Operator::WithinNetwork
-                | Operator::ContainsNetwork
-                | Operator::ContainsIp
-                | Operator::OverlapsNetwork
-                | Operator::InetEquals
-        )
-    }
-}
-
-/// ## An enum that represents a search operator
-///
-/// This enum represents the different types of search operators that can be used in a search query,
-/// such as equals, greater than, less than, etc. The types they apply to are defined in is_applicable_to.
-#[derive(Debug, PartialEq, Clone)]
-pub enum SearchOperator {
-    Equals { is_negated: bool },
-    IEquals { is_negated: bool },
-    Contains { is_negated: bool },
-    IContains { is_negated: bool },
-    StartsWith { is_negated: bool },
-    IStartsWith { is_negated: bool },
-    EndsWith { is_negated: bool },
-    IEndsWith { is_negated: bool },
-    Like { is_negated: bool },
-    Regex { is_negated: bool },
-    Gt { is_negated: bool },
-    Gte { is_negated: bool },
-    Lt { is_negated: bool },
-    Lte { is_negated: bool },
-    Between { is_negated: bool },
-    WithinNetwork { is_negated: bool },
-    ContainsNetwork { is_negated: bool },
-    ContainsIp { is_negated: bool },
-    OverlapsNetwork { is_negated: bool },
-    InetEquals { is_negated: bool },
-    In { is_negated: bool },
-    All { is_negated: bool },
-    ArrayLength { is_negated: bool },
-    HasKey { is_negated: bool },
-    IsNull { is_negated: bool },
-}
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum DataType {
-    String,
-    NumericOrDate,
-    Boolean,
-    Array,
-}
-
-impl std::fmt::Display for SearchOperator {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let (op, neg) = self.op_and_neg();
-        let neg_str = if neg { "not_" } else { "" };
-        write!(f, "{neg_str}{op}")
-    }
-}
-
-impl SearchOperator {
-    /// Checks if the operator is applicable to a given data type.
-    pub fn is_applicable_to(&self, data_type: DataType) -> bool {
-        type SO = SearchOperator;
-        match self {
-            SO::Equals { .. } => true,
-            SO::Gt { .. }
-            | SO::Gte { .. }
-            | SO::Lt { .. }
-            | SO::Lte { .. }
-            | SO::Between { .. } => matches!(data_type, DataType::NumericOrDate),
-            SO::WithinNetwork { .. }
-            | SO::ContainsNetwork { .. }
-            | SO::ContainsIp { .. }
-            | SO::OverlapsNetwork { .. }
-            | SO::InetEquals { .. } => false,
-            SO::In { .. } => {
-                matches!(data_type, DataType::String)
-                    || matches!(data_type, DataType::NumericOrDate)
-            }
-            SO::IsNull { .. } => true,
-            SO::All { .. } | SO::ArrayLength { .. } | SO::HasKey { .. } => false,
-            SO::Contains { .. } => {
-                matches!(data_type, DataType::String) || matches!(data_type, DataType::Array)
-            }
-            _ => {
-                matches!(data_type, DataType::String)
-            }
-        }
-    }
-
-    pub fn op_and_neg(&self) -> (Operator, bool) {
-        match self {
-            SearchOperator::Equals { is_negated } => (Operator::Equals, *is_negated),
-            SearchOperator::IEquals { is_negated, .. } => (Operator::IEquals, *is_negated),
-            SearchOperator::Contains { is_negated, .. } => (Operator::Contains, *is_negated),
-            SearchOperator::IContains { is_negated, .. } => (Operator::IContains, *is_negated),
-            SearchOperator::StartsWith { is_negated, .. } => (Operator::StartsWith, *is_negated),
-            SearchOperator::IStartsWith { is_negated, .. } => (Operator::IStartsWith, *is_negated),
-            SearchOperator::EndsWith { is_negated, .. } => (Operator::EndsWith, *is_negated),
-            SearchOperator::IEndsWith { is_negated, .. } => (Operator::IEndsWith, *is_negated),
-            SearchOperator::Like { is_negated, .. } => (Operator::Like, *is_negated),
-            SearchOperator::Regex { is_negated, .. } => (Operator::Regex, *is_negated),
-            SearchOperator::Gt { is_negated, .. } => (Operator::Gt, *is_negated),
-            SearchOperator::Gte { is_negated, .. } => (Operator::Gte, *is_negated),
-            SearchOperator::Lt { is_negated, .. } => (Operator::Lt, *is_negated),
-            SearchOperator::Lte { is_negated, .. } => (Operator::Lte, *is_negated),
-            SearchOperator::Between { is_negated, .. } => (Operator::Between, *is_negated),
-            SearchOperator::WithinNetwork { is_negated, .. } => {
-                (Operator::WithinNetwork, *is_negated)
-            }
-            SearchOperator::ContainsNetwork { is_negated, .. } => {
-                (Operator::ContainsNetwork, *is_negated)
-            }
-            SearchOperator::ContainsIp { is_negated, .. } => (Operator::ContainsIp, *is_negated),
-            SearchOperator::OverlapsNetwork { is_negated, .. } => {
-                (Operator::OverlapsNetwork, *is_negated)
-            }
-            SearchOperator::InetEquals { is_negated, .. } => (Operator::InetEquals, *is_negated),
-            SearchOperator::In { is_negated, .. } => (Operator::In, *is_negated),
-            SearchOperator::All { is_negated, .. } => (Operator::All, *is_negated),
-            SearchOperator::ArrayLength { is_negated, .. } => (Operator::ArrayLength, *is_negated),
-            SearchOperator::HasKey { is_negated, .. } => (Operator::HasKey, *is_negated),
-            SearchOperator::IsNull { is_negated, .. } => (Operator::IsNull, *is_negated),
-        }
-    }
-
-    pub fn new_from_string(operator: &str) -> Result<SearchOperator, ApiError> {
-        type SO = SearchOperator;
-
-        let mut negated = false;
-
-        let operator = match operator {
-            operator if operator.starts_with("not_") => {
-                negated = true;
-                operator.trim_start_matches("not_")
-            }
-            operator => operator,
-        };
-
-        match operator {
-            "equals" => Ok(SO::Equals {
-                is_negated: negated,
-            }),
-            "iequals" => Ok(SO::IEquals {
-                is_negated: negated,
-            }),
-            "contains" => Ok(SO::Contains {
-                is_negated: negated,
-            }),
-            "icontains" => Ok(SO::IContains {
-                is_negated: negated,
-            }),
-            "startswith" => Ok(SO::StartsWith {
-                is_negated: negated,
-            }),
-            "istartswith" => Ok(SO::IStartsWith {
-                is_negated: negated,
-            }),
-            "endswith" => Ok(SO::EndsWith {
-                is_negated: negated,
-            }),
-            "iendswith" => Ok(SO::IEndsWith {
-                is_negated: negated,
-            }),
-            "like" => Ok(SO::Like {
-                is_negated: negated,
-            }),
-            "regex" => Ok(SO::Regex {
-                is_negated: negated,
-            }),
-            "gt" => Ok(SO::Gt {
-                is_negated: negated,
-            }),
-            "gte" => Ok(SO::Gte {
-                is_negated: negated,
-            }),
-            "lt" => Ok(SO::Lt {
-                is_negated: negated,
-            }),
-            "lte" => Ok(SO::Lte {
-                is_negated: negated,
-            }),
-            "between" => Ok(SO::Between {
-                is_negated: negated,
-            }),
-            "within_network" => Ok(SO::WithinNetwork {
-                is_negated: negated,
-            }),
-            "contains_network" => Ok(SO::ContainsNetwork {
-                is_negated: negated,
-            }),
-            "contains_ip" => Ok(SO::ContainsIp {
-                is_negated: negated,
-            }),
-            "overlaps_network" => Ok(SO::OverlapsNetwork {
-                is_negated: negated,
-            }),
-            "inet_equals" => Ok(SO::InetEquals {
-                is_negated: negated,
-            }),
-            "in" | "any" => Ok(SO::In {
-                is_negated: negated,
-            }),
-            "all" => Ok(SO::All {
-                is_negated: negated,
-            }),
-            "array_length" => Ok(SO::ArrayLength {
-                is_negated: negated,
-            }),
-            "has_key" => Ok(SO::HasKey {
-                is_negated: negated,
-            }),
-            "is_null" => Ok(SO::IsNull {
-                is_negated: negated,
-            }),
-
-            _ => Err(ApiError::BadRequest(format!(
-                "Invalid search operator: '{operator}'"
-            ))),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum SQLMappedType {
-    String,
-    Numeric,
-    Date,
-    Boolean,
-    None,
-}
-
-/// ## Get the type of a field within a JSON schema
-///
-/// This function takes a JSON schema and a key, and returns the type of the field at that key.
-/// The key can be a nested key, separated by commas.
-///
-/// ### Arguments
-///
-/// * `schema` - A JSON schema (assumed to be valid)
-/// * `key` - The key to get the type for, may be a nested key separated by commas
-///
-/// ### Returns
-///
-/// * Some(SQLMappedType) if the key exists and has a type, None otherwise
-///
-/// ### Example
-///
-/// Given the following JSON schema:
-///
-/// ```json
-/// {
-///   "type": "object",
-///   "properties": {
-///     "name": {
-///       "type": "string"
-///     },
-///     "age": {
-///       "type": "number"
-///     },
-///     "date_of_birth": {
-///       "type": "string",
-///       "format": "date-time"
-///     },
-///     "is_active": {
-///       "type": "boolean"
-///     },
-///     "address": {
-///       "type": "object",
-///       "properties": {
-///         "street": {
-///            "type": "string"
-///       },
-///       "city": {
-///         "type": "string"
-///       },
-///       "zip": {
-///         "type": "number"
-///       }
-///     }
-///   }
-/// }
-/// ```
-///
-/// The following keys would return the following types:
-///
-/// * "name" -> Some(SQLMappedType::String)
-/// * "age" -> Some(SQLMappedType::Numeric)
-/// * "is_active" -> Some(SQLMappedType::Boolean)
-/// * "date_of_birth" -> Some(SQLMappedType::Date)
-/// * "address,street" -> Some(SQLMappedType::String)
-/// * "address,city" -> Some(SQLMappedType::String)
-/// * "address,zip" -> Some(SQLMappedType::Numeric)
-///
-#[cfg(test)]
-fn get_jsonb_field_type_from_json_schema(
-    schema: &serde_json::Value,
-    key: &str,
-) -> Option<SQLMappedType> {
-    use serde_json::Value;
-
-    let mut current_schema = schema;
-
-    for key in key.split(',') {
-        match current_schema {
-            Value::Object(map) => {
-                if let Some(sub_schema) = map.get("properties").and_then(|p| p.get(key)) {
-                    current_schema = sub_schema;
-                } else {
-                    let items_schema = map.get("items")?;
-                    current_schema = items_schema;
-                }
-            }
-            _ => return None,
-        }
-    }
-
-    // If we have a specific format, we can use that to determine the type from a set of
-    // predefined formats.
-    if let Some(Value::String(format_str)) = current_schema.get("format") {
-        match format_str.as_ref() {
-            "date-time" | "date" => return Some(SQLMappedType::Date),
-            _ => {}
-        }
-    };
-
-    // We do not have a specific format, we rely on the more generic type.
-    match current_schema.get("type") {
-        Some(Value::String(type_str)) => match type_str.as_ref() {
-            "string" => Some(SQLMappedType::String),
-            "number" | "integer" => Some(SQLMappedType::Numeric),
-            "boolean" => Some(SQLMappedType::Boolean),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// ## Get the type of a JSON field
-///
-/// This function takes a JSON field and an operator and returns a best guess of type of the field.
-/// The operator is used to eliminate some types, for example, if the operator is "gt" or "lt",
-/// the field is assumed to be a number or a date. If no valid type can be determined, the function
-/// returns None.
-///
-/// ### Arguments
-///
-/// * `value` - The value of the field
-/// * `operator` - The operator that is being applied
-///
-/// ### Returns
-///
-/// * Some(SQLMappedType) if the type can be determined, None otherwise
-pub fn get_jsonb_field_type_from_value_and_operator(
-    value: &str,
-    operator: Operator,
-) -> Option<SQLMappedType> {
-    match operator {
-        Operator::Equals => get_sql_mapped_type_from_value(
-            value,
-            &[
-                SQLMappedType::Date,
-                SQLMappedType::Boolean,
-                SQLMappedType::Numeric,
-                SQLMappedType::None,
-                SQLMappedType::String,
-            ],
-        ),
-        Operator::Contains => Some(SQLMappedType::String),
-        Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte => {
-            get_sql_mapped_type_from_value(value, &[SQLMappedType::Date, SQLMappedType::Numeric])
-        }
-        Operator::Between => {
-            let parts = value.split(',').collect::<Vec<&str>>();
-            if parts.len() != 2 {
-                return None;
-            }
-            let lval = get_sql_mapped_type_from_value(
-                parts[0],
-                &[SQLMappedType::Date, SQLMappedType::Numeric],
-            );
-            let rval = get_sql_mapped_type_from_value(
-                parts[1],
-                &[SQLMappedType::Date, SQLMappedType::Numeric],
-            );
-            if lval.is_none() || rval.is_none() || lval != rval {
-                return None;
-            }
-            lval // Already a Some() from get_sql_mapped_type_from_value
-        }
-        Operator::IEquals
-        | Operator::IContains
-        | Operator::StartsWith
-        | Operator::IStartsWith
-        | Operator::EndsWith
-        | Operator::IEndsWith
-        | Operator::Like
-        | Operator::Regex => Some(SQLMappedType::String),
-        Operator::WithinNetwork
-        | Operator::ContainsNetwork
-        | Operator::ContainsIp
-        | Operator::OverlapsNetwork
-        | Operator::InetEquals => None,
-        Operator::In => Some(SQLMappedType::String),
-        Operator::All | Operator::ArrayLength | Operator::HasKey | Operator::IsNull => None,
-    }
-}
-
 fn parse_json_ip_filter_value(value: &str, operator: &Operator) -> Result<String, ApiError> {
     match operator {
         Operator::ContainsIp => value
@@ -1642,175 +1030,6 @@ fn ip_to_host_net(value: &str) -> Result<IpNet, ()> {
         Err(_) => Err(()),
     }
 }
-
-/// ## Get an SQL type from a value based on a list of accepted types
-///
-/// This function takes a value and a list of accepted types and returns the first type that the
-/// value can be parsed into. If the value cannot be parsed into any of the accepted types, the
-/// function returns None.
-///
-/// ### Arguments
-///
-/// * `value` - The value to parse
-/// * `accepted_types` - A list of accepted types
-///
-/// ### Returns
-///
-/// * Some(SQLMappedType) if the value can be parsed into one of the accepted types, None otherwise
-fn get_sql_mapped_type_from_value(
-    value: &str,
-    accepted_types: &[SQLMappedType],
-) -> Option<SQLMappedType> {
-    use chrono::{DateTime, NaiveDate};
-
-    for t in accepted_types {
-        match t {
-            SQLMappedType::String => {
-                return Some(SQLMappedType::String);
-            }
-            SQLMappedType::Numeric => {
-                if value.parse::<f64>().is_ok() {
-                    return Some(SQLMappedType::Numeric);
-                }
-            }
-            SQLMappedType::Date => {
-                if DateTime::parse_from_rfc3339(value).is_ok() {
-                    return Some(SQLMappedType::Date);
-                }
-
-                let format = "%Y-%m-%d";
-                if NaiveDate::parse_from_str(value, format).is_ok() {
-                    return Some(SQLMappedType::Date);
-                }
-            }
-            SQLMappedType::Boolean => {
-                if value.to_lowercase() == "true" || value.to_lowercase() == "false" {
-                    return Some(SQLMappedType::Boolean);
-                }
-            }
-            SQLMappedType::None => {
-                if value.is_empty() || value.to_lowercase() == "null" {
-                    return Some(SQLMappedType::None);
-                }
-            }
-        }
-    }
-
-    None
-}
-
-// Generate the FilterField enum and its associated functions. We use a macro
-// to generate the enum and its functions to ensure that the FromStr and query_string
-// functions are always in sync.
-macro_rules! filter_fields {
-    ($(($variant:ident, $str_rep:expr)),* $(,)?) => {
-        /// Valid search fields in URLS.
-        ///
-        /// Each enum variant corresponds to a field that can be searched on. As a general rule, fields that may
-        /// be issued repeatedly in the query string are puralized while fields that are unique are singular.
-        ///
-        /// JSON fields (JsonSchema and JsonData aliases) also have a table field, which is used for
-        /// JSON SQL query generation
-        /// to map into the correct JSON field in the database as these fields do not use the macro–defined searches
-        /// and interpolate the field directly.
-        #[derive(Debug, PartialEq, Clone)]
-        pub enum FilterField {
-            $($variant),*
-        }
-
-        impl std::str::FromStr for FilterField {
-            type Err = ApiError;
-
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
-                match s {
-                    $(
-                        $str_rep => Ok(FilterField::$variant),
-                    )*
-                    _ => Err(ApiError::BadRequest(format!(
-                        "Invalid search field: '{}'",
-                        s
-                    ))),
-                }
-            }
-        }
-
-        impl std::fmt::Display for FilterField {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match self {
-                    $(
-                        FilterField::$variant => write!(f, "{}", $str_rep),
-                    )*
-                }
-            }
-        }
-
-        impl FilterField {
-            pub fn table_field(&self) -> &'static str {
-                match self {
-                    FilterField::JsonSchema => "json_schema",
-                    FilterField::JsonData
-                    | FilterField::JsonDataFrom
-                    | FilterField::JsonDataTo => "data",
-                    _ => panic!("{:?} should not be used as a table field", self),
-                }
-            }
-        }
-    }
-}
-
-filter_fields!(
-    (Id, "id"),
-    (Collections, "collections"),
-    (CollectionId, "collection_id"),
-    (Name, "name"),
-    (IdentityScope, "identity_scope"),
-    (Groupname, "groupname"),
-    (Username, "username"),
-    (ProperName, "proper_name"),
-    (Description, "description"),
-    (Email, "email"),
-    (ValidateSchema, "validate_schema"),
-    (JsonSchema, "json_schema"),
-    (JsonData, "json_data"),
-    (Permissions, "permissions"),
-    (Classes, "classes"),
-    (ClassId, "class_id"),
-    (CreatedAt, "created_at"),
-    (UpdatedAt, "updated_at"),
-    (OccurredAt, "occurred_at"),
-    (NextAttemptAt, "next_attempt_at"),
-    (StartedAt, "started_at"),
-    (FinishedAt, "finished_at"),
-    (IssuedAt, "issued_at"),
-    (ExpiresAt, "expires_at"),
-    (LastUsedAt, "last_used_at"),
-    (Kind, "kind"),
-    (Status, "status"),
-    (SubmittedBy, "submitted_by"),
-    (NameFrom, "from_name"),
-    (NameTo, "to_name"),
-    (DescriptionFrom, "from_description"),
-    (DescriptionTo, "to_description"),
-    (ObjectFrom, "from_objects"),
-    (ObjectTo, "to_objects"),
-    (ClassTo, "to_classes"),
-    (ClassFrom, "from_classes"),
-    (ClassToName, "to_class_name"),
-    (ClassFromName, "from_class_name"),
-    (CollectionsFrom, "from_collections"),
-    (CollectionsTo, "to_collections"),
-    (JsonDataFrom, "from_json_data"),
-    (JsonDataTo, "to_json_data"),
-    (CreatedAtFrom, "from_created_at"),
-    (CreatedAtTo, "to_created_at"),
-    (UpdatedAtFrom, "from_updated_at"),
-    (UpdatedAtTo, "to_updated_at"),
-    (ClassRelation, "class_relation"),
-    (Depth, "depth"),
-    (Path, "path"),
-    (ValidFrom, "valid_from"),
-    (HistoryId, "history_id"),
-);
 
 // TODO: Rewrite to use rstest cases...
 #[cfg(test)]
@@ -2700,16 +1919,10 @@ mod test {
     }
 
     #[test]
-    fn parse_query_parameter_supports_total_count_opt_out() {
+    fn parse_query_parameter_preserves_total_count_opt_out() {
         let options = parse_query_parameter("include_total=false").unwrap();
+
         assert!(!options.include_total);
-
-        let defaults = parse_query_parameter("").unwrap();
-        assert!(defaults.include_total);
-
-        let duplicate =
-            parse_query_parameter("include_total=true&include_total=false").unwrap_err();
-        assert_eq!(duplicate.to_string(), "duplicate include_total");
     }
 
     #[test]

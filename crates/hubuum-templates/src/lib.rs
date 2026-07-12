@@ -13,6 +13,7 @@
 //! app-specific warning collection.
 
 use std::fmt;
+use std::io::{self, Write};
 
 use minijinja::value::Value;
 use minijinja::{Environment, Error as MiniJinjaError, ErrorKind as MiniJinjaErrorKind, State};
@@ -21,6 +22,51 @@ pub type MissingValueRecorder = fn(MissingValue);
 
 pub fn prepare_template(source: &str) -> PreparedTemplate<'_> {
     PreparedTemplate::new(source)
+}
+
+/// Size-bounded `Write` sink for render paths that must stop at a byte budget.
+///
+/// The writer stores bytes until the configured cap is reached. A write that
+/// would exceed the cap returns an `io::Error` and marks the writer as exceeded,
+/// allowing callers to map that condition into their own error type.
+pub struct SizeLimitedWriter {
+    max_bytes: usize,
+    buffer: Vec<u8>,
+    exceeded: bool,
+}
+
+impl SizeLimitedWriter {
+    pub fn new(max_bytes: usize) -> Self {
+        Self {
+            max_bytes,
+            buffer: Vec::new(),
+            exceeded: false,
+        }
+    }
+
+    pub fn exceeded(&self) -> bool {
+        self.exceeded
+    }
+
+    pub fn into_string(self) -> Result<String, std::string::FromUtf8Error> {
+        String::from_utf8(self.buffer)
+    }
+}
+
+impl Write for SizeLimitedWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.buffer.len().saturating_add(buf.len()) > self.max_bytes {
+            self.exceeded = true;
+            return Err(io::Error::other("template output limit exceeded"));
+        }
+
+        self.buffer.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -382,6 +428,24 @@ fn parse_template_datetime(raw: &str) -> Option<chrono::DateTime<chrono::FixedOf
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn size_limited_writer_accumulates_under_limit() {
+        let mut writer = SizeLimitedWriter::new(16);
+        writer.write_all(b"hello ").unwrap();
+        writer.write_all(b"world").unwrap();
+        assert!(!writer.exceeded());
+        assert_eq!(writer.into_string().unwrap(), "hello world");
+    }
+
+    #[test]
+    fn size_limited_writer_aborts_over_limit() {
+        let mut writer = SizeLimitedWriter::new(4);
+        let err = writer.write_all(b"toolong").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Other);
+        assert!(writer.exceeded());
+    }
 
     #[test]
     fn csv_cell_neutralizes_formula_injection() {

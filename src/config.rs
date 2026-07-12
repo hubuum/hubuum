@@ -1,73 +1,29 @@
 pub mod environment;
 pub mod running;
 
-use std::sync::LazyLock;
-#[cfg(test)]
-use std::sync::Mutex;
 #[cfg(not(test))]
 use std::sync::OnceLock;
+#[cfg(test)]
+use std::sync::{LazyLock, Mutex};
 
-use clap::{Parser, ValueEnum};
-use ipnet::{IpNet, Ipv4Net, Ipv6Net};
+use clap::Parser;
+#[cfg(test)]
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
-use uuid::Uuid;
 
 use crate::errors::ApiError;
 
-pub const DEFAULT_PAGE_LIMIT: usize = 100;
-pub const MAX_PAGE_LIMIT: usize = 250;
-pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 200;
-pub const DEFAULT_EVENT_FANOUT_WORKERS: usize = 1;
-pub const DEFAULT_EVENT_FANOUT_BATCH_SIZE: usize = 100;
-pub const DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS: u64 = 250;
-pub const DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS: u64 = 30_000;
-pub const DEFAULT_EVENT_DELIVERY_WORKERS: usize = 0;
-pub const DEFAULT_EVENT_DELIVERY_BATCH_SIZE: usize = 100;
-pub const DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS: u64 = 500;
-pub const DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS: u64 = 30_000;
-pub const DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS: u64 = 25_000;
-pub const DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS: u64 = 1_000;
-pub const DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS: u64 = 300_000;
-pub const DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS: i32 = 10;
-pub const DEFAULT_EVENT_RETENTION_PURGE_ENABLED: bool = false;
-pub const DEFAULT_EVENT_RETENTION_DAYS: i64 = 365;
-pub const DEFAULT_EVENT_DELIVERY_RETENTION_DAYS: i64 = 30;
-pub const DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS: u64 = 3_600;
-pub const DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE: usize = 1_000;
-pub const DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED: bool = false;
-pub const DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS: i64 = 24 * 7;
-pub const DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS: u64 = 300;
-pub const DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
-pub const DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
-pub const DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER: usize = 100;
-pub const DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT: usize = 64;
-pub const DEFAULT_EXPORT_TEMPLATE_FUEL: u64 = 50_000;
-pub const DEFAULT_EXPORT_TEMPLATE_MAX_OBJECTS: usize = 2_000;
-pub const DEFAULT_EXPORT_MAX_OUTPUT_BYTES: usize = 262_144;
-pub const DEFAULT_EXPORT_STAGE_TIMEOUT_MS: u64 = 10_000;
-pub const DEFAULT_REMOTE_CALL_TIMEOUT_MS: u64 = 10_000;
-pub const DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES: usize = 262_144;
-pub const DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS: bool = false;
-pub const DEFAULT_DB_STATEMENT_TIMEOUT_MS: u64 = 30_000;
-pub const DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS: u64 = 2_000;
-pub const DEFAULT_EXPORT_DB_STATEMENT_TIMEOUT_MS: u64 = 0;
-pub const DEFAULT_TOKEN_LIFETIME_HOURS: i64 = 24;
-pub const DEFAULT_LOGIN_RATE_LIMIT_ENABLED: bool = true;
-pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: usize = 5;
-pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP: usize = 20;
-pub const DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET: usize = 100;
-pub const DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS: u64 = 300;
-pub const DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_BASE_SECONDS: u64 = 300;
-pub const DEFAULT_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS: u64 = 86_400;
-pub const DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4: u8 = 24;
-pub const DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6: u8 = 64;
-pub const DEFAULT_METRICS_ENABLED: bool = true;
-pub const DEFAULT_METRICS_PATH: &str = "/metrics";
-pub const DEFAULT_TRUSTED_PROXY_HOPS: usize = 0;
-pub const DEFAULT_MAX_TRANSITIVE_DEPTH: i32 = 100;
+mod client_network;
+mod defaults;
+mod tls_backend;
+mod token_hash;
+pub use client_network::{ClientAllowlist, TrustedProxies};
+use client_network::{parse_client_allowlist, parse_trusted_proxies};
+pub use defaults::*;
+pub use tls_backend::TlsBackend;
+pub use token_hash::{token_hash_key_bytes, token_hash_key_is_ephemeral};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -132,29 +88,6 @@ impl From<MetricsPath> for String {
     }
 }
 
-struct TokenHashKeyConfig {
-    key: Vec<u8>,
-    is_ephemeral: bool,
-}
-
-static TOKEN_HASH_KEY_CONFIG: LazyLock<TokenHashKeyConfig> = LazyLock::new(|| {
-    if let Ok(env_key) = std::env::var("HUBUUM_TOKEN_HASH_KEY") {
-        let trimmed = env_key.trim();
-        if !trimmed.is_empty() {
-            return TokenHashKeyConfig {
-                key: trimmed.as_bytes().to_vec(),
-                is_ephemeral: false,
-            };
-        }
-    }
-
-    let generated = format!("{}{}", Uuid::new_v4(), Uuid::new_v4());
-    TokenHashKeyConfig {
-        key: generated.into_bytes(),
-        is_ephemeral: true,
-    }
-});
-
 fn detected_cpu_count() -> usize {
     std::thread::available_parallelism()
         .map(NonZeroUsize::get)
@@ -167,27 +100,6 @@ fn default_actix_workers() -> usize {
 
 fn default_task_workers() -> usize {
     detected_cpu_count().div_ceil(2).max(1)
-}
-
-#[derive(ValueEnum, Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum TlsBackend {
-    Rustls,
-    Openssl,
-}
-
-impl TlsBackend {
-    #[cfg(any(
-        not(any(feature = "tls-rustls", feature = "tls-openssl")),
-        all(feature = "tls-rustls", not(feature = "tls-openssl")),
-        all(feature = "tls-openssl", not(feature = "tls-rustls"))
-    ))]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Rustls => "rustls",
-            Self::Openssl => "openssl",
-        }
-    }
 }
 
 #[derive(Parser, Deserialize, Clone)]
@@ -752,14 +664,6 @@ impl std::fmt::Debug for AppConfig {
     }
 }
 
-fn parse_client_allowlist(s: &str) -> Result<ClientAllowlist, String> {
-    ClientAllowlist::from_str(s).map_err(|e| e.to_string())
-}
-
-fn parse_trusted_proxies(s: &str) -> Result<TrustedProxies, String> {
-    TrustedProxies::from_str(s).map_err(|e| e.to_string())
-}
-
 impl AppConfig {
     fn validate(self) -> Result<Self, ApiError> {
         if self.actix_workers == 0 {
@@ -1098,14 +1002,6 @@ pub fn max_transitive_depth() -> i32 {
         .unwrap_or(DEFAULT_MAX_TRANSITIVE_DEPTH);
 
     depth
-}
-
-pub fn token_hash_key_bytes() -> &'static [u8] {
-    &TOKEN_HASH_KEY_CONFIG.key
-}
-
-pub fn token_hash_key_is_ephemeral() -> bool {
-    TOKEN_HASH_KEY_CONFIG.is_ephemeral
 }
 
 /// Snapshot of all login rate-limit knobs, resolved once per check so a single request
@@ -1506,156 +1402,6 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
     };
 
     config.validate()
-}
-
-/// Client IP allowlist - either allow all (`*`) or specific IPs/CIDRs
-#[derive(Debug, Clone)]
-pub enum ClientAllowlist {
-    Any,
-    Nets(Vec<IpNet>),
-}
-
-impl Serialize for ClientAllowlist {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            ClientAllowlist::Any => serializer.serialize_str("*"),
-            ClientAllowlist::Nets(nets) => {
-                let s = nets
-                    .iter()
-                    .map(|n| n.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                serializer.serialize_str(&s)
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ClientAllowlist {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        ClientAllowlist::from_str(&s).map_err(serde::de::Error::custom)
-    }
-}
-
-impl ClientAllowlist {
-    /// Parse a CLI/env string into a ClientAllowlist
-    pub fn parse_cli(input: &str) -> Result<Self, ApiError> {
-        let trimmed = input.trim();
-
-        if trimmed == "*" {
-            return Ok(Self::Any);
-        }
-
-        let nets: Vec<IpNet> = trimmed
-            .split(',')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .map(Self::parse_net)
-            .collect::<Result<_, _>>()?;
-
-        if nets.is_empty() {
-            return Err(ApiError::BadRequest(
-                "client allowlist cannot be empty".into(),
-            ));
-        }
-
-        Ok(Self::Nets(nets))
-    }
-
-    /// Check if an IP address is allowed
-    pub fn allows(&self, ip: IpAddr) -> bool {
-        match self {
-            ClientAllowlist::Any => true,
-            ClientAllowlist::Nets(nets) => nets.iter().any(|net| match (net, ip) {
-                (IpNet::V4(net), IpAddr::V4(addr)) => net.contains(&addr),
-                (IpNet::V6(net), IpAddr::V6(addr)) => net.contains(&addr),
-                _ => false,
-            }),
-        }
-    }
-
-    /// Parse a network CIDR or single IP
-    fn parse_net(raw: &str) -> Result<IpNet, ApiError> {
-        IpNet::from_str(raw)
-            .or_else(|_| Self::ip_to_host_net(raw))
-            .map_err(|_| ApiError::BadRequest(format!("Invalid IP/CIDR: {}", raw)))
-    }
-
-    /// Convert a single IP address to a /32 or /128 network
-    fn ip_to_host_net(raw: &str) -> Result<IpNet, ()> {
-        let ip: IpAddr = raw.parse().map_err(|_| ())?;
-        match ip {
-            IpAddr::V4(addr) => Ipv4Net::new(addr, 32).map(IpNet::from).map_err(|_| ()),
-            IpAddr::V6(addr) => Ipv6Net::new(addr, 128).map(IpNet::from).map_err(|_| ()),
-        }
-    }
-}
-
-impl FromStr for ClientAllowlist {
-    type Err = ApiError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse_cli(s)
-    }
-}
-
-/// Trusted reverse-proxy networks used to resolve the real client IP from a forwarded
-/// hop chain. Unlike [`ClientAllowlist`], an empty set is valid and means "no trusted
-/// proxies configured".
-#[derive(Debug, Clone, Default)]
-pub struct TrustedProxies(Vec<IpNet>);
-
-impl TrustedProxies {
-    /// The configured trusted-proxy networks.
-    pub fn nets(&self) -> &[IpNet] {
-        &self.0
-    }
-}
-
-impl FromStr for TrustedProxies {
-    type Err = ApiError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let nets = s
-            .split(',')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .map(ClientAllowlist::parse_net)
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(TrustedProxies(nets))
-    }
-}
-
-impl Serialize for TrustedProxies {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let s = self
-            .0
-            .iter()
-            .map(|n| n.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        serializer.serialize_str(&s)
-    }
-}
-
-impl<'de> Deserialize<'de> for TrustedProxies {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        TrustedProxies::from_str(&s).map_err(serde::de::Error::custom)
-    }
 }
 
 #[cfg(test)]

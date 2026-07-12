@@ -6,7 +6,7 @@ pub use crate::config::max_transitive_depth as max_transitive_depth_from_config;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
-use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions};
+use crate::models::search::{FilterField, ParsedQueryParam, ParsedQueryParamExt, QueryOptions};
 use crate::models::{
     HubuumClass, HubuumClassRelation, HubuumClassRelationID, HubuumClassRelationTransitive,
     HubuumObject, HubuumObjectID, HubuumObjectRelation, HubuumObjectRelationID,

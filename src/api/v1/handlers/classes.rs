@@ -30,8 +30,8 @@ use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors, Search, 
 use crate::utilities::extensions::CustomStringExtensions;
 
 use crate::models::search::{
-    FilterField, QueryOptions, QueryParamsExt, SearchOperator, parse_query_parameter,
-    parse_query_parameter_with_passthrough,
+    FilterField, QueryOptions, QueryOptionsExt, QueryParamsExt, SearchOperator,
+    parse_query_parameter, parse_query_parameter_with_passthrough,
 };
 use crate::models::traits::class_relation::ToHubuumClasses;
 

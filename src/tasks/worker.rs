@@ -7,13 +7,13 @@ use chrono::Utc;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
-use crate::api::v1::handlers::exports::execute_export_task;
 use crate::config::{DEFAULT_TASK_POLL_INTERVAL_MS, get_config};
 use crate::db::DbPool;
 use crate::db::traits::task::{
     TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_export_outputs,
 };
 use crate::errors::ApiError;
+use crate::exports::execute_export_task;
 use crate::models::{NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus};
 use crate::observability::metrics;
 

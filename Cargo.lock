@@ -2034,6 +2034,7 @@ dependencies = [
  "hubuum-event-sinks-common",
  "hubuum-events-core",
  "hubuum-outbound-http",
+ "hubuum-query",
  "hubuum-templates",
  "iai-callgrind",
  "ipnet",
@@ -2185,10 +2186,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hubuum-query"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "iai-callgrind",
+ "percent-encoding",
+ "serde_json",
+]
+
+[[package]]
 name = "hubuum-templates"
 version = "0.0.1"
 dependencies = [
  "chrono",
+ "iai-callgrind",
  "minijinja",
  "serde_json",
 ]
