@@ -90,7 +90,8 @@ where
             .get(&CORRELATION_ID)
             .and_then(|hv| hv.to_str().ok())
             .map(str::to_string);
-        let span = span!(Level::INFO, "request", request_id = %request_id_s, correlation_id = ?correlation_id);
+        let correlation_id_log_value = correlation_id.as_deref().unwrap_or_default();
+        let span = span!(Level::INFO, "request", request_id = %request_id_s, correlation_id = correlation_id_log_value);
 
         let method = req.method().to_string();
         let path = req.path().to_string();
@@ -104,7 +105,7 @@ where
             ));
 
         let start_time = Instant::now();
-        info!(request_id = %request_id_s, correlation_id = ?correlation_id, message = "Request start", method = &method, path = &path, client_ip = client_ip_s.as_deref());
+        info!(request_id = %request_id_s, correlation_id = correlation_id_log_value, message = "Request start", method = &method, path = &path, client_ip = client_ip_s.as_deref());
 
         let fut = self.service.call(req);
 
