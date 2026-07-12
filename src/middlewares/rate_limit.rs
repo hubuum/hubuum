@@ -351,12 +351,10 @@ pub(crate) async fn finish_login_attempt(permit: LoginAttemptPermit, outcome: Lo
 /// Resolve the trustworthy client IP for a login request, honoring the configured proxy
 /// trust policy. Returns `None` when no address can be determined.
 pub(crate) fn client_ip_for_request(req: &HttpRequest) -> Option<IpAddr> {
-    let policy = req
-        .app_data::<web::Data<ProxyTrust>>()
-        .map(|policy| policy.get_ref().clone())
-        .unwrap_or_default();
-
-    extract_client_ip_from_http_request(req, &policy)
+    match req.app_data::<web::Data<ProxyTrust>>() {
+        Some(policy) => extract_client_ip_from_http_request(req, policy.get_ref()),
+        None => extract_client_ip_from_http_request(req, &ProxyTrust::default()),
+    }
 }
 
 /// Record a failed login attempt across all applicable scopes, applying lockouts with

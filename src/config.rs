@@ -1171,7 +1171,7 @@ pub fn login_rate_limit_config() -> LoginRateLimitConfig {
 }
 
 #[cfg(not(test))]
-pub fn load_config() -> Result<AppConfig, ApiError> {
+fn load_config() -> Result<AppConfig, ApiError> {
     environment::validate_registry().map_err(ApiError::BadRequest)?;
     match AppConfig::try_parse() {
         Ok(config) => config.validate(),
@@ -1201,10 +1201,7 @@ pub fn initialize_config() -> Result<&'static AppConfig, ApiError> {
     }
 
     let config = load_config()?;
-    let _ = CONFIG.set(config);
-    CONFIG.get().ok_or_else(|| {
-        ApiError::InternalServerError("Failed to initialize application config".to_string())
-    })
+    Ok(CONFIG.get_or_init(|| config))
 }
 
 #[cfg(not(test))]
