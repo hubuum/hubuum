@@ -3,7 +3,7 @@ use diesel::expression::{AppearsOnTable, Expression, SelectableExpression, Valid
 use diesel::pg::Pg;
 use diesel::query_builder::{AstPass, QueryFragment, QueryId};
 use diesel::result::QueryResult;
-use diesel::sql_types::{Bool, Float8, Integer, Text, Timestamp};
+use diesel::sql_types::{Bool, Integer, Text, Timestamp};
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -24,7 +24,7 @@ use crate::pagination::validate_page_limit;
 use crate::traits::SelfAccessors;
 use crate::utilities::extensions::CustomStringExtensions;
 
-use super::HubuumClassID;
+use super::{HubuumClass, HubuumClassID};
 
 /// ## Parse a query string into search parameters
 ///
@@ -144,7 +144,6 @@ impl<GB> ValidGrouping<GB> for JsonSqlPredicate {
 fn bind_sql_value<'b>(out: &mut AstPass<'_, 'b, Pg>, value: &'b SQLValue) -> QueryResult<()> {
     match value {
         SQLValue::String(value) => out.push_bind_param::<Text, _>(value),
-        SQLValue::Float(value) => out.push_bind_param::<Float8, _>(value),
         SQLValue::Integer(value) => out.push_bind_param::<Integer, _>(value),
         SQLValue::Date(value) => out.push_bind_param::<Timestamp, _>(value),
         SQLValue::Boolean(value) => out.push_bind_param::<Bool, _>(value),
@@ -158,7 +157,6 @@ fn bind_sql_value<'b>(out: &mut AstPass<'_, 'b, Pg>, value: &'b SQLValue) -> Que
 #[derive(Debug, Clone, PartialEq)]
 pub enum SQLValue {
     String(String),
-    Float(f64),
     Integer(i32),
     Date(NaiveDateTime),
     Boolean(bool),
@@ -220,10 +218,10 @@ impl QueryOptionsExt for QueryOptions {
     ///
     /// * bool - true if the filter was added, false if it already existed
     fn ensure_filter_exact(&mut self, field: FilterField, identifier: &HubuumClassID) -> bool {
-        self.filters.ensure_filter(
+        self.ensure_filter::<_, HubuumClass>(
             field,
             SearchOperator::Equals { is_negated: false },
-            &identifier.id().to_string(),
+            identifier,
         )
     }
 }
@@ -1921,16 +1919,10 @@ mod test {
     }
 
     #[test]
-    fn parse_query_parameter_supports_total_count_opt_out() {
+    fn parse_query_parameter_preserves_total_count_opt_out() {
         let options = parse_query_parameter("include_total=false").unwrap();
+
         assert!(!options.include_total);
-
-        let defaults = parse_query_parameter("").unwrap();
-        assert!(defaults.include_total);
-
-        let duplicate =
-            parse_query_parameter("include_total=true&include_total=false").unwrap_err();
-        assert_eq!(duplicate.to_string(), "duplicate include_total");
     }
 
     #[test]

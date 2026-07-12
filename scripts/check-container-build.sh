@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-variant="rustls-only"
+variant="full"
 tag="hubuum:local-container-check"
 platform=""
 load_flag=()
@@ -11,7 +11,8 @@ usage() {
 Usage: scripts/check-container-build.sh [--variant rustls-only|full] [--platform linux/amd64|linux/arm64] [--tag TAG] [--no-load]
 
 Builds the production Dockerfile locally with the same feature variants used by CI.
-Defaults to the rustls-only variant because it is the cheaper container smoke test.
+Runs the Docker workspace-manifest parity regression before building. Defaults to
+the full published-container feature combination.
 USAGE
 }
 
@@ -62,6 +63,8 @@ if ! command -v docker >/dev/null 2>&1; then
   echo "docker is required for the container build check" >&2
   exit 1
 fi
+
+cargo test --bin hubuum-server dockerfile_copies_every_workspace_manifest --locked
 
 build_args=(
   buildx build

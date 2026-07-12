@@ -45,7 +45,6 @@ macro_rules! bind_raw_sql_query {
                 SQLValue::Integer(i) => query.bind::<diesel::sql_types::Integer, _>(i),
                 SQLValue::String(s) => query.bind::<diesel::sql_types::Text, _>(s),
                 SQLValue::Boolean(b) => query.bind::<diesel::sql_types::Bool, _>(b),
-                SQLValue::Float(f) => query.bind::<diesel::sql_types::Float8, _>(f),
                 SQLValue::Date(d) => query.bind::<diesel::sql_types::Timestamp, _>(d),
             };
         }

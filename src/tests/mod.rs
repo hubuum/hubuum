@@ -14,6 +14,7 @@ pub mod id_newtypes;
 pub mod search;
 pub mod temporal;
 pub mod validation;
+pub mod workspace_boundaries;
 
 use crate::db::prelude::*;
 use actix_web::web;

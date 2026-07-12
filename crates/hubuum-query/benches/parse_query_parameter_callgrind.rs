@@ -13,6 +13,7 @@ const COMPLEX_QUERY: &str = concat!(
     "&created_at__gte=2024-01-01",
     "&updated_at__lte=2024-12-31",
     "&sort=-created_at,name.asc",
+    "&include_total=false",
 );
 
 #[library_benchmark]

@@ -732,6 +732,7 @@ filter_fields!(
     (Collections, "collections"),
     (CollectionId, "collection_id"),
     (Name, "name"),
+    (IdentityScope, "identity_scope"),
     (Groupname, "groupname"),
     (Username, "username"),
     (ProperName, "proper_name"),
@@ -853,6 +854,57 @@ mod tests {
         assert_eq!(parsed.sort.len(), 2);
         assert!(parsed.sort[0].descending);
         assert!(!parsed.sort[1].descending);
+    }
+
+    #[test]
+    fn include_total_defaults_to_true() {
+        let parsed = parse_query_parameter("").unwrap();
+
+        assert!(parsed.include_total);
+    }
+
+    #[test]
+    fn include_total_accepts_false() {
+        let parsed = parse_query_parameter("include_total=false").unwrap();
+
+        assert!(!parsed.include_total);
+    }
+
+    #[test]
+    fn include_total_rejects_duplicates() {
+        let error = parse_query_parameter("include_total=true&include_total=false").unwrap_err();
+
+        assert_eq!(
+            error,
+            QueryError::BadRequest("duplicate include_total".to_string())
+        );
+    }
+
+    #[test]
+    fn include_total_rejects_invalid_boolean() {
+        let error = parse_query_parameter("include_total=yes").unwrap_err();
+
+        assert_eq!(
+            error,
+            QueryError::BadRequest("Invalid boolean value: 'yes'".to_string())
+        );
+    }
+
+    #[test]
+    fn passthrough_preserves_repeated_values() {
+        let (parsed, passthrough) =
+            parse_query_parameter_with_passthrough("name=router&local=one&local=two", &["local"])
+                .unwrap();
+
+        assert_eq!(parsed.filters.len(), 1);
+        assert_eq!(passthrough["local"], ["one", "two"]);
+    }
+
+    #[test]
+    fn decodes_form_encoded_filter_values() {
+        let parsed = parse_query_parameter("name=core+router%2Fedge").unwrap();
+
+        assert_eq!(parsed.filters[0].value, "core router/edge");
     }
 
     #[test]

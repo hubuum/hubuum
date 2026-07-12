@@ -28,6 +28,7 @@ use crate::models::{
     NewExportTaskOutputRecord, NewTaskEventRecord, Permissions, RELATED_INCLUDE_DEFAULT_LIMIT,
     RELATED_INCLUDE_DEFAULT_MAX_DEPTH, TaskKind, TaskRecord,
 };
+use crate::observability::metrics;
 use crate::pagination::page_limits_or_defaults;
 use crate::tasks::{ensure_task_worker_running, request_hash};
 use crate::traits::{AuthzSubject, CollectionAccessors, SelfAccessors};
@@ -306,28 +307,10 @@ async fn find_or_create_export_task(
     payload: serde_json::Value,
     request_hash_value: String,
 ) -> Result<TaskRecord, ApiError> {
-    let request_hash_for_match = request_hash_value.clone();
-    let matches_request = |task: &TaskRecord| {
-        task.kind == TaskKind::Export.as_str()
-            && task.request_hash.as_deref() == Some(request_hash_for_match.as_str())
-    };
-
-    if let Some(key) = idempotency_key.as_deref()
-        && let Some(existing) = TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
-    {
-        if matches_request(&existing) {
-            return Ok(existing);
-        }
-
-        return Err(ApiError::Conflict(format!(
-            "Idempotency-Key '{key}' is already in use for a different task submission"
-        )));
-    }
-
-    match (TaskCreateRequest {
+    (TaskCreateRequest {
         kind: TaskKind::Export,
         submitted_by,
-        idempotency_key: idempotency_key.clone(),
+        idempotency_key,
         request_hash: Some(request_hash_value),
         request_payload: payload,
         total_items: 1,
@@ -335,25 +318,8 @@ async fn find_or_create_export_task(
         submitted_token_scoped: snapshot.scoped,
         submitted_token_scopes: snapshot.scopes,
     })
-    .create_with_active_export_limit(pool, max_active_export_tasks_per_user())
+    .create_idempotently_with_active_limit(pool, max_active_export_tasks_per_user())
     .await
-    {
-        Ok(task) => Ok(task),
-        Err(ApiError::Conflict(_)) => {
-            if let Some(key) = idempotency_key.as_deref()
-                && let Some(existing) =
-                    TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
-                && matches_request(&existing)
-            {
-                return Ok(existing);
-            }
-
-            Err(ApiError::Conflict(
-                "Idempotency-Key is already in use for a different task submission".to_string(),
-            ))
-        }
-        Err(error) => Err(error),
-    }
 }
 
 pub(crate) async fn execute_export_task(
@@ -426,7 +392,9 @@ pub(crate) async fn execute_export_task(
         apply_export_includes(pool, subject, scopes, &runtime.export, &mut items),
     )
     .await?;
-    timings.query_duration_ms = duration_to_millis_i32(query_start.elapsed());
+    let query_elapsed = query_start.elapsed();
+    timings.query_duration_ms = duration_to_millis_i32(query_elapsed);
+    metrics::export_phase_duration("query", query_elapsed);
     enforce_export_stage_timeout(query_start, "query execution")?;
 
     if relation_hydration
@@ -454,7 +422,9 @@ pub(crate) async fn execute_export_task(
         build_template_items(pool, subject, scopes, &runtime, &items, relation_hydration),
     )
     .await?;
-    timings.hydration_duration_ms = duration_to_millis_i32(hydration_start.elapsed());
+    let hydration_elapsed = hydration_start.elapsed();
+    timings.hydration_duration_ms = duration_to_millis_i32(hydration_elapsed);
+    metrics::export_phase_duration("hydration", hydration_elapsed);
     enforce_export_stage_timeout(hydration_start, "relation hydration")?;
     let template_export = runtime.template.is_some();
     let item_count = if template_export {
@@ -493,14 +463,22 @@ pub(crate) async fn execute_export_task(
     let render_start = Instant::now();
     let artifact = build_export_artifact(&runtime, execution, timings)?;
     let mut timings = artifact.timings;
-    timings.render_duration_ms = duration_to_millis_i32(render_start.elapsed());
-    timings.total_duration_ms = duration_to_millis_i32(total_start.elapsed());
+    let render_elapsed = render_start.elapsed();
+    let total_elapsed = total_start.elapsed();
+    timings.render_duration_ms = duration_to_millis_i32(render_elapsed);
+    timings.total_duration_ms = duration_to_millis_i32(total_elapsed);
+    metrics::export_phase_duration("render", render_elapsed);
+    metrics::export_phase_duration("total", total_elapsed);
     enforce_export_stage_timeout(render_start, "template rendering")?;
     log_export_stage_metrics(task.id, &runtime, timings);
     let artifact = ExportArtifact {
         timings,
         ..artifact
     };
+    let metric_scope = artifact.meta.scope.kind.as_str();
+    let metric_content_type = artifact.content_type.as_mime();
+    let metric_truncated = artifact.meta.truncated;
+    let metric_warning_count = artifact.warnings.len();
 
     NewTaskEventRecord {
         task_id: task.id,
@@ -543,6 +521,14 @@ pub(crate) async fn execute_export_task(
         artifact_to_output_record(task.id, artifact)?,
     )
     .await?;
+
+    metrics::export_completed(metric_scope, metric_content_type);
+    if metric_truncated {
+        metrics::export_truncated(metric_scope, metric_content_type);
+    }
+    if metric_warning_count > 0 {
+        metrics::export_warnings(metric_scope, metric_content_type, metric_warning_count);
+    }
 
     Ok(())
 }
