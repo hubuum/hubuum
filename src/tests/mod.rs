@@ -30,12 +30,19 @@ use crate::models::token::create_principal_token;
 use crate::models::user::{NewUser, User};
 use crate::models::{HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject};
 
-use crate::utilities::auth::generate_random_password;
+use crate::utilities::auth::{generate_random_password, hash_password};
 
 use crate::db::traits::service_account::SaveServiceAccount;
+use crate::db::traits::user::CreateUserRecord;
 use crate::traits::{CanDelete, CanSave};
 use std::sync::LazyLock;
 use tokio::sync::{Mutex, MutexGuard};
+
+static TEST_USER_PASSWORD_HASH: LazyLock<String> =
+    LazyLock::new(|| hash_password("testpassword").expect("test user password must be hashable"));
+static TEST_ADMIN_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
+    hash_password("testadminpassword").expect("test admin password must be hashable")
+});
 
 fn new_test_pool() -> DbPool {
     let config = get_config().unwrap();
@@ -429,15 +436,32 @@ pub(crate) async fn create_object_fixture(
 }
 
 pub async fn create_user_with_params(pool: &DbPool, username: &str, password: &str) -> User {
-    let result = NewUser {
+    let new_user = NewUser {
         identity_scope: None,
         name: username.to_string(),
         password: password.to_string(),
         proper_name: None,
         email: None,
-    }
-    .save_without_events(pool)
-    .await;
+    };
+    let result = match password {
+        "testpassword" => {
+            NewUser {
+                password: TEST_USER_PASSWORD_HASH.clone(),
+                ..new_user
+            }
+            .create_user_record_without_events(pool)
+            .await
+        }
+        "testadminpassword" => {
+            NewUser {
+                password: TEST_ADMIN_PASSWORD_HASH.clone(),
+                ..new_user
+            }
+            .create_user_record_without_events(pool)
+            .await
+        }
+        _ => new_user.save_without_events(pool).await,
+    };
 
     assert!(
         result.is_ok(),
