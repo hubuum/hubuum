@@ -210,7 +210,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{DELIVERIES_ENDPOINT}?status=dead"),
+            &format!("{DELIVERIES_ENDPOINT}?id={}&status=dead", dead.id),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
