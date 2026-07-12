@@ -1,10 +1,10 @@
 pub mod environment;
 pub mod running;
 
-#[cfg(test)]
-use std::sync::{LazyLock, Mutex};
 #[cfg(not(test))]
 use std::sync::OnceLock;
+#[cfg(test)]
+use std::sync::{LazyLock, Mutex};
 
 use clap::Parser;
 #[cfg(test)]
