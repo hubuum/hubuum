@@ -1,5 +1,4 @@
 use std::sync::{Mutex, Once, OnceLock};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use actix_rt::time::sleep;
@@ -14,6 +13,7 @@ use crate::db::traits::task::{
 };
 use crate::errors::ApiError;
 use crate::exports::execute_export_task;
+use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus};
 use crate::observability::metrics;
 
@@ -56,39 +56,48 @@ pub(super) fn background_worker_action(result: &Result<bool, ApiError>) -> Worke
     }
 }
 
-async fn wait_for_task_worker_wakeup(poll_interval: Duration) {
+async fn wait_for_task_worker_wakeup(poll_interval: Duration, shutdown: &ShutdownSignal) -> bool {
     tokio::select! {
-        _ = sleep(poll_interval) => {}
-        _ = get_task_worker_notify().notified() => {}
+        biased;
+        _ = shutdown.requested() => false,
+        _ = sleep(poll_interval) => true,
+        _ = get_task_worker_notify().notified() => true,
     }
 }
 
-async fn task_worker_loop(pool: DbPool, poll_interval: Duration) {
+async fn task_worker_loop(pool: DbPool, poll_interval: Duration, shutdown: ShutdownSignal) {
     loop {
-        let result = process_one_task(&pool).await;
+        if shutdown.is_requested() {
+            break;
+        }
+        let result = process_one_task(&pool, Some(&shutdown)).await;
+        if shutdown.is_requested() {
+            break;
+        }
         match background_worker_action(&result) {
             WorkerLoopAction::Continue => continue,
-            WorkerLoopAction::Sleep => wait_for_task_worker_wakeup(poll_interval).await,
+            WorkerLoopAction::Sleep => {
+                if !wait_for_task_worker_wakeup(poll_interval, &shutdown).await {
+                    break;
+                }
+            }
         }
     }
 }
 
 fn spawn_task_worker_loop(pool: DbPool, poll_interval: Duration, worker_index: usize) {
-    thread::Builder::new()
-        .name(format!("task-worker-{worker_index}"))
-        .spawn(move || {
-            info!(
-                message = "Starting task worker loop",
-                worker_index = worker_index,
-                poll_interval = ?poll_interval
-            );
-            let system = actix_rt::System::new();
-            system.block_on(async move {
-                let pool = task_worker_pool(pool);
-                task_worker_loop(pool, poll_interval).await;
-            });
-        })
-        .expect("failed to spawn task worker thread");
+    spawn_background_worker(format!("task-worker-{worker_index}"), move |shutdown| {
+        info!(
+            message = "Starting task worker loop",
+            worker_index = worker_index,
+            poll_interval = ?poll_interval
+        );
+        let system = actix_rt::System::new();
+        system.block_on(async move {
+            let pool = task_worker_pool(pool);
+            task_worker_loop(pool, poll_interval, shutdown).await;
+        });
+    });
 }
 
 #[cfg(not(test))]
@@ -128,7 +137,10 @@ pub fn kick_task_worker(pool: DbPool) {
     get_task_worker_notify().notify_one();
 }
 
-pub(super) async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
+pub(super) async fn process_one_task(
+    pool: &DbPool,
+    shutdown: Option<&ShutdownSignal>,
+) -> Result<bool, ApiError> {
     if let Err(error) = maybe_cleanup_expired_export_outputs(pool).await {
         metrics::task_worker_iteration("error");
         return Err(error);
@@ -157,7 +169,19 @@ pub(super) async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
         worker = std::thread::current().name().unwrap_or("task-worker")
     );
 
-    if let Err(err) = process_claimed_task(pool, &task).await {
+    let result = match shutdown {
+        Some(shutdown) => {
+            tokio::select! {
+                biased;
+                _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
+                    "Task interrupted by graceful server shutdown".to_string(),
+                )),
+                result = process_claimed_task(pool, &task) => result,
+            }
+        }
+        None => process_claimed_task(pool, &task).await,
+    };
+    if let Err(err) = result {
         mark_claimed_task_failed(pool, &task, &err).await?;
     }
 

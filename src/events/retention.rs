@@ -3,7 +3,6 @@ use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
-use std::thread;
 use std::time::Duration;
 
 use actix_rt::time::sleep;
@@ -23,6 +22,7 @@ use crate::db::traits::event_retention::{
 };
 use crate::errors::ApiError;
 use crate::events::Event;
+use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 
 static EVENT_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
 
@@ -93,34 +93,43 @@ fn retention_worker_should_continue(result: &Result<EventRetentionPurgeSummary, 
     }
 }
 
-async fn event_retention_worker_loop(pool: DbPool, config: EventRetentionWorkerConfig) {
+async fn event_retention_worker_loop(
+    pool: DbPool,
+    config: EventRetentionWorkerConfig,
+    shutdown: ShutdownSignal,
+) {
     loop {
         let archive_path = config.file_archive_path().map(Path::new);
-        let result = process_event_retention_batch(&pool, config.settings, archive_path).await;
+        let result = tokio::select! {
+            biased;
+            _ = shutdown.requested() => break,
+            result = process_event_retention_batch(&pool, config.settings, archive_path) => result,
+        };
         if retention_worker_should_continue(&result) {
             continue;
         }
-        sleep(config.interval).await;
+        tokio::select! {
+            biased;
+            _ = shutdown.requested() => break,
+            _ = sleep(config.interval) => {}
+        }
     }
 }
 
 fn spawn_event_retention_worker_loop(pool: DbPool, config: EventRetentionWorkerConfig) {
-    thread::Builder::new()
-        .name("event-retention-worker".to_string())
-        .spawn(move || {
-            info!(
-                message = "Starting event retention worker loop",
-                event_retention_days = config.settings.event_retention_days,
-                delivery_retention_days = config.settings.delivery_retention_days,
-                batch_size = config.settings.batch_size,
-                interval = ?config.interval,
-                file_archive_enabled = config.file_archive_enabled,
-                archive_path_configured = config.archive_path.is_some()
-            );
-            let system = actix_rt::System::new();
-            system.block_on(event_retention_worker_loop(pool, config));
-        })
-        .expect("failed to spawn event retention worker thread");
+    spawn_background_worker("event-retention-worker", move |shutdown| {
+        info!(
+            message = "Starting event retention worker loop",
+            event_retention_days = config.settings.event_retention_days,
+            delivery_retention_days = config.settings.delivery_retention_days,
+            batch_size = config.settings.batch_size,
+            interval = ?config.interval,
+            file_archive_enabled = config.file_archive_enabled,
+            archive_path_configured = config.archive_path.is_some()
+        );
+        let system = actix_rt::System::new();
+        system.block_on(event_retention_worker_loop(pool, config, shutdown));
+    });
 }
 
 pub fn ensure_event_retention_worker_running(pool: DbPool) {

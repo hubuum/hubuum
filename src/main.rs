@@ -8,6 +8,7 @@ mod errors;
 pub mod events;
 mod exports;
 mod extractors;
+mod lifecycle;
 mod logger;
 mod macros;
 mod middlewares;
@@ -29,6 +30,7 @@ use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
+use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
@@ -46,6 +48,7 @@ use crate::events::{
     ensure_event_delivery_worker_running, ensure_event_fanout_worker_running,
     ensure_event_retention_worker_running,
 };
+use crate::lifecycle::shutdown_background_workers;
 use crate::tasks::ensure_task_worker_running;
 use crate::utilities::is_valid_log_level;
 
@@ -127,11 +130,6 @@ async fn main() -> std::io::Result<()> {
             }
         };
 
-    ensure_task_worker_running(pool.clone());
-    ensure_event_fanout_worker_running(pool.clone());
-    ensure_event_delivery_worker_running(pool.clone());
-    ensure_event_retention_worker_running(pool.clone());
-
     let client_allowlist = config.client_allowlist.clone();
     let proxy_trust = middlewares::ProxyTrust::new(
         config.trust_ip_headers,
@@ -141,6 +139,7 @@ async fn main() -> std::io::Result<()> {
     let running_config = RunningConfig::from(&config);
     let metrics_enabled = config.metrics_enabled;
     let metrics_path = config.metrics_path.clone();
+    let app_pool = pool.clone();
 
     let server = HttpServer::new(move || {
         let app = App::new()
@@ -156,7 +155,7 @@ async fn main() -> std::io::Result<()> {
             ))
             .app_data(Data::new(proxy_trust.clone()))
             .app_data(Data::new(running_config.clone()))
-            .app_data(Data::new(pool.clone()))
+            .app_data(Data::new(app_pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .route("/api-doc/openapi.json", web::get().to(openapi_json_handler));
 
@@ -206,6 +205,11 @@ async fn main() -> std::io::Result<()> {
         _ => server.bind(&bind_address)?,
     };
 
+    ensure_task_worker_running(pool.clone());
+    ensure_event_fanout_worker_running(pool.clone());
+    ensure_event_delivery_worker_running(pool.clone());
+    ensure_event_retention_worker_running(pool.clone());
+
     info!(
         message = "server startup",
         version = env!("CARGO_PKG_VERSION"),
@@ -223,5 +227,8 @@ async fn main() -> std::io::Result<()> {
         active_event_sinks,
     );
 
-    server.workers(config.actix_workers).run().await
+    let result = server.workers(config.actix_workers).run().await;
+    shutdown_background_workers(Duration::from_secs(30)).await;
+    drop(pool);
+    result
 }

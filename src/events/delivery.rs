@@ -1,6 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Once, OnceLock};
-use std::thread;
 use std::time::Duration;
 
 use actix_rt::time::sleep;
@@ -21,6 +20,7 @@ use crate::db::traits::event_delivery::{
 };
 use crate::errors::ApiError;
 use crate::events::sink::{DefaultSinkResolver, EventEnvelope, SinkResolver};
+use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();
@@ -160,13 +160,20 @@ fn delivery_worker_should_continue(result: &Result<usize, ApiError>) -> bool {
     }
 }
 
-async fn wait_for_event_delivery_wakeup(poll_interval: Duration) {
+async fn wait_for_event_delivery_wakeup(
+    poll_interval: Duration,
+    shutdown: &ShutdownSignal,
+) -> bool {
     tokio::select! {
+        biased;
+        _ = shutdown.requested() => false,
         _ = sleep(poll_interval) => {
             EVENT_DELIVERY_POLL_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+            true
         }
         _ = get_event_delivery_notify().notified() => {
             EVENT_DELIVERY_NOTIFICATION_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+            true
         }
     }
 }
@@ -176,13 +183,20 @@ async fn event_delivery_worker_loop(
     settings: EventDeliverySettings,
     poll_interval: Duration,
     resolver: &'static dyn SinkResolver,
+    shutdown: ShutdownSignal,
 ) {
     loop {
-        let result = process_event_delivery_batch(&pool, settings, resolver).await;
+        let result = tokio::select! {
+            biased;
+            _ = shutdown.requested() => break,
+            result = process_event_delivery_batch(&pool, settings, resolver) => result,
+        };
         if delivery_worker_should_continue(&result) {
             continue;
         }
-        wait_for_event_delivery_wakeup(poll_interval).await;
+        if !wait_for_event_delivery_wakeup(poll_interval, &shutdown).await {
+            break;
+        }
     }
 }
 
@@ -193,9 +207,9 @@ fn spawn_event_delivery_worker_loop(
     worker_index: usize,
     resolver: &'static dyn SinkResolver,
 ) {
-    thread::Builder::new()
-        .name(format!("event-delivery-worker-{worker_index}"))
-        .spawn(move || {
+    spawn_background_worker(
+        format!("event-delivery-worker-{worker_index}"),
+        move |shutdown| {
             info!(
                 message = "Starting event delivery worker loop",
                 worker_index = worker_index,
@@ -212,9 +226,10 @@ fn spawn_event_delivery_worker_loop(
                 settings,
                 poll_interval,
                 resolver,
+                shutdown,
             ));
-        })
-        .expect("failed to spawn event delivery worker thread");
+        },
+    );
 }
 
 pub fn ensure_event_delivery_worker_running(pool: DbPool) {

@@ -86,6 +86,10 @@ budgeting, pool observability, and a repeatable k6 scenario.
 | `HUBUUM_TASK_POLL_INTERVAL_MS` | `200` | Idle polling interval for background task workers |
 | `HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running import tasks one user may have at once |
 
+Background workers and PostgreSQL notification listeners participate in
+bounded graceful shutdown. See [Background Worker Lifecycle](background_workers.md)
+for startup ownership, cancellation, task interruption, and pool-drop ordering.
+
 ### Event And Audit Configuration
 
 | Variable | Default | Description |

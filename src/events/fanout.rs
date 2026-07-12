@@ -1,6 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Once, OnceLock};
-use std::thread;
 use std::time::Duration;
 
 use actix_rt::time::sleep;
@@ -14,6 +13,7 @@ use crate::config::{
 use crate::db::DbPool;
 use crate::db::traits::event_fanout::{EventFanoutSettings, process_event_fanout_batch};
 use crate::errors::ApiError;
+use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::EventWorkerWakeupStats;
 
 static EVENT_FANOUT_WORKER: Once = Once::new();
@@ -66,13 +66,17 @@ pub(super) fn fanout_worker_should_continue(result: &Result<usize, ApiError>) ->
     }
 }
 
-async fn wait_for_event_fanout_wakeup(poll_interval: Duration) {
+async fn wait_for_event_fanout_wakeup(poll_interval: Duration, shutdown: &ShutdownSignal) -> bool {
     tokio::select! {
+        biased;
+        _ = shutdown.requested() => false,
         _ = sleep(poll_interval) => {
             EVENT_FANOUT_POLL_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+            true
         }
         _ = get_event_fanout_notify().notified() => {
             EVENT_FANOUT_NOTIFICATION_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+            true
         }
     }
 }
@@ -81,13 +85,20 @@ async fn event_fanout_worker_loop(
     pool: DbPool,
     settings: EventFanoutSettings,
     poll_interval: Duration,
+    shutdown: ShutdownSignal,
 ) {
     loop {
-        let result = process_event_fanout_batch(&pool, settings).await;
+        let result = tokio::select! {
+            biased;
+            _ = shutdown.requested() => break,
+            result = process_event_fanout_batch(&pool, settings) => result,
+        };
         if fanout_worker_should_continue(&result) {
             continue;
         }
-        wait_for_event_fanout_wakeup(poll_interval).await;
+        if !wait_for_event_fanout_wakeup(poll_interval, &shutdown).await {
+            break;
+        }
     }
 }
 
@@ -97,9 +108,9 @@ fn spawn_event_fanout_worker_loop(
     poll_interval: Duration,
     worker_index: usize,
 ) {
-    thread::Builder::new()
-        .name(format!("event-fanout-worker-{worker_index}"))
-        .spawn(move || {
+    spawn_background_worker(
+        format!("event-fanout-worker-{worker_index}"),
+        move |shutdown| {
             info!(
                 message = "Starting event fan-out worker loop",
                 worker_index = worker_index,
@@ -108,9 +119,14 @@ fn spawn_event_fanout_worker_loop(
                 poll_interval = ?poll_interval
             );
             let system = actix_rt::System::new();
-            system.block_on(event_fanout_worker_loop(pool, settings, poll_interval));
-        })
-        .expect("failed to spawn event fan-out worker thread");
+            system.block_on(event_fanout_worker_loop(
+                pool,
+                settings,
+                poll_interval,
+                shutdown,
+            ));
+        },
+    );
 }
 
 pub fn ensure_event_fanout_worker_running(pool: DbPool) {
