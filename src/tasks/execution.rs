@@ -9,6 +9,7 @@ use crate::models::{
     ImportAtomicity, ImportCollisionPolicy, ImportMode, ImportPermissionPolicy, ImportRequest,
     NewTaskEventRecord, TaskRecord, TaskStatus,
 };
+use crate::observability::metrics;
 
 use super::helpers::{
     flush_import_result_batches, sanitize_error_for_storage, should_abort_best_effort_execution,
@@ -66,6 +67,7 @@ pub(super) async fn execute_import_task(
             .instrument(info_span!("import_planning"))
             .await;
         let planning_time = planning_start.elapsed();
+        metrics::import_phase_duration("planning", planning_time);
 
         info!(
             message = "Import planning finished",
@@ -112,6 +114,8 @@ pub(super) async fn execute_import_task(
                 },
             )
             .await?;
+            metrics::import_items(failed_count, 0, failed_count);
+            metrics::import_phase_duration("total", total_start.elapsed());
             return Ok(());
         }
 
@@ -225,13 +229,15 @@ pub(super) async fn execute_import_task(
             accumulator.success, accumulator.failed
         );
 
+        let execution_time = execution_start.elapsed();
+        metrics::import_phase_duration("execution", execution_time);
         info!(
             message = "Import execution finished",
             task_id = task.id,
             processed_items = accumulator.processed,
             success_items = accumulator.success,
             failed_items = accumulator.failed,
-            execution_time = ?execution_start.elapsed(),
+            execution_time = ?execution_time,
             total_time = ?total_start.elapsed()
         );
 
@@ -252,6 +258,12 @@ pub(super) async fn execute_import_task(
             },
         )
         .await?;
+        metrics::import_items(
+            accumulator.processed,
+            accumulator.success,
+            accumulator.failed,
+        );
+        metrics::import_phase_duration("total", total_start.elapsed());
 
         Ok(())
     }

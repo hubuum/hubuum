@@ -10,6 +10,8 @@ use std::num::ParseIntError;
 
 use tracing::{debug, error};
 
+use crate::observability::metrics;
+
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
 
@@ -76,6 +78,28 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    pub fn class(&self) -> &'static str {
+        match self {
+            ApiError::Unauthorized(_) => "unauthorized",
+            ApiError::InternalServerError(_) => "internal_server_error",
+            ApiError::Forbidden(_) => "forbidden",
+            ApiError::NotAcceptable(_) => "not_acceptable",
+            ApiError::PayloadTooLarge(_) => "payload_too_large",
+            ApiError::DatabaseError(_) => "database_error",
+            ApiError::Conflict(_) => "conflict",
+            ApiError::TooManyRequests(_) => "too_many_requests",
+            ApiError::ServiceUnavailable(_) => "service_unavailable",
+            ApiError::NotFound(_) => "not_found",
+            ApiError::Gone(_) => "gone",
+            ApiError::DbConnectionError(_) => "db_connection_error",
+            ApiError::HashError(_) => "hash_error",
+            ApiError::BadRequest(_) => "bad_request",
+            ApiError::OperatorMismatch(_) => "operator_mismatch",
+            ApiError::InvalidIntegerRange(_) => "invalid_integer_range",
+            ApiError::ValidationError(_) => "validation_error",
+        }
+    }
+
     /// Return an appropriate exit code for startup/initialization errors based on error type.
     /// Failure modes:
     /// - Configuration/validation errors (BadRequest, ValidationError, etc.) → EXIT_CODE_CONFIG_ERROR (2)
@@ -146,6 +170,7 @@ impl fmt::Display for ApiError {
 
 impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
+        metrics::api_error(self.class());
         match self {
             ApiError::Conflict(message) => {
                 HttpResponse::Conflict().json(json!({ "error": "Conflict", "message": message}))
@@ -288,6 +313,7 @@ impl From<DieselError> for ApiError {
 /// Ensure that json deserialization errors are exported as a bad request and
 /// that the error itself is returned as json.
 pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::Error {
+    metrics::extraction_failure("json");
     let error_message = format!("Json deserialize error: {err}");
     ApiError::BadRequest(error_message).into()
 }
@@ -297,6 +323,7 @@ pub fn json_error_handler(err: JsonPayloadError, _: &HttpRequest) -> actix_web::
 /// (e.g. "Invalid collection id '0': must be a positive integer"); this maps that to a `400` so an
 /// invalid id is rejected at the edge as the contract promises.
 pub fn path_error_handler(err: actix_web::error::PathError, _: &HttpRequest) -> actix_web::Error {
+    metrics::extraction_failure("path");
     ApiError::BadRequest(err.to_string()).into()
 }
 

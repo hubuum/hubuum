@@ -20,6 +20,7 @@ use crate::models::{
     RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTemplateContext,
     StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, authorize_remote_invocation,
 };
+use crate::observability::metrics;
 
 pub(super) async fn execute_remote_call_task(
     pool: &DbPool,
@@ -180,6 +181,14 @@ async fn execute_remote_call(
         Ok(response) => {
             let status = response.status_display();
             let success = response.is_success();
+            metrics::remote_call_finished(
+                target.method.as_str(),
+                status_family(response.status_code()),
+                if success { "success" } else { "failure" },
+                std::time::Duration::from_millis(
+                    u64::try_from(response.duration_ms()).unwrap_or(0),
+                ),
+            );
             insert_remote_call_result(
                 pool,
                 NewRemoteCallResult {
@@ -232,8 +241,15 @@ async fn record_remote_call_failure(
     duration_ms: i32,
     error: OutboundHttpError,
 ) -> Result<RemoteExecutionOutcome, ApiError> {
+    let metric_outcome = remote_error_outcome(&error);
     let api_error = outbound_error_to_api_error(error);
     let message = crate::tasks::helpers::sanitize_error_for_storage(&api_error);
+    metrics::remote_call_finished(
+        context.method,
+        "none",
+        metric_outcome,
+        std::time::Duration::from_millis(u64::try_from(duration_ms).unwrap_or(0)),
+    );
     insert_remote_call_result(
         context.pool,
         NewRemoteCallResult {
@@ -257,6 +273,37 @@ async fn record_remote_call_failure(
         summary: message,
         event_data: Some(serde_json::json!({ "duration_ms": duration_ms })),
     })
+}
+
+fn status_family(status_code: u16) -> &'static str {
+    match status_code {
+        100..=199 => "1xx",
+        200..=299 => "2xx",
+        300..=399 => "3xx",
+        400..=499 => "4xx",
+        500..=599 => "5xx",
+        _ => "unknown",
+    }
+}
+
+fn remote_error_outcome(error: &OutboundHttpError) -> &'static str {
+    match error {
+        OutboundHttpError::Timeout => "timeout",
+        OutboundHttpError::DisallowedAddress { .. } => "private_target_rejected",
+        OutboundHttpError::InvalidUrl
+        | OutboundHttpError::NonHttpsUrl
+        | OutboundHttpError::EmbeddedCredentials
+        | OutboundHttpError::MissingHost
+        | OutboundHttpError::MissingKnownPort
+        | OutboundHttpError::InvalidHeaderName { .. }
+        | OutboundHttpError::InvalidHeaderValue { .. } => "validation_rejected",
+        OutboundHttpError::DnsResolution { .. }
+        | OutboundHttpError::EmptyDnsResolution { .. }
+        | OutboundHttpError::ClientBuild(_)
+        | OutboundHttpError::ResponseRead(_)
+        | OutboundHttpError::Connect
+        | OutboundHttpError::Request(_) => "failure",
+    }
 }
 
 async fn finalize_remote_task(
@@ -478,7 +525,60 @@ fn outbound_error_to_bad_request(error: OutboundHttpError) -> ApiError {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use rstest::rstest;
+
     use super::*;
+
+    #[rstest]
+    #[case(OutboundHttpError::Timeout, "timeout")]
+    #[case(
+        OutboundHttpError::DisallowedAddress {
+            host: "internal.example".to_string(),
+            address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        },
+        "private_target_rejected"
+    )]
+    #[case(OutboundHttpError::InvalidUrl, "validation_rejected")]
+    #[case(OutboundHttpError::NonHttpsUrl, "validation_rejected")]
+    #[case(OutboundHttpError::EmbeddedCredentials, "validation_rejected")]
+    #[case(OutboundHttpError::MissingHost, "validation_rejected")]
+    #[case(OutboundHttpError::MissingKnownPort, "validation_rejected")]
+    #[case(
+        OutboundHttpError::InvalidHeaderName {
+            name: "bad header".to_string(),
+        },
+        "validation_rejected"
+    )]
+    #[case(
+        OutboundHttpError::InvalidHeaderValue {
+            name: "x-test".to_string(),
+        },
+        "validation_rejected"
+    )]
+    #[case(
+        OutboundHttpError::DnsResolution {
+            host: "missing.example".to_string(),
+        },
+        "failure"
+    )]
+    #[case(
+        OutboundHttpError::EmptyDnsResolution {
+            host: "empty.example".to_string(),
+        },
+        "failure"
+    )]
+    #[case(OutboundHttpError::ClientBuild("client".to_string()), "failure")]
+    #[case(OutboundHttpError::ResponseRead("body".to_string()), "failure")]
+    #[case(OutboundHttpError::Connect, "failure")]
+    #[case(OutboundHttpError::Request("request".to_string()), "failure")]
+    fn remote_errors_use_lossless_metric_outcomes(
+        #[case] error: OutboundHttpError,
+        #[case] expected: &'static str,
+    ) {
+        assert_eq!(remote_error_outcome(&error), expected);
+    }
 
     #[test]
     fn render_template_supports_curated_filters() {

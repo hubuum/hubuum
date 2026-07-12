@@ -3,6 +3,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use actix_rt::time::sleep;
+use chrono::Utc;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
@@ -14,6 +15,7 @@ use crate::db::traits::task::{
 };
 use crate::errors::ApiError;
 use crate::models::{NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus};
+use crate::observability::metrics;
 
 use super::execution::execute_import_task;
 use super::helpers::sanitize_error_for_storage;
@@ -114,6 +116,7 @@ pub fn ensure_task_worker_running(pool: DbPool) {
             worker_count = worker_count,
             poll_interval = ?poll_interval
         );
+        metrics::task_worker_config(worker_count, poll_interval);
         for worker_index in 0..worker_count {
             spawn_task_worker_loop(pool.clone(), poll_interval, worker_index);
         }
@@ -126,11 +129,25 @@ pub fn kick_task_worker(pool: DbPool) {
 }
 
 pub(super) async fn process_one_task(pool: &DbPool) -> Result<bool, ApiError> {
-    maybe_cleanup_expired_export_outputs(pool).await?;
+    if let Err(error) = maybe_cleanup_expired_export_outputs(pool).await {
+        metrics::task_worker_iteration("error");
+        return Err(error);
+    }
 
-    let Some(task) = claim_next_queued_task(pool).await? else {
+    let task = match claim_next_queued_task(pool).await {
+        Ok(task) => task,
+        Err(error) => {
+            metrics::task_worker_iteration("error");
+            return Err(error);
+        }
+    };
+
+    let Some(task) = task else {
+        metrics::task_worker_iteration("idle");
         return Ok(false);
     };
+    metrics::task_worker_iteration("claimed");
+    metrics::task_claimed(&task.kind, duration_since(task.created_at));
 
     info!(
         message = "Task picked up by worker",
@@ -166,15 +183,28 @@ async fn maybe_cleanup_expired_export_outputs(pool: &DbPool) -> Result<(), ApiEr
         }
     };
 
-    if let Err(error) = purge_expired_export_outputs(pool).await {
-        let mut state = cleanup_state().lock().map_err(|_| {
-            ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
-        })?;
-        *state = previous_last_run;
-        return Err(error);
+    metrics::export_output_cleanup_run();
+    match purge_expired_export_outputs(pool).await {
+        Ok(deleted) => metrics::export_output_cleanup_deleted(deleted.len()),
+        Err(error) => {
+            metrics::export_output_cleanup_failed();
+            let mut state = cleanup_state().lock().map_err(|_| {
+                ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
+            })?;
+            *state = previous_last_run;
+            return Err(error);
+        }
     }
 
     Ok(())
+}
+
+fn duration_since(timestamp: chrono::NaiveDateTime) -> Option<Duration> {
+    let elapsed = Utc::now()
+        .naive_utc()
+        .signed_duration_since(timestamp)
+        .num_milliseconds();
+    (elapsed >= 0).then(|| Duration::from_millis(elapsed as u64))
 }
 
 async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), ApiError> {

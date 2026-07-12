@@ -69,7 +69,12 @@ impl ScopeState {
 
     /// Record a failed attempt: prune the window, reset escalation after a genuine
     /// cool-off, append the attempt, and lock out if the threshold is reached.
-    fn register_failure(&mut self, now: Instant, threshold: usize, cfg: &LoginRateLimitConfig) {
+    fn register_failure(
+        &mut self,
+        now: Instant,
+        threshold: usize,
+        cfg: &LoginRateLimitConfig,
+    ) -> bool {
         let window = Duration::from_secs(cfg.window_seconds);
         self.prune(now, window);
         self.reset_escalation_if_cooled_off(now, window);
@@ -77,6 +82,9 @@ impl ScopeState {
         self.last_activity_at = Some(now);
         if self.attempts.len() >= threshold {
             self.trigger_lockout(now, cfg);
+            true
+        } else {
+            false
         }
     }
 
@@ -154,6 +162,15 @@ fn subnet_label(ip: IpAddr, cfg: &LoginRateLimitConfig) -> String {
         IpAddr::V6(addr) => Ipv6Net::new(addr, cfg.subnet_prefix_v6)
             .map(|net| net.trunc().to_string())
             .unwrap_or_else(|_| ip.to_string()),
+    }
+}
+
+fn scope_kind(key: &str) -> &'static str {
+    match key.as_bytes().first() {
+        Some(b'u') => "principal_ip",
+        Some(b'i') => "ip",
+        Some(b's') => "subnet",
+        _ => "unknown",
     }
 }
 
@@ -306,8 +323,10 @@ pub(crate) async fn finish_login_attempt(permit: LoginAttemptPermit, outcome: Lo
         if let Some(state) = guard.get_mut(key) {
             state.in_flight = state.in_flight.saturating_sub(1);
             state.last_activity_at = Some(now);
-            if matches!(outcome, LoginAttemptOutcome::Failed) {
-                state.register_failure(now, *threshold, &cfg);
+            if matches!(outcome, LoginAttemptOutcome::Failed)
+                && state.register_failure(now, *threshold, &cfg)
+            {
+                crate::observability::metrics::login_lockout(scope_kind(key));
             }
         }
     }
@@ -365,8 +384,11 @@ pub(crate) async fn record_login_failure(
             }
         }
 
+        let scope = scope_kind(&key);
         let state = guard.entry(key).or_default();
-        state.register_failure(now, threshold, &cfg);
+        if state.register_failure(now, threshold, &cfg) {
+            crate::observability::metrics::login_lockout(scope);
+        }
     }
 }
 
@@ -442,7 +464,20 @@ pub(crate) async fn reset_login_rate_limit_for_tests() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use std::net::Ipv4Addr;
+
+    #[rstest]
+    #[case("u:local/alice|192.0.2.1", "principal_ip")]
+    #[case("i:192.0.2.1", "ip")]
+    #[case("s:192.0.2.0/24", "subnet")]
+    #[case("x:unexpected", "unknown")]
+    fn limiter_keys_have_bounded_metric_scope_kinds(
+        #[case] key: &str,
+        #[case] expected: &'static str,
+    ) {
+        assert_eq!(scope_kind(key), expected);
+    }
 
     fn cfg() -> LoginRateLimitConfig {
         LoginRateLimitConfig {

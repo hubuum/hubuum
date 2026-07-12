@@ -434,18 +434,29 @@ pub async fn cancel_pending_tasks_for_principal(
     pool: &DbPool,
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
-    use crate::schema::tasks::dsl::{status, submitted_by, tasks};
-    with_connection(pool, async |conn| {
+    use crate::schema::tasks::dsl::{kind, status, submitted_by, tasks};
+    let cancelled_kinds = with_connection(pool, async |conn| {
         diesel::update(
             tasks
                 .filter(submitted_by.eq(principal_id_value))
                 .filter(status.eq(TaskStatus::Queued.as_str())),
         )
         .set(status.eq(TaskStatus::Cancelled.as_str()))
-        .execute(conn)
+        .returning(kind)
+        .get_results::<String>(conn)
         .await
     })
-    .await
+    .await?;
+
+    for task_kind in &cancelled_kinds {
+        crate::observability::metrics::task_completed(
+            task_kind,
+            TaskStatus::Cancelled.as_str(),
+            None,
+        );
+    }
+
+    Ok(cancelled_kinds.len())
 }
 
 pub async fn service_accounts_owned_by_group(

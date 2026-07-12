@@ -11,6 +11,7 @@ pub mod logger;
 pub mod macros;
 pub mod middlewares;
 pub mod models;
+pub mod observability;
 pub mod pagination;
 pub mod schema;
 pub mod tasks;

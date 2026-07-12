@@ -11,6 +11,7 @@ mod logger;
 mod macros;
 mod middlewares;
 mod models;
+mod observability;
 mod pagination;
 mod schema;
 mod tasks;
@@ -77,6 +78,14 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
+    if config.metrics_enabled
+        && let Err(e) = observability::metrics::init()
+    {
+        fatal_error(
+            &format!("Failed to initialize metrics: {}", e),
+            EXIT_CODE_INIT_ERROR,
+        );
+    }
     utilities::auth::initialize_dummy_password_hash();
     let pool = init_pool(&config.database_url, config.db_pool_size);
 
@@ -107,6 +116,8 @@ async fn main() -> std::io::Result<()> {
     let client_allowlist = config.client_allowlist.clone();
     let proxy_trust = middlewares::ProxyTrust::from_config(&config);
     let app_config = config.clone();
+    let metrics_enabled = config.metrics_enabled;
+    let metrics_path = config.metrics_path.clone();
 
     let server = HttpServer::new(move || {
         let app = App::new()
@@ -124,6 +135,15 @@ async fn main() -> std::io::Result<()> {
             .app_data(Data::new(pool.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .route("/api-doc/openapi.json", web::get().to(openapi_json_handler));
+
+        let app = if metrics_enabled {
+            app.route(
+                metrics_path.as_str(),
+                web::get().to(observability::metrics::scrape),
+            )
+        } else {
+            app
+        };
 
         #[cfg(feature = "swagger-ui")]
         let app = app.service(

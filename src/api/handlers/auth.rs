@@ -7,6 +7,7 @@ use crate::middlewares::rate_limit::{
     LoginAttemptOutcome, begin_login_attempt, client_ip_for_request, finish_login_attempt,
 };
 use crate::models::{LOCAL_IDENTITY_SCOPE, LoginUser, Token, UserID};
+use crate::observability::metrics;
 use actix_web::{HttpRequest, Responder, get, post, web};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -70,6 +71,7 @@ pub async fn login(
     let client_ip_log = client_ip.map(|ip| ip.to_string());
 
     let Some(login_permit) = begin_login_attempt(&identity_scope, &name, client_ip).await else {
+        metrics::login_attempt("rate_limited");
         warn!(
             message = "Login throttled",
             identity_scope = identity_scope,
@@ -85,12 +87,13 @@ pub async fn login(
     let user = match crate::auth::login(&pool, login).await {
         Ok(user) => user,
         Err(e) => {
-            let outcome = if matches!(e, ApiError::Unauthorized(_)) {
-                LoginAttemptOutcome::Failed
+            let (outcome, metric_outcome) = if matches!(e, ApiError::Unauthorized(_)) {
+                (LoginAttemptOutcome::Failed, "bad_credentials")
             } else {
-                LoginAttemptOutcome::Aborted
+                (LoginAttemptOutcome::Aborted, "internal_error")
             };
             finish_login_attempt(login_permit, outcome).await;
+            metrics::login_attempt(metric_outcome);
             return Err(e);
         }
     };
@@ -102,6 +105,7 @@ pub async fn login(
     let token = match token_generation_result {
         Ok(token) => token,
         Err(e) => {
+            metrics::login_attempt("internal_error");
             warn!(
                 message = "Login failed (token generation failed)",
                 user = name,
@@ -114,6 +118,7 @@ pub async fn login(
     };
 
     debug!(message = "Login successful", name = name, user_id = user.id,);
+    metrics::login_attempt("success");
 
     Ok(ApiResponse::ok(LoginResponse::new(token.get_token())))
 }
