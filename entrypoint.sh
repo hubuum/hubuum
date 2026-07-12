@@ -16,7 +16,7 @@ should_skip_migrations() {
 wait_for_db() {
     echo "Waiting for database to be ready..."
     if should_skip_migrations; then
-        while ! psql "$HUBUUM_DATABASE_URL" -c 'SELECT 1' >/dev/null 2>&1; do
+        while ! diesel migration list --migration-dir /migrations --database-url "$HUBUUM_DATABASE_URL" >/dev/null 2>&1; do
             echo "Database is unavailable - sleeping"
             sleep 1
         done
@@ -34,9 +34,6 @@ wait_for_db
 
 if should_skip_migrations; then
     echo "HUBUUM_SKIP_MIGRATIONS is set; skipping database migrations."
-else
-    echo "Running database migrations... (shouldn't be needed)"
-    diesel migration run --migration-dir /migrations --database-url "$HUBUUM_DATABASE_URL"
 fi
 
 # Start the application

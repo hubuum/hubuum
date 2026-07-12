@@ -15,6 +15,28 @@ Hubuum exposes unauthenticated probe endpoints for container schedulers and load
 
 Probe paths bypass the client IP allowlist so platform health checks are not rejected before reaching the handler.
 
+### Local Docker Compose
+
+The development Compose stack requires a local, untracked `.env` file instead
+of using a password committed to the repository:
+
+```bash
+cp .env.example .env
+printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)" > .env
+docker compose up --build
+```
+
+The API is published on `127.0.0.1:9999` and PostgreSQL on
+`127.0.0.1:9998`; neither service listens on all host interfaces by default.
+The Hubuum container runs as the unprivileged `hubuum` user with a read-only
+root filesystem, all Linux capabilities dropped, and only a small temporary
+filesystem at `/tmp`.
+
+The production image includes a `/healthz` health check and retains the pinned
+Diesel CLI solely for the existing startup migration workflow. PostgreSQL
+client administration tools are not installed in the runtime image. Set
+`HUBUUM_SKIP_MIGRATIONS=true` only when migrations are coordinated externally.
+
 ### Server Configuration
 
 | Variable | Default | Description |

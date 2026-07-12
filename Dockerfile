@@ -1,18 +1,33 @@
 # syntax=docker/dockerfile:1
-FROM rust:slim-trixie AS builder
+FROM docker.io/library/rust:1.96.0-slim-trixie@sha256:c37af730be4fd8104cbf9aedbd6ab259e51ca2d5437817a0f8680edf66ac6c28 AS builder
 
 ARG CARGO_BUILD_FLAGS="--locked --release"
+ARG CARGO_BINSTALL_VERSION="1.20.1"
+ARG CARGO_BINSTALL_SHA256_AMD64="f12954bc382e1d0b2df3fbfb217a05d92c25570e4517841e0613499a24f4594e"
+ARG CARGO_BINSTALL_SHA256_ARM64="23679581c4cfa1782953264a6e36965198aed995b3a5287550dd78a113ce2288"
+ARG DIESEL_CLI_VERSION="2.3.11"
+ARG TARGETARCH
 
 WORKDIR /usr/src/hubuum
 
-# Install system dependencies and cargo-binstall in one layer
+# Install build dependencies and a checksum-verified cargo-binstall release.
 RUN apt-get update && \
-    apt-get install -y pkg-config libpq-dev libpq5 libssl3 libssl-dev curl && \
+    apt-get install -y --no-install-recommends pkg-config libpq-dev libpq5 libssl3 libssl-dev curl ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
-    curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+    case "${TARGETARCH}" in \
+        amd64) binstall_target="x86_64-unknown-linux-musl"; binstall_sha256="${CARGO_BINSTALL_SHA256_AMD64}" ;; \
+        arm64) binstall_target="aarch64-unknown-linux-musl"; binstall_sha256="${CARGO_BINSTALL_SHA256_ARM64}" ;; \
+        *) echo "Unsupported build architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    curl -L --proto '=https' --tlsv1.2 -sSf \
+        "https://github.com/cargo-bins/cargo-binstall/releases/download/v${CARGO_BINSTALL_VERSION}/cargo-binstall-${binstall_target}.tgz" \
+        -o /tmp/cargo-binstall.tgz && \
+    echo "${binstall_sha256}  /tmp/cargo-binstall.tgz" | sha256sum --check --strict && \
+    tar -xzf /tmp/cargo-binstall.tgz -C /usr/local/cargo/bin cargo-binstall && \
+    rm /tmp/cargo-binstall.tgz
 
-# Install diesel CLI using binstall (much faster)
-RUN cargo binstall --no-confirm diesel_cli
+# Install an explicit Diesel CLI release using binstall.
+RUN cargo binstall --no-confirm --disable-telemetry "diesel_cli@${DIESEL_CLI_VERSION}"
 
 # Copy manifests first for better layer caching. Workspace member manifests are
 # required for Cargo to load the workspace during the dependency-only build.
@@ -83,9 +98,17 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp target/release/hubuum-server /tmp/ && \
     cp target/release/hubuum-admin /tmp/
 
-FROM debian:trixie-slim
+FROM docker.io/library/debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
 
-RUN apt-get update && apt-get install -y libpq5 libssl3 postgresql-client && rm -rf /var/lib/apt/lists/*
+ARG HUBUUM_UID="10001"
+ARG HUBUUM_GID="10001"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl libpq5 libssl3 && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --gid "${HUBUUM_GID}" hubuum && \
+    useradd --uid "${HUBUUM_UID}" --gid hubuum --no-create-home \
+        --home-dir /nonexistent --shell /usr/sbin/nologin hubuum
 
 COPY --from=builder /tmp/hubuum-server /usr/local/bin/hubuum-server
 COPY --from=builder /tmp/hubuum-admin /usr/local/bin/hubuum-admin
@@ -97,5 +120,10 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8080
+
+USER hubuum:hubuum
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl --fail --silent --show-error "http://127.0.0.1:${HUBUUM_BIND_PORT:-8080}/healthz" || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

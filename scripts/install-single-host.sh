@@ -646,6 +646,13 @@ fi
 cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     container_name: hubuum-api
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
       HUBUUM_BIND_IP: ${HUBUUM_BIND_IP}
       HUBUUM_BIND_PORT: ${HUBUUM_BIND_PORT}

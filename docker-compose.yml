@@ -4,28 +4,37 @@ services:
     ports:
       - "127.0.0.1:9999:8080"
     environment:
-      - HUBUUM_BIND_IP=0.0.0.0
-      - HUBUUM_DATABASE_URL=postgres://hubuum:hubuum_password@db/hubuum
-      - HUBUUM_LOG_LEVEL=debug
-      - DATABASE_URL=postgres://hubuum:hubuum_password@db/hubuum
+      HUBUUM_BIND_IP: 0.0.0.0
+      HUBUUM_CLIENT_ALLOWLIST: "*"
+      HUBUUM_DATABASE_URL: postgres://hubuum:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db/hubuum
+      HUBUUM_LOG_LEVEL: debug
+      DATABASE_URL: postgres://hubuum:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db/hubuum
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
   db:
     build:
       context: .
       dockerfile: docker/postgres/Dockerfile
     ports:
-      - "9998:5432"
+      - "127.0.0.1:9998:5432"
     environment:
-      - POSTGRES_USER=hubuum
-      - POSTGRES_PASSWORD=hubuum_password
-      - POSTGRES_DB=hubuum
-      - PGUSER=hubuum
+      POSTGRES_USER: hubuum
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: hubuum
+      PGUSER: hubuum
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U hubuum" ]
+      test: [ "CMD-SHELL", "pg_isready -U hubuum -d hubuum" ]
       interval: 5s
       timeout: 5s
       retries: 5
