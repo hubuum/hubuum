@@ -319,6 +319,7 @@ pub async fn get_task_queue_state(
 #[derive(Serialize, Debug, ToSchema)]
 pub struct LoginRateLimitConfigResponse {
     enabled: bool,
+    backend: String,
     max_attempts: usize,
     max_attempts_per_ip: usize,
     max_attempts_per_subnet: usize,
@@ -407,7 +408,8 @@ fn scope_and_identifier(key: &str) -> (&'static str, String) {
     responses(
         (status = 200, description = "Login rate-limit configuration and tracked scopes", body = LoginRateLimitStateResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Forbidden", body = ApiErrorResponse)
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 503, description = "Shared limiter unavailable", body = ApiErrorResponse)
     )
 )]
 #[get("login-rate-limit")]
@@ -416,7 +418,7 @@ pub async fn get_login_rate_limit_state(
     query: web::Query<LoginRateLimitQuery>,
 ) -> Result<impl Responder, ApiError> {
     let cfg = login_rate_limit_config();
-    let snapshots = rate_limit::snapshot().await;
+    let snapshots = rate_limit::snapshot().await?;
     let tracked_entries = snapshots.len();
     let locked_entries = snapshots.iter().filter(|entry| entry.locked).count();
 
@@ -462,6 +464,7 @@ pub async fn get_login_rate_limit_state(
     let response = LoginRateLimitStateResponse {
         config: LoginRateLimitConfigResponse {
             enabled: cfg.enabled,
+            backend: get_config()?.login_rate_limit_backend.as_str().to_string(),
             max_attempts: cfg.max_attempts,
             max_attempts_per_ip: cfg.max_attempts_per_ip,
             max_attempts_per_subnet: cfg.max_attempts_per_subnet,
@@ -493,7 +496,8 @@ pub async fn get_login_rate_limit_state(
         (status = 400, description = "Invalid entry id", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
-        (status = 404, description = "Entry not found", body = ApiErrorResponse)
+        (status = 404, description = "Entry not found", body = ApiErrorResponse),
+        (status = 503, description = "Shared limiter unavailable", body = ApiErrorResponse)
     )
 )]
 #[delete("login-rate-limit/{id}")]
@@ -508,7 +512,7 @@ pub async fn release_login_rate_limit_entry(
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| ApiError::BadRequest("Invalid rate-limit entry id".to_string()))?;
 
-    if !rate_limit::release_entry(&key).await {
+    if !rate_limit::release_entry(&key).await? {
         return Err(ApiError::NotFound("Rate-limit entry not found".to_string()));
     }
 
@@ -531,12 +535,13 @@ pub async fn release_login_rate_limit_entry(
     responses(
         (status = 200, description = "All entries cleared", body = ClearRateLimitResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Forbidden", body = ApiErrorResponse)
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 503, description = "Shared limiter unavailable", body = ApiErrorResponse)
     )
 )]
 #[delete("login-rate-limit")]
 pub async fn clear_login_rate_limit(requestor: AdminAccess) -> Result<impl Responder, ApiError> {
-    let cleared = rate_limit::clear_all().await;
+    let cleared = rate_limit::clear_all().await?;
 
     debug!(
         message = "Login rate-limit state cleared",

@@ -30,6 +30,7 @@ pub struct SecretStatus {
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct ServerConfig {
+    pub runtime_role: String,
     pub bind_ip: String,
     pub bind_port: u16,
     pub log_level: String,
@@ -60,6 +61,9 @@ pub struct DatabaseConfig {
 pub struct TaskConfig {
     pub workers: usize,
     pub poll_interval_ms: u64,
+    pub lease_seconds: u64,
+    pub heartbeat_seconds: u64,
+    pub recovery_interval_seconds: u64,
     pub import_max_active_per_user: usize,
     pub export_max_active_per_user: usize,
     pub remote_call_max_active_per_user: usize,
@@ -128,6 +132,10 @@ pub struct LoginRateLimitConfig {
     pub backoff_max_seconds: u64,
     pub subnet_prefix_v4: u8,
     pub subnet_prefix_v6: u8,
+    pub backend: String,
+    pub valkey_url: SecretStatus,
+    pub valkey_prefix: String,
+    pub valkey_io_timeout_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -176,6 +184,7 @@ impl From<&AppConfig> for RunningConfig {
 
         Self {
             server: ServerConfig {
+                runtime_role: config.runtime_role.as_str().to_string(),
                 bind_ip: config.bind_ip.clone(),
                 bind_port: config.port,
                 log_level: config.log_level.clone(),
@@ -208,6 +217,9 @@ impl From<&AppConfig> for RunningConfig {
             tasks: TaskConfig {
                 workers: config.task_workers,
                 poll_interval_ms: config.task_poll_interval_ms,
+                lease_seconds: config.task_lease_seconds,
+                heartbeat_seconds: config.task_heartbeat_seconds,
+                recovery_interval_seconds: config.task_recovery_interval_seconds,
                 import_max_active_per_user: config.import_max_active_tasks_per_user,
                 export_max_active_per_user: config.export_max_active_tasks_per_user,
                 remote_call_max_active_per_user: config.remote_call_max_active_tasks_per_user,
@@ -266,6 +278,12 @@ impl From<&AppConfig> for RunningConfig {
                     backoff_max_seconds: config.login_rate_limit_backoff_max_seconds,
                     subnet_prefix_v4: config.login_rate_limit_subnet_prefix_v4,
                     subnet_prefix_v6: config.login_rate_limit_subnet_prefix_v6,
+                    backend: config.login_rate_limit_backend.as_str().to_string(),
+                    valkey_url: SecretStatus {
+                        configured: config.login_rate_limit_valkey_url.is_some(),
+                    },
+                    valkey_prefix: config.login_rate_limit_valkey_prefix.clone(),
+                    valkey_io_timeout_ms: config.login_rate_limit_valkey_io_timeout_ms,
                 },
             },
             permissions: PermissionConfig {
@@ -309,6 +327,8 @@ mod tests {
         config.tls_key_path = Some("/secret/private-key.pem".to_string());
         config.tls_key_passphrase = Some("correct horse battery staple".to_string());
         config.auth_config_path = Some("/secret/providers.toml".to_string());
+        config.login_rate_limit_valkey_url =
+            Some("redis://secret-user:secret-password@valkey.example/".to_string());
         config.treetop_url = Some("https://treetop-token@example.invalid".to_string());
 
         let json = serde_json::to_string(&RunningConfig::from(&config)).unwrap();
@@ -319,6 +339,7 @@ mod tests {
         assert!(!json.contains("private-key.pem"));
         assert!(!json.contains("correct horse battery staple"));
         assert!(!json.contains("providers.toml"));
+        assert!(!json.contains("valkey.example"));
         assert!(!json.contains("treetop-token"));
         assert!(json.contains("\"configured\":true"));
         assert!(!debug.contains("secret-password"));

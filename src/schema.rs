@@ -521,6 +521,9 @@ diesel::table! {
         deleted_by -> Nullable<Int4>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        lease_token -> Nullable<Uuid>,
+        lease_expires_at -> Nullable<Timestamp>,
+        attempt_count -> Int4,
     }
 }
 

@@ -1,8 +1,10 @@
 use crate::db::prelude::*;
-use chrono::Utc;
-use diesel::sql_types::{BigInt, Bool};
+use chrono::{Duration as ChronoDuration, Utc};
+use diesel::expression::AsExpression;
+use diesel::sql_types::{BigInt, Bool, Timestamp};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
+use uuid::Uuid;
 
 use crate::apply_query_options;
 use crate::config::get_config;
@@ -85,11 +87,31 @@ struct AdvisoryLockRow {
     locked: bool,
 }
 
+#[derive(QueryableByName)]
+struct DatabaseTimeRow {
+    #[diesel(sql_type = Timestamp)]
+    now: chrono::NaiveDateTime,
+}
+
+async fn database_now(
+    conn: &mut crate::db::DbConnection,
+) -> Result<chrono::NaiveDateTime, ApiError> {
+    diesel::sql_query("SELECT CURRENT_TIMESTAMP::timestamp AS now")
+        .get_result::<DatabaseTimeRow>(conn)
+        .await
+        .map(|row| row.now)
+        .map_err(ApiError::from)
+}
+
 /// Anything that can name a task for a backend query: a [`TaskID`] from a request path or an
 /// already-loaded [`TaskRecord`] (and references to either). The required `task_id` resolves the
 /// raw id at the persistence boundary so it never leaks into the domain.
 pub trait TaskIdentifier {
     fn task_id(&self) -> i32;
+
+    fn task_lease_token(&self) -> Option<Uuid> {
+        None
+    }
 }
 
 impl TaskIdentifier for TaskID {
@@ -102,11 +124,19 @@ impl TaskIdentifier for TaskRecord {
     fn task_id(&self) -> i32 {
         self.id
     }
+
+    fn task_lease_token(&self) -> Option<Uuid> {
+        self.lease_token
+    }
 }
 
 impl<T: TaskIdentifier + ?Sized> TaskIdentifier for &T {
     fn task_id(&self) -> i32 {
         (**self).task_id()
+    }
+
+    fn task_lease_token(&self) -> Option<Uuid> {
+        (**self).task_lease_token()
     }
 }
 
@@ -338,26 +368,36 @@ pub trait TaskBackend: TaskIdentifier {
         update: TaskStateUpdate,
     ) -> Result<TaskRecord, ApiError> {
         use crate::schema::tasks::dsl::{
-            failed_items, finished_at, id, processed_items, started_at, status, success_items,
-            summary, tasks, updated_at,
+            failed_items, finished_at, id, lease_expires_at, lease_token, processed_items,
+            started_at, status, success_items, summary, tasks, updated_at,
         };
 
         let task_id_value = self.task_id();
-        let now = Utc::now().naive_utc();
-        let record = with_connection(pool, async |conn| {
-            diesel::update(tasks.filter(id.eq(task_id_value)))
-                .set((
-                    status.eq(update.status.as_str()),
-                    summary.eq(update.summary),
-                    processed_items.eq(update.processed_items),
-                    success_items.eq(update.success_items),
-                    failed_items.eq(update.failed_items),
-                    started_at.eq(update.started_at),
-                    finished_at.eq(update.finished_at),
-                    updated_at.eq(now),
-                ))
-                .get_result::<TaskRecord>(conn)
-                .await
+        let task_lease_token = self.task_lease_token();
+        let record = with_connection(pool, async |conn| -> Result<TaskRecord, ApiError> {
+            let now = database_now(conn).await?;
+            let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
+                <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
+            Ok(diesel::update(
+                tasks.filter(id.eq(task_id_value)).filter(
+                    lease_token
+                        .eq(task_lease_token)
+                        .and(lease_expires_at.gt(now))
+                        .or(lease_token.is_null().and(no_lease_token)),
+                ),
+            )
+            .set((
+                status.eq(update.status.as_str()),
+                summary.eq(update.summary),
+                processed_items.eq(update.processed_items),
+                success_items.eq(update.success_items),
+                failed_items.eq(update.failed_items),
+                started_at.eq(update.started_at),
+                finished_at.eq(update.finished_at),
+                updated_at.eq(now),
+            ))
+            .get_result::<TaskRecord>(conn)
+            .await?)
         })
         .await?;
 
@@ -381,30 +421,43 @@ pub trait TaskBackend: TaskIdentifier {
         event: NewTaskEventRecord,
     ) -> Result<TaskRecord, ApiError> {
         use crate::schema::tasks::dsl::{
-            failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
-            started_at, status, success_items, summary, tasks, updated_at,
+            failed_items, finished_at, id, lease_expires_at, lease_token, processed_items,
+            request_payload, request_redacted_at, started_at, status, success_items, summary,
+            tasks, updated_at,
         };
 
         let task_id_value = self.task_id();
+        let task_lease_token = self.task_lease_token();
         let record = with_transaction(pool, async |conn| -> Result<TaskRecord, ApiError> {
             let event_record =
                 emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None).await?;
+            let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
+                <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
 
-            Ok(diesel::update(tasks.filter(id.eq(task_id_value)))
-                .set((
-                    status.eq(update.status.as_str()),
-                    summary.eq(update.summary),
-                    processed_items.eq(update.processed_items),
-                    success_items.eq(update.success_items),
-                    failed_items.eq(update.failed_items),
-                    started_at.eq(update.started_at),
-                    finished_at.eq(Some(event_record.occurred_at)),
-                    request_payload.eq::<Option<serde_json::Value>>(None),
-                    request_redacted_at.eq(event_record.occurred_at),
-                    updated_at.eq(event_record.occurred_at),
-                ))
-                .get_result::<TaskRecord>(conn)
-                .await?)
+            Ok(diesel::update(
+                tasks.filter(id.eq(task_id_value)).filter(
+                    lease_token
+                        .eq(task_lease_token)
+                        .and(lease_expires_at.gt(event_record.occurred_at))
+                        .or(lease_token.is_null().and(no_lease_token)),
+                ),
+            )
+            .set((
+                status.eq(update.status.as_str()),
+                summary.eq(update.summary),
+                processed_items.eq(update.processed_items),
+                success_items.eq(update.success_items),
+                failed_items.eq(update.failed_items),
+                started_at.eq(update.started_at),
+                finished_at.eq(Some(event_record.occurred_at)),
+                request_payload.eq::<Option<serde_json::Value>>(None),
+                request_redacted_at.eq(event_record.occurred_at),
+                lease_token.eq::<Option<Uuid>>(None),
+                lease_expires_at.eq::<Option<chrono::NaiveDateTime>>(None),
+                updated_at.eq(event_record.occurred_at),
+            ))
+            .get_result::<TaskRecord>(conn)
+            .await?)
         })
         .await?;
 
@@ -434,11 +487,13 @@ pub trait TaskBackend: TaskIdentifier {
             export_task_outputs, task_id as export_output_task_id,
         };
         use crate::schema::tasks::dsl::{
-            failed_items, finished_at, id, processed_items, request_payload, request_redacted_at,
-            started_at, status, success_items, summary, tasks, updated_at,
+            failed_items, finished_at, id, lease_expires_at, lease_token, processed_items,
+            request_payload, request_redacted_at, started_at, status, success_items, summary,
+            tasks, updated_at,
         };
 
         let task_id_value = self.task_id();
+        let task_lease_token = self.task_lease_token();
         let record = with_transaction(pool, async |conn| -> Result<TaskRecord, ApiError> {
             // Idempotent so a future requeue / manual re-claim that re-finalizes the same task
             // cannot trip the `export_task_outputs.task_id` UNIQUE constraint and roll back the
@@ -452,22 +507,33 @@ pub trait TaskBackend: TaskIdentifier {
 
             let event_record =
                 emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None).await?;
+            let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
+                <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
 
-            Ok(diesel::update(tasks.filter(id.eq(task_id_value)))
-                .set((
-                    status.eq(update.status.as_str()),
-                    summary.eq(update.summary),
-                    processed_items.eq(update.processed_items),
-                    success_items.eq(update.success_items),
-                    failed_items.eq(update.failed_items),
-                    started_at.eq(update.started_at),
-                    finished_at.eq(Some(event_record.occurred_at)),
-                    request_payload.eq::<Option<serde_json::Value>>(None),
-                    request_redacted_at.eq(event_record.occurred_at),
-                    updated_at.eq(event_record.occurred_at),
-                ))
-                .get_result::<TaskRecord>(conn)
-                .await?)
+            Ok(diesel::update(
+                tasks.filter(id.eq(task_id_value)).filter(
+                    lease_token
+                        .eq(task_lease_token)
+                        .and(lease_expires_at.gt(event_record.occurred_at))
+                        .or(lease_token.is_null().and(no_lease_token)),
+                ),
+            )
+            .set((
+                status.eq(update.status.as_str()),
+                summary.eq(update.summary),
+                processed_items.eq(update.processed_items),
+                success_items.eq(update.success_items),
+                failed_items.eq(update.failed_items),
+                started_at.eq(update.started_at),
+                finished_at.eq(Some(event_record.occurred_at)),
+                request_payload.eq::<Option<serde_json::Value>>(None),
+                request_redacted_at.eq(event_record.occurred_at),
+                lease_token.eq::<Option<Uuid>>(None),
+                lease_expires_at.eq::<Option<chrono::NaiveDateTime>>(None),
+                updated_at.eq(event_record.occurred_at),
+            ))
+            .get_result::<TaskRecord>(conn)
+            .await?)
         })
         .await?;
 
@@ -794,8 +860,14 @@ fn task_kind_claim_order(start: usize) -> [&'static str; 3] {
     std::array::from_fn(|offset| kinds[(start + offset) % kinds.len()])
 }
 
-pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>, ApiError> {
-    use crate::schema::tasks::dsl::{created_at, id, kind, started_at, status, tasks, updated_at};
+pub async fn claim_next_queued_task(
+    pool: &DbPool,
+    lease_duration: std::time::Duration,
+) -> Result<Option<TaskRecord>, ApiError> {
+    use crate::schema::tasks::dsl::{
+        attempt_count, created_at, id, kind, lease_expires_at, lease_token, started_at, status,
+        tasks, updated_at,
+    };
 
     let record = with_transaction(pool, async |conn| -> Result<Option<TaskRecord>, ApiError> {
         let task_kinds = executable_task_kind_values();
@@ -821,11 +893,15 @@ pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>,
             return Ok(None);
         };
 
-        let now = Utc::now().naive_utc();
+        let now = database_now(conn).await?;
+        let claim_token = Uuid::new_v4();
         let record = diesel::update(tasks.filter(id.eq(task_id_value)))
             .set((
                 status.eq(TaskStatus::Validating.as_str()),
                 started_at.eq(Some(now)),
+                lease_token.eq(Some(claim_token)),
+                lease_expires_at.eq(Some(task_lease_expiry(now, lease_duration))),
+                attempt_count.eq(attempt_count + 1),
                 updated_at.eq(now),
             ))
             .get_result::<TaskRecord>(conn)
@@ -862,6 +938,157 @@ pub async fn claim_next_queued_task(pool: &DbPool) -> Result<Option<TaskRecord>,
     }
 
     Ok(record)
+}
+
+fn task_lease_expiry(
+    now: chrono::NaiveDateTime,
+    lease_duration: std::time::Duration,
+) -> chrono::NaiveDateTime {
+    let lease_milliseconds = i64::try_from(lease_duration.as_millis()).unwrap_or(i64::MAX);
+    now.checked_add_signed(ChronoDuration::milliseconds(lease_milliseconds))
+        .unwrap_or(chrono::NaiveDateTime::MAX)
+}
+
+/// Extend an active task lease if this worker still owns it.
+pub async fn renew_task_lease(
+    pool: &DbPool,
+    task_id_value: i32,
+    claim_token: Uuid,
+    lease_duration: std::time::Duration,
+) -> Result<bool, ApiError> {
+    use crate::schema::tasks::dsl::{id, lease_expires_at, lease_token, status, tasks, updated_at};
+
+    let active_statuses = [
+        TaskStatus::Validating.as_str(),
+        TaskStatus::Running.as_str(),
+    ];
+    let updated = with_connection(pool, async |conn| -> Result<usize, ApiError> {
+        let now = database_now(conn).await?;
+        diesel::update(
+            tasks
+                .filter(id.eq(task_id_value))
+                .filter(lease_token.eq(Some(claim_token)))
+                .filter(lease_expires_at.gt(now))
+                .filter(status.eq_any(active_statuses)),
+        )
+        .set((
+            lease_expires_at.eq(Some(task_lease_expiry(now, lease_duration))),
+            updated_at.eq(now),
+        ))
+        .execute(conn)
+        .await
+        .map_err(ApiError::from)
+    })
+    .await?;
+
+    Ok(updated == 1)
+}
+
+/// Recover tasks whose owning process stopped renewing its durable lease.
+///
+/// Recovery is deliberately terminal rather than an automatic retry. Import and
+/// remote-call tasks can have external side effects, so replaying them without an
+/// operator first inspecting the task history could duplicate those effects.
+pub async fn recover_expired_task_leases(
+    pool: &DbPool,
+    batch_size: i64,
+) -> Result<Vec<TaskRecord>, ApiError> {
+    recover_expired_task_leases_matching(pool, batch_size, None).await
+}
+
+async fn recover_expired_task_leases_matching(
+    pool: &DbPool,
+    batch_size: i64,
+    task_id_filter: Option<i32>,
+) -> Result<Vec<TaskRecord>, ApiError> {
+    use crate::schema::tasks::dsl::{
+        deleted_at, failed_items, finished_at, id, lease_expires_at, lease_token, processed_items,
+        request_payload, request_redacted_at, status, summary, tasks, updated_at,
+    };
+
+    let active_statuses = [
+        TaskStatus::Validating.as_str(),
+        TaskStatus::Running.as_str(),
+    ];
+    with_transaction(pool, async |conn| -> Result<Vec<TaskRecord>, ApiError> {
+        let now = database_now(conn).await?;
+        let stale_tasks = if let Some(task_id_filter) = task_id_filter {
+            tasks
+                .filter(status.eq_any(active_statuses))
+                .filter(deleted_at.is_null())
+                .filter(lease_expires_at.is_null().or(lease_expires_at.le(now)))
+                .filter(id.eq(task_id_filter))
+                .order(id.asc())
+                .limit(batch_size)
+                .for_update()
+                .skip_locked()
+                .load::<TaskRecord>(conn)
+                .await?
+        } else {
+            tasks
+                .filter(status.eq_any(active_statuses))
+                .filter(deleted_at.is_null())
+                .filter(lease_expires_at.is_null().or(lease_expires_at.le(now)))
+                .order(id.asc())
+                .limit(batch_size)
+                .for_update()
+                .skip_locked()
+                .load::<TaskRecord>(conn)
+                .await?
+        };
+
+        let mut recovered = Vec::with_capacity(stale_tasks.len());
+        for stale_task in stale_tasks {
+            let previous_status = stale_task.status.clone();
+            let message = "Task worker lease expired; task failed without automatic replay";
+            emit_task_lifecycle_event(
+                conn,
+                &NewTaskEventRecord {
+                    task_id: stale_task.id,
+                    event_type: TaskStatus::Failed.as_str().to_string(),
+                    message: message.to_string(),
+                    data: Some(serde_json::json!({
+                        "previous_status": previous_status,
+                        "lease_expires_at": stale_task.lease_expires_at,
+                        "attempt_count": stale_task.attempt_count,
+                        "operator_action": "inspect task history and submit a new task if replay is safe",
+                    })),
+                },
+                ActorKind::System,
+                None,
+                Some(stale_task.kind.as_str()),
+            )
+            .await?;
+
+            let record = diesel::update(tasks.filter(id.eq(stale_task.id)))
+                .set((
+                    status.eq(TaskStatus::Failed.as_str()),
+                    summary.eq(Some(message.to_string())),
+                    processed_items.eq(stale_task.processed_items),
+                    failed_items.eq(stale_task.failed_items),
+                    finished_at.eq(Some(now)),
+                    request_payload.eq::<Option<serde_json::Value>>(None),
+                    request_redacted_at.eq(Some(now)),
+                    lease_token.eq::<Option<Uuid>>(None),
+                    lease_expires_at.eq::<Option<chrono::NaiveDateTime>>(None),
+                    updated_at.eq(now),
+                ))
+                .get_result::<TaskRecord>(conn)
+                .await?;
+            recovered.push(record);
+        }
+
+        Ok(recovered)
+    })
+    .await
+}
+
+#[cfg(test)]
+async fn recover_expired_task_lease(
+    pool: &DbPool,
+    task_id: i32,
+) -> Result<Vec<TaskRecord>, ApiError> {
+    recover_expired_task_leases_matching(pool, 1, Some(task_id)).await
 }
 
 impl TaskCreateRequest {
@@ -1065,14 +1292,17 @@ fn log_task_queued(task: &TaskRecord) {
 #[cfg(test)]
 mod tests {
     use crate::db::prelude::*;
+    use chrono::{Duration as ChronoDuration, Utc};
     use tokio::sync::oneshot;
+    use uuid::Uuid;
 
     use super::{
-        TaskBackend, TaskCreateRequest, claim_next_queued_task, task_capacity_lock_key,
+        TaskBackend, TaskCreateRequest, TaskStateUpdate, claim_next_queued_task,
+        recover_expired_task_lease, renew_task_lease, task_capacity_lock_key,
         task_kind_claim_order,
     };
     use crate::db::traits::user::DeleteUserRecord;
-    use crate::db::with_transaction;
+    use crate::db::{with_connection, with_transaction};
     use crate::errors::ApiError;
     use crate::models::search::QueryOptions;
     use crate::models::{
@@ -1081,6 +1311,52 @@ mod tests {
         TaskStatus,
     };
     use crate::tests::{TestContext, create_test_user};
+
+    async fn create_leased_task(
+        context: &TestContext,
+        name: &str,
+        lease_expires_at_value: chrono::NaiveDateTime,
+    ) -> crate::models::TaskRecord {
+        let task = NewTaskRecord {
+            kind: TaskKind::Import.as_str().to_string(),
+            status: TaskStatus::Validating.as_str().to_string(),
+            submitted_by: Some(context.admin_user.id),
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            idempotency_key: Some(context.scoped_name(name)),
+            request_hash: None,
+            request_payload: Some(serde_json::json!({"items": []})),
+            summary: None,
+            total_items: 0,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            request_redacted_at: None,
+            started_at: Some(Utc::now().naive_utc()),
+            finished_at: None,
+        }
+        .create(&context.pool)
+        .await
+        .unwrap();
+        let claim_token = Uuid::new_v4();
+        with_connection(&context.pool, async |conn| {
+            use crate::schema::tasks::dsl::{
+                attempt_count, id, lease_expires_at, lease_token, tasks,
+            };
+
+            diesel::update(tasks.filter(id.eq(task.id)))
+                .set((
+                    lease_token.eq(Some(claim_token)),
+                    lease_expires_at.eq(Some(lease_expires_at_value)),
+                    attempt_count.eq(1),
+                ))
+                .get_result::<crate::models::TaskRecord>(conn)
+                .await
+        })
+        .await
+        .unwrap()
+    }
 
     #[test]
     fn test_task_capacity_lock_keys_do_not_collide_between_kind_slots() {
@@ -1177,7 +1453,7 @@ mod tests {
         });
 
         let locked_id = locked_rx.await.unwrap();
-        let claimed = claim_next_queued_task(&context.pool)
+        let claimed = claim_next_queued_task(&context.pool, std::time::Duration::from_secs(60))
             .await
             .unwrap()
             .map(|task| task.id);
@@ -1187,6 +1463,15 @@ mod tests {
         assert!(claimed.is_some());
         assert_ne!(claimed.unwrap(), locked_id);
         assert!(created_ids.contains(&locked_id));
+
+        let claimed_record = TaskID::new(claimed.unwrap())
+            .unwrap()
+            .find_record(&context.pool)
+            .await
+            .unwrap();
+        assert!(claimed_record.lease_token.is_some());
+        assert!(claimed_record.lease_expires_at.is_some());
+        assert_eq!(claimed_record.attempt_count, 1);
 
         let (claimed_events, _) = (TaskID::new(claimed.unwrap())
             .unwrap()
@@ -1208,6 +1493,103 @@ mod tests {
                 .filter(|event| event.event_type == "validating")
                 .count(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_task_lease_is_failed_without_replay() {
+        let context = TestContext::new().await;
+        let leased = create_leased_task(
+            &context,
+            "expired-lease",
+            Utc::now().naive_utc() - ChronoDuration::seconds(1),
+        )
+        .await;
+
+        let recovered = recover_expired_task_lease(&context.pool, leased.id)
+            .await
+            .unwrap();
+
+        assert_eq!(recovered.len(), 1);
+        let recovered = &recovered[0];
+        assert_eq!(recovered.status, TaskStatus::Failed.as_str());
+        assert_eq!(recovered.attempt_count, 1);
+        assert!(recovered.lease_token.is_none());
+        assert!(recovered.lease_expires_at.is_none());
+        assert!(recovered.request_payload.is_none());
+        assert!(recovered.finished_at.is_some());
+        assert!(
+            recovered
+                .summary
+                .as_deref()
+                .is_some_and(|summary| summary.contains("without automatic replay"))
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_worker_cannot_update_recovered_task() {
+        let context = TestContext::new().await;
+        let leased = create_leased_task(
+            &context,
+            "stale-worker-fence",
+            Utc::now().naive_utc() - ChronoDuration::seconds(1),
+        )
+        .await;
+        recover_expired_task_lease(&context.pool, leased.id)
+            .await
+            .unwrap();
+
+        let result = leased
+            .update_state(
+                &context.pool,
+                TaskStateUpdate {
+                    status: TaskStatus::Running,
+                    summary: None,
+                    processed_items: 0,
+                    success_items: 0,
+                    failed_items: 0,
+                    started_at: leased.started_at,
+                    finished_at: None,
+                },
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            leased.find_record(&context.pool).await.unwrap().status,
+            TaskStatus::Failed.as_str()
+        );
+    }
+
+    #[tokio::test]
+    async fn task_lease_renewal_requires_the_claim_token() {
+        let context = TestContext::new().await;
+        let leased = create_leased_task(
+            &context,
+            "lease-renewal-token",
+            Utc::now().naive_utc() + ChronoDuration::minutes(1),
+        )
+        .await;
+
+        assert!(
+            !renew_task_lease(
+                &context.pool,
+                leased.id,
+                Uuid::new_v4(),
+                std::time::Duration::from_secs(60),
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            renew_task_lease(
+                &context.pool,
+                leased.id,
+                leased.lease_token.unwrap(),
+                std::time::Duration::from_secs(60),
+            )
+            .await
+            .unwrap()
         );
     }
 

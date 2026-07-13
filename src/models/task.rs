@@ -169,6 +169,9 @@ pub struct TaskRecord {
     pub deleted_by: Option<i32>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub lease_token: Option<uuid::Uuid>,
+    pub lease_expires_at: Option<NaiveDateTime>,
+    pub attempt_count: i32,
 }
 
 #[derive(Debug, Insertable)]

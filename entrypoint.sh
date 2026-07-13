@@ -2,6 +2,14 @@
 set -e
 
 should_skip_migrations() {
+    case "${HUBUUM_RUNTIME_ROLE:-all}" in
+        api|worker)
+            # Distributed long-running roles never own schema changes. Run
+            # hubuum-admin --migrate as a one-shot job before rollout.
+            return 0
+            ;;
+    esac
+
     case "${HUBUUM_SKIP_MIGRATIONS:-false}" in
         1|yes|y|true|on)
             return 0

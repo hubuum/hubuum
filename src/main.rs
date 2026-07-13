@@ -12,7 +12,7 @@ mod lifecycle;
 mod logger;
 mod macros;
 mod middlewares;
-mod models;
+pub mod models;
 mod observability;
 mod pagination;
 pub mod permissions;
@@ -41,6 +41,7 @@ use crate::config::get_config;
 use crate::config::initialize_config;
 use crate::config::running::RunningConfig;
 use crate::config::token_hash_key_is_ephemeral;
+use crate::config::{AppConfig, LoginRateLimitBackendKind};
 use crate::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_PERMISSION_BACKEND_ERROR,
     EXIT_CODE_TLS_ERROR, fatal_error, json_error_handler,
@@ -50,8 +51,13 @@ use crate::events::{
     ensure_event_retention_worker_running,
 };
 use crate::lifecycle::shutdown_background_workers;
+use crate::middlewares::rate_limit::{
+    LoginRateLimitStoreSettings, initialize_login_rate_limit_store,
+};
 use crate::permissions::{AppContext, build_permission_backend};
-use crate::tasks::ensure_task_worker_running;
+use crate::tasks::{
+    TaskWorkerSettings, ensure_task_worker_running, initialize_task_worker_settings,
+};
 use crate::utilities::is_valid_log_level;
 
 #[actix_web::main]
@@ -113,22 +119,32 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
     let pool = init_pool_with_settings(&database_settings);
 
-    if let Err(e) = utilities::init::init(pool.clone()).await {
+    let task_worker_count = if config.runtime_role.runs_background_workers() {
+        config.task_workers
+    } else {
+        0
+    };
+    let task_worker_settings = TaskWorkerSettings::new(
+        task_worker_count,
+        Duration::from_millis(config.task_poll_interval_ms),
+        Duration::from_secs(config.task_lease_seconds),
+        Duration::from_secs(config.task_heartbeat_seconds),
+        Duration::from_secs(config.task_recovery_interval_seconds),
+        Duration::from_secs(config.export_output_cleanup_interval_seconds),
+    )
+    .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+    initialize_task_worker_settings(task_worker_settings)
+        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_INIT_ERROR));
+
+    let initialization_settings =
+        utilities::init::InitializationSettings::new(config.admin_groupname.clone())
+            .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+    if let Err(e) = utilities::init::init(pool.clone(), &initialization_settings).await {
         fatal_error(
             &format!("Critical database initialization failed: {}", e),
             EXIT_CODE_INIT_ERROR,
         );
     }
-
-    let permission_backend = build_permission_backend(&config, pool.clone())
-        .await
-        .unwrap_or_else(|error| {
-            fatal_error(
-                &format!("Failed to initialize permission backend: {error}"),
-                EXIT_CODE_PERMISSION_BACKEND_ERROR,
-            )
-        });
-    let app_context = AppContext::new(pool.clone(), permission_backend);
 
     let active_event_sinks =
         match db::traits::event_subscription::enabled_event_sink_count(&pool).await {
@@ -141,6 +157,52 @@ async fn main() -> std::io::Result<()> {
                 None
             }
         };
+
+    if config.runtime_role.runs_background_workers() {
+        ensure_task_worker_running(pool.clone());
+        ensure_event_fanout_worker_running(pool.clone());
+        ensure_event_delivery_worker_running(pool.clone());
+        ensure_event_retention_worker_running(pool.clone());
+    }
+
+    if !config.runtime_role.serves_http() {
+        info!(
+            message = "worker startup",
+            version = env!("CARGO_PKG_VERSION"),
+            git_sha = logger::build_git_sha(),
+            runtime_role = config.runtime_role.as_str(),
+            task_workers = config.task_workers,
+            event_fanout_workers = config.event_fanout_workers,
+            event_delivery_workers = config.event_delivery_workers,
+            db_backend = "postgresql",
+            active_event_sinks,
+        );
+        wait_for_shutdown_signal().await?;
+        shutdown_background_workers(Duration::from_secs(30)).await;
+        drop(pool);
+        return Ok(());
+    }
+
+    let login_rate_limit_store_settings = login_rate_limit_store_settings(&config)
+        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+    initialize_login_rate_limit_store(login_rate_limit_store_settings)
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Failed to initialize login rate-limit store: {error}"),
+                EXIT_CODE_INIT_ERROR,
+            )
+        });
+
+    let permission_backend = build_permission_backend(&config, pool.clone())
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Failed to initialize permission backend: {error}"),
+                EXIT_CODE_PERMISSION_BACKEND_ERROR,
+            )
+        });
+    let app_context = AppContext::new(pool.clone(), permission_backend);
 
     let client_allowlist = config.client_allowlist.clone();
     let proxy_trust = middlewares::ProxyTrust::new(
@@ -218,15 +280,11 @@ async fn main() -> std::io::Result<()> {
         _ => server.bind(&bind_address)?,
     };
 
-    ensure_task_worker_running(pool.clone());
-    ensure_event_fanout_worker_running(pool.clone());
-    ensure_event_delivery_worker_running(pool.clone());
-    ensure_event_retention_worker_running(pool.clone());
-
     info!(
         message = "server startup",
         version = env!("CARGO_PKG_VERSION"),
         git_sha = logger::build_git_sha(),
+        runtime_role = config.runtime_role.as_str(),
         bind_address = bind_address.as_str(),
         tls = config.tls_cert_path.is_some() && config.tls_key_path.is_some(),
         log_format = "json",
@@ -237,6 +295,7 @@ async fn main() -> std::io::Result<()> {
         event_delivery_workers = config.event_delivery_workers,
         db_backend = "postgresql",
         authorization_backend = "database_permissions",
+        login_rate_limit_backend = config.login_rate_limit_backend.as_str(),
         active_event_sinks,
     );
 
@@ -244,4 +303,43 @@ async fn main() -> std::io::Result<()> {
     shutdown_background_workers(Duration::from_secs(30)).await;
     drop(pool);
     result
+}
+
+fn login_rate_limit_store_settings(
+    config: &AppConfig,
+) -> Result<LoginRateLimitStoreSettings, String> {
+    match config.login_rate_limit_backend {
+        LoginRateLimitBackendKind::Memory => Ok(LoginRateLimitStoreSettings::in_memory()),
+        LoginRateLimitBackendKind::Valkey => {
+            #[cfg(feature = "login-rate-limit-valkey")]
+            {
+                let url = config.login_rate_limit_valkey_url.clone().ok_or_else(|| {
+                    "login rate-limit Valkey URL is required for the Valkey backend".to_string()
+                })?;
+                LoginRateLimitStoreSettings::valkey(
+                    url,
+                    config.login_rate_limit_valkey_prefix.clone(),
+                    Duration::from_millis(config.login_rate_limit_valkey_io_timeout_ms),
+                )
+            }
+            #[cfg(not(feature = "login-rate-limit-valkey"))]
+            {
+                Err("the Valkey login rate-limit backend is not compiled in".to_string())
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() -> std::io::Result<()> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal() -> std::io::Result<()> {
+    tokio::signal::ctrl_c().await
 }

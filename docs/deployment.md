@@ -1,5 +1,8 @@
 # Single-Host Container Deployment
 
+For multiple API or worker replicas, one-shot migrations, and optional shared
+login throttling, see [Distributed Deployment](distributed_deployment.md).
+
 Hubuum can be installed on one host with Docker Compose or rootful Podman Compose. The installer uses published container images by default and can deploy either:
 
 - `all`: backend API, frontend, Caddy, Postgres, and Valkey.

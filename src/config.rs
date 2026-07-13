@@ -108,9 +108,57 @@ pub enum PermissionBackendKind {
     Treetop,
 }
 
+#[derive(ValueEnum, Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeRole {
+    #[default]
+    All,
+    Api,
+    Worker,
+}
+
+impl RuntimeRole {
+    pub const fn serves_http(self) -> bool {
+        matches!(self, Self::All | Self::Api)
+    }
+
+    pub const fn runs_background_workers(self) -> bool {
+        matches!(self, Self::All | Self::Worker)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Api => "api",
+            Self::Worker => "worker",
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LoginRateLimitBackendKind {
+    #[default]
+    Memory,
+    Valkey,
+}
+
+impl LoginRateLimitBackendKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Valkey => "valkey",
+        }
+    }
+}
+
 #[derive(Parser, Deserialize, Clone)]
 #[command(version = env!("CARGO_PKG_VERSION"), about = "Hubuum server", long_about = None)]
 pub struct AppConfig {
+    /// Runtime role: combined API/workers, API-only, or worker-only.
+    #[clap(long, env = "HUBUUM_RUNTIME_ROLE", default_value = "all")]
+    pub runtime_role: RuntimeRole,
+
     /// IP address to bind to
     #[clap(long, env = "HUBUUM_BIND_IP", default_value = "127.0.0.1")]
     pub bind_ip: String,
@@ -154,6 +202,30 @@ pub struct AppConfig {
         default_value_t = DEFAULT_TASK_POLL_INTERVAL_MS
     )]
     pub task_poll_interval_ms: u64,
+
+    /// Duration of a task worker lease before another worker may recover it.
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_LEASE_SECONDS",
+        default_value_t = DEFAULT_TASK_LEASE_SECONDS
+    )]
+    pub task_lease_seconds: u64,
+
+    /// Interval at which an active task lease is renewed.
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_HEARTBEAT_SECONDS",
+        default_value_t = DEFAULT_TASK_HEARTBEAT_SECONDS
+    )]
+    pub task_heartbeat_seconds: u64,
+
+    /// Minimum interval between stale-task recovery scans in this process.
+    #[clap(
+        long,
+        env = "HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS",
+        default_value_t = DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS
+    )]
+    pub task_recovery_interval_seconds: u64,
 
     /// Number of background event fan-out workers
     #[clap(
@@ -557,6 +629,34 @@ pub struct AppConfig {
     )]
     pub login_rate_limit_subnet_prefix_v6: u8,
 
+    /// State backend for login throttling.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_BACKEND",
+        default_value = "memory"
+    )]
+    pub login_rate_limit_backend: LoginRateLimitBackendKind,
+
+    /// Valkey/Redis URL for shared login throttling state.
+    #[clap(long, env = "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL")]
+    pub login_rate_limit_valkey_url: Option<String>,
+
+    /// Namespace prefix for shared login throttling keys.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_PREFIX",
+        default_value = DEFAULT_LOGIN_RATE_LIMIT_VALKEY_PREFIX
+    )]
+    pub login_rate_limit_valkey_prefix: String,
+
+    /// Valkey/Redis connect, read, and write timeout.
+    #[clap(
+        long,
+        env = "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS",
+        default_value_t = DEFAULT_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS
+    )]
+    pub login_rate_limit_valkey_io_timeout_ms: u64,
+
     /// Default number of items returned by cursor-paginated list endpoints
     #[clap(
         long,
@@ -720,21 +820,9 @@ impl AppConfig {
             ));
         }
 
-        if self.task_workers == 0 {
-            return Err(ApiError::BadRequest(
-                "task_workers must be greater than 0".to_string(),
-            ));
-        }
-
         if self.task_poll_interval_ms == 0 {
             return Err(ApiError::BadRequest(
                 "task_poll_interval_ms must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.event_fanout_workers == 0 {
-            return Err(ApiError::BadRequest(
-                "event_fanout_workers must be greater than 0".to_string(),
             ));
         }
 
@@ -975,6 +1063,65 @@ impl AppConfig {
             ));
         }
 
+        if self.task_lease_seconds == 0 {
+            return Err(ApiError::BadRequest(
+                "task_lease_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.task_heartbeat_seconds == 0 {
+            return Err(ApiError::BadRequest(
+                "task_heartbeat_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.task_heartbeat_seconds >= self.task_lease_seconds {
+            return Err(ApiError::BadRequest(format!(
+                "task_heartbeat_seconds ({}) must be less than task_lease_seconds ({})",
+                self.task_heartbeat_seconds, self.task_lease_seconds
+            )));
+        }
+
+        if self.task_recovery_interval_seconds == 0 {
+            return Err(ApiError::BadRequest(
+                "task_recovery_interval_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.login_rate_limit_valkey_io_timeout_ms == 0 {
+            return Err(ApiError::BadRequest(
+                "login_rate_limit_valkey_io_timeout_ms must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.login_rate_limit_valkey_prefix.trim().is_empty()
+            || self.login_rate_limit_valkey_prefix.contains(['{', '}'])
+        {
+            return Err(ApiError::BadRequest(
+                "login_rate_limit_valkey_prefix must not be empty or contain braces".to_string(),
+            ));
+        }
+
+        if self.login_rate_limit_backend == LoginRateLimitBackendKind::Valkey {
+            #[cfg(not(feature = "login-rate-limit-valkey"))]
+            return Err(ApiError::BadRequest(
+                "login_rate_limit_backend=valkey requires the login-rate-limit-valkey feature"
+                    .to_string(),
+            ));
+
+            #[cfg(feature = "login-rate-limit-valkey")]
+            if self
+                .login_rate_limit_valkey_url
+                .as_deref()
+                .is_none_or(|url| url.trim().is_empty())
+            {
+                return Err(ApiError::BadRequest(
+                    "login_rate_limit_valkey_url is required when login_rate_limit_backend=valkey"
+                        .to_string(),
+                ));
+            }
+        }
+
         if self.max_transitive_depth <= 0 {
             return Err(ApiError::BadRequest(
                 "max_transitive_depth must be greater than 0".to_string(),
@@ -1198,6 +1345,24 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             })
     }
 
+    fn env_or_default_runtime_role(key: &str, default: RuntimeRole) -> RuntimeRole {
+        env::var(key).map_or(default, |value| {
+            RuntimeRole::from_str(&value, true)
+                .unwrap_or_else(|err| panic!("Invalid runtime role in {key}: {value} ({err})"))
+        })
+    }
+
+    fn env_or_default_login_rate_limit_backend(
+        key: &str,
+        default: LoginRateLimitBackendKind,
+    ) -> LoginRateLimitBackendKind {
+        env::var(key).map_or(default, |value| {
+            LoginRateLimitBackendKind::from_str(&value, true).unwrap_or_else(|err| {
+                panic!("Invalid login rate-limit backend in {key}: {value} ({err})")
+            })
+        })
+    }
+
     fn env_or_default_client_allowlist(key: &str, default: &str) -> ClientAllowlist {
         env::var(key)
             .unwrap_or_else(|_| default.to_string())
@@ -1213,6 +1378,7 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
     }
 
     let config = AppConfig {
+        runtime_role: env_or_default_runtime_role("HUBUUM_RUNTIME_ROLE", RuntimeRole::All),
         bind_ip: env_or_default("HUBUUM_BIND_IP", "127.0.0.1"),
         port: env_or_default("HUBUUM_BIND_PORT", "8080")
             .parse()
@@ -1231,6 +1397,18 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_TASK_POLL_INTERVAL_MS),
+        task_lease_seconds: env::var("HUBUUM_TASK_LEASE_SECONDS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_TASK_LEASE_SECONDS),
+        task_heartbeat_seconds: env::var("HUBUUM_TASK_HEARTBEAT_SECONDS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_TASK_HEARTBEAT_SECONDS),
+        task_recovery_interval_seconds: env::var("HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS),
         event_fanout_workers: env::var("HUBUUM_EVENT_FANOUT_WORKERS")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -1435,6 +1613,21 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         )
         .parse()
         .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6),
+        login_rate_limit_backend: env_or_default_login_rate_limit_backend(
+            "HUBUUM_LOGIN_RATE_LIMIT_BACKEND",
+            LoginRateLimitBackendKind::Memory,
+        ),
+        login_rate_limit_valkey_url: env_or_default_opt("HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL", None),
+        login_rate_limit_valkey_prefix: env_or_default(
+            "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_PREFIX",
+            DEFAULT_LOGIN_RATE_LIMIT_VALKEY_PREFIX,
+        ),
+        login_rate_limit_valkey_io_timeout_ms: env_or_default(
+            "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS",
+            "1000",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS),
         default_page_limit: env_or_default("HUBUUM_DEFAULT_PAGE_LIMIT", "100")
             .parse()
             .unwrap_or(DEFAULT_PAGE_LIMIT),
@@ -1500,6 +1693,8 @@ mod tests {
     use clap::Parser;
     use rstest::rstest;
 
+    #[cfg(feature = "login-rate-limit-valkey")]
+    use super::LoginRateLimitBackendKind;
     use super::{
         AppConfig, DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_BATCH_SIZE,
         DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS,
@@ -1514,9 +1709,9 @@ mod tests {
         DEFAULT_EXPORT_MAX_OUTPUT_BYTES, DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER,
         DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
         DEFAULT_PAGE_LIMIT, DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER,
-        DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, TEST_ENV_LOCK,
-        TlsBackend, default_actix_workers, default_task_workers, get_config_from_env,
-        token_hash_key_bytes, token_hash_key_is_ephemeral,
+        DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, RuntimeRole,
+        TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
+        get_config_from_env, token_hash_key_bytes, token_hash_key_is_ephemeral,
     };
 
     struct EnvVarGuard {
@@ -1640,6 +1835,51 @@ mod tests {
         assert_eq!(parsed.task_poll_interval_ms, 750);
         assert_eq!(loaded.task_workers, 3);
         assert_eq!(loaded.task_poll_interval_ms, 750);
+    }
+
+    #[test]
+    fn runtime_role_is_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _role_guard = EnvVarGuard::set("HUBUUM_RUNTIME_ROLE", Some("worker"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.runtime_role, RuntimeRole::Worker);
+        assert_eq!(loaded.runtime_role, RuntimeRole::Worker);
+        assert!(!loaded.runtime_role.serves_http());
+        assert!(loaded.runtime_role.runs_background_workers());
+    }
+
+    #[test]
+    fn task_lease_settings_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _lease_guard = EnvVarGuard::set("HUBUUM_TASK_LEASE_SECONDS", Some("90"));
+        let _heartbeat_guard = EnvVarGuard::set("HUBUUM_TASK_HEARTBEAT_SECONDS", Some("15"));
+        let _recovery_guard = EnvVarGuard::set("HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS", Some("45"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        for config in [&parsed, &loaded] {
+            assert_eq!(config.task_lease_seconds, 90);
+            assert_eq!(config.task_heartbeat_seconds, 15);
+            assert_eq!(config.task_recovery_interval_seconds, 45);
+        }
+    }
+
+    #[test]
+    fn task_heartbeat_must_be_shorter_than_lease() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _lease_guard = EnvVarGuard::set("HUBUUM_TASK_LEASE_SECONDS", Some("30"));
+        let _heartbeat_guard = EnvVarGuard::set("HUBUUM_TASK_HEARTBEAT_SECONDS", Some("30"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "task_heartbeat_seconds (30) must be less than task_lease_seconds (30)"
+        );
     }
 
     #[test]
@@ -2215,6 +2455,49 @@ mod tests {
         assert_eq!(parsed.login_rate_limit_window_seconds, 120);
         assert_eq!(loaded.login_rate_limit_max_attempts, 9);
         assert_eq!(loaded.login_rate_limit_window_seconds, 120);
+    }
+
+    #[cfg(feature = "login-rate-limit-valkey")]
+    #[test]
+    fn shared_login_rate_limit_settings_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _backend = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_BACKEND", Some("valkey"));
+        let _url = EnvVarGuard::set(
+            "HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL",
+            Some("redis://valkey.internal:6379/"),
+        );
+        let _prefix =
+            EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_VALKEY_PREFIX", Some("hubuum:test"));
+        let _timeout =
+            EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS", Some("250"));
+
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(
+            loaded.login_rate_limit_backend,
+            LoginRateLimitBackendKind::Valkey
+        );
+        assert_eq!(
+            loaded.login_rate_limit_valkey_url.as_deref(),
+            Some("redis://valkey.internal:6379/")
+        );
+        assert_eq!(loaded.login_rate_limit_valkey_prefix, "hubuum:test");
+        assert_eq!(loaded.login_rate_limit_valkey_io_timeout_ms, 250);
+    }
+
+    #[cfg(feature = "login-rate-limit-valkey")]
+    #[test]
+    fn shared_login_rate_limit_requires_a_url() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _backend = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_BACKEND", Some("valkey"));
+        let _url = EnvVarGuard::set("HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL", None);
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "login_rate_limit_valkey_url is required when login_rate_limit_backend=valkey"
+        );
     }
 
     #[test]

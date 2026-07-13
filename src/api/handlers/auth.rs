@@ -70,7 +70,7 @@ pub async fn login(
     let client_ip = client_ip_for_request(&req);
     let client_ip_log = client_ip.map(|ip| ip.to_string());
 
-    let Some(login_permit) = begin_login_attempt(&identity_scope, &name, client_ip).await else {
+    let Some(login_permit) = begin_login_attempt(&identity_scope, &name, client_ip).await? else {
         metrics::login_attempt("rate_limited");
         warn!(
             message = "Login throttled",
@@ -92,13 +92,13 @@ pub async fn login(
             } else {
                 (LoginAttemptOutcome::Aborted, "internal_error")
             };
-            finish_login_attempt(login_permit, outcome).await;
+            finish_login_attempt(login_permit, outcome).await?;
             metrics::login_attempt(metric_outcome);
             return Err(e);
         }
     };
 
-    finish_login_attempt(login_permit, LoginAttemptOutcome::Succeeded).await;
+    finish_login_attempt(login_permit, LoginAttemptOutcome::Succeeded).await?;
 
     let token_generation_result = user.create_token(&pool).await;
 

@@ -348,14 +348,6 @@ pub struct NewGroup {
 }
 
 impl NewGroup {
-    pub async fn new(groupname: &str, description: Option<&str>) -> Self {
-        NewGroup {
-            identity_scope: None,
-            groupname: groupname.to_string(),
-            description: description.map(|s| s.to_string()),
-        }
-    }
-
     /// Persist without emitting domain events.
     ///
     /// Intended only for internal infrastructure paths such as bootstrap/setup,

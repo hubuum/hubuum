@@ -518,6 +518,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Shared limiter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -556,6 +566,16 @@
           },
           "403": {
             "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Shared limiter unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -634,6 +654,16 @@
           },
           "404": {
             "description": "Entry not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Shared limiter unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -16534,9 +16564,16 @@
           "backoff_base_seconds",
           "backoff_max_seconds",
           "subnet_prefix_v4",
-          "subnet_prefix_v6"
+          "subnet_prefix_v6",
+          "backend",
+          "valkey_url",
+          "valkey_prefix",
+          "valkey_io_timeout_ms"
         ],
         "properties": {
+          "backend": {
+            "type": "string"
+          },
           "backoff_base_seconds": {
             "type": "integer",
             "format": "int64",
@@ -16572,6 +16609,17 @@
             "format": "int32",
             "minimum": 0
           },
+          "valkey_io_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "valkey_prefix": {
+            "type": "string"
+          },
+          "valkey_url": {
+            "$ref": "#/components/schemas/SecretStatus"
+          },
           "window_seconds": {
             "type": "integer",
             "format": "int64",
@@ -16584,6 +16632,7 @@
         "description": "Effective login rate-limit configuration, echoed back in the admin state endpoint.",
         "required": [
           "enabled",
+          "backend",
           "max_attempts",
           "max_attempts_per_ip",
           "max_attempts_per_subnet",
@@ -16594,6 +16643,9 @@
           "subnet_prefix_v6"
         ],
         "properties": {
+          "backend": {
+            "type": "string"
+          },
           "backoff_base_seconds": {
             "type": "integer",
             "format": "int64",
@@ -18506,6 +18558,7 @@
       "ServerConfig": {
         "type": "object",
         "required": [
+          "runtime_role",
           "bind_ip",
           "bind_port",
           "log_level",
@@ -18534,6 +18587,9 @@
             "type": "boolean"
           },
           "metrics_path": {
+            "type": "string"
+          },
+          "runtime_role": {
             "type": "string"
           },
           "tls": {
@@ -18600,6 +18656,9 @@
         "required": [
           "workers",
           "poll_interval_ms",
+          "lease_seconds",
+          "heartbeat_seconds",
+          "recovery_interval_seconds",
           "import_max_active_per_user",
           "export_max_active_per_user",
           "remote_call_max_active_per_user"
@@ -18609,11 +18668,26 @@
             "type": "integer",
             "minimum": 0
           },
+          "heartbeat_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
           "import_max_active_per_user": {
             "type": "integer",
             "minimum": 0
           },
+          "lease_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
           "poll_interval_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "recovery_interval_seconds": {
             "type": "integer",
             "format": "int64",
             "minimum": 0

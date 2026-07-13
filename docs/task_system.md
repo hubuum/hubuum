@@ -189,6 +189,9 @@ Worker behavior is configurable via:
 
 - `HUBUUM_TASK_WORKERS`
 - `HUBUUM_TASK_POLL_INTERVAL_MS`
+- `HUBUUM_TASK_LEASE_SECONDS`
+- `HUBUUM_TASK_HEARTBEAT_SECONDS`
+- `HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS`
 - `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`
 
 The canonical env-var reference lives in:
@@ -200,6 +203,9 @@ Defaults:
 - `HUBUUM_ACTIX_WORKERS`: detected CPU count
 - `HUBUUM_TASK_WORKERS`: about half the detected CPU count, minimum `1`
 - `HUBUUM_TASK_POLL_INTERVAL_MS`: `200`
+- `HUBUUM_TASK_LEASE_SECONDS`: `60`
+- `HUBUUM_TASK_HEARTBEAT_SECONDS`: `20`
+- `HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS`: `30`
 - `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`: `300`
 
 The HTTP worker count and background task worker count are intentionally separate.
@@ -222,6 +228,11 @@ That gives these properties:
 - multiple workers in one process are safe
 - multiple app instances are also safe
 - workers skip rows currently locked by another claimant instead of blocking
+
+Claims also receive a durable lease token. Workers renew the lease while a task
+is active, and persistence updates are fenced by the token. If a process dies,
+another worker fails the expired task and records a recovery event without
+automatically replaying external side effects.
 
 Claiming immediately transitions the task to:
 
@@ -476,7 +487,8 @@ The design does not require an external queue for correctness.
 ## Limitations and current assumptions
 
 - there is no cancellation flow implemented yet
-- there is no separate worker binary yet; workers run inside the web process
+- API and worker duties use the same binary with `HUBUUM_RUNTIME_ROLE`; they can
+  run in separate processes or together
 - progress counters are currently updated at finalize time, not streamed continuously per item
 - only imports have a concrete executor and a typed result table today
 - task retention is summary/results after payload redaction, not full payload retention
