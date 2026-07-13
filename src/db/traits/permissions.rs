@@ -168,6 +168,33 @@ fn update_permission_for_grant(
     update_perm
 }
 
+fn grant_changes_permission(
+    current: &Permission,
+    requested: &PermissionsList<Permissions>,
+    replace_existing: bool,
+) -> bool {
+    let granted = current.granted();
+    if replace_existing {
+        Permissions::ALL
+            .iter()
+            .any(|permission| granted.contains(permission) != requested.contains(permission))
+    } else {
+        requested
+            .iter()
+            .any(|permission| !granted.contains(permission))
+    }
+}
+
+fn revoke_changes_permission(
+    current: &Permission,
+    requested: &PermissionsList<Permissions>,
+) -> bool {
+    let granted = current.granted();
+    requested
+        .iter()
+        .any(|permission| granted.contains(permission))
+}
+
 fn update_permission_for_revoke(
     permission_list: &PermissionsList<Permissions>,
 ) -> UpdatePermission {
@@ -324,12 +351,16 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
             let existing_entry = permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_grant))
+                .for_update()
                 .first::<Permission>(conn)
                 .await
                 .optional()?;
 
             match existing_entry {
-                Some(_) => {
+                Some(existing) => {
+                    if !grant_changes_permission(&existing, &permission_list, replace_existing) {
+                        return Ok(existing);
+                    }
                     let mut update_perm = if replace_existing {
                         UpdatePermission {
                             has_read_collection: Some(false),
@@ -565,9 +596,16 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
             let before = permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_grant))
+                .for_update()
                 .first::<Permission>(conn)
                 .await
                 .optional()?;
+
+            if let Some(current) = before
+                && !grant_changes_permission(&current, &permission_list, replace_existing)
+            {
+                return Ok(current);
+            }
 
             let after = match before {
                 Some(_) => {
@@ -628,11 +666,16 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         let target_collection_id = self.collection_id(pool).await?.id();
 
         with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
-            permissions
+            let before = permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
+                .for_update()
                 .first::<Permission>(conn)
                 .await?;
+
+            if !revoke_changes_permission(&before, &permission_list) {
+                return Ok(before);
+            }
 
             let mut update_perm = UpdatePermission::default();
             for permission in permission_list.into_iter() {
@@ -769,8 +812,13 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
             let before = permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
+                .for_update()
                 .first::<Permission>(conn)
                 .await?;
+
+            if !revoke_changes_permission(&before, &permission_list) {
+                return Ok(before);
+            }
 
             let update_perm = update_permission_for_revoke(&permission_list);
             let after = diesel::update(permissions)
@@ -838,6 +886,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
             let before = permissions
                 .filter(collection_id.eq(collection_id_for_revoke))
                 .filter(group_id.eq(group_id_for_revoke))
+                .for_update()
                 .first::<Permission>(conn)
                 .await
                 .optional()?;

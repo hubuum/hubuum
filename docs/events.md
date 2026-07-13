@@ -8,6 +8,13 @@ The event stream is append-only during normal application operation. Domain
 changes emit events in the same database transaction as the state change, so an
 event exists only if the change commits.
 
+Audited mutation paths compare the requested state with the stored state before
+writing. Requests that would leave domain state unchanged are no-ops: they do
+not advance `updated_at` or append lifecycle events. This includes identical
+entity updates, moves to the current parent, repeated permission grants or
+revocations, repeated service-account disable requests, and membership changes
+that do not change effective membership.
+
 ## Audit Log
 
 Audit readers query the canonical stream with `GET /api/v1/events`. The

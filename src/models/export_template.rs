@@ -258,6 +258,57 @@ pub(crate) struct UpdateExportTemplateRow {
     default_limits: Option<Option<serde_json::Value>>,
 }
 
+impl UpdateExportTemplateRow {
+    pub(crate) fn has_changes(&self, current: &ExportTemplateRow) -> bool {
+        self.collection_id
+            .is_some_and(|value| value != current.collection_id)
+            || self
+                .name
+                .as_ref()
+                .is_some_and(|value| value != &current.name)
+            || self
+                .description
+                .as_ref()
+                .is_some_and(|value| value != &current.description)
+            || self
+                .template
+                .as_ref()
+                .is_some_and(|value| value != &current.template)
+            || self
+                .kind
+                .as_ref()
+                .is_some_and(|value| value != &current.kind)
+            || self
+                .scope_kind
+                .as_ref()
+                .is_some_and(|value| value != &current.scope_kind)
+            || self
+                .class_id
+                .as_ref()
+                .is_some_and(|value| value != &current.class_id)
+            || self
+                .default_query
+                .as_ref()
+                .is_some_and(|value| value != &current.default_query)
+            || self
+                .include
+                .as_ref()
+                .is_some_and(|value| value != &current.include)
+            || self
+                .relation_context
+                .as_ref()
+                .is_some_and(|value| value != &current.relation_context)
+            || self
+                .default_missing_data_policy
+                .as_ref()
+                .is_some_and(|value| value != &current.default_missing_data_policy)
+            || self
+                .default_limits
+                .as_ref()
+                .is_some_and(|value| value != &current.default_limits)
+    }
+}
+
 impl TryFrom<ExportTemplateRow> for ExportTemplate {
     type Error = ApiError;
 

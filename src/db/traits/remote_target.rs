@@ -167,8 +167,12 @@ impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
         with_transaction(pool, async |conn| -> Result<RemoteTargetRow, ApiError> {
             let before = remote_targets
                 .filter(id.eq(target_id))
+                .for_update()
                 .first::<RemoteTargetRow>(conn)
                 .await?;
+            if !self.has_changes(&before) {
+                return Ok(before);
+            }
             let after = diesel::update(remote_targets.filter(id.eq(target_id)))
                 .set(self)
                 .get_result::<RemoteTargetRow>(conn)
@@ -234,6 +238,7 @@ impl DeleteRemoteTargetRecord for RemoteTargetID {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
             let before = remote_targets
                 .filter(id.eq(self.id()))
+                .for_update()
                 .first::<RemoteTargetRow>(conn)
                 .await?;
             diesel::delete(remote_targets.filter(id.eq(self.id())))

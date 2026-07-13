@@ -190,8 +190,12 @@ impl UpdateExportTemplateRecord for UpdateExportTemplateRow {
         with_transaction(pool, async |conn| -> Result<ExportTemplateRow, ApiError> {
             let before = export_templates
                 .filter(id.eq(template_id))
+                .for_update()
                 .first::<ExportTemplateRow>(conn)
                 .await?;
+            if !self.has_changes(&before) {
+                return Ok(before);
+            }
             let after = diesel::update(export_templates.filter(id.eq(template_id)))
                 .set(self)
                 .get_result::<ExportTemplateRow>(conn)
@@ -262,6 +266,7 @@ impl DeleteExportTemplateRecord for ExportTemplateID {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
             let before = export_templates
                 .filter(id.eq(self.id()))
+                .for_update()
                 .first::<ExportTemplateRow>(conn)
                 .await?;
             diesel::delete(export_templates.filter(id.eq(self.id())))

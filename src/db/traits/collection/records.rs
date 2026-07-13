@@ -253,17 +253,22 @@ impl DeleteCollectionRecord for Collection {
         use crate::schema::collections::dsl::{collections, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            validate_collection_can_be_deleted(conn, self.id).await?;
+            let before = collections
+                .filter(id.eq(self.id))
+                .for_update()
+                .first::<Collection>(conn)
+                .await?;
+            validate_collection_can_be_deleted(conn, before.id).await?;
             diesel::delete(collections.filter(id.eq(self.id)))
                 .execute(conn)
                 .await?;
             let event = collection_event(
-                self,
+                &before,
                 Action::Deleted,
                 context,
-                format!("Collection '{}' deleted", self.name),
+                format!("Collection '{}' deleted", before.name),
             )?
-            .with_before(collection_snapshot(self));
+            .with_before(collection_snapshot(&before));
             emit_event(conn, &event).await?;
             Ok(())
         })
@@ -299,6 +304,7 @@ impl DeleteCollectionRecord for CollectionID {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
             let collection = collections
                 .filter(id.eq(self.id()))
+                .for_update()
                 .first::<Collection>(conn)
                 .await?;
             validate_collection_can_be_deleted(conn, collection.id).await?;
@@ -378,8 +384,12 @@ impl UpdateCollectionRecord for UpdateCollection {
         with_transaction(pool, async |conn| -> Result<Collection, ApiError> {
             let before = collections
                 .filter(id.eq(collection_id))
+                .for_update()
                 .first::<Collection>(conn)
                 .await?;
+            if !self.has_changes(&before) {
+                return Ok(before);
+            }
             let updated = diesel::update(collections.filter(id.eq(collection_id)))
                 .set(self)
                 .get_result::<Collection>(conn)
@@ -565,6 +575,7 @@ pub async fn move_collection_record_from_backend(
     with_transaction(pool, async |conn| -> Result<Collection, ApiError> {
         let before = collections
             .filter(id.eq(target_collection_id))
+            .for_update()
             .first::<Collection>(conn)
             .await?;
 
@@ -572,6 +583,10 @@ pub async fn move_collection_record_from_backend(
             return Err(ApiError::Conflict(
                 "The root collection cannot be moved".to_string(),
             ));
+        }
+
+        if before.parent_collection_id == Some(new_parent_collection_id) {
+            return Ok(before);
         }
 
         if target_collection_id == new_parent_collection_id {

@@ -52,6 +52,18 @@ pub struct UpdateCollection {
     pub description: Option<String>,
 }
 
+impl UpdateCollection {
+    pub(crate) fn has_changes(&self, current: &Collection) -> bool {
+        self.name
+            .as_ref()
+            .is_some_and(|value| value != &current.name)
+            || self
+                .description
+                .as_ref()
+                .is_some_and(|value| value != &current.description)
+    }
+}
+
 /// A new collection, with an assignee. Used for creating new collection entries
 /// into the database and assign all permissions to the group given as group_id.
 ///

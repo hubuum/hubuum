@@ -449,8 +449,12 @@ impl UpdateObjectRecord for UpdateHubuumObject {
         with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
             let before = hubuumobject
                 .filter(id.eq(object_id))
+                .for_update()
                 .first::<HubuumObject>(conn)
                 .await?;
+            if !self.has_changes(&before) {
+                return Ok(before);
+            }
             let updated = diesel::update(hubuumobject.filter(id.eq(object_id)))
                 .set(self)
                 .get_result::<HubuumObject>(conn)
@@ -508,16 +512,21 @@ impl DeleteObjectRecord for HubuumObject {
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            let before = hubuumobject
+                .filter(id.eq(self.id))
+                .for_update()
+                .first::<HubuumObject>(conn)
+                .await?;
             diesel::delete(hubuumobject.filter(id.eq(self.id)))
                 .execute(conn)
                 .await?;
             let event = object_event(
-                self,
+                &before,
                 Action::Deleted,
                 context,
-                format!("Object '{}' deleted", self.name),
+                format!("Object '{}' deleted", before.name),
             )?
-            .with_before(object_snapshot(self));
+            .with_before(object_snapshot(&before));
             emit_event(conn, &event).await?;
             Ok(())
         })

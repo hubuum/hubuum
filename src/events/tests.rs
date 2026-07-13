@@ -33,7 +33,7 @@ use crate::events::{
     Action, ActorKind, EntityType, Event, EventContext, NewEvent, RequestProvenance, emit_event,
 };
 use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
-use crate::models::collection::{NewCollectionWithAssignee, UpdateCollection};
+use crate::models::collection::{NewCollectionWithAssignee, UpdateCollection, move_collection};
 use crate::models::group::{NewGroup, UpdateGroup};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
 use crate::models::token::{create_principal_token, revoke_token_by_id_for_principal};
@@ -865,7 +865,16 @@ async fn collection_writes_emit_lifecycle_events_in_transaction() {
     .await
     .unwrap();
 
-    updated.delete(&scope.pool, &context).await.unwrap();
+    let unchanged = UpdateCollection {
+        name: Some(collection_name.clone()),
+        description: Some("after".to_string()),
+    }
+    .update(&scope.pool, collection.id, &context)
+    .await
+    .unwrap();
+    assert_eq!(unchanged.updated_at, updated.updated_at);
+
+    unchanged.delete(&scope.pool, &context).await.unwrap();
 
     let rows = events_for(&scope, "collection", collection.id).await;
     assert_eq!(rows.len(), 3);
@@ -892,6 +901,27 @@ async fn collection_writes_emit_lifecycle_events_in_transaction() {
     assert_eq!(rows[2].before.as_ref().unwrap()["description"], "after");
     assert!(rows[2].after.is_none());
 
+    fixture.cleanup().await.unwrap();
+}
+
+#[actix_web::test]
+async fn moving_a_collection_to_its_current_parent_is_a_noop() {
+    let scope = test_scope();
+    let fixture = scope.with_collection().await;
+    let context = EventContext::user(8, Some(Uuid::new_v4()), None);
+    let collection = fixture.collection.clone();
+    let parent_id = collection.parent_collection_id.unwrap();
+    let event_count = events_for(&scope, "collection", collection.id).await.len();
+
+    let unchanged = move_collection(&scope.pool, collection.id, parent_id, Some(&context))
+        .await
+        .unwrap();
+
+    assert_eq!(unchanged.updated_at, collection.updated_at);
+    assert_eq!(
+        events_for(&scope, "collection", collection.id).await.len(),
+        event_count
+    );
     fixture.cleanup().await.unwrap();
 }
 
@@ -924,7 +954,22 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
     .await
     .unwrap();
 
-    updated.delete(&scope.pool, &context).await.unwrap();
+    let unchanged = UpdateHubuumClass {
+        name: Some(class_name.clone()),
+        collection_id: Some(fixture.collection.id),
+        json_schema: Some(serde_json::json!({
+            "type": "object",
+            "additionalProperties": true
+        })),
+        validate_schema: Some(false),
+        description: Some("after".to_string()),
+    }
+    .update(&scope.pool, class.id, &context)
+    .await
+    .unwrap();
+    assert_eq!(unchanged.updated_at, updated.updated_at);
+
+    unchanged.delete(&scope.pool, &context).await.unwrap();
 
     let rows = events_for(&scope, "class", class.id).await;
     assert_eq!(rows.len(), 3);
@@ -990,7 +1035,19 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
     .await
     .unwrap();
 
-    updated.delete(&scope.pool, &context).await.unwrap();
+    let unchanged = UpdateHubuumObject {
+        name: Some(object_name.clone()),
+        collection_id: Some(fixture.collection.id),
+        hubuum_class_id: Some(class.id),
+        data: Some(serde_json::json!({"state": "after"})),
+        description: Some("after".to_string()),
+    }
+    .update(&scope.pool, object.id, &context)
+    .await
+    .unwrap();
+    assert_eq!(unchanged.updated_at, updated.updated_at);
+
+    unchanged.delete(&scope.pool, &context).await.unwrap();
 
     let rows = events_for(&scope, "object", object.id).await;
     assert_eq!(rows.len(), 3);
@@ -1244,7 +1301,15 @@ async fn group_writes_emit_lifecycle_events_in_transaction() {
     .await
     .unwrap();
 
-    GroupID::new(updated.id)
+    let unchanged = UpdateGroup {
+        groupname: Some(updated.groupname.clone()),
+    }
+    .save(group.id, &scope.pool, Some(&context))
+    .await
+    .unwrap();
+    assert_eq!(unchanged.updated_at, updated.updated_at);
+
+    GroupID::new(unchanged.id)
         .unwrap()
         .delete(&scope.pool, Some(&context))
         .await
@@ -1372,7 +1437,17 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
     .await
     .unwrap();
 
-    updated.delete(&scope.pool, Some(&context)).await.unwrap();
+    let unchanged = UpdateUser {
+        password: None,
+        proper_name: Some("After User".to_string()),
+        email: Some("after@example.invalid".to_string()),
+    }
+    .save(user.id, &scope.pool, Some(&context))
+    .await
+    .unwrap();
+    assert_eq!(unchanged.updated_at, updated.updated_at);
+
+    unchanged.delete(&scope.pool, Some(&context)).await.unwrap();
 
     let rows = events_for(&scope, "user", user.id).await;
     assert_eq!(rows.len(), 3);
@@ -1497,6 +1572,29 @@ async fn permission_writes_emit_granted_revoked_events() {
 
     fixture
         .collection
+        .grant(
+            &scope.pool,
+            group.id,
+            PermissionsList::new([Permissions::ReadCollection, Permissions::CreateClass]),
+            Some(&context),
+        )
+        .await
+        .unwrap();
+
+    fixture
+        .collection
+        .apply_permissions(
+            &scope.pool,
+            group.id,
+            PermissionsList::new([Permissions::ReadCollection, Permissions::CreateClass]),
+            true,
+            Some(&context),
+        )
+        .await
+        .unwrap();
+
+    fixture
+        .collection
         .revoke(
             &scope.pool,
             group.id,
@@ -1506,6 +1604,22 @@ async fn permission_writes_emit_granted_revoked_events() {
         .await
         .unwrap();
 
+    fixture
+        .collection
+        .revoke(
+            &scope.pool,
+            group.id,
+            PermissionsList::new([Permissions::CreateClass]),
+            Some(&context),
+        )
+        .await
+        .unwrap();
+
+    fixture
+        .collection
+        .revoke_all(&scope.pool, group.id, Some(&context))
+        .await
+        .unwrap();
     fixture
         .collection
         .revoke_all(&scope.pool, group.id, Some(&context))
@@ -1607,6 +1721,24 @@ async fn export_template_writes_emit_lifecycle_events() {
     .await
     .unwrap();
 
+    UpdateExportTemplate {
+        collection_id: Some(fixture.collection.id),
+        name: Some(updated.name.clone()),
+        description: Some("after".to_string()),
+        template: Some("Goodbye {{ name }}".to_string()),
+        kind: Some(ExportTemplateKind::Fragment),
+        scope_kind: None,
+        class_id: None,
+        default_query: None,
+        include: None,
+        relation_context: None,
+        default_missing_data_policy: None,
+        default_limits: None,
+    }
+    .update(&scope.pool, template.id, &context)
+    .await
+    .unwrap();
+
     ExportTemplateID::new(updated.id)
         .unwrap()
         .delete(&scope.pool, &context)
@@ -1686,6 +1818,24 @@ async fn remote_target_writes_emit_lifecycle_and_invoked_events_with_redacted_au
     .update_remote_target_record(&scope.pool, row.id, Some(&context))
     .await
     .unwrap();
+    let unchanged = UpdateRemoteTargetRow {
+        collection_id: Some(updated.collection_id),
+        class_id: Some(updated.class_id),
+        name: Some(updated.name.clone()),
+        description: Some(updated.description.clone()),
+        method: Some(updated.method.clone()),
+        url_template: Some(updated.url_template.clone()),
+        headers_template: Some(updated.headers_template.clone()),
+        body_template: Some(updated.body_template.clone()),
+        auth_config: Some(updated.auth_config.clone()),
+        allowed_subject_types: Some(updated.allowed_subject_types.clone()),
+        timeout_ms: Some(updated.timeout_ms),
+        enabled: Some(updated.enabled),
+    }
+    .update_remote_target_record(&scope.pool, row.id, Some(&context))
+    .await
+    .unwrap();
+    assert_eq!(unchanged.updated_at, updated.updated_at);
     let target = updated.clone().try_into().unwrap();
 
     emit_remote_target_invoked_event(

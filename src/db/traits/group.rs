@@ -51,7 +51,7 @@ async fn insert_effective_membership(
     conn: &mut DbConnection,
     principal: i32,
     group: i32,
-) -> Result<PrincipalGroup, diesel::result::Error> {
+) -> Result<(PrincipalGroup, bool), diesel::result::Error> {
     use crate::schema::group_memberships::dsl::group_memberships;
 
     let inserted = diesel::insert_into(group_memberships)
@@ -64,8 +64,8 @@ async fn insert_effective_membership(
         .await
         .optional()?;
     match inserted {
-        Some(membership) => Ok(membership),
-        None => load_principal_group(conn, principal, group).await,
+        Some(membership) => Ok((membership, true)),
+        None => Ok((load_principal_group(conn, principal, group).await?, false)),
     }
 }
 
@@ -96,7 +96,7 @@ async fn remove_manual_membership_source(
     conn: &mut DbConnection,
     principal: i32,
     group: i32,
-) -> Result<(), ApiError> {
+) -> Result<bool, ApiError> {
     use crate::schema::{group_membership_sources, group_memberships};
 
     ensure_group_allows_local_write(conn, group).await?;
@@ -119,15 +119,16 @@ async fn remove_manual_membership_source(
         .get_result::<i64>(conn)
         .await?;
     if remaining == 0 {
-        diesel::delete(
+        let deleted = diesel::delete(
             group_memberships::table
                 .filter(group_memberships::principal_id.eq(principal))
                 .filter(group_memberships::group_id.eq(group)),
         )
         .execute(conn)
         .await?;
+        return Ok(deleted > 0);
     }
-    Ok(())
+    Ok(false)
 }
 
 async fn ensure_group_allows_local_write(
@@ -226,7 +227,11 @@ impl DeleteGroupRecord for GroupID {
         use crate::schema::groups::dsl::{groups, id};
 
         with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-            let group = groups.filter(id.eq(self.id())).first::<Group>(conn).await?;
+            let group = groups
+                .filter(id.eq(self.id()))
+                .for_update()
+                .first::<Group>(conn)
+                .await?;
             ensure_group_allows_local_write(conn, group.id).await?;
             let deleted = diesel::delete(groups.filter(id.eq(self.id())))
                 .execute(conn)
@@ -270,7 +275,11 @@ impl DeleteGroupRecord for Group {
         use crate::schema::groups::dsl::{groups, id};
 
         with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-            let before = groups.filter(id.eq(self.id)).first::<Group>(conn).await?;
+            let before = groups
+                .filter(id.eq(self.id))
+                .for_update()
+                .first::<Group>(conn)
+                .await?;
             ensure_group_allows_local_write(conn, before.id).await?;
             let deleted = diesel::delete(groups.filter(id.eq(self.id)))
                 .execute(conn)
@@ -432,8 +441,15 @@ impl UpdateGroupRecord for UpdateGroup {
         use crate::schema::groups::dsl::{groups, id};
 
         with_transaction(pool, async |conn| -> Result<Group, ApiError> {
-            let before = groups.filter(id.eq(group_id)).first::<Group>(conn).await?;
+            let before = groups
+                .filter(id.eq(group_id))
+                .for_update()
+                .first::<Group>(conn)
+                .await?;
             ensure_group_allows_local_write(conn, before.id).await?;
+            if !self.has_changes(&before) {
+                return Ok(before);
+            }
             let after = diesel::update(groups.filter(id.eq(group_id)))
                 .set(self)
                 .get_result::<Group>(conn)
@@ -585,7 +601,7 @@ impl GroupMembersBackend for Group {
         pool: &DbPool,
     ) -> Result<(), ApiError> {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            remove_manual_membership_source(conn, member_principal_id, self.id).await?;
+            let _ = remove_manual_membership_source(conn, member_principal_id, self.id).await?;
             Ok(())
         })
         .await?;
@@ -608,9 +624,10 @@ impl GroupMembersBackend for Group {
             let membership = load_principal_group(conn, member_principal_id, self.id)
                 .await
                 .optional()?;
-            remove_manual_membership_source(conn, member_principal_id, self.id).await?;
+            let removed_effective =
+                remove_manual_membership_source(conn, member_principal_id, self.id).await?;
 
-            if let Some(membership) = membership {
+            if let Some(membership) = membership.filter(|_| removed_effective) {
                 let event = NewEvent::new(
                     EntityType::UserGroup,
                     Action::Removed,
@@ -656,7 +673,7 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
         pool: &DbPool,
     ) -> Result<PrincipalGroup, ApiError> {
         with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
-            let membership =
+            let (membership, _) =
                 insert_effective_membership(conn, self.principal_id, self.group_id).await?;
             insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
             Ok(membership)
@@ -674,33 +691,27 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
         };
 
         with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
-            let already_present = load_principal_group(conn, self.principal_id, self.group_id)
-                .await
-                .optional()?;
-            let membership =
+            let (membership, inserted) =
                 insert_effective_membership(conn, self.principal_id, self.group_id).await?;
             insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
-            match already_present {
-                None => {
-                    let event = NewEvent::new(
-                        EntityType::UserGroup,
-                        Action::Added,
-                        context.actor_kind(),
-                        format!(
-                            "Principal {} added to group {}",
-                            membership.principal_id, membership.group_id
-                        ),
-                    )?
-                    .with_context(context)
-                    .with_metadata(user_group_metadata(
-                        membership.principal_id,
-                        membership.group_id,
-                    ));
-                    emit_event(conn, &event).await?;
-                    Ok(membership)
-                }
-                Some(_) => Ok(membership),
+            if inserted {
+                let event = NewEvent::new(
+                    EntityType::UserGroup,
+                    Action::Added,
+                    context.actor_kind(),
+                    format!(
+                        "Principal {} added to group {}",
+                        membership.principal_id, membership.group_id
+                    ),
+                )?
+                .with_context(context)
+                .with_metadata(user_group_metadata(
+                    membership.principal_id,
+                    membership.group_id,
+                ));
+                emit_event(conn, &event).await?;
             }
+            Ok(membership)
         })
         .await
     }
@@ -712,7 +723,7 @@ impl SavePrincipalGroupRecord for PrincipalGroup {
         pool: &DbPool,
     ) -> Result<PrincipalGroup, ApiError> {
         with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
-            let membership =
+            let (membership, _) =
                 insert_effective_membership(conn, self.principal_id, self.group_id).await?;
             insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
             Ok(membership)
@@ -730,24 +741,26 @@ impl SavePrincipalGroupRecord for PrincipalGroup {
         };
 
         with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
-            let membership =
+            let (membership, inserted) =
                 insert_effective_membership(conn, self.principal_id, self.group_id).await?;
             insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
-            let event = NewEvent::new(
-                EntityType::UserGroup,
-                Action::Added,
-                context.actor_kind(),
-                format!(
-                    "Principal {} added to group {}",
-                    membership.principal_id, membership.group_id
-                ),
-            )?
-            .with_context(context)
-            .with_metadata(user_group_metadata(
-                membership.principal_id,
-                membership.group_id,
-            ));
-            emit_event(conn, &event).await?;
+            if inserted {
+                let event = NewEvent::new(
+                    EntityType::UserGroup,
+                    Action::Added,
+                    context.actor_kind(),
+                    format!(
+                        "Principal {} added to group {}",
+                        membership.principal_id, membership.group_id
+                    ),
+                )?
+                .with_context(context)
+                .with_metadata(user_group_metadata(
+                    membership.principal_id,
+                    membership.group_id,
+                ));
+                emit_event(conn, &event).await?;
+            }
             Ok(membership)
         })
         .await
@@ -774,7 +787,8 @@ pub trait DeletePrincipalGroupRecord {
 impl DeletePrincipalGroupRecord for PrincipalGroup {
     async fn delete_principal_group_record(&self, pool: &DbPool) -> Result<(), ApiError> {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            remove_manual_membership_source(conn, self.principal_id, self.group_id).await
+            let _ = remove_manual_membership_source(conn, self.principal_id, self.group_id).await?;
+            Ok(())
         })
         .await?;
         Ok(())

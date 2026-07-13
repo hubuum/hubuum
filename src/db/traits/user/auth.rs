@@ -279,6 +279,12 @@ async fn delete_principal(
     use crate::schema::principals::dsl::{id, principals};
 
     with_transaction(pool, async |conn| -> Result<usize, ApiError> {
+        principals
+            .filter(id.eq(principal_id_value))
+            .for_update()
+            .select(id)
+            .first::<i32>(conn)
+            .await?;
         let (user, name) = load_user_with_name(conn, principal_id_value).await?;
         ensure_user_allows_local_write_conn(conn, principal_id_value).await?;
         let deleted = diesel::delete(principals.filter(id.eq(principal_id_value)))
@@ -497,8 +503,22 @@ impl UpdateUserRecord for UpdateUser {
         use crate::schema::users::dsl::{id, users};
 
         with_transaction(pool, async |conn| -> Result<User, ApiError> {
-            let (before, name) = load_user_with_name(conn, user_id).await?;
+            use crate::schema::principals;
+
+            let before = users
+                .filter(id.eq(user_id))
+                .for_update()
+                .first::<User>(conn)
+                .await?;
+            let name = principals::table
+                .filter(principals::id.eq(user_id))
+                .select(principals::name)
+                .first::<String>(conn)
+                .await?;
             ensure_user_allows_local_write_conn(conn, user_id).await?;
+            if !self.has_changes(&before) {
+                return Ok(before);
+            }
             let after = diesel::update(users.filter(id.eq(user_id)))
                 .set(self)
                 .get_result::<User>(conn)

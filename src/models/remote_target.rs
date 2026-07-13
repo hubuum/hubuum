@@ -265,6 +265,53 @@ pub(crate) struct UpdateRemoteTargetRow {
     pub enabled: Option<bool>,
 }
 
+impl UpdateRemoteTargetRow {
+    pub(crate) fn has_changes(&self, current: &RemoteTargetRow) -> bool {
+        self.collection_id
+            .is_some_and(|value| value != current.collection_id)
+            || self
+                .class_id
+                .as_ref()
+                .is_some_and(|value| value != &current.class_id)
+            || self
+                .name
+                .as_ref()
+                .is_some_and(|value| value != &current.name)
+            || self
+                .description
+                .as_ref()
+                .is_some_and(|value| value != &current.description)
+            || self
+                .method
+                .as_ref()
+                .is_some_and(|value| value != &current.method)
+            || self
+                .url_template
+                .as_ref()
+                .is_some_and(|value| value != &current.url_template)
+            || self
+                .headers_template
+                .as_ref()
+                .is_some_and(|value| value != &current.headers_template)
+            || self
+                .body_template
+                .as_ref()
+                .is_some_and(|value| value != &current.body_template)
+            || self
+                .auth_config
+                .as_ref()
+                .is_some_and(|value| value != &current.auth_config)
+            || self
+                .allowed_subject_types
+                .as_ref()
+                .is_some_and(|value| value != &current.allowed_subject_types)
+            || self
+                .timeout_ms
+                .is_some_and(|value| value != current.timeout_ms)
+            || self.enabled.is_some_and(|value| value != current.enabled)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct RemoteTargetInvokeRequest {
     pub subject: RemoteInvocationSubject,
