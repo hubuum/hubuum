@@ -343,7 +343,7 @@ async fn test_process_one_task_marks_claimed_task_failed_when_execution_setup_er
     .unwrap();
 
     for _ in 0..20 {
-        let _ = (process_one_task(&context.pool)).await.unwrap();
+        let _ = (process_one_task(&context.pool, None)).await.unwrap();
 
         let stored = (task.find_record(&context.pool)).await.unwrap();
         if stored.status == TaskStatus::Failed.as_str() {
@@ -1536,7 +1536,7 @@ async fn test_process_one_task_export_failure_marks_single_failed_item() {
     .unwrap();
 
     for _ in 0..20 {
-        let _ = (process_one_task(&context.pool)).await.unwrap();
+        let _ = (process_one_task(&context.pool, None)).await.unwrap();
         let stored = (task.find_record(&context.pool)).await.unwrap();
         if stored.status == TaskStatus::Failed.as_str() {
             assert_eq!(stored.total_items, 0);
