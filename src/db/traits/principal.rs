@@ -89,6 +89,10 @@ pub async fn mutate_principal_settings(
             PrincipalSettingsMutation::Reset => PrincipalSettings::default(),
         };
 
+        if before == after {
+            return Ok(after);
+        }
+
         diesel::update(principals::table.filter(principals::id.eq(principal_id_value)))
             .set(principals::settings.eq(after.as_value()))
             .execute(conn)

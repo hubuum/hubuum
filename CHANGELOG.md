@@ -50,6 +50,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   notification workers before dropping the database pool. Interrupted active
   tasks are marked failed instead of remaining active.
 
+### Fixed
+
+- Principal settings mutations that leave the document unchanged are now
+  treated as no-ops, avoiding misleading `updated` audit events and
+  `updated_at` changes.
+
 ### Security
 
 - Hardened login handling against username enumeration and concurrent
