@@ -1,27 +1,29 @@
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
-use crate::db::DbPool;
+use crate::api::response::ApiResponse;
+use crate::api::v1::handlers::history::HistoryResponse;
+use crate::can;
+use crate::db::traits::UserPermissions;
+use crate::db::traits::authz::scope_allows;
+use crate::db::traits::history::{collection_as_of, collection_history_paginated_with_total_count};
+use crate::db::traits::user::UserSearchBackend;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, Authenticated};
-use crate::models::{
-    Collection, CollectionID, EffectiveGroupPermission, Group, GroupID, GroupPermission,
-    GroupResponse, NewCollectionWithAssignee, Permission, Permissions, PermissionsList,
-    UpdateCollection, UpdateCollectionParent,
-};
-
+use crate::models::collection as collection_model;
 use crate::models::search::parse_query_parameter;
-use crate::pagination::{count_query_options, prepare_db_pagination};
-
-use crate::api::response::ApiResponse;
+use crate::models::{
+    Collection, CollectionHistory, CollectionID, EffectiveGroupPermission, Group, GroupID,
+    GroupPermission, GroupResponse, NewCollectionWithAssignee, Permission, Permissions,
+    PermissionsList, PrincipalID, UpdateCollection, UpdateCollectionParent,
+};
+use crate::pagination::{SKIPPED_TOTAL_COUNT, count_query_options, prepare_db_pagination};
+use crate::permissions::visibility::authorize_cursor_page;
+use crate::permissions::{AppContext, PrincipalRef, ResourceRef};
 use actix_web::{
     HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, routes, web,
 };
 use tracing::{debug, info};
 
-use crate::can;
-
-use crate::db::traits::UserPermissions;
-use crate::db::traits::history::{collection_as_of, collection_history_paginated_with_total_count};
 use crate::traits::{
     CanDelete, CanSave, CanUpdate, CollectionAccessors, PermissionController, Search, SelfAccessors,
 };
@@ -41,7 +43,7 @@ use crate::traits::{
 #[get("")]
 #[get("/")]
 pub async fn get_collections(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -55,16 +57,43 @@ pub async fn get_collections(
         Err(e) => return Err(e),
     };
 
-    let total_count = if params.include_total {
-        user.count_collections(&pool, count_query_options(&params), requestor.scopes())
-            .await?
+    let (result, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {
+        let total_count = if params.include_total {
+            user.count_collections(&pool, count_query_options(&params), requestor.scopes())
+                .await?
+        } else {
+            SKIPPED_TOTAL_COUNT
+        };
+        let search_params = prepare_db_pagination::<Collection>(&params)?;
+        let result = user
+            .search_collections(&pool, search_params, requestor.scopes())
+            .await?;
+        (result, total_count)
     } else {
-        crate::pagination::SKIPPED_TOTAL_COUNT
-    };
-    let search_params = prepare_db_pagination::<Collection>(&params)?;
-    let result = user
-        .search_collections(&pool, search_params, requestor.scopes())
+        if !scope_allows(requestor.scopes(), &[Permissions::ReadCollection]) {
+            return ApiResponse::paginated(Vec::new(), 0, &params);
+        }
+        let candidates = user
+            .search_collections_from_backend_with_admin_status(
+                &pool,
+                count_query_options(&params),
+                true,
+                None,
+            )
+            .await?;
+        let principal = PrincipalRef::load(&pool, user).await?;
+        let search_params = prepare_db_pagination::<Collection>(&params)?;
+        let page = authorize_cursor_page(
+            pool.permission_backend(),
+            &principal,
+            candidates,
+            vec![Permissions::ReadCollection],
+            &search_params,
+            |collection| ResourceRef::collection(collection.id),
+        )
         .await?;
+        (page.rows, page.total_count)
+    };
     ApiResponse::paginated(result, total_count, &params)
 }
 
@@ -85,7 +114,7 @@ pub async fn get_collections(
 #[post("")]
 #[post("/")]
 pub async fn create_collection(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     new_collection_request: web::Json<NewCollectionWithAssignee>,
     requestor: AdminAccess,
     req: HttpRequest,
@@ -120,7 +149,7 @@ pub async fn create_collection(
 )]
 #[get("/{collection_id}")]
 pub async fn get_collection(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
 ) -> Result<impl Responder, ApiError> {
@@ -161,7 +190,7 @@ pub async fn get_collection(
 )]
 #[patch("/{collection_id}")]
 pub async fn update_collection(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     update_data: web::Json<UpdateCollection>,
@@ -207,7 +236,7 @@ pub async fn update_collection(
 )]
 #[delete("/{collection_id}")]
 pub async fn delete_collection(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     req: HttpRequest,
@@ -248,7 +277,7 @@ pub async fn delete_collection(
 )]
 #[get("/{collection_id}/children")]
 pub async fn get_collection_children(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
 ) -> Result<impl Responder, ApiError> {
@@ -261,7 +290,7 @@ pub async fn get_collection_children(
         collection.clone()
     );
 
-    let children = crate::models::collection::collection_children(&pool, collection).await?;
+    let children = collection_model::collection_children(&pool, collection).await?;
     Ok(ApiResponse::new(children, StatusCode::OK))
 }
 
@@ -281,7 +310,7 @@ pub async fn get_collection_children(
 )]
 #[get("/{collection_id}/ancestors")]
 pub async fn get_collection_ancestors(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
 ) -> Result<impl Responder, ApiError> {
@@ -294,7 +323,7 @@ pub async fn get_collection_ancestors(
         collection.clone()
     );
 
-    let ancestors = crate::models::collection::collection_ancestors(&pool, collection).await?;
+    let ancestors = collection_model::collection_ancestors(&pool, collection).await?;
     Ok(ApiResponse::new(ancestors, StatusCode::OK))
 }
 
@@ -318,7 +347,7 @@ pub async fn get_collection_ancestors(
 )]
 #[put("/{collection_id}/parent")]
 pub async fn move_collection_parent(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     update_parent: web::Json<UpdateCollectionParent>,
@@ -356,7 +385,7 @@ pub async fn move_collection_parent(
     );
 
     let event_context = requestor.event_context(&req);
-    let updated = crate::models::collection::move_collection(
+    let updated = collection_model::move_collection(
         &pool,
         collection.id,
         new_parent_id.id(),
@@ -384,7 +413,7 @@ pub async fn move_collection_parent(
 )]
 #[get("/{collection_id}/permissions")]
 pub async fn get_collection_permissions(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     req: HttpRequest,
@@ -407,14 +436,19 @@ pub async fn get_collection_permissions(
     );
 
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
-    let (permissions, total_count) =
-        crate::models::collection::groups_on_paginated_with_total_count(
+    let (permissions, total_count) = if pool.permission_backend().uses_sql_permission_store() {
+        collection_model::groups_on_paginated_with_total_count(
             &pool,
             collection.clone(),
             vec![],
             &search_params,
         )
-        .await?;
+        .await?
+    } else {
+        pool.permission_backend()
+            .groups_with_permissions_on(collection.id, &[], &search_params)
+            .await?
+    };
     ApiResponse::paginated(permissions, total_count, &params)
 }
 
@@ -436,11 +470,10 @@ pub async fn get_collection_permissions(
 )]
 #[get("/{collection_id}/permissions/group/{group_id}")]
 pub async fn get_collection_group_permissions(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID)>,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::collection::group_on;
     use crate::models::permissions::Permissions;
 
     let (collection_id, group_id) = params.into_inner();
@@ -461,7 +494,14 @@ pub async fn get_collection_group_permissions(
         collection
     );
 
-    let permissions = group_on(&pool, collection.id, group_id.id()).await?;
+    let permissions = if pool.permission_backend().uses_sql_permission_store() {
+        collection_model::group_on(&pool, collection.id, group_id.id()).await?
+    } else {
+        pool.permission_backend()
+            .group_permission_on(collection.id, group_id.id())
+            .await?
+            .ok_or_else(|| ApiError::NotFound("Permission record not found".to_string()))?
+    };
 
     Ok(ApiResponse::new(permissions, StatusCode::OK))
 }
@@ -483,10 +523,15 @@ pub async fn get_collection_group_permissions(
 )]
 #[get("/{collection_id}/permissions/effective/group/{group_id}")]
 pub async fn get_collection_effective_group_permissions(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID)>,
 ) -> Result<impl Responder, ApiError> {
+    if !pool.permission_backend().supports_permission_provenance() {
+        return Err(ApiError::NotImplemented(
+            "effective permission provenance is unavailable for the treetop backend".to_string(),
+        ));
+    }
     let (collection_id, group_id) = params.into_inner();
     let collection = collection_id.instance(&pool).await?;
     can!(
@@ -498,8 +543,7 @@ pub async fn get_collection_effective_group_permissions(
     );
 
     let permissions =
-        crate::models::collection::effective_group_on(&pool, collection_id.id(), group_id.id())
-            .await?;
+        collection_model::effective_group_on(&pool, collection_id.id(), group_id.id()).await?;
 
     Ok(ApiResponse::new(permissions, StatusCode::OK))
 }
@@ -533,7 +577,7 @@ pub async fn get_collection_effective_group_permissions(
 )]
 #[post("/{collection_id}/permissions/group/{group_id}")]
 pub async fn grant_collection_group_permissions(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
@@ -559,10 +603,16 @@ pub async fn grant_collection_group_permissions(
         collection
     );
 
-    let event_context = requestor.event_context(&req);
-    collection
-        .grant(&pool, group_id.id(), permissions, Some(&event_context))
-        .await?;
+    if pool.permission_backend().supports_mutation() {
+        let event_context = requestor.event_context(&req);
+        collection
+            .grant(&pool, group_id.id(), permissions, Some(&event_context))
+            .await?;
+    } else {
+        pool.permission_backend()
+            .apply_permissions(collection.id, group_id.id(), permissions, false)
+            .await?;
+    }
 
     Ok(ApiResponse::created_empty())
 }
@@ -588,7 +638,7 @@ pub async fn grant_collection_group_permissions(
 )]
 #[put("/{collection_id}/permissions/group/{group_id}")]
 pub async fn replace_collection_group_permissions(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
@@ -621,10 +671,16 @@ pub async fn replace_collection_group_permissions(
         ));
     }
 
-    let event_context = requestor.event_context(&req);
-    collection
-        .set_permissions(&pool, group_id.id(), permissions, Some(&event_context))
-        .await?;
+    if pool.permission_backend().supports_mutation() {
+        let event_context = requestor.event_context(&req);
+        collection
+            .set_permissions(&pool, group_id.id(), permissions, Some(&event_context))
+            .await?;
+    } else {
+        pool.permission_backend()
+            .apply_permissions(collection.id, group_id.id(), permissions, true)
+            .await?;
+    }
 
     Ok(ApiResponse::ok_empty())
 }
@@ -647,7 +703,7 @@ pub async fn replace_collection_group_permissions(
 )]
 #[delete("/{collection_id}/permissions/group/{group_id}")]
 pub async fn revoke_collection_group_permissions(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID)>,
     req: HttpRequest,
@@ -670,10 +726,16 @@ pub async fn revoke_collection_group_permissions(
         collection
     );
 
-    let event_context = requestor.event_context(&req);
-    collection
-        .revoke_all(&pool, group_id.id(), Some(&event_context))
-        .await?;
+    if pool.permission_backend().supports_mutation() {
+        let event_context = requestor.event_context(&req);
+        collection
+            .revoke_all(&pool, group_id.id(), Some(&event_context))
+            .await?;
+    } else {
+        pool.permission_backend()
+            .revoke_all(collection.id, group_id.id())
+            .await?;
+    }
 
     Ok(ApiResponse::no_content())
 }
@@ -696,7 +758,7 @@ pub async fn revoke_collection_group_permissions(
 )]
 #[get("/{collection_id}/permissions/group/{group_id}/{permission}")]
 pub async fn get_collection_group_permission(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID, Permissions)>,
 ) -> Result<impl Responder, ApiError> {
@@ -721,7 +783,15 @@ pub async fn get_collection_group_permission(
         collection
     );
 
-    if group_can_on(&pool, group_id.id(), collection, permission).await? {
+    let allowed = if pool.permission_backend().uses_sql_permission_store() {
+        group_can_on(&pool, group_id.id(), collection, permission).await?
+    } else {
+        pool.permission_backend()
+            .group_permission_on(collection.id, group_id.id())
+            .await?
+            .is_some_and(|row| row.granted().contains(&permission))
+    };
+    if allowed {
         return Ok(ApiResponse::no_content());
     }
     Ok(ApiResponse::not_found_empty())
@@ -747,7 +817,7 @@ pub async fn get_collection_group_permission(
 )]
 #[post("/{collection_id}/permissions/group/{group_id}/{permission}")]
 pub async fn grant_collection_group_permission(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID, Permissions)>,
     req: HttpRequest,
@@ -771,15 +841,17 @@ pub async fn grant_collection_group_permission(
         collection
     );
 
-    let event_context = requestor.event_context(&req);
-    collection
-        .grant(
-            &pool,
-            group_id.id(),
-            PermissionsList::new([permission]),
-            Some(&event_context),
-        )
-        .await?;
+    let permissions = PermissionsList::new([permission]);
+    if pool.permission_backend().supports_mutation() {
+        let event_context = requestor.event_context(&req);
+        collection
+            .grant(&pool, group_id.id(), permissions, Some(&event_context))
+            .await?;
+    } else {
+        pool.permission_backend()
+            .apply_permissions(collection.id, group_id.id(), permissions, false)
+            .await?;
+    }
 
     Ok(ApiResponse::created_empty())
 }
@@ -803,7 +875,7 @@ pub async fn grant_collection_group_permission(
 )]
 #[delete("/{collection_id}/permissions/group/{group_id}/{permission}")]
 pub async fn revoke_collection_group_permission(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID, Permissions)>,
     req: HttpRequest,
@@ -827,15 +899,17 @@ pub async fn revoke_collection_group_permission(
         collection
     );
 
-    let event_context = requestor.event_context(&req);
-    collection
-        .revoke(
-            &pool,
-            group_id.id(),
-            PermissionsList::new([permission]),
-            Some(&event_context),
-        )
-        .await?;
+    let permissions = PermissionsList::new([permission]);
+    if pool.permission_backend().supports_mutation() {
+        let event_context = requestor.event_context(&req);
+        collection
+            .revoke(&pool, group_id.id(), permissions, Some(&event_context))
+            .await?;
+    } else {
+        pool.permission_backend()
+            .revoke_permissions(collection.id, group_id.id(), permissions)
+            .await?;
+    }
 
     Ok(ApiResponse::no_content())
 }
@@ -858,11 +932,16 @@ pub async fn revoke_collection_group_permission(
 )]
 #[get("/{collection_id}/permissions/principal/{principal_id}")]
 pub async fn get_collection_principal_permissions(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
-    params: web::Path<(CollectionID, crate::models::PrincipalID)>,
+    params: web::Path<(CollectionID, PrincipalID)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
+    if !pool.permission_backend().supports_permission_provenance() {
+        return Err(ApiError::NotImplemented(
+            "principal permission provenance is unavailable for the treetop backend".to_string(),
+        ));
+    }
     let (collection_id, principal_id) = params.into_inner();
     let query_options = parse_query_parameter(req.query_string())?;
 
@@ -883,14 +962,13 @@ pub async fn get_collection_principal_permissions(
     );
 
     let search_params = prepare_db_pagination::<GroupPermission>(&query_options)?;
-    let (permissions, total_count) =
-        crate::models::collection::principal_on_paginated_with_total_count(
-            &pool,
-            principal_id,
-            collection.clone(),
-            &search_params,
-        )
-        .await?;
+    let (permissions, total_count) = collection_model::principal_on_paginated_with_total_count(
+        &pool,
+        principal_id,
+        collection.clone(),
+        &search_params,
+    )
+    .await?;
 
     if permissions.is_empty() && query_options.cursor.is_none() {
         return Err(ApiError::NotFound("No permissions found".to_string()));
@@ -916,10 +994,15 @@ pub async fn get_collection_principal_permissions(
 )]
 #[get("/{collection_id}/permissions/effective/principal/{principal_id}")]
 pub async fn get_collection_effective_principal_permissions(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
-    params: web::Path<(CollectionID, crate::models::PrincipalID)>,
+    params: web::Path<(CollectionID, PrincipalID)>,
 ) -> Result<impl Responder, ApiError> {
+    if !pool.permission_backend().supports_permission_provenance() {
+        return Err(ApiError::NotImplemented(
+            "effective permission provenance is unavailable for the treetop backend".to_string(),
+        ));
+    }
     let (collection_id, principal_id) = params.into_inner();
     let collection = collection_id.instance(&pool).await?;
     can!(
@@ -931,7 +1014,7 @@ pub async fn get_collection_effective_principal_permissions(
     );
 
     let permissions =
-        crate::models::collection::effective_principal_on(&pool, principal_id, collection).await?;
+        collection_model::effective_principal_on(&pool, principal_id, collection).await?;
 
     Ok(ApiResponse::new(permissions, StatusCode::OK))
 }
@@ -954,7 +1037,7 @@ pub async fn get_collection_effective_principal_permissions(
 )]
 #[get("/{collection_id}/has_permissions/{permission}")]
 pub async fn get_collection_groups_with_permission(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, Permissions)>,
     req: HttpRequest,
@@ -979,14 +1062,24 @@ pub async fn get_collection_groups_with_permission(
     );
 
     let search_params = prepare_db_pagination::<Group>(&query_options)?;
-    let (groups, total_count) =
-        crate::models::collection::groups_can_on_paginated_with_total_count(
+    let (groups, total_count) = if pool.permission_backend().uses_sql_permission_store() {
+        collection_model::groups_can_on_paginated_with_total_count(
             &pool,
             collection.id,
             permission,
             &search_params,
         )
-        .await?;
+        .await?
+    } else {
+        let (permissions, total_count) = pool
+            .permission_backend()
+            .groups_with_permissions_on(collection.id, &[permission], &search_params)
+            .await?;
+        (
+            permissions.into_iter().map(|row| row.group).collect(),
+            total_count,
+        )
+    };
 
     let response = GroupResponse::from_groups(&pool, groups).await?;
 
@@ -1000,7 +1093,7 @@ pub async fn get_collection_groups_with_permission(
     security(("bearer_auth" = [])),
     params(("collection_id" = i32, Path, description = "Collection ID")),
     responses(
-        (status = 200, description = "Collection history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::CollectionHistory>]),
+        (status = 200, description = "Collection history", body = [HistoryResponse<CollectionHistory>]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Collection not found", body = ApiErrorResponse)
@@ -1008,7 +1101,7 @@ pub async fn get_collection_groups_with_permission(
 )]
 #[get("/{collection_id}/history")]
 pub async fn get_collection_history(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     req: HttpRequest,
@@ -1037,7 +1130,7 @@ pub async fn get_collection_history(
     };
 
     let params = parse_query_parameter(req.query_string())?;
-    let search_params = prepare_db_pagination::<crate::models::CollectionHistory>(&params)?;
+    let search_params = prepare_db_pagination::<CollectionHistory>(&params)?;
     let (rows, total_count) =
         collection_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
     if require_history && rows.is_empty() && params.cursor.is_none() {
@@ -1072,7 +1165,7 @@ pub async fn get_collection_history(
         ("at" = String, Query, description = "RFC3339 timestamp")
     ),
     responses(
-        (status = 200, description = "Collection version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::CollectionHistory>),
+        (status = 200, description = "Collection version at timestamp", body = HistoryResponse<CollectionHistory>),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
@@ -1081,7 +1174,7 @@ pub async fn get_collection_history(
 )]
 #[get("/{collection_id}/history/as-of")]
 pub async fn get_collection_as_of(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     req: HttpRequest,

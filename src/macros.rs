@@ -83,17 +83,34 @@ macro_rules! can {
     // scope bypass. Resource/task handlers pass `requestor.scopes()`; truly
     // unscoped internal callers pass `None` explicitly.
     ($pool:expr, $subject:expr, $scopes:expr, [$($perm:expr),+], $($collection:expr),+) => {{
-        $subject.can(
-            $pool,
-            vec![$($perm),+],
-            vec![
-                // This should be fairly cheap. We're just getting the collection ID for each object,
-                // which is a field lookup returning a `CollectionID`. There is no database interaction
-                // here but the trait definition requires the pool to be passed.
-                $($collection.collection_id($pool).await?),+
-            ],
-            $scopes,
-        ).await?
+        use $crate::permissions::AuthzTarget as _;
+        use $crate::traits::BackendContext as _;
+
+        match $crate::traits::BackendContext::permission_backend($pool) {
+            Some(permission_backend) if !permission_backend.uses_sql_permission_store() => {
+                let resources = vec![
+                    $($collection.to_resource_ref($pool.db_pool()).await?),+
+                ];
+                $crate::permissions::authorize_resources(
+                    permission_backend,
+                    $pool.db_pool(),
+                    $subject,
+                    $scopes,
+                    vec![$($perm),+],
+                    resources,
+                ).await?
+            }
+            _ => {
+                $subject.can(
+                    $pool,
+                    vec![$($perm),+],
+                    vec![
+                        $($collection.collection_id($pool).await?),+
+                    ],
+                    $scopes,
+                ).await?
+            }
+        }
     }};
 }
 

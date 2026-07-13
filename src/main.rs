@@ -15,6 +15,7 @@ mod middlewares;
 mod models;
 mod observability;
 mod pagination;
+pub mod permissions;
 mod schema;
 mod tasks;
 #[cfg(test)]
@@ -41,14 +42,15 @@ use crate::config::initialize_config;
 use crate::config::running::RunningConfig;
 use crate::config::token_hash_key_is_ephemeral;
 use crate::errors::{
-    EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_TLS_ERROR, fatal_error,
-    json_error_handler,
+    EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_PERMISSION_BACKEND_ERROR,
+    EXIT_CODE_TLS_ERROR, fatal_error, json_error_handler,
 };
 use crate::events::{
     ensure_event_delivery_worker_running, ensure_event_fanout_worker_running,
     ensure_event_retention_worker_running,
 };
 use crate::lifecycle::shutdown_background_workers;
+use crate::permissions::{AppContext, build_permission_backend};
 use crate::tasks::ensure_task_worker_running;
 use crate::utilities::is_valid_log_level;
 
@@ -118,6 +120,16 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
+    let permission_backend = build_permission_backend(&config, pool.clone())
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Failed to initialize permission backend: {error}"),
+                EXIT_CODE_PERMISSION_BACKEND_ERROR,
+            )
+        });
+    let app_context = AppContext::new(pool.clone(), permission_backend);
+
     let active_event_sinks =
         match db::traits::event_subscription::enabled_event_sink_count(&pool).await {
             Ok(count) => Some(count),
@@ -156,6 +168,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(Data::new(proxy_trust.clone()))
             .app_data(Data::new(running_config.clone()))
             .app_data(Data::new(app_pool.clone()))
+            .app_data(Data::new(app_context.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .route("/api-doc/openapi.json", web::get().to(openapi_json_handler));
 

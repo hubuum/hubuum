@@ -17,6 +17,7 @@ pub struct RunningConfig {
     pub exports: ExportConfig,
     pub remote_calls: RemoteCallConfig,
     pub authentication: AuthenticationConfig,
+    pub permissions: PermissionConfig,
     pub pagination: PaginationConfig,
     pub network: NetworkConfig,
 }
@@ -134,6 +135,16 @@ pub struct PaginationConfig {
     pub default_page_limit: usize,
     pub max_page_limit: usize,
     pub max_transitive_depth: i32,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct PermissionConfig {
+    pub backend: String,
+    pub treetop_url: SecretStatus,
+    pub treetop_connect_timeout_ms: u64,
+    pub treetop_request_timeout_ms: u64,
+    pub treetop_ca_certificate_configured: bool,
+    pub treetop_accept_invalid_certificates: bool,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -257,6 +268,19 @@ impl From<&AppConfig> for RunningConfig {
                     subnet_prefix_v6: config.login_rate_limit_subnet_prefix_v6,
                 },
             },
+            permissions: PermissionConfig {
+                backend: match config.permission_backend {
+                    super::PermissionBackendKind::Local => "local".to_string(),
+                    super::PermissionBackendKind::Treetop => "treetop".to_string(),
+                },
+                treetop_url: SecretStatus {
+                    configured: config.treetop_url.is_some(),
+                },
+                treetop_connect_timeout_ms: config.treetop_connect_timeout_ms,
+                treetop_request_timeout_ms: config.treetop_request_timeout_ms,
+                treetop_ca_certificate_configured: config.treetop_ca_cert.is_some(),
+                treetop_accept_invalid_certificates: config.treetop_accept_invalid_certs,
+            },
             pagination: PaginationConfig {
                 default_page_limit: config.default_page_limit,
                 max_page_limit: config.max_page_limit,
@@ -285,6 +309,7 @@ mod tests {
         config.tls_key_path = Some("/secret/private-key.pem".to_string());
         config.tls_key_passphrase = Some("correct horse battery staple".to_string());
         config.auth_config_path = Some("/secret/providers.toml".to_string());
+        config.treetop_url = Some("https://treetop-token@example.invalid".to_string());
 
         let json = serde_json::to_string(&RunningConfig::from(&config)).unwrap();
         let debug = format!("{config:?}");
@@ -294,6 +319,7 @@ mod tests {
         assert!(!json.contains("private-key.pem"));
         assert!(!json.contains("correct horse battery staple"));
         assert!(!json.contains("providers.toml"));
+        assert!(!json.contains("treetop-token"));
         assert!(json.contains("\"configured\":true"));
         assert!(!debug.contains("secret-password"));
         assert!(!debug.contains("correct horse battery staple"));

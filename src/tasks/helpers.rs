@@ -74,6 +74,8 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
         }
         ApiError::InternalServerError(_) => "An internal error occurred".to_string(),
         ApiError::ServiceUnavailable(_) => "Service unavailable".to_string(),
+        ApiError::NotImplemented(_) => "Operation is not implemented".to_string(),
+        ApiError::PermissionBackendUnavailable(_) => "Permission backend unavailable".to_string(),
         ApiError::HashError(_) => "Hashing operation failed".to_string(),
         ApiError::Unauthorized(msg) => format!("Unauthorized: {}", msg),
         ApiError::TooManyRequests(msg) => format!("Too many requests: {}", msg),

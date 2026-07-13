@@ -389,7 +389,7 @@ pub(crate) async fn class_collection_id(
 /// Build the filtered (but unsorted, unpaginated) query for listing export templates within the
 /// collections the caller may see.
 fn build_list_query<'a>(
-    allowed_collection_ids: &'a [i32],
+    allowed_collection_ids: Option<&'a [i32]>,
     query_options: &'a QueryOptions,
 ) -> Result<crate::schema::export_templates::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
     use crate::schema::export_templates::dsl::{
@@ -397,15 +397,10 @@ fn build_list_query<'a>(
         updated_at,
     };
 
-    if allowed_collection_ids.is_empty() {
-        return Ok(export_templates
-            .into_boxed()
-            .filter(collection_id.eq_any(allowed_collection_ids)));
+    let mut query = export_templates.into_boxed();
+    if let Some(allowed_collection_ids) = allowed_collection_ids {
+        query = query.filter(collection_id.eq_any(allowed_collection_ids));
     }
-
-    let mut query = export_templates
-        .into_boxed()
-        .filter(collection_id.eq_any(allowed_collection_ids));
 
     for param in &query_options.filters {
         let operator = param.operator.clone();
@@ -437,6 +432,22 @@ fn build_list_query<'a>(
 pub(crate) async fn list_rows_with_total_count(
     pool: &DbPool,
     allowed_collection_ids: &[i32],
+    query_options: &QueryOptions,
+) -> Result<(Vec<ExportTemplateRow>, i64), ApiError> {
+    list_rows_with_optional_collection_scope(pool, Some(allowed_collection_ids), query_options)
+        .await
+}
+
+pub(crate) async fn list_all_rows_with_total_count(
+    pool: &DbPool,
+    query_options: &QueryOptions,
+) -> Result<(Vec<ExportTemplateRow>, i64), ApiError> {
+    list_rows_with_optional_collection_scope(pool, None, query_options).await
+}
+
+async fn list_rows_with_optional_collection_scope(
+    pool: &DbPool,
+    allowed_collection_ids: Option<&[i32]>,
     query_options: &QueryOptions,
 ) -> Result<(Vec<ExportTemplateRow>, i64), ApiError> {
     let query = build_list_query(allowed_collection_ids, query_options)?;

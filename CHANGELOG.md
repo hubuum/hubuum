@@ -9,6 +9,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added a pluggable permission backend. Local SQL authorization remains the
+  default and is available in every build, while opt-in Treetop support makes
+  Cedar policies authoritative across point checks, list and search visibility,
+  tasks, relations, templates, and reverse permission queries.
 - Added a Prometheus-compatible runtime metrics endpoint, enabled by default at
   `/metrics`, with low-cardinality metrics for HTTP traffic, database activity,
   background tasks, imports, exports, remote calls, authentication, event

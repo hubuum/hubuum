@@ -17,6 +17,7 @@ pub enum EnvironmentOwner {
     Pagination,
     Relations,
     Network,
+    Permissions,
     Operations,
 }
 
@@ -133,6 +134,12 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_TRUSTED_PROXIES", Network),
     option!("HUBUUM_TRUSTED_PROXY_HOPS", Network),
     option!("HUBUUM_CLIENT_ALLOWLIST", Network),
+    option!("HUBUUM_PERMISSION_BACKEND", Permissions),
+    option!("HUBUUM_TREETOP_URL", Permissions, sensitive),
+    option!("HUBUUM_TREETOP_CONNECT_TIMEOUT_MS", Permissions),
+    option!("HUBUUM_TREETOP_REQUEST_TIMEOUT_MS", Permissions),
+    option!("HUBUUM_TREETOP_CA_CERT", Permissions),
+    option!("HUBUUM_TREETOP_ACCEPT_INVALID_CERTS", Permissions),
 ];
 
 /// Exact Hubuum variables resolved outside clap's `AppConfig` adapter.
@@ -141,6 +148,7 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_BUILD_GIT_SHA", Operations),
     option!("HUBUUM_SKIP_MIGRATIONS", Operations),
     option!("HUBUUM_AUTH_CONFIG_HOST_PATH", Operations, sensitive),
+    option!("HUBUUM_TREETOP_TEST_URL", Permissions, sensitive),
 ];
 
 /// Registered dynamic secret namespaces. The suffix is a consumer-supplied
@@ -159,6 +167,7 @@ pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/bin/admin.rs",
     "src/logger.rs",
     "src/tasks/remote_call.rs",
+    "src/tests/permissions/live_treetop_parity.rs",
     "crates/hubuum-events-core/src/lib.rs",
 ];
 

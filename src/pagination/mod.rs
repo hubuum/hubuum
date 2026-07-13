@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use base64::Engine;
@@ -143,6 +144,81 @@ where
     };
 
     Ok(Page { items, next_cursor })
+}
+
+/// Apply the same stable ordering and cursor semantics as the SQL pagination
+/// macros to rows synthesized or authorized outside PostgreSQL. `limit` is
+/// applied last; callers should pass the prepared `limit + 1` value so
+/// [`finalize_page`] can produce the next cursor normally.
+pub fn paginate_in_memory<T>(
+    mut items: Vec<T>,
+    query_options: &QueryOptions,
+) -> Result<Vec<T>, ApiError>
+where
+    T: CursorPaginated,
+{
+    let sorts = normalized_sorts::<T>(&query_options.sort)?;
+    items.sort_by(|left, right| {
+        compare_cursor_values(left, right, &sorts).unwrap_or(Ordering::Equal)
+    });
+
+    if let Some(cursor) = query_options.cursor.as_deref() {
+        let cursor_values = decode_cursor_values(cursor, &sorts)?;
+        let mut filtered = Vec::with_capacity(items.len());
+        for item in items {
+            if compare_item_to_values(&item, &cursor_values, &sorts)? == Ordering::Greater {
+                filtered.push(item);
+            }
+        }
+        items = filtered;
+    }
+
+    if let Some(limit) = query_options.limit {
+        items.truncate(limit);
+    }
+    Ok(items)
+}
+
+fn compare_cursor_values<T>(left: &T, right: &T, sorts: &[SortParam]) -> Result<Ordering, ApiError>
+where
+    T: CursorPaginated,
+{
+    for sort in sorts {
+        let ordering = left
+            .cursor_value(&sort.field)?
+            .cmp(&right.cursor_value(&sort.field)?);
+        let ordering = if sort.descending {
+            ordering.reverse()
+        } else {
+            ordering
+        };
+        if ordering != Ordering::Equal {
+            return Ok(ordering);
+        }
+    }
+    Ok(Ordering::Equal)
+}
+
+fn compare_item_to_values<T>(
+    item: &T,
+    values: &[CursorValue],
+    sorts: &[SortParam],
+) -> Result<Ordering, ApiError>
+where
+    T: CursorPaginated,
+{
+    for (sort, cursor_value) in sorts.iter().zip(values) {
+        let ordering = item.cursor_value(&sort.field)?.cmp(cursor_value);
+        let ordering = if sort.descending {
+            ordering.reverse()
+        } else {
+            ordering
+        };
+        if ordering != Ordering::Equal {
+            return Ok(ordering);
+        }
+    }
+    Ok(Ordering::Equal)
 }
 
 pub fn pagination_headers(

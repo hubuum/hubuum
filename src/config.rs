@@ -6,9 +6,7 @@ use std::sync::OnceLock;
 #[cfg(test)]
 use std::sync::{LazyLock, Mutex};
 
-use clap::Parser;
-#[cfg(test)]
-use clap::ValueEnum;
+use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
@@ -100,6 +98,14 @@ fn default_actix_workers() -> usize {
 
 fn default_task_workers() -> usize {
     detected_cpu_count().div_ceil(2).max(1)
+}
+
+#[derive(ValueEnum, Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PermissionBackendKind {
+    #[default]
+    Local,
+    Treetop,
 }
 
 #[derive(Parser, Deserialize, Clone)]
@@ -609,6 +615,48 @@ pub struct AppConfig {
     )]
     pub tls_backend: Option<TlsBackend>,
 
+    /// Active permission backend.
+    #[clap(
+        long,
+        env = "HUBUUM_PERMISSION_BACKEND",
+        value_enum,
+        ignore_case = true,
+        default_value = "local"
+    )]
+    pub permission_backend: PermissionBackendKind,
+
+    /// Treetop server URL (required when HUBUUM_PERMISSION_BACKEND=treetop).
+    #[clap(long, env = "HUBUUM_TREETOP_URL", default_value = None)]
+    pub treetop_url: Option<String>,
+
+    /// Treetop client connect timeout in milliseconds.
+    #[clap(
+        long,
+        env = "HUBUUM_TREETOP_CONNECT_TIMEOUT_MS",
+        default_value_t = 5000
+    )]
+    pub treetop_connect_timeout_ms: u64,
+
+    /// Treetop client request timeout in milliseconds.
+    #[clap(
+        long,
+        env = "HUBUUM_TREETOP_REQUEST_TIMEOUT_MS",
+        default_value_t = 30000
+    )]
+    pub treetop_request_timeout_ms: u64,
+
+    /// Optional path to a CA certificate to trust for the Treetop client.
+    #[clap(long, env = "HUBUUM_TREETOP_CA_CERT", default_value = None)]
+    pub treetop_ca_cert: Option<String>,
+
+    /// Accept invalid Treetop server certificates (development only).
+    #[clap(
+        long,
+        env = "HUBUUM_TREETOP_ACCEPT_INVALID_CERTS",
+        default_value_t = false
+    )]
+    pub treetop_accept_invalid_certs: bool,
+
     /// Enable the Prometheus metrics scrape endpoint.
     #[clap(
         long,
@@ -972,6 +1020,12 @@ impl AppConfig {
             )));
         }
 
+        if self.permission_backend == PermissionBackendKind::Treetop && self.treetop_url.is_none() {
+            return Err(ApiError::BadRequest(
+                "treetop_url is required when permission_backend=treetop".to_string(),
+            ));
+        }
+
         Ok(self)
     }
 }
@@ -1128,6 +1182,20 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             TlsBackend::from_str(&value, true)
                 .unwrap_or_else(|err| panic!("Invalid TLS backend in {key}: {value} ({err})"))
         })
+    }
+
+    fn env_or_default_permission_backend(key: &str, default: &str) -> PermissionBackendKind {
+        env::var(key)
+            .ok()
+            .map(|value| {
+                PermissionBackendKind::from_str(&value, true).unwrap_or_else(|err| {
+                    panic!("Invalid permission backend in {key}: {value} ({err})")
+                })
+            })
+            .unwrap_or_else(|| {
+                PermissionBackendKind::from_str(default, true)
+                    .expect("Invalid default permission backend")
+            })
     }
 
     fn env_or_default_client_allowlist(key: &str, default: &str) -> ClientAllowlist {
@@ -1383,6 +1451,21 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         tls_key_path: env_or_default_opt("HUBUUM_TLS_KEY_PATH", None),
         tls_key_passphrase: env_or_default_opt("HUBUUM_TLS_KEY_PASSPHRASE", None),
         tls_backend: env_or_default_tls_backend("HUBUUM_TLS_BACKEND"),
+        permission_backend: env_or_default_permission_backend("HUBUUM_PERMISSION_BACKEND", "local"),
+        treetop_url: env_or_default_opt("HUBUUM_TREETOP_URL", None),
+        treetop_connect_timeout_ms: env_or_default("HUBUUM_TREETOP_CONNECT_TIMEOUT_MS", "5000")
+            .parse()
+            .unwrap_or(5000),
+        treetop_request_timeout_ms: env_or_default("HUBUUM_TREETOP_REQUEST_TIMEOUT_MS", "30000")
+            .parse()
+            .unwrap_or(30000),
+        treetop_ca_cert: env_or_default_opt("HUBUUM_TREETOP_CA_CERT", None),
+        treetop_accept_invalid_certs: env_or_default(
+            "HUBUUM_TREETOP_ACCEPT_INVALID_CERTS",
+            "false",
+        )
+        .parse()
+        .unwrap_or(false),
         metrics_enabled: env_or_default("HUBUUM_METRICS_ENABLED", "true")
             .parse()
             .unwrap_or(DEFAULT_METRICS_ENABLED),

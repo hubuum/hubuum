@@ -5,10 +5,16 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::db::traits::authz::scope_allows;
+use crate::db::traits::user::UnifiedSearchBackend;
 use crate::errors::ApiError;
 use crate::models::{Collection, HubuumClassExpanded, HubuumObject, Permissions};
 use crate::pagination::{page_limits, validate_page_limit_with_max};
-use crate::traits::BackendContext;
+use crate::permissions::{
+    PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs,
+    ResourceKind, ResourceRef,
+};
+use crate::traits::{BackendContext, Search};
 use crate::utilities::extensions::CustomStringExtensions;
 
 const MAX_UNIFIED_SEARCH_QUERY_LENGTH: usize = 256;
@@ -442,14 +448,48 @@ async fn search_collections<C, S>(
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
     scopes: Option<&[Permissions]>,
+    authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<Collection>, ApiError>
 where
     C: BackendContext + ?Sized,
-    S: crate::traits::Search + ?Sized,
+    S: Search + ?Sized,
 {
-    let rows = user
-        .search_unified_collections(backend, search_spec, scopes)
-        .await?;
+    let rows = if let Some((permission_backend, principal)) = authorization {
+        if !scope_allows(scopes, &[Permissions::ReadCollection]) {
+            Vec::new()
+        } else {
+            let mut candidate_spec = search_spec.clone();
+            candidate_spec.limit_per_kind = usize::MAX;
+            let candidates = user
+                .search_unified_collections_from_backend_with_admin_status(
+                    backend.db_pool(),
+                    &candidate_spec,
+                    None,
+                    true,
+                )
+                .await?;
+            let requests = candidates
+                .iter()
+                .map(|collection| PermissionRequest {
+                    resource: ResourceRef::collection(collection.id),
+                    permissions: vec![Permissions::ReadCollection],
+                })
+                .collect();
+            let decisions = permission_backend
+                .authorize_many(principal, requests)
+                .await?;
+            candidates
+                .into_iter()
+                .zip(decisions)
+                .filter_map(|(candidate, decision)| {
+                    (decision == PermissionDecision::Allow).then_some(candidate)
+                })
+                .collect()
+        }
+    } else {
+        user.search_unified_collections(backend, search_spec, scopes)
+            .await?
+    };
     if rows.is_empty() {
         return Ok(SearchPage {
             items: vec![],
@@ -488,14 +528,56 @@ async fn search_classes<C, S>(
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
     scopes: Option<&[Permissions]>,
+    authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<HubuumClassExpanded>, ApiError>
 where
     C: BackendContext + ?Sized,
-    S: crate::traits::Search + ?Sized,
+    S: Search + ?Sized,
 {
-    let rows = user
-        .search_unified_classes(backend, search_spec, scopes)
-        .await?;
+    let rows = if let Some((permission_backend, principal)) = authorization {
+        if !scope_allows(scopes, &[Permissions::ReadClass]) {
+            Vec::new()
+        } else {
+            let mut candidate_spec = search_spec.clone();
+            candidate_spec.limit_per_kind = usize::MAX;
+            let candidates = user
+                .search_unified_classes_from_backend_with_admin_status(
+                    backend.db_pool(),
+                    &candidate_spec,
+                    None,
+                    true,
+                )
+                .await?;
+            let requests = candidates
+                .iter()
+                .map(|class| PermissionRequest {
+                    resource: ResourceRef {
+                        kind: ResourceKind::Class,
+                        id: class.id,
+                        attrs: ResourceAttrs {
+                            collection_id: Some(class.collection.id),
+                            name: Some(class.name.clone()),
+                            ..Default::default()
+                        },
+                    },
+                    permissions: vec![Permissions::ReadClass],
+                })
+                .collect();
+            let decisions = permission_backend
+                .authorize_many(principal, requests)
+                .await?;
+            candidates
+                .into_iter()
+                .zip(decisions)
+                .filter_map(|(candidate, decision)| {
+                    (decision == PermissionDecision::Allow).then_some(candidate)
+                })
+                .collect()
+        }
+    } else {
+        user.search_unified_classes(backend, search_spec, scopes)
+            .await?
+    };
     if rows.is_empty() {
         return Ok(SearchPage {
             items: vec![],
@@ -532,14 +614,57 @@ async fn search_objects<C, S>(
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
     scopes: Option<&[Permissions]>,
+    authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<HubuumObject>, ApiError>
 where
     C: BackendContext + ?Sized,
-    S: crate::traits::Search + ?Sized,
+    S: Search + ?Sized,
 {
-    let rows = user
-        .search_unified_objects(backend, search_spec, scopes)
-        .await?;
+    let rows = if let Some((permission_backend, principal)) = authorization {
+        if !scope_allows(scopes, &[Permissions::ReadObject]) {
+            Vec::new()
+        } else {
+            let mut candidate_spec = search_spec.clone();
+            candidate_spec.limit_per_kind = usize::MAX;
+            let candidates = user
+                .search_unified_objects_from_backend_with_admin_status(
+                    backend.db_pool(),
+                    &candidate_spec,
+                    None,
+                    true,
+                )
+                .await?;
+            let requests = candidates
+                .iter()
+                .map(|object| PermissionRequest {
+                    resource: ResourceRef {
+                        kind: ResourceKind::Object,
+                        id: object.id,
+                        attrs: ResourceAttrs {
+                            collection_id: Some(object.collection_id),
+                            class_id: Some(object.hubuum_class_id),
+                            name: Some(object.name.clone()),
+                            ..Default::default()
+                        },
+                    },
+                    permissions: vec![Permissions::ReadObject],
+                })
+                .collect();
+            let decisions = permission_backend
+                .authorize_many(principal, requests)
+                .await?;
+            candidates
+                .into_iter()
+                .zip(decisions)
+                .filter_map(|(candidate, decision)| {
+                    (decision == PermissionDecision::Allow).then_some(candidate)
+                })
+                .collect()
+        }
+    } else {
+        user.search_unified_objects(backend, search_spec, scopes)
+            .await?
+    };
     if rows.is_empty() {
         return Ok(SearchPage {
             items: vec![],
@@ -574,12 +699,21 @@ pub async fn execute_unified_search<C, S>(
 ) -> Result<UnifiedSearchResponse, ApiError>
 where
     C: BackendContext + ?Sized,
-    S: crate::traits::Search + ?Sized,
+    S: Search + ?Sized,
 {
     let search_spec = params.search_spec();
+    let external_backend = backend
+        .permission_backend()
+        .filter(|permission_backend| !permission_backend.supports_sql_visibility_pushdown());
+    let principal = if external_backend.is_some() {
+        Some(PrincipalRef::load(backend.db_pool(), user).await?)
+    } else {
+        None
+    };
+    let authorization = external_backend.zip(principal.as_ref());
     let collections_future = async {
         if params.includes(UnifiedSearchKind::Collection) {
-            search_collections(user, backend, params, &search_spec, scopes).await
+            search_collections(user, backend, params, &search_spec, scopes, authorization).await
         } else {
             Ok(SearchPage {
                 items: vec![],
@@ -589,7 +723,7 @@ where
     };
     let classes_future = async {
         if params.includes(UnifiedSearchKind::Class) {
-            search_classes(user, backend, params, &search_spec, scopes).await
+            search_classes(user, backend, params, &search_spec, scopes, authorization).await
         } else {
             Ok(SearchPage {
                 items: vec![],
@@ -599,7 +733,7 @@ where
     };
     let objects_future = async {
         if params.includes(UnifiedSearchKind::Object) {
-            search_objects(user, backend, params, &search_spec, scopes).await
+            search_objects(user, backend, params, &search_spec, scopes, authorization).await
         } else {
             Ok(SearchPage {
                 items: vec![],
@@ -634,12 +768,23 @@ pub async fn execute_unified_search_batch<C, S>(
 ) -> Result<UnifiedSearchBatchResponse, ApiError>
 where
     C: BackendContext + ?Sized,
-    S: crate::traits::Search + ?Sized,
+    S: Search + ?Sized,
 {
     let search_spec = params.search_spec();
+    let external_backend = backend
+        .permission_backend()
+        .filter(|permission_backend| !permission_backend.supports_sql_visibility_pushdown());
+    let principal = if external_backend.is_some() {
+        Some(PrincipalRef::load(backend.db_pool(), user).await?)
+    } else {
+        None
+    };
+    let authorization = external_backend.zip(principal.as_ref());
     match kind {
         UnifiedSearchKind::Collection => {
-            let page = search_collections(user, backend, params, &search_spec, scopes).await?;
+            let page =
+                search_collections(user, backend, params, &search_spec, scopes, authorization)
+                    .await?;
             Ok(UnifiedSearchBatchResponse {
                 kind: kind.batch_key().to_string(),
                 collections: page.items,
@@ -649,7 +794,8 @@ where
             })
         }
         UnifiedSearchKind::Class => {
-            let page = search_classes(user, backend, params, &search_spec, scopes).await?;
+            let page =
+                search_classes(user, backend, params, &search_spec, scopes, authorization).await?;
             Ok(UnifiedSearchBatchResponse {
                 kind: kind.batch_key().to_string(),
                 collections: vec![],
@@ -659,7 +805,8 @@ where
             })
         }
         UnifiedSearchKind::Object => {
-            let page = search_objects(user, backend, params, &search_spec, scopes).await?;
+            let page =
+                search_objects(user, backend, params, &search_spec, scopes, authorization).await?;
             Ok(UnifiedSearchBatchResponse {
                 kind: kind.batch_key().to_string(),
                 collections: vec![],

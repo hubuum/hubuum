@@ -1,12 +1,18 @@
 use crate::db::prelude::*;
+use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::db::DbPool;
+use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
 use crate::events::Event;
 use crate::models::search::{FilterField, SortParam};
+use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::{export_task_outputs, import_task_results, tasks};
+use crate::traits::SelfAccessors;
+use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -587,6 +593,47 @@ impl CursorPaginated for TaskResponse {
     }
 }
 
+impl CursorPaginated for TaskRecord {
+    fn supports_sort(field: &FilterField) -> bool {
+        TaskResponse::supports_sort(field)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id as i64),
+            FilterField::Kind => CursorValue::String(self.kind.clone()),
+            FilterField::Status => CursorValue::String(self.status.clone()),
+            FilterField::SubmittedBy => self
+                .submitted_by
+                .map(|value| CursorValue::Integer(value as i64))
+                .unwrap_or(CursorValue::Null),
+            FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
+            FilterField::StartedAt => self
+                .started_at
+                .map(CursorValue::DateTime)
+                .unwrap_or(CursorValue::Null),
+            FilterField::FinishedAt => self
+                .finished_at
+                .map(CursorValue::DateTime)
+                .unwrap_or(CursorValue::Null),
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Unsupported sort field '{}' for tasks",
+                    field
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        TaskResponse::default_sort()
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        TaskResponse::tie_breaker_sort()
+    }
+}
+
 impl CursorSqlMapping for TaskResponse {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
         Ok(match field {
@@ -686,6 +733,51 @@ impl CursorPaginated for ImportTaskResultResponse {
 
     fn tie_breaker_sort() -> Vec<SortParam> {
         Self::default_sort()
+    }
+}
+
+impl IdAccessor for TaskRecord {
+    fn accessor_id(&self) -> i32 {
+        self.id
+    }
+}
+
+impl IdAccessor for TaskID {
+    fn accessor_id(&self) -> i32 {
+        self.id()
+    }
+}
+
+impl InstanceAdapter<TaskRecord> for TaskRecord {
+    async fn instance_adapter(&self, _pool: &DbPool) -> Result<TaskRecord, ApiError> {
+        Ok(self.clone())
+    }
+}
+
+impl InstanceAdapter<TaskRecord> for TaskID {
+    async fn instance_adapter(&self, pool: &DbPool) -> Result<TaskRecord, ApiError> {
+        self.find_record(pool).await
+    }
+}
+
+#[async_trait]
+impl AuthzTarget for TaskRecord {
+    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        Ok(ResourceRef {
+            kind: ResourceKind::Task,
+            id: self.id,
+            attrs: ResourceAttrs {
+                submitted_by: self.submitted_by,
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait]
+impl AuthzTarget for TaskID {
+    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        self.instance(pool).await?.to_resource_ref(pool).await
     }
 }
 

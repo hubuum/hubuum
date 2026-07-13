@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::db::prelude::*;
 use crate::db::traits::ClassRelation;
 
@@ -13,14 +15,133 @@ use crate::models::{
     HubuumObjectTransitiveLink, NewHubuumClassRelation, NewHubuumObjectRelation, User,
     user_can_on_any,
 };
+use crate::permissions::{ResourceAttrs, ResourceKind, ResourceRef};
 use crate::utilities::aliases::normalize_template_alias;
 use crate::{
-    bind_transitive_filter_params, date_search, numeric_search, string_search, trace_query,
+    apply_query_options, bind_transitive_filter_params, date_search, numeric_search, string_search,
+    trace_query,
 };
 
 use crate::traits::{GroupAccessors, SelfAccessors};
 
 use super::{ObjectRelationsFromUser, Relations, SelfRelations};
+
+/// Build Cedar authorization resources for class relations with one bulk
+/// class lookup. Keeping this in the database layer avoids the two endpoint
+/// queries per relation that `AuthzTarget::to_resource_ref` would otherwise
+/// require on list paths.
+pub async fn class_relation_authorization_resources(
+    pool: &DbPool,
+    relations: &[HubuumClassRelation],
+) -> Result<Vec<ResourceRef>, ApiError> {
+    use crate::schema::hubuumclass::dsl::{hubuumclass, id};
+
+    let class_ids = relations
+        .iter()
+        .flat_map(|relation| [relation.from_hubuum_class_id, relation.to_hubuum_class_id])
+        .collect::<Vec<_>>();
+    let classes = with_connection(pool, async |conn| {
+        hubuumclass
+            .filter(id.eq_any(class_ids))
+            .load::<HubuumClass>(conn)
+            .await
+    })
+    .await?;
+    let by_id = classes
+        .into_iter()
+        .map(|class| (class.id, class))
+        .collect::<HashMap<_, _>>();
+
+    relations
+        .iter()
+        .map(|relation| {
+            let from = by_id.get(&relation.from_hubuum_class_id).ok_or_else(|| {
+                ApiError::InternalServerError(format!(
+                    "class relation {} references missing class {}",
+                    relation.id, relation.from_hubuum_class_id
+                ))
+            })?;
+            let to = by_id.get(&relation.to_hubuum_class_id).ok_or_else(|| {
+                ApiError::InternalServerError(format!(
+                    "class relation {} references missing class {}",
+                    relation.id, relation.to_hubuum_class_id
+                ))
+            })?;
+            Ok(ResourceRef {
+                kind: ResourceKind::ClassRelation,
+                id: relation.id,
+                attrs: ResourceAttrs {
+                    collection_id: (from.collection_id == to.collection_id)
+                        .then_some(from.collection_id),
+                    from_collection_id: Some(from.collection_id),
+                    to_collection_id: Some(to.collection_id),
+                    from_class_id: Some(from.id),
+                    to_class_id: Some(to.id),
+                    ..Default::default()
+                },
+            })
+        })
+        .collect()
+}
+
+/// Build Cedar authorization resources for object relations with one bulk
+/// object lookup, rather than issuing endpoint lookups for every row.
+pub async fn object_relation_authorization_resources(
+    pool: &DbPool,
+    relations: &[HubuumObjectRelation],
+) -> Result<Vec<ResourceRef>, ApiError> {
+    use crate::schema::hubuumobject::dsl::{hubuumobject, id};
+
+    let object_ids = relations
+        .iter()
+        .flat_map(|relation| [relation.from_hubuum_object_id, relation.to_hubuum_object_id])
+        .collect::<Vec<_>>();
+    let objects = with_connection(pool, async |conn| {
+        hubuumobject
+            .filter(id.eq_any(object_ids))
+            .load::<HubuumObject>(conn)
+            .await
+    })
+    .await?;
+    let by_id = objects
+        .into_iter()
+        .map(|object| (object.id, object))
+        .collect::<HashMap<_, _>>();
+
+    relations
+        .iter()
+        .map(|relation| {
+            let from = by_id.get(&relation.from_hubuum_object_id).ok_or_else(|| {
+                ApiError::InternalServerError(format!(
+                    "object relation {} references missing object {}",
+                    relation.id, relation.from_hubuum_object_id
+                ))
+            })?;
+            let to = by_id.get(&relation.to_hubuum_object_id).ok_or_else(|| {
+                ApiError::InternalServerError(format!(
+                    "object relation {} references missing object {}",
+                    relation.id, relation.to_hubuum_object_id
+                ))
+            })?;
+            Ok(ResourceRef {
+                kind: ResourceKind::ObjectRelation,
+                id: relation.id,
+                attrs: ResourceAttrs {
+                    collection_id: (from.collection_id == to.collection_id)
+                        .then_some(from.collection_id),
+                    from_collection_id: Some(from.collection_id),
+                    to_collection_id: Some(to.collection_id),
+                    from_class_id: Some(from.hubuum_class_id),
+                    to_class_id: Some(to.hubuum_class_id),
+                    from_object_id: Some(from.id),
+                    to_object_id: Some(to.id),
+                    class_relation_id: Some(relation.class_relation_id),
+                    ..Default::default()
+                },
+            })
+        })
+        .collect()
+}
 
 fn class_relation_snapshot(relation: &HubuumClassRelation) -> serde_json::Value {
     serde_json::json!({
@@ -305,7 +426,7 @@ where
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, HubuumClassRelation);
+        apply_query_options!(base_query, query_options, HubuumClassRelation);
 
         trace_query!(base_query, "Searching relations");
 

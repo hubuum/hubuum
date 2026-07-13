@@ -11,6 +11,7 @@ pub mod constants;
 pub mod container_build;
 pub mod docs_examples;
 pub mod id_newtypes;
+pub mod permissions;
 pub mod search;
 pub mod temporal;
 pub mod validation;

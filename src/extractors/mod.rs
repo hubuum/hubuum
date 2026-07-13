@@ -8,6 +8,7 @@ use crate::models::permissions::Permissions;
 use crate::models::principal::{Principal, load_principal_by_id};
 use crate::models::token::{PrincipalToken, Token};
 use crate::models::user::User;
+use crate::permissions::{AppContext, PrincipalRef};
 
 use actix_web::{FromRequest, HttpMessage, HttpRequest, dev::Payload, web::Data};
 use futures_util::future::{self, FutureExt};
@@ -120,6 +121,22 @@ fn pool_from_req(req: &HttpRequest) -> Result<Data<DbPool>, ApiError> {
     req.app_data::<Data<DbPool>>()
         .cloned()
         .ok_or_else(|| ApiError::InternalServerError("Pool not found".to_string()))
+}
+
+fn permission_context_from_req(req: &HttpRequest) -> Option<Data<AppContext>> {
+    req.app_data::<Data<AppContext>>().cloned()
+}
+
+async fn selected_backend_is_admin(
+    context: Option<&AppContext>,
+    pool: &DbPool,
+    user: &User,
+) -> Result<bool, ApiError> {
+    let Some(context) = context else {
+        return user.is_admin(pool).await;
+    };
+    let principal = PrincipalRef::load(pool, user).await?;
+    context.permission_backend().is_admin(&principal).await
 }
 
 /// Build the full authenticated context (accepts scoped tokens).
@@ -281,6 +298,7 @@ impl FromRequest for AdminAccess {
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool = pool_from_req(req);
+        let permission_context = permission_context_from_req(req);
         let token_result = extract_token(req);
         let token_meta = token_result
             .as_ref()
@@ -294,7 +312,13 @@ impl FromRequest for AdminAccess {
                 None => human_unscoped_user(&pool, &token).await?,
             };
 
-            if user.is_admin(&pool).await? {
+            if selected_backend_is_admin(
+                permission_context.as_ref().map(|context| context.get_ref()),
+                &pool,
+                &user,
+            )
+            .await?
+            {
                 Ok(AdminAccess { user })
             } else {
                 Err(ApiError::Forbidden("Permission denied".to_string()))
@@ -310,6 +334,7 @@ impl FromRequest for AdminOrSelfAccess {
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         let pool = pool_from_req(req);
+        let permission_context = permission_context_from_req(req);
         let token_result = extract_token(req);
         let token_meta = token_result
             .as_ref()
@@ -326,7 +351,14 @@ impl FromRequest for AdminOrSelfAccess {
             };
             let target_id = self_target_id(&path_info)?;
 
-            if user.is_admin(&pool).await? || user.id == target_id {
+            if selected_backend_is_admin(
+                permission_context.as_ref().map(|context| context.get_ref()),
+                &pool,
+                &user,
+            )
+            .await?
+                || user.id == target_id
+            {
                 Ok(AdminOrSelfAccess { user })
             } else {
                 debug! {

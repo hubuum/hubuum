@@ -1,21 +1,21 @@
 use crate::db::prelude::*;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::db::DbPool;
+use crate::db::traits::authz::AuthzSubject;
 use crate::db::traits::collection as collection_backend;
-use crate::models::group::Group;
-
-use crate::schema::collections;
-
 use crate::errors::ApiError;
-
+use crate::models::group::Group;
 use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::search::QueryOptions;
-use crate::models::{Permission, Permissions};
-
 use crate::models::traits::GroupAccessors;
-use crate::traits::{BackendContext, CollectionAccessors};
+use crate::models::{Permission, Permissions};
+use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
+use crate::schema::collections;
+use crate::traits::{BackendContext, CollectionAccessors, SelfAccessors};
 
 #[derive(
     Serialize,
@@ -138,7 +138,7 @@ pub async fn principal_on<C, S, T>(
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
     C: BackendContext + ?Sized,
-    S: crate::db::traits::authz::AuthzSubject,
+    S: AuthzSubject,
     T: CollectionAccessors,
 {
     collection_backend::principal_on_from_backend(backend.db_pool(), principal, collection_ref)
@@ -153,7 +153,7 @@ pub async fn principal_all_permissions<C, S>(
 ) -> Result<Vec<(Collection, Group, Permission)>, ApiError>
 where
     C: BackendContext + ?Sized,
-    S: crate::db::traits::authz::AuthzSubject,
+    S: AuthzSubject,
 {
     collection_backend::principal_all_permissions_from_backend(backend.db_pool(), principal).await
 }
@@ -215,7 +215,7 @@ pub async fn user_can_on_any<C, U>(
 ) -> Result<Vec<Collection>, ApiError>
 where
     C: BackendContext + ?Sized,
-    U: GroupAccessors + crate::db::traits::authz::AuthzSubject,
+    U: GroupAccessors + AuthzSubject,
 {
     collection_backend::user_can_on_any_from_backend(
         backend.db_pool(),
@@ -472,6 +472,28 @@ pub struct CollectionHistory {
 }
 
 crate::impl_history_pagination!(CollectionHistory, "collections_history");
+
+#[async_trait]
+impl AuthzTarget for Collection {
+    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        Ok(ResourceRef {
+            kind: ResourceKind::Collection,
+            id: self.id,
+            attrs: ResourceAttrs {
+                collection_id: Some(self.id),
+                name: Some(self.name.clone()),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait]
+impl AuthzTarget for CollectionID {
+    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        self.instance(pool).await?.to_resource_ref(pool).await
+    }
+}
 
 #[cfg(test)]
 mod tests {

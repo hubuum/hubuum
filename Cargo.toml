@@ -34,6 +34,7 @@ actix-service = "2"
 actix-web = { version = "4" }
 actix-http = { version = "3" }
 argon2 = "0.6.0-rc.8"
+async-trait = "0.1"
 bytes = "1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
@@ -96,6 +97,9 @@ rustls = { version = "0.23", features = ["aws-lc-rs", "ring"] }
 prometheus = "0.14"
 openssl = { version = "0.10.80", optional = true }
 lru = "0.18.0"
+# treetop-client is currently consumed from git at version 0.0.1. Cargo.lock
+# pins the exact revision; bump explicitly when the upstream API stabilizes.
+treetop-client = { git = "https://github.com/terjekv/treetop-client", optional = true }
 toml = "0.9"
 
 [dev-dependencies]
@@ -113,6 +117,7 @@ swagger-ui = ["dep:utoipa-swagger-ui"]
 tls-rustls = ["actix-web/rustls-0_23"]
 tls-openssl = ["dep:openssl", "actix-web/openssl"]
 valkey = ["dep:hubuum-event-sink-valkey"]
+permissions-treetop = ["dep:treetop-client"]
 embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
 vendored-openssl = ["openssl/vendored"]
 

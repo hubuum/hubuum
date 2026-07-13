@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use crate::db::prelude::*;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -20,10 +21,11 @@ use crate::models::{
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
+use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::export_templates;
 use crate::traits::BackendContext;
 use crate::traits::accessors::{
-    CollectionAccessors, CollectionAdapter, IdAccessor, InstanceAdapter,
+    CollectionAccessors, CollectionAdapter, IdAccessor, InstanceAdapter, SelfAccessors,
 };
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::utilities::exporting::validate_template;
@@ -494,6 +496,17 @@ impl ExportTemplate {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok((items, total_count))
+    }
+
+    /// List candidates without applying local permission-table visibility.
+    /// External authorization backends use this before filtering the rows
+    /// against their own policy decisions.
+    pub async fn list_candidates(
+        pool: &DbPool,
+        query_options: &QueryOptions,
+    ) -> Result<Vec<ExportTemplate>, ApiError> {
+        let (rows, _) = backend::list_all_rows_with_total_count(pool, query_options).await?;
+        rows.into_iter().map(TryInto::try_into).collect()
     }
 }
 
@@ -1246,3 +1259,25 @@ pub struct ExportTemplateHistory {
 }
 
 crate::impl_history_pagination!(ExportTemplateHistory, "export_templates_history");
+
+#[async_trait]
+impl AuthzTarget for ExportTemplate {
+    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        Ok(ResourceRef {
+            kind: ResourceKind::Template,
+            id: self.id,
+            attrs: ResourceAttrs {
+                collection_id: Some(self.collection_id),
+                name: Some(self.name.clone()),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait]
+impl AuthzTarget for ExportTemplateID {
+    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        self.instance(pool).await?.to_resource_ref(pool).await
+    }
+}
