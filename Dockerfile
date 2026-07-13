@@ -70,7 +70,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/usr/src/hubuum/target \
     HUBUUM_BUILD_GIT_SHA="${HUBUUM_BUILD_GIT_SHA}" \
-    find . -path '*/src/*' -type f -exec touch {} + && \
+    find ./src ./crates -path '*/src/*' -type f -exec touch {} + && \
     cargo build ${CARGO_BUILD_FLAGS} --features embedded-migrations \
         --bin hubuum-server --bin hubuum-admin && \
     cp target/release/hubuum-server /tmp/ && \
