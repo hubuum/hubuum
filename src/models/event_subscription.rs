@@ -147,6 +147,27 @@ pub(crate) struct UpdateEventSinkRow {
     pub enabled: Option<bool>,
 }
 
+impl UpdateEventSinkRow {
+    pub(crate) fn has_changes(&self, current: &EventSinkRow) -> bool {
+        self.name
+            .as_ref()
+            .is_some_and(|value| value != &current.name)
+            || self
+                .kind
+                .as_ref()
+                .is_some_and(|value| value != &current.kind)
+            || self
+                .config
+                .as_ref()
+                .is_some_and(|value| value != &current.config)
+            || self
+                .secret_ref
+                .as_ref()
+                .is_some_and(|value| value != &current.secret_ref)
+            || self.enabled.is_some_and(|value| value != current.enabled)
+    }
+}
+
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = event_subscriptions)]
 pub(crate) struct EventSubscriptionRow {
@@ -234,6 +255,37 @@ pub(crate) struct UpdateEventSubscriptionRow {
     pub filter: Option<serde_json::Value>,
     pub routing: Option<serde_json::Value>,
     pub enabled: Option<bool>,
+}
+
+impl UpdateEventSubscriptionRow {
+    pub(crate) fn has_changes(&self, current: &EventSubscriptionRow) -> bool {
+        self.sink_id.is_some_and(|value| value != current.sink_id)
+            || self
+                .name
+                .as_ref()
+                .is_some_and(|value| value != &current.name)
+            || self
+                .description
+                .as_ref()
+                .is_some_and(|value| value != &current.description)
+            || self
+                .entity_types
+                .as_ref()
+                .is_some_and(|value| value != &current.entity_types)
+            || self
+                .actions
+                .as_ref()
+                .is_some_and(|value| value != &current.actions)
+            || self
+                .filter
+                .as_ref()
+                .is_some_and(|value| value != &current.filter)
+            || self
+                .routing
+                .as_ref()
+                .is_some_and(|value| value != &current.routing)
+            || self.enabled.is_some_and(|value| value != current.enabled)
+    }
 }
 
 impl TryFrom<EventSinkRow> for EventSink {

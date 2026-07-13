@@ -287,8 +287,12 @@ impl UpdateClassRecord for UpdateHubuumClass {
         with_transaction(pool, async |conn| -> Result<HubuumClass, ApiError> {
             let before = hubuumclass
                 .filter(id.eq(class_id))
+                .for_update()
                 .first::<HubuumClass>(conn)
                 .await?;
+            if !self.has_changes(&before) {
+                return Ok(before);
+            }
             let updated = diesel::update(hubuumclass.filter(id.eq(class_id)))
                 .set(self)
                 .get_result::<HubuumClass>(conn)
@@ -346,16 +350,21 @@ impl DeleteClassRecord for HubuumClass {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            let before = hubuumclass
+                .filter(id.eq(self.id))
+                .for_update()
+                .first::<HubuumClass>(conn)
+                .await?;
             diesel::delete(hubuumclass.filter(id.eq(self.id)))
                 .execute(conn)
                 .await?;
             let event = class_event(
-                self,
+                &before,
                 Action::Deleted,
                 context,
-                format!("Class '{}' deleted", self.name),
+                format!("Class '{}' deleted", before.name),
             )?
-            .with_before(class_snapshot(self));
+            .with_before(class_snapshot(&before));
             emit_event(conn, &event).await?;
             Ok(())
         })

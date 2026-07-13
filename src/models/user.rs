@@ -385,6 +385,18 @@ pub struct UpdateUser {
 }
 
 impl UpdateUser {
+    pub(crate) fn has_changes(&self, current: &User) -> bool {
+        self.password.is_some()
+            || self
+                .proper_name
+                .as_ref()
+                .is_some_and(|value| Some(value) != current.proper_name.as_ref())
+            || self
+                .email
+                .as_ref()
+                .is_some_and(|value| Some(value) != current.email.as_ref())
+    }
+
     pub fn hash_password(self) -> Result<Self, ApiError> {
         if let Some(ref pass) = self.password {
             match crate::utilities::auth::hash_password(pass) {

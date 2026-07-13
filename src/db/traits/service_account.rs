@@ -169,25 +169,20 @@ async fn update_service_account_record(
     use crate::schema::service_accounts::dsl::{id, service_accounts as sa_table};
 
     with_transaction(pool, async |conn| -> Result<ServiceAccount, ApiError> {
-        let before = if event_context.is_some() {
-            Some(
-                sa_table
-                    .filter(id.eq(service_account_id))
-                    .first::<ServiceAccount>(conn)
-                    .await?,
-            )
-        } else {
-            None
-        };
+        let before = sa_table
+            .filter(id.eq(service_account_id))
+            .for_update()
+            .first::<ServiceAccount>(conn)
+            .await?;
+        if !update.has_changes(&before) {
+            return Ok(before);
+        }
         let updated = diesel::update(sa_table.filter(id.eq(service_account_id)))
             .set(update)
             .get_result::<ServiceAccount>(conn)
             .await?;
         if let Some(event_context) = event_context {
             let name = load_principal_name_by_id(conn, updated.id).await?;
-            let before = before.ok_or_else(|| {
-                ApiError::InternalServerError("missing service account event snapshot".to_string())
-            })?;
             let event = NewEvent::new(
                 EntityType::ServiceAccount,
                 Action::Updated,
@@ -276,8 +271,12 @@ where
         async |conn| -> Result<ServiceAccount, ApiError> {
             let before = sa_table
                 .filter(id.eq(sa_id))
+                .for_update()
                 .first::<ServiceAccount>(conn)
                 .await?;
+            if before.disabled_at.is_some() {
+                return Ok(before);
+            }
             let disabled = diesel::update(sa_table.filter(id.eq(sa_id)))
                 .set(disabled_at.eq(diesel::dsl::now))
                 .get_result::<ServiceAccount>(conn)
@@ -314,6 +313,12 @@ async fn delete_service_account(
     use crate::schema::principals::dsl::{id, principals as principals_table};
     let sa_id = account_id.id();
     with_transaction(pool, async |conn| -> Result<(), ApiError> {
+        principals_table
+            .filter(id.eq(sa_id))
+            .for_update()
+            .select(id)
+            .first::<i32>(conn)
+            .await?;
         let sa = load_service_account_by_id_conn(conn, sa_id).await?;
         if let Some(event_context) = event_context {
             let name = load_principal_name_by_id(conn, sa_id).await?;

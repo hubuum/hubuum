@@ -42,6 +42,28 @@ pub struct UpdateHubuumClass {
     pub description: Option<String>,
 }
 
+impl UpdateHubuumClass {
+    pub(crate) fn has_changes(&self, current: &HubuumClass) -> bool {
+        self.name
+            .as_ref()
+            .is_some_and(|value| value != &current.name)
+            || self
+                .collection_id
+                .is_some_and(|value| value != current.collection_id)
+            || self
+                .json_schema
+                .as_ref()
+                .is_some_and(|value| Some(value) != current.json_schema.as_ref())
+            || self
+                .validate_schema
+                .is_some_and(|value| value != current.validate_schema)
+            || self
+                .description
+                .as_ref()
+                .is_some_and(|value| value != &current.description)
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct HubuumClassWithPath {
     pub id: i32,

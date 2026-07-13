@@ -52,9 +52,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
-- Principal settings mutations that leave the document unchanged are now
-  treated as no-ops, avoiding misleading `updated` audit events and
-  `updated_at` changes.
+- Audited mutations that leave domain state unchanged are now treated as
+  no-ops, avoiding misleading lifecycle events and `updated_at` changes. This
+  includes entity updates, principal settings, collection moves, permission
+  grants and revocations, service-account disable, and group membership
+  transitions.
 
 ### Security
 

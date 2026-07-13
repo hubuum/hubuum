@@ -201,6 +201,17 @@ pub struct UpdateServiceAccount {
     pub owner_group_id: Option<i32>,
 }
 
+impl UpdateServiceAccount {
+    pub(crate) fn has_changes(&self, current: &ServiceAccount) -> bool {
+        self.description
+            .as_ref()
+            .is_some_and(|value| value != &current.description)
+            || self
+                .owner_group_id
+                .is_some_and(|value| value != current.owner_group_id)
+    }
+}
+
 crate::int_id_newtype! {
     /// Identifier wrapper for a [`ServiceAccount`].
     pub struct ServiceAccountID;

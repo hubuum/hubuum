@@ -782,12 +782,17 @@ impl DeleteClassRelationRecord for HubuumClassRelation {
         use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            let relation = hubuumclass_relation
+                .filter(id.eq(self.id))
+                .for_update()
+                .first::<HubuumClassRelation>(conn)
+                .await?;
             let from_class = hubuumclass
-                .filter(class_id.eq(self.from_hubuum_class_id))
+                .filter(class_id.eq(relation.from_hubuum_class_id))
                 .first::<HubuumClass>(conn)
                 .await?;
             let to_class = hubuumclass
-                .filter(class_id.eq(self.to_hubuum_class_id))
+                .filter(class_id.eq(relation.to_hubuum_class_id))
                 .first::<HubuumClass>(conn)
                 .await?;
 
@@ -800,12 +805,12 @@ impl DeleteClassRelationRecord for HubuumClassRelation {
                 context.actor_kind(),
                 format!(
                     "Class relation {} -> {} deleted",
-                    self.from_hubuum_class_id, self.to_hubuum_class_id
+                    relation.from_hubuum_class_id, relation.to_hubuum_class_id
                 ),
             )?
             .with_context(context)
-            .with_entity_id(self.id)
-            .with_before(class_relation_snapshot(self))
+            .with_entity_id(relation.id)
+            .with_before(class_relation_snapshot(&relation))
             .with_metadata(class_relation_metadata(&from_class, &to_class));
             emit_event(conn, &event).await?;
             Ok(())
@@ -845,6 +850,7 @@ impl DeleteClassRelationRecord for HubuumClassRelationID {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
             let relation = hubuumclass_relation
                 .filter(id.eq(self.id()))
+                .for_update()
                 .first::<HubuumClassRelation>(conn)
                 .await?;
             let from_class = hubuumclass
@@ -1081,12 +1087,17 @@ impl DeleteObjectRelationRecord for HubuumObjectRelation {
         use crate::schema::hubuumobject_relation::dsl::{hubuumobject_relation, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            let relation = hubuumobject_relation
+                .filter(id.eq(self.id))
+                .for_update()
+                .first::<HubuumObjectRelation>(conn)
+                .await?;
             let from_object = hubuumobject
-                .filter(object_id.eq(self.from_hubuum_object_id))
+                .filter(object_id.eq(relation.from_hubuum_object_id))
                 .first::<HubuumObject>(conn)
                 .await?;
             let to_object = hubuumobject
-                .filter(object_id.eq(self.to_hubuum_object_id))
+                .filter(object_id.eq(relation.to_hubuum_object_id))
                 .first::<HubuumObject>(conn)
                 .await?;
             diesel::delete(hubuumobject_relation.filter(id.eq(self.id)))
@@ -1098,13 +1109,17 @@ impl DeleteObjectRelationRecord for HubuumObjectRelation {
                 context.actor_kind(),
                 format!(
                     "Object relation {} -> {} deleted",
-                    self.from_hubuum_object_id, self.to_hubuum_object_id
+                    relation.from_hubuum_object_id, relation.to_hubuum_object_id
                 ),
             )?
             .with_context(context)
-            .with_entity_id(self.id)
-            .with_before(object_relation_snapshot(self))
-            .with_metadata(object_relation_metadata(self, &from_object, &to_object));
+            .with_entity_id(relation.id)
+            .with_before(object_relation_snapshot(&relation))
+            .with_metadata(object_relation_metadata(
+                &relation,
+                &from_object,
+                &to_object,
+            ));
             emit_event(conn, &event).await?;
             Ok(())
         })
@@ -1145,6 +1160,7 @@ impl DeleteObjectRelationRecord for HubuumObjectRelationID {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
             let relation = hubuumobject_relation
                 .filter(id.eq(self.id()))
+                .for_update()
                 .first::<HubuumObjectRelation>(conn)
                 .await?;
             let from_object = hubuumobject

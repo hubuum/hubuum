@@ -1421,14 +1421,32 @@ mod tests {
             1
         );
 
-        let resp = post_request(
+        let resp = patch_request(
             &context.pool,
             &context.admin_token,
-            &format!("{SERVICE_ACCOUNTS_ENDPOINT}/{}/disable", created.id),
-            serde_json::json!({}),
+            &format!("{SERVICE_ACCOUNTS_ENDPOINT}/{}", created.id),
+            serde_json::json!({
+                "description": "audited",
+                "owner_group_id": group.id
+            }),
         )
         .await;
         assert_response_status(resp, StatusCode::OK).await;
+        assert_eq!(
+            service_account_audit_event_count(&context, Action::Updated, created.id).await,
+            0
+        );
+
+        for _ in 0..2 {
+            let resp = post_request(
+                &context.pool,
+                &context.admin_token,
+                &format!("{SERVICE_ACCOUNTS_ENDPOINT}/{}/disable", created.id),
+                serde_json::json!({}),
+            )
+            .await;
+            assert_response_status(resp, StatusCode::OK).await;
+        }
         assert_eq!(
             service_account_audit_event_count(&context, Action::Disabled, created.id).await,
             1

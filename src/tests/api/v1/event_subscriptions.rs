@@ -10,7 +10,7 @@ mod tests {
         EventSink, EventSinkKind, EventSubscription, NewEventSink, NewEventSubscription,
     };
     use crate::tests::TestContext;
-    use crate::tests::api_operations::{delete_request, get_request, post_request};
+    use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;
 
     const SINKS_ENDPOINT: &str = "/api/v1/event-sinks";
@@ -110,6 +110,19 @@ mod tests {
         let fetched: EventSink = test::read_body_json(resp).await;
         assert_eq!(fetched.id, created.id);
 
+        let resp = patch_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{SINKS_ENDPOINT}/{}", created.id),
+            json!({ "enabled": true }),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::OK).await;
+        assert_eq!(
+            audit_event_count(&context, EntityType::EventSink, Action::Updated, created.id).await,
+            0
+        );
+
         if let Some(kind) = disabled_sink_kind_for_feature_set() {
             let disabled_kind = NewEventSink {
                 name: context.scoped_name("sink_disabled"),
@@ -183,6 +196,25 @@ mod tests {
             )
             .await,
             1
+        );
+
+        let resp = patch_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{endpoint}/{}", created.id),
+            json!({ "enabled": true }),
+        )
+        .await;
+        assert_response_status(resp, StatusCode::OK).await;
+        assert_eq!(
+            audit_event_count(
+                &context,
+                EntityType::EventSubscription,
+                Action::Updated,
+                created.id
+            )
+            .await,
+            0
         );
 
         let invalid_pair = NewEventSubscription {

@@ -111,8 +111,12 @@ async fn update_event_sink_record_impl(
     with_transaction(pool, async |conn| -> Result<EventSinkRow, ApiError> {
         let before = event_sinks
             .filter(id.eq(sink_id))
+            .for_update()
             .first::<EventSinkRow>(conn)
             .await?;
+        if !row.has_changes(&before) {
+            return Ok(before);
+        }
         let updated = diesel::update(event_sinks.filter(id.eq(sink_id)))
             .set(row)
             .get_result::<EventSinkRow>(conn)
@@ -158,6 +162,7 @@ async fn delete_event_sink_record_impl(
     with_transaction(pool, async |conn| -> Result<(), ApiError> {
         let before = event_sinks
             .filter(id.eq(sink_id.id()))
+            .for_update()
             .first::<EventSinkRow>(conn)
             .await?;
         emit_event_sink_audit(conn, Action::Deleted, event_context, Some(&before), &before).await?;
@@ -283,8 +288,12 @@ async fn update_event_subscription_record_impl(
         async |conn| -> Result<EventSubscriptionRow, ApiError> {
             let before = event_subscriptions
                 .filter(id.eq(subscription_id))
+                .for_update()
                 .first::<EventSubscriptionRow>(conn)
                 .await?;
+            if !row.has_changes(&before) {
+                return Ok(before);
+            }
             let updated = diesel::update(event_subscriptions.filter(id.eq(subscription_id)))
                 .set(row)
                 .get_result::<EventSubscriptionRow>(conn)
@@ -331,6 +340,7 @@ async fn delete_event_subscription_record_impl(
     with_transaction(pool, async |conn| -> Result<(), ApiError> {
         let before = event_subscriptions
             .filter(id.eq(subscription_id.id()))
+            .for_update()
             .first::<EventSubscriptionRow>(conn)
             .await?;
         emit_event_subscription_audit(conn, Action::Deleted, event_context, Some(&before), &before)

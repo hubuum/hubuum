@@ -389,6 +389,14 @@ pub struct UpdateGroup {
 }
 
 impl UpdateGroup {
+    pub(crate) fn has_changes(&self, current: &Group) -> bool {
+        self.groupname
+            .as_ref()
+            .is_some_and(|value| value != &current.groupname)
+    }
+}
+
+impl UpdateGroup {
     /// Persist changes without emitting domain events.
     ///
     /// Intended only for internal infrastructure paths such as bootstrap/setup,

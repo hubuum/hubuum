@@ -55,6 +55,28 @@ pub struct UpdateHubuumObject {
     pub description: Option<String>,
 }
 
+impl UpdateHubuumObject {
+    pub(crate) fn has_changes(&self, current: &HubuumObject) -> bool {
+        self.name
+            .as_ref()
+            .is_some_and(|value| value != &current.name)
+            || self
+                .collection_id
+                .is_some_and(|value| value != current.collection_id)
+            || self
+                .hubuum_class_id
+                .is_some_and(|value| value != current.hubuum_class_id)
+            || self
+                .data
+                .as_ref()
+                .is_some_and(|value| value != &current.data)
+            || self
+                .description
+                .as_ref()
+                .is_some_and(|value| value != &current.description)
+    }
+}
+
 crate::int_id_newtype! {
     /// Identifier wrapper for a [`HubuumObject`].
     pub struct HubuumObjectID;
