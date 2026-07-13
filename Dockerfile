@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM rust:alpine AS builder
+FROM docker.io/library/rust:1.97.0-alpine3.24@sha256:ec9c91e77119ce498cd1e87d96d77e0f75b2cee21655a29bc2bf75a51a2b20a4 AS builder
 
 ARG CARGO_BUILD_FLAGS="-F tls-rustls -F tls-openssl --locked --release"
 
@@ -83,9 +83,14 @@ FROM scratch AS release-artifacts
 COPY --from=builder /tmp/hubuum-server /hubuum-server
 COPY --from=builder /tmp/hubuum-admin /hubuum-admin
 
-FROM alpine:latest
+FROM docker.io/library/alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
-RUN apk add --no-cache ca-certificates
+ARG HUBUUM_UID="10001"
+ARG HUBUUM_GID="10001"
+
+RUN apk add --no-cache ca-certificates && \
+    addgroup -S -g "${HUBUUM_GID}" hubuum && \
+    adduser -S -D -H -u "${HUBUUM_UID}" -G hubuum hubuum
 
 COPY --from=builder /tmp/hubuum-server /usr/local/bin/hubuum-server
 COPY --from=builder /tmp/hubuum-admin /usr/local/bin/hubuum-admin
@@ -93,5 +98,13 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8080
+
+USER hubuum:hubuum
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD scheme=http; \
+        if [ -n "${HUBUUM_TLS_CERT_PATH:-}" ] && [ -n "${HUBUUM_TLS_KEY_PATH:-}" ]; then scheme=https; fi; \
+        wget --quiet --no-check-certificate --output-document=/dev/null \
+            "${scheme}://127.0.0.1:${HUBUUM_BIND_PORT:-8080}/healthz" || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
