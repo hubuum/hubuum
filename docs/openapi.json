@@ -17627,6 +17627,41 @@
           }
         }
       },
+      "PermissionConfig": {
+        "type": "object",
+        "required": [
+          "backend",
+          "treetop_url",
+          "treetop_connect_timeout_ms",
+          "treetop_request_timeout_ms",
+          "treetop_ca_certificate_configured",
+          "treetop_accept_invalid_certificates"
+        ],
+        "properties": {
+          "backend": {
+            "type": "string"
+          },
+          "treetop_accept_invalid_certificates": {
+            "type": "boolean"
+          },
+          "treetop_ca_certificate_configured": {
+            "type": "boolean"
+          },
+          "treetop_connect_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "treetop_request_timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "treetop_url": {
+            "$ref": "#/components/schemas/SecretStatus"
+          }
+        }
+      },
       "Permissions": {
         "type": "string",
         "enum": [
@@ -18419,6 +18454,7 @@
           "exports",
           "remote_calls",
           "authentication",
+          "permissions",
           "pagination",
           "network"
         ],
@@ -18440,6 +18476,9 @@
           },
           "pagination": {
             "$ref": "#/components/schemas/PaginationConfig"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/PermissionConfig"
           },
           "remote_calls": {
             "$ref": "#/components/schemas/RemoteCallConfig"

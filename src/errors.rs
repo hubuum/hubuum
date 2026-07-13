@@ -14,6 +14,7 @@ use crate::observability::metrics;
 
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
+const PUBLIC_PERMISSION_BACKEND_UNAVAILABLE: &str = "Permission backend temporarily unavailable";
 
 // Exit codes for startup/initialization failures.
 // These help shell scripts and orchestration systems determine the failure mode.
@@ -22,6 +23,7 @@ pub const EXIT_CODE_CONFIG_ERROR: i32 = 2; // Config/validation
 pub const EXIT_CODE_DATABASE_ERROR: i32 = 3; // Database connection/pool error
 pub const EXIT_CODE_INIT_ERROR: i32 = 4; // Critical initialization error (admin user/group)
 pub const EXIT_CODE_TLS_ERROR: i32 = 5; // TLS setup error
+pub const EXIT_CODE_PERMISSION_BACKEND_ERROR: i32 = 6; // Permission backend unavailable
 
 /// Log a fatal error and exit the process with the specified exit code.
 /// This provides a consistent way to handle unrecoverable errors during startup.
@@ -63,6 +65,8 @@ pub enum ApiError {
     Forbidden(String),
     NotAcceptable(String),
     PayloadTooLarge(String),
+    NotImplemented(String),
+    PermissionBackendUnavailable(String),
     DatabaseError(String),
     Conflict(String),
     TooManyRequests(String),
@@ -89,6 +93,8 @@ impl ApiError {
             ApiError::Conflict(_) => "conflict",
             ApiError::TooManyRequests(_) => "too_many_requests",
             ApiError::ServiceUnavailable(_) => "service_unavailable",
+            ApiError::NotImplemented(_) => "not_implemented",
+            ApiError::PermissionBackendUnavailable(_) => "permission_backend_unavailable",
             ApiError::NotFound(_) => "not_found",
             ApiError::Gone(_) => "gone",
             ApiError::DbConnectionError(_) => "db_connection_error",
@@ -114,6 +120,7 @@ impl ApiError {
             | ApiError::InvalidIntegerRange(_) => EXIT_CODE_CONFIG_ERROR,
             // Database errors: can't connect or pool exhausted
             ApiError::DatabaseError(_) | ApiError::DbConnectionError(_) => EXIT_CODE_DATABASE_ERROR,
+            ApiError::PermissionBackendUnavailable(_) => EXIT_CODE_PERMISSION_BACKEND_ERROR,
             // Generic errors: should not occur during startup
             _ => EXIT_CODE_GENERIC_ERROR,
         }
@@ -128,6 +135,7 @@ impl ApiError {
             | ApiError::DbConnectionError(_)
             | ApiError::HashError(_) => PUBLIC_INTERNAL_ERROR,
             ApiError::ServiceUnavailable(_) => PUBLIC_SERVICE_UNAVAILABLE,
+            ApiError::PermissionBackendUnavailable(_) => PUBLIC_PERMISSION_BACKEND_UNAVAILABLE,
             ApiError::Unauthorized(message)
             | ApiError::Forbidden(message)
             | ApiError::NotAcceptable(message)
@@ -136,6 +144,7 @@ impl ApiError {
             | ApiError::TooManyRequests(message)
             | ApiError::NotFound(message)
             | ApiError::Gone(message)
+            | ApiError::NotImplemented(message)
             | ApiError::BadRequest(message)
             | ApiError::OperatorMismatch(message)
             | ApiError::InvalidIntegerRange(message)
@@ -153,6 +162,8 @@ impl fmt::Display for ApiError {
             ApiError::Conflict(message) => write!(f, "{message}"),
             ApiError::TooManyRequests(message) => write!(f, "{message}"),
             ApiError::ServiceUnavailable(message) => write!(f, "{message}"),
+            ApiError::NotImplemented(message) => write!(f, "{message}"),
+            ApiError::PermissionBackendUnavailable(message) => write!(f, "{message}"),
             ApiError::Forbidden(message) => write!(f, "{message}"),
             ApiError::InternalServerError(message) => write!(f, "{message}"),
             ApiError::Unauthorized(message) => write!(f, "{message}"),
@@ -180,6 +191,14 @@ impl ResponseError for ApiError {
             ApiError::ServiceUnavailable(_) => HttpResponse::ServiceUnavailable().json(
                 json!({ "error": "Service Unavailable", "message": PUBLIC_SERVICE_UNAVAILABLE }),
             ),
+            ApiError::NotImplemented(message) => HttpResponse::NotImplemented()
+                .json(json!({ "error": "Not Implemented", "message": message })),
+            ApiError::PermissionBackendUnavailable(_) => HttpResponse::ServiceUnavailable()
+                .append_header(("Retry-After", "5"))
+                .json(json!({
+                    "error": "Permission Backend Unavailable",
+                    "message": PUBLIC_PERMISSION_BACKEND_UNAVAILABLE
+                })),
             ApiError::Forbidden(message) => {
                 HttpResponse::Forbidden().json(json!({ "error": "Forbidden", "message": message }))
             }
@@ -217,6 +236,8 @@ impl ResponseError for ApiError {
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            ApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
+            ApiError::PermissionBackendUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::NotAcceptable(_) => StatusCode::NOT_ACCEPTABLE,
             ApiError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,

@@ -1,0 +1,240 @@
+// Cedar entity schema for Hubuum permission model.
+//
+// This schema describes the entity types and actions that Hubuum's Treetop
+// integration emits. It must be uploaded to your Treetop server before Hubuum
+// can delegate authorization requests.
+//
+// IMPORTANT: This file must stay in sync with the runtime entity mappings in
+// src/permissions/treetop/mapping.rs::cedar_resource and the policy exporter
+// in src/permissions/export.rs. Any new attributes or entity types added to
+// the runtime MUST be reflected here, otherwise Treetop will reject the
+// authorization requests.
+
+// ============================================================================
+// Principal entities
+// ============================================================================
+
+entity User;
+entity Group;
+
+// ============================================================================
+// Resource entities
+// ============================================================================
+
+// Global singleton representing the system itself.
+// Used for admin authorization checks.
+entity HubuumSystem;
+
+// A collection. The entity ID is the collection's database id.
+// `collection_id` is also exposed as an attribute (it always equals the entity
+// id) so that policies can be written uniformly across collection and child
+// resources without special-casing. `name` is set when the runtime has loaded
+// the full collection row (most authorize paths); not when only the id is
+// known.
+entity HubuumCollection {
+    collection_id?: Long,
+    name?: String
+};
+
+// A class definition within a collection. `name` is populated when the full
+// class row was loaded by the request that triggered the authorization.
+entity HubuumClass {
+    collection_id: Long,
+    name?: String
+};
+
+// An object instance within a collection and class. `name` is populated when
+// the full object row was loaded.
+entity HubuumObject {
+    collection_id: Long,
+    class_id: Long,
+    name?: String
+};
+
+// A template within a collection. `name` is populated when the full template
+// row was loaded.
+entity HubuumTemplate {
+    collection_id: Long,
+    name?: String
+};
+
+// A relationship definition between two classes.
+// Relations span two collections (which may be the same). `from_collection_id`
+// and `to_collection_id` are always set; `collection_id` is set ONLY when both
+// endpoints share a collection, as a convenience for policies that don't need
+// to discriminate by direction.
+entity HubuumClassRelation {
+    from_collection_id: Long,
+    to_collection_id: Long,
+    from_class_id: Long,
+    to_class_id: Long,
+    collection_id?: Long
+};
+
+// A relationship instance between two objects. Same `collection_id?` rule as
+// HubuumClassRelation: present iff `from_collection_id == to_collection_id`.
+entity HubuumObjectRelation {
+    from_collection_id: Long,
+    to_collection_id: Long,
+    from_class_id: Long,
+    to_class_id: Long,
+    from_object_id: Long,
+    to_object_id: Long,
+    class_relation_id: Long,
+    collection_id?: Long
+};
+
+// A background task. `submitted_by` is the user id that submitted the task,
+// optional because legacy tasks may not have a recorded submitter.
+entity HubuumTask {
+    submitted_by?: Long
+};
+
+// ============================================================================
+// Actions
+// ============================================================================
+
+// Collection-level actions (collection CRUD + delegation).
+action ReadCollection appliesTo {
+    principal: [User, Group],
+    resource: [HubuumCollection, HubuumSystem]
+};
+action UpdateCollection appliesTo {
+    principal: [User, Group],
+    resource: HubuumCollection
+};
+action DeleteCollection appliesTo {
+    principal: [User, Group],
+    resource: HubuumCollection
+};
+action DelegateCollection appliesTo {
+    principal: [User, Group],
+    resource: HubuumCollection
+};
+
+// Current remote-target, audit, and event-subscription permissions are
+// collection scoped in the Hubuum API and SQL permission model.
+action ReadRemoteTarget appliesTo {
+    principal: [User, Group],
+    resource: HubuumCollection
+};
+action CreateRemoteTarget appliesTo {
+    principal: [User, Group],
+    resource: HubuumCollection
+};
+action UpdateRemoteTarget appliesTo {
+    principal: [User, Group],
+    resource: HubuumCollection
+};
+action DeleteRemoteTarget appliesTo {
+    principal: [User, Group],
+    resource: HubuumCollection
+};
+action ExecuteRemoteTarget appliesTo {
+    principal: [User, Group],
+    resource: HubuumCollection
+};
+action ReadAudit appliesTo {
+    principal: [User, Group],
+    resource: HubuumCollection
+};
+action ManageEventSubscription appliesTo {
+    principal: [User, Group],
+    resource: HubuumCollection
+};
+
+// Class-level actions.
+action CreateClass appliesTo {
+    principal: [User, Group],
+    resource: HubuumClass
+};
+action ReadClass appliesTo {
+    principal: [User, Group],
+    resource: HubuumClass
+};
+action UpdateClass appliesTo {
+    principal: [User, Group],
+    resource: HubuumClass
+};
+action DeleteClass appliesTo {
+    principal: [User, Group],
+    resource: HubuumClass
+};
+
+// Object-level actions.
+action CreateObject appliesTo {
+    principal: [User, Group],
+    resource: HubuumObject
+};
+action ReadObject appliesTo {
+    principal: [User, Group],
+    resource: HubuumObject
+};
+action UpdateObject appliesTo {
+    principal: [User, Group],
+    resource: HubuumObject
+};
+action DeleteObject appliesTo {
+    principal: [User, Group],
+    resource: HubuumObject
+};
+
+// Class relation actions.
+action CreateClassRelation appliesTo {
+    principal: [User, Group],
+    resource: HubuumClassRelation
+};
+action ReadClassRelation appliesTo {
+    principal: [User, Group],
+    resource: HubuumClassRelation
+};
+action UpdateClassRelation appliesTo {
+    principal: [User, Group],
+    resource: HubuumClassRelation
+};
+action DeleteClassRelation appliesTo {
+    principal: [User, Group],
+    resource: HubuumClassRelation
+};
+
+// Object relation actions.
+action CreateObjectRelation appliesTo {
+    principal: [User, Group],
+    resource: HubuumObjectRelation
+};
+action ReadObjectRelation appliesTo {
+    principal: [User, Group],
+    resource: HubuumObjectRelation
+};
+action UpdateObjectRelation appliesTo {
+    principal: [User, Group],
+    resource: HubuumObjectRelation
+};
+action DeleteObjectRelation appliesTo {
+    principal: [User, Group],
+    resource: HubuumObjectRelation
+};
+
+// Template actions.
+action ReadTemplate appliesTo {
+    principal: [User, Group],
+    resource: HubuumTemplate
+};
+action CreateTemplate appliesTo {
+    principal: [User, Group],
+    resource: HubuumTemplate
+};
+action UpdateTemplate appliesTo {
+    principal: [User, Group],
+    resource: HubuumTemplate
+};
+action DeleteTemplate appliesTo {
+    principal: [User, Group],
+    resource: HubuumTemplate
+};
+
+// Task visibility is policy-controlled independently from collection grants.
+action ReadTask appliesTo {
+    principal: [User, Group],
+    resource: HubuumTask
+};

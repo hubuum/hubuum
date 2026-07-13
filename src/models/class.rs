@@ -1,11 +1,14 @@
 use crate::db::prelude::*;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::db::DbPool;
 use crate::db::traits::class::total_class_count_from_backend;
 use crate::errors::ApiError;
+use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::hubuumclass;
-use crate::traits::BackendContext;
+use crate::traits::{BackendContext, SelfAccessors};
 
 #[derive(Serialize, Deserialize, Queryable, QueryableByName, Clone, PartialEq, Debug, ToSchema)]
 #[diesel(table_name = hubuumclass )]
@@ -164,6 +167,28 @@ pub struct HubuumClassHistory {
 }
 
 crate::impl_history_pagination!(HubuumClassHistory, "hubuumclass_history");
+
+#[async_trait]
+impl AuthzTarget for HubuumClass {
+    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        Ok(ResourceRef {
+            kind: ResourceKind::Class,
+            id: self.id,
+            attrs: ResourceAttrs {
+                collection_id: Some(self.collection_id),
+                name: Some(self.name.clone()),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait]
+impl AuthzTarget for HubuumClassID {
+    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        self.instance(pool).await?.to_resource_ref(pool).await
+    }
+}
 
 #[cfg(test)]
 pub mod tests {

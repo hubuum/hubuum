@@ -4,10 +4,12 @@ use tracing::{debug, info};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
+use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
 use crate::config::{DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, get_config};
 use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
+use crate::db::traits::authz::scope_allows;
 use crate::db::traits::history::{
     remote_target_as_of, remote_target_history_paginated_with_total_count,
 };
@@ -21,11 +23,12 @@ use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    CollectionID, HubuumClassID, NewRemoteTarget, Permissions, RemoteTarget, RemoteTargetID,
-    RemoteTargetInvokeRequest, StoredRemoteCallTaskPayload, TaskKind, UpdateRemoteTarget,
-    authorize_remote_invocation,
+    CollectionID, HubuumClassID, NewRemoteTarget, Permissions, RemoteTarget, RemoteTargetHistory,
+    RemoteTargetID, RemoteTargetInvokeRequest, StoredRemoteCallTaskPayload, TaskKind, TaskRecord,
+    TaskResponse, UpdateRemoteTarget, authorize_remote_invocation,
 };
 use crate::pagination::prepare_db_pagination;
+use crate::permissions::{AppContext, PrincipalRef};
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
@@ -49,7 +52,7 @@ use crate::traits::{ClassAccessors, CollectionAccessors};
 #[post("")]
 #[post("/")]
 pub async fn create_remote_target(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     target: web::Json<NewRemoteTarget>,
     req: HttpRequest,
@@ -95,23 +98,33 @@ pub async fn create_remote_target(
 #[get("")]
 #[get("/")]
 pub async fn get_remote_targets(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let params = parse_query_parameter(req.query_string())?;
     let query_options = prepare_db_pagination::<RemoteTarget>(&params)?;
-    let allowed_collection_ids = user_can_on_any(
-        &pool,
-        user,
-        Permissions::ReadRemoteTarget,
-        requestor.scopes(),
-    )
-    .await?
-    .into_iter()
-    .map(|collection| collection.id)
-    .collect::<Vec<_>>();
+    let visible_collections = if pool.permission_backend().supports_sql_visibility_pushdown() {
+        user_can_on_any(
+            &pool,
+            user,
+            Permissions::ReadRemoteTarget,
+            requestor.scopes(),
+        )
+        .await?
+    } else if scope_allows(requestor.scopes(), &[Permissions::ReadRemoteTarget]) {
+        let principal = PrincipalRef::load(&pool, user).await?;
+        pool.permission_backend()
+            .collections_user_can(&principal, &[Permissions::ReadRemoteTarget])
+            .await?
+    } else {
+        Vec::new()
+    };
+    let allowed_collection_ids = visible_collections
+        .into_iter()
+        .map(|collection| collection.id)
+        .collect::<Vec<_>>();
     let (targets, total_count) =
         RemoteTarget::list_with_total_count(&pool, &allowed_collection_ids, &query_options).await?;
 
@@ -133,7 +146,7 @@ pub async fn get_remote_targets(
 )]
 #[get("/{target_id}")]
 pub async fn get_remote_target(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     target_id: web::Path<RemoteTargetID>,
 ) -> Result<impl Responder, ApiError> {
@@ -167,7 +180,7 @@ pub async fn get_remote_target(
 )]
 #[patch("/{target_id}")]
 pub async fn patch_remote_target(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     target_id: web::Path<RemoteTargetID>,
     update: web::Json<UpdateRemoteTarget>,
@@ -251,7 +264,7 @@ async fn validate_remote_target_class_scope(
 )]
 #[delete("/{target_id}")]
 pub async fn delete_remote_target(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     target_id: web::Path<RemoteTargetID>,
     req: HttpRequest,
@@ -283,7 +296,7 @@ pub async fn delete_remote_target(
     ),
     request_body = RemoteTargetInvokeRequest,
     responses(
-        (status = 202, description = "Remote call task accepted", body = crate::models::TaskResponse),
+        (status = 202, description = "Remote call task accepted", body = TaskResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
@@ -293,13 +306,13 @@ pub async fn delete_remote_target(
 )]
 #[post("/{target_id}/invoke")]
 pub async fn invoke_remote_target(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     target_id: web::Path<RemoteTargetID>,
     body: web::Json<RemoteTargetInvokeRequest>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(pool.db_pool.clone());
     let user = &requestor.principal;
     let target_id = target_id.into_inner();
     let invoke = body.into_inner();
@@ -334,7 +347,7 @@ pub async fn invoke_remote_target(
         resolved.subject_id,
     )
     .await?;
-    kick_task_worker(pool.get_ref().clone());
+    kick_task_worker(pool.db_pool.clone());
 
     debug!(
         message = "Remote target invocation queued",
@@ -356,7 +369,7 @@ async fn find_or_create_remote_call_task(
     snapshot: TaskScopeSnapshot,
     idempotency_key: Option<String>,
     payload: serde_json::Value,
-) -> Result<crate::models::TaskRecord, ApiError> {
+) -> Result<TaskRecord, ApiError> {
     let hash = request_hash(&payload)?;
 
     info!(
@@ -391,7 +404,7 @@ fn max_active_remote_call_tasks_per_user() -> usize {
     security(("bearer_auth" = [])),
     params(("remote_target_id" = i32, Path, description = "Remote target ID")),
     responses(
-        (status = 200, description = "Remote target history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::RemoteTargetHistory>]),
+        (status = 200, description = "Remote target history", body = [HistoryResponse<RemoteTargetHistory>]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Remote target not found", body = ApiErrorResponse)
@@ -399,7 +412,7 @@ fn max_active_remote_call_tasks_per_user() -> usize {
 )]
 #[get("/{remote_target_id}/history")]
 pub async fn get_remote_target_history(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     remote_target_id: web::Path<RemoteTargetID>,
     req: HttpRequest,
@@ -430,7 +443,7 @@ pub async fn get_remote_target_history(
     };
 
     let params = parse_query_parameter(req.query_string())?;
-    let search_params = prepare_db_pagination::<crate::models::RemoteTargetHistory>(&params)?;
+    let search_params = prepare_db_pagination::<RemoteTargetHistory>(&params)?;
     let (rows, total_count) =
         remote_target_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
     if require_history && rows.is_empty() && params.cursor.is_none() {
@@ -465,7 +478,7 @@ pub async fn get_remote_target_history(
         ("at" = String, Query, description = "RFC3339 timestamp")
     ),
     responses(
-        (status = 200, description = "Remote target version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::RemoteTargetHistory>),
+        (status = 200, description = "Remote target version at timestamp", body = HistoryResponse<RemoteTargetHistory>),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
@@ -474,7 +487,7 @@ pub async fn get_remote_target_history(
 )]
 #[get("/{remote_target_id}/history/as-of")]
 pub async fn get_remote_target_as_of(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     remote_target_id: web::Path<RemoteTargetID>,
     req: HttpRequest,

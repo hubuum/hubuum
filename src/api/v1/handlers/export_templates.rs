@@ -4,21 +4,27 @@ use tracing::{debug, info};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
+use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
-use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
+use crate::db::traits::authz::scope_allows;
 use crate::db::traits::history::{
     export_template_as_of, export_template_history_paginated_with_total_count,
 };
 use crate::errors::ApiError;
+use crate::exports::submit_export_task;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    CollectionID, ExportTemplate, ExportTemplateID, ExportTemplateRunRequest, NewExportTemplate,
-    Permissions, TaskResponse, UpdateExportTemplate,
+    CollectionID, ExportTemplate, ExportTemplateHistory, ExportTemplateID,
+    ExportTemplateRunRequest, NewExportTemplate, Permissions, TaskResponse, UpdateExportTemplate,
 };
-use crate::pagination::prepare_db_pagination;
+use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::permissions::visibility::authorize_cursor_page;
+use crate::permissions::{
+    AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef, authorize_resources,
+};
 use crate::tasks::idempotency_key_from_headers;
 use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors, SelfAccessors};
 
@@ -40,7 +46,7 @@ use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors, SelfAcce
 #[post("")]
 #[post("/")]
 pub async fn create_template(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     template: web::Json<NewExportTemplate>,
     req: HttpRequest,
@@ -55,13 +61,33 @@ pub async fn create_template(
         template_name = template.name
     );
 
-    can!(
-        &pool,
-        user,
-        requestor.scopes(),
-        [Permissions::CreateTemplate],
-        CollectionID::new(template.collection_id)?
-    );
+    if pool.permission_backend().uses_sql_permission_store() {
+        can!(
+            &pool,
+            user,
+            requestor.scopes(),
+            [Permissions::CreateTemplate],
+            CollectionID::new(template.collection_id)?
+        );
+    } else {
+        authorize_resources(
+            pool.permission_backend(),
+            &pool,
+            user,
+            requestor.scopes(),
+            vec![Permissions::CreateTemplate],
+            vec![ResourceRef {
+                kind: ResourceKind::Template,
+                id: 0,
+                attrs: ResourceAttrs {
+                    collection_id: Some(template.collection_id),
+                    name: Some(template.name.clone()),
+                    ..Default::default()
+                },
+            }],
+        )
+        .await?;
+    }
 
     let event_context = requestor.event_context(&req);
     let created = template.save(&pool, &event_context).await?;
@@ -85,7 +111,7 @@ pub async fn create_template(
 #[get("")]
 #[get("/")]
 pub async fn get_templates(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -97,17 +123,44 @@ pub async fn get_templates(
         user_id = user.id
     );
 
-    let search_params = prepare_db_pagination::<ExportTemplate>(&params)?;
-    let allowed_collection_ids =
-        user_can_on_any(&pool, user, Permissions::ReadTemplate, requestor.scopes())
-            .await?
-            .into_iter()
-            .map(|collection| collection.id)
-            .collect::<Vec<_>>();
-
-    let (templates, total_count) =
+    let (templates, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {
+        let search_params = prepare_db_pagination::<ExportTemplate>(&params)?;
+        let allowed_collection_ids =
+            user_can_on_any(&pool, user, Permissions::ReadTemplate, requestor.scopes())
+                .await?
+                .into_iter()
+                .map(|collection| collection.id)
+                .collect::<Vec<_>>();
         ExportTemplate::list_with_total_count(&pool, &allowed_collection_ids, &search_params)
-            .await?;
+            .await?
+    } else {
+        if !scope_allows(requestor.scopes(), &[Permissions::ReadTemplate]) {
+            return ApiResponse::paginated(Vec::new(), 0, &params);
+        }
+        let mut candidate_options = count_query_options(&params);
+        candidate_options.include_total = false;
+        let candidates = ExportTemplate::list_candidates(&pool, &candidate_options).await?;
+        let principal = PrincipalRef::load(&pool, user).await?;
+        let search_params = prepare_db_pagination::<ExportTemplate>(&params)?;
+        let page = authorize_cursor_page(
+            pool.permission_backend(),
+            &principal,
+            candidates,
+            vec![Permissions::ReadTemplate],
+            &search_params,
+            |template| ResourceRef {
+                kind: ResourceKind::Template,
+                id: template.id,
+                attrs: ResourceAttrs {
+                    collection_id: Some(template.collection_id),
+                    name: Some(template.name.clone()),
+                    ..Default::default()
+                },
+            },
+        )
+        .await?;
+        (page.rows, page.total_count)
+    };
 
     ApiResponse::paginated(templates, total_count, &params)
 }
@@ -129,7 +182,7 @@ pub async fn get_templates(
 )]
 #[get("/{template_id}")]
 pub async fn get_template(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     template_id: web::Path<ExportTemplateID>,
 ) -> Result<impl Responder, ApiError> {
@@ -149,7 +202,7 @@ pub async fn get_template(
         user,
         requestor.scopes(),
         [Permissions::ReadTemplate],
-        CollectionID::new(template.collection_id)?
+        &template
     );
 
     Ok(ApiResponse::new(template, StatusCode::OK))
@@ -176,7 +229,7 @@ pub async fn get_template(
 )]
 #[post("/{template_id}/exports")]
 pub async fn run_template_export(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     template_id: web::Path<ExportTemplateID>,
@@ -199,12 +252,12 @@ pub async fn run_template_export(
         user.clone(),
         requestor.scopes(),
         [Permissions::ReadTemplate],
-        CollectionID::new(template.collection_id)?
+        &template
     );
 
     let export = template.build_export_request(run)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
-    let task = crate::exports::submit_export_task(
+    let task = submit_export_task(
         &pool,
         user,
         requestor.scopes(),
@@ -242,7 +295,7 @@ pub async fn run_template_export(
 )]
 #[patch("/{template_id}")]
 pub async fn patch_template(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     template_id: web::Path<ExportTemplateID>,
     update: web::Json<UpdateExportTemplate>,
@@ -265,7 +318,7 @@ pub async fn patch_template(
         user.clone(),
         requestor.scopes(),
         [Permissions::UpdateTemplate],
-        CollectionID::new(existing.collection_id)?
+        &existing
     );
 
     if let Some(target_collection) = update.collection_id
@@ -303,7 +356,7 @@ pub async fn patch_template(
 )]
 #[delete("/{template_id}")]
 pub async fn delete_template(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     template_id: web::Path<ExportTemplateID>,
     req: HttpRequest,
@@ -324,7 +377,7 @@ pub async fn delete_template(
         user,
         requestor.scopes(),
         [Permissions::DeleteTemplate],
-        CollectionID::new(template.collection_id)?
+        &template
     );
 
     let event_context = requestor.event_context(&req);
@@ -340,7 +393,7 @@ pub async fn delete_template(
     security(("bearer_auth" = [])),
     params(("template_id" = i32, Path, description = "Template ID")),
     responses(
-        (status = 200, description = "Template history", body = [crate::api::v1::handlers::history::HistoryResponse<crate::models::ExportTemplateHistory>]),
+        (status = 200, description = "Template history", body = [HistoryResponse<ExportTemplateHistory>]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Template not found", body = ApiErrorResponse)
@@ -348,7 +401,7 @@ pub async fn delete_template(
 )]
 #[get("/{template_id}/history")]
 pub async fn get_template_history(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     template_id: web::Path<ExportTemplateID>,
     req: HttpRequest,
@@ -368,7 +421,7 @@ pub async fn get_template_history(
                 user,
                 requestor.scopes(),
                 [Permissions::ReadTemplate],
-                CollectionID::new(instance.collection_id)?
+                &instance
             );
             (instance.id, false)
         }
@@ -379,7 +432,7 @@ pub async fn get_template_history(
     };
 
     let params = parse_query_parameter(req.query_string())?;
-    let search_params = prepare_db_pagination::<crate::models::ExportTemplateHistory>(&params)?;
+    let search_params = prepare_db_pagination::<ExportTemplateHistory>(&params)?;
     let (rows, total_count) =
         export_template_history_paginated_with_total_count(entity_id, &pool, &search_params)
             .await?;
@@ -415,7 +468,7 @@ pub async fn get_template_history(
         ("at" = String, Query, description = "RFC3339 timestamp")
     ),
     responses(
-        (status = 200, description = "Template version at timestamp", body = crate::api::v1::handlers::history::HistoryResponse<crate::models::ExportTemplateHistory>),
+        (status = 200, description = "Template version at timestamp", body = HistoryResponse<ExportTemplateHistory>),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
@@ -424,7 +477,7 @@ pub async fn get_template_history(
 )]
 #[get("/{template_id}/history/as-of")]
 pub async fn get_template_as_of(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     template_id: web::Path<ExportTemplateID>,
     req: HttpRequest,
@@ -442,7 +495,7 @@ pub async fn get_template_as_of(
                 user,
                 requestor.scopes(),
                 [Permissions::ReadTemplate],
-                CollectionID::new(instance.collection_id)?
+                &instance
             );
             instance.id
         }

@@ -1,19 +1,26 @@
+use std::collections::HashMap;
+
 use crate::api::openapi::ApiErrorResponse;
-use crate::db::DbPool;
+use crate::api::response::ApiResponse;
+use crate::can;
+use crate::db::traits::UserPermissions;
+use crate::db::traits::authz::scope_allows;
+use crate::db::traits::relations::{
+    class_relation_authorization_resources, object_relation_authorization_resources,
+};
+use crate::db::traits::user::UserSearchBackend;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
-use crate::models::search::parse_query_parameter;
+use crate::models::search::{QueryParamsExt, parse_query_parameter};
 use crate::models::{
     HubuumClassRelation, HubuumClassRelationID, HubuumObjectRelation, HubuumObjectRelationID,
     NewHubuumClassRelation, NewHubuumObjectRelation, Permissions,
 };
-use crate::pagination::prepare_db_pagination;
-
-use crate::can;
-use crate::db::traits::UserPermissions;
+use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::permissions::visibility::authorize_cursor_page;
+use crate::permissions::{AppContext, AuthzTarget, PrincipalRef, authorize_resources};
 use crate::traits::{CanDelete, CanSave, CollectionAccessors, SelfAccessors};
 
-use crate::api::response::ApiResponse;
 use actix_web::delete;
 use tracing::debug;
 
@@ -36,7 +43,7 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 #[get("classes")]
 #[get("classes/")]
 async fn get_class_relations(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -50,10 +57,51 @@ async fn get_class_relations(
 
     debug!(message = "Listing class relations", user_id = user.id());
 
-    let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
-    let (classes, total_count) = user
-        .class_relations_page(&pool, search_params, requestor.scopes())
+    let (classes, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {
+        let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
+        user.class_relations_page(&pool, search_params, requestor.scopes())
+            .await?
+    } else {
+        let mut required = params.filters.permissions()?;
+        required.ensure_contains(&[Permissions::ReadClassRelation]);
+        let required = required.iter().copied().collect::<Vec<_>>();
+        if !scope_allows(requestor.scopes(), &required) {
+            return ApiResponse::paginated(Vec::new(), 0, &params);
+        }
+
+        let mut candidate_options = count_query_options(&params);
+        candidate_options.include_total = false;
+        let candidates = user
+            .search_class_relations_from_backend_with_admin_status(
+                &pool,
+                candidate_options,
+                true,
+                None,
+            )
+            .await?;
+        let resources = class_relation_authorization_resources(&pool, &candidates).await?;
+        let resources = resources
+            .into_iter()
+            .map(|resource| (resource.id, resource))
+            .collect::<HashMap<_, _>>();
+        let principal = PrincipalRef::load(&pool, user).await?;
+        let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
+        let page = authorize_cursor_page(
+            pool.permission_backend(),
+            &principal,
+            candidates,
+            required,
+            &search_params,
+            |relation| {
+                resources
+                    .get(&relation.id)
+                    .expect("every relation candidate has an authorization resource")
+                    .clone()
+            },
+        )
         .await?;
+        (page.rows, page.total_count)
+    };
 
     ApiResponse::paginated(classes, total_count, &params)
 }
@@ -74,7 +122,7 @@ async fn get_class_relations(
 )]
 #[get("classes/{relation_id}")]
 async fn get_class_relation(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     relation_id: web::Path<HubuumClassRelationID>,
 ) -> Result<impl Responder, ApiError> {
@@ -87,17 +135,29 @@ async fn get_class_relation(
         relation_id = ?relation_id,
     );
 
-    let collections = relation_id.collection(&pool).await?;
-    can!(
-        &pool,
-        user,
-        requestor.scopes(),
-        [Permissions::ReadClassRelation],
-        collections.0,
-        collections.1
-    );
-
     let relation = relation_id.instance(&pool).await?;
+    if pool.permission_backend().uses_sql_permission_store() {
+        let collections = relation_id.collection(&pool).await?;
+        can!(
+            &pool,
+            user,
+            requestor.scopes(),
+            [Permissions::ReadClassRelation],
+            collections.0,
+            collections.1
+        );
+    } else {
+        let resource = relation.to_resource_ref(&pool).await?;
+        authorize_resources(
+            pool.permission_backend(),
+            &pool,
+            user,
+            requestor.scopes(),
+            vec![Permissions::ReadClassRelation],
+            vec![resource],
+        )
+        .await?;
+    }
 
     Ok(ApiResponse::new(relation, StatusCode::OK))
 }
@@ -119,7 +179,7 @@ async fn get_class_relation(
 #[post("classes")]
 #[post("classes/")]
 async fn create_class_relation(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     relation: web::Json<NewHubuumClassRelation>,
     req: HttpRequest,
@@ -134,15 +194,28 @@ async fn create_class_relation(
         to_class = relation.to_hubuum_class_id,
     );
 
-    let collections = relation.collection(&pool).await?;
-    can!(
-        &pool,
-        user,
-        requestor.scopes(),
-        [Permissions::CreateClassRelation],
-        collections.0,
-        collections.1
-    );
+    if pool.permission_backend().uses_sql_permission_store() {
+        let collections = relation.collection(&pool).await?;
+        can!(
+            &pool,
+            user,
+            requestor.scopes(),
+            [Permissions::CreateClassRelation],
+            collections.0,
+            collections.1
+        );
+    } else {
+        let resource = relation.to_resource_ref(&pool).await?;
+        authorize_resources(
+            pool.permission_backend(),
+            &pool,
+            user,
+            requestor.scopes(),
+            vec![Permissions::CreateClassRelation],
+            vec![resource],
+        )
+        .await?;
+    }
 
     let event_context = requestor.event_context(&req);
     let relation = relation.save(&pool, &event_context).await?;
@@ -166,7 +239,7 @@ async fn create_class_relation(
 )]
 #[delete("classes/{relation_id}")]
 async fn delete_class_relation(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     relation_id: web::Path<HubuumClassRelationID>,
     req: HttpRequest,
@@ -180,15 +253,29 @@ async fn delete_class_relation(
         relation_id = ?relation_id,
     );
 
-    let collections = relation_id.collection(&pool).await?;
-    can!(
-        &pool,
-        user,
-        requestor.scopes(),
-        [Permissions::DeleteClassRelation],
-        collections.0,
-        collections.1
-    );
+    if pool.permission_backend().uses_sql_permission_store() {
+        let collections = relation_id.collection(&pool).await?;
+        can!(
+            &pool,
+            user,
+            requestor.scopes(),
+            [Permissions::DeleteClassRelation],
+            collections.0,
+            collections.1
+        );
+    } else {
+        let relation = relation_id.instance(&pool).await?;
+        let resource = relation.to_resource_ref(&pool).await?;
+        authorize_resources(
+            pool.permission_backend(),
+            &pool,
+            user,
+            requestor.scopes(),
+            vec![Permissions::DeleteClassRelation],
+            vec![resource],
+        )
+        .await?;
+    }
 
     let event_context = requestor.event_context(&req);
     relation_id.delete(&pool, &event_context).await?;
@@ -211,7 +298,7 @@ async fn delete_class_relation(
 #[get("objects")]
 #[get("objects/")]
 async fn get_object_relations(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -225,10 +312,52 @@ async fn get_object_relations(
 
     debug!(message = "Listing object relations", user_id = user.id());
 
-    let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
-    let (object_relations, total_count) = user
-        .object_relations_page(&pool, search_params, requestor.scopes())
-        .await?;
+    let (object_relations, total_count) =
+        if pool.permission_backend().supports_sql_visibility_pushdown() {
+            let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
+            user.object_relations_page(&pool, search_params, requestor.scopes())
+                .await?
+        } else {
+            let mut required = params.filters.permissions()?;
+            required.ensure_contains(&[Permissions::ReadObjectRelation]);
+            let required = required.iter().copied().collect::<Vec<_>>();
+            if !scope_allows(requestor.scopes(), &required) {
+                return ApiResponse::paginated(Vec::new(), 0, &params);
+            }
+
+            let mut candidate_options = count_query_options(&params);
+            candidate_options.include_total = false;
+            let candidates = user
+                .search_object_relations_from_backend_with_admin_status(
+                    &pool,
+                    candidate_options,
+                    true,
+                    None,
+                )
+                .await?;
+            let resources = object_relation_authorization_resources(&pool, &candidates).await?;
+            let resources = resources
+                .into_iter()
+                .map(|resource| (resource.id, resource))
+                .collect::<HashMap<_, _>>();
+            let principal = PrincipalRef::load(&pool, user).await?;
+            let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
+            let page = authorize_cursor_page(
+                pool.permission_backend(),
+                &principal,
+                candidates,
+                required,
+                &search_params,
+                |relation| {
+                    resources
+                        .get(&relation.id)
+                        .expect("every relation candidate has an authorization resource")
+                        .clone()
+                },
+            )
+            .await?;
+            (page.rows, page.total_count)
+        };
 
     ApiResponse::paginated(object_relations, total_count, &params)
 }
@@ -249,7 +378,7 @@ async fn get_object_relations(
 )]
 #[get("objects/{relation_id}")]
 async fn get_object_relation(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     relation_id: web::Path<HubuumObjectRelationID>,
 ) -> Result<impl Responder, ApiError> {
@@ -262,17 +391,29 @@ async fn get_object_relation(
         relation_id = ?relation_id,
     );
 
-    let collections = relation_id.collection(&pool).await?;
-    can!(
-        &pool,
-        user,
-        requestor.scopes(),
-        [Permissions::ReadObjectRelation],
-        collections.0,
-        collections.1
-    );
-
     let relation = relation_id.instance(&pool).await?;
+    if pool.permission_backend().uses_sql_permission_store() {
+        let collections = relation_id.collection(&pool).await?;
+        can!(
+            &pool,
+            user,
+            requestor.scopes(),
+            [Permissions::ReadObjectRelation],
+            collections.0,
+            collections.1
+        );
+    } else {
+        let resource = relation.to_resource_ref(&pool).await?;
+        authorize_resources(
+            pool.permission_backend(),
+            &pool,
+            user,
+            requestor.scopes(),
+            vec![Permissions::ReadObjectRelation],
+            vec![resource],
+        )
+        .await?;
+    }
 
     Ok(ApiResponse::new(relation, StatusCode::OK))
 }
@@ -294,7 +435,7 @@ async fn get_object_relation(
 #[post("objects")]
 #[post("objects/")]
 async fn create_object_relation(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     relation: web::Json<NewHubuumObjectRelation>,
     req: HttpRequest,
@@ -309,15 +450,28 @@ async fn create_object_relation(
         to_object = relation.to_hubuum_object_id,
     );
 
-    let collections = relation.collection(&pool).await?;
-    can!(
-        &pool,
-        user,
-        requestor.scopes(),
-        [Permissions::CreateObjectRelation],
-        collections.0,
-        collections.1
-    );
+    if pool.permission_backend().uses_sql_permission_store() {
+        let collections = relation.collection(&pool).await?;
+        can!(
+            &pool,
+            user,
+            requestor.scopes(),
+            [Permissions::CreateObjectRelation],
+            collections.0,
+            collections.1
+        );
+    } else {
+        let resource = relation.to_resource_ref(&pool).await?;
+        authorize_resources(
+            pool.permission_backend(),
+            &pool,
+            user,
+            requestor.scopes(),
+            vec![Permissions::CreateObjectRelation],
+            vec![resource],
+        )
+        .await?;
+    }
 
     let event_context = requestor.event_context(&req);
     let relation = relation.save(&pool, &event_context).await?;
@@ -341,7 +495,7 @@ async fn create_object_relation(
 )]
 #[delete("objects/{relation_id}")]
 async fn delete_object_relation(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     relation_id: web::Path<HubuumObjectRelationID>,
     req: HttpRequest,
@@ -355,15 +509,29 @@ async fn delete_object_relation(
         relation_id = ?relation_id,
     );
 
-    let collections = relation_id.collection(&pool).await?;
-    can!(
-        &pool,
-        user,
-        requestor.scopes(),
-        [Permissions::DeleteObjectRelation],
-        collections.0,
-        collections.1
-    );
+    if pool.permission_backend().uses_sql_permission_store() {
+        let collections = relation_id.collection(&pool).await?;
+        can!(
+            &pool,
+            user,
+            requestor.scopes(),
+            [Permissions::DeleteObjectRelation],
+            collections.0,
+            collections.1
+        );
+    } else {
+        let relation = relation_id.instance(&pool).await?;
+        let resource = relation.to_resource_ref(&pool).await?;
+        authorize_resources(
+            pool.permission_backend(),
+            &pool,
+            user,
+            requestor.scopes(),
+            vec![Permissions::DeleteObjectRelation],
+            vec![resource],
+        )
+        .await?;
+    }
 
     let event_context = requestor.event_context(&req);
     relation_id.delete(&pool, &event_context).await?;

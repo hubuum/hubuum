@@ -129,11 +129,27 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         params: &UnifiedSearchSpec,
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<Collection>, ApiError> {
+        let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
+        self.search_unified_collections_from_backend_with_admin_status(
+            pool,
+            params,
+            scopes,
+            is_unscoped_admin,
+        )
+        .await
+    }
+
+    async fn search_unified_collections_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        params: &UnifiedSearchSpec,
+        scopes: Option<&[Permissions]>,
+        is_unscoped_admin: bool,
+    ) -> Result<Vec<Collection>, ApiError> {
         if !scope_allows(scopes, &[Permissions::ReadCollection]) {
             return Ok(Vec::new());
         }
 
-        let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
         let principal_id = self.principal_id();
         let query = params.query.clone();
         let (no_cursor, cursor_rank, cursor_name, cursor_id) =
@@ -162,6 +178,23 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         params: &UnifiedSearchSpec,
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
+        let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
+        self.search_unified_classes_from_backend_with_admin_status(
+            pool,
+            params,
+            scopes,
+            is_unscoped_admin,
+        )
+        .await
+    }
+
+    async fn search_unified_classes_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        params: &UnifiedSearchSpec,
+        scopes: Option<&[Permissions]>,
+        is_unscoped_admin: bool,
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         if !scope_allows(
             scopes,
             &[Permissions::ReadCollection, Permissions::ReadClass],
@@ -169,7 +202,6 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
             return Ok(Vec::new());
         }
 
-        let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
         let principal_id = self.principal_id();
         let query = params.query.clone();
         let search_schema = params.search_class_schema;
@@ -223,6 +255,23 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         params: &UnifiedSearchSpec,
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
+        let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
+        self.search_unified_objects_from_backend_with_admin_status(
+            pool,
+            params,
+            scopes,
+            is_unscoped_admin,
+        )
+        .await
+    }
+
+    async fn search_unified_objects_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        params: &UnifiedSearchSpec,
+        scopes: Option<&[Permissions]>,
+        is_unscoped_admin: bool,
+    ) -> Result<Vec<HubuumObject>, ApiError> {
         if !scope_allows(
             scopes,
             &[Permissions::ReadCollection, Permissions::ReadObject],
@@ -230,7 +279,6 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
             return Ok(Vec::new());
         }
 
-        let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
         let principal_id = self.principal_id();
         let query = params.query.clone();
         let search_data = params.search_object_data;

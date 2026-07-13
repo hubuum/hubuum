@@ -3,7 +3,6 @@ use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, ro
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::{ApiResponse, ResponseLocation};
 use crate::can;
-use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::event_subscription::{
     DeleteEventSubscriptionRecord, SaveEventSubscriptionRecord, UpdateEventSubscriptionRecord,
@@ -16,6 +15,7 @@ use crate::models::{
     UpdateEventSubscription,
 };
 use crate::pagination::prepare_db_pagination;
+use crate::permissions::AppContext;
 use crate::traits::CollectionAccessors;
 
 #[utoipa::path(
@@ -38,7 +38,7 @@ use crate::traits::CollectionAccessors;
 #[post("/{collection_id}/event-subscriptions")]
 #[post("/{collection_id}/event-subscriptions/")]
 pub async fn create_event_subscription(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     collection_id: web::Path<CollectionID>,
@@ -84,7 +84,7 @@ pub async fn create_event_subscription(
 #[get("/{collection_id}/event-subscriptions")]
 #[get("/{collection_id}/event-subscriptions/")]
 pub async fn get_event_subscriptions(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     req: actix_web::HttpRequest,
@@ -122,7 +122,7 @@ pub async fn get_event_subscriptions(
 )]
 #[get("/{collection_id}/event-subscriptions/{subscription_id}")]
 pub async fn get_event_subscription(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     path: web::Path<(CollectionID, EventSubscriptionID)>,
 ) -> Result<impl Responder, ApiError> {
@@ -160,7 +160,7 @@ pub async fn get_event_subscription(
 )]
 #[patch("/{collection_id}/event-subscriptions/{subscription_id}")]
 pub async fn patch_event_subscription(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     path: web::Path<(CollectionID, EventSubscriptionID)>,
@@ -212,7 +212,7 @@ pub async fn patch_event_subscription(
 )]
 #[delete("/{collection_id}/event-subscriptions/{subscription_id}")]
 pub async fn delete_event_subscription(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     path: web::Path<(CollectionID, EventSubscriptionID)>,

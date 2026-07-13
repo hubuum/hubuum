@@ -1,11 +1,10 @@
-use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, web};
+use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode};
 use bytes::Bytes;
 use futures_util::stream;
 use serde::Serialize;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::{
@@ -13,6 +12,7 @@ use crate::models::{
     UnifiedSearchStartedEvent, execute_unified_search, execute_unified_search_batch,
     parse_unified_search_query,
 };
+use crate::permissions::AppContext;
 
 fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> {
     let data = serde_json::to_string(payload).map_err(|error| {
@@ -44,7 +44,7 @@ fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> 
 )]
 #[get("")]
 pub async fn get_search(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -77,7 +77,7 @@ pub async fn get_search(
 )]
 #[get("/stream")]
 pub async fn stream_search(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {

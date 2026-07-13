@@ -1,10 +1,15 @@
 use crate::db::prelude::*;
+use async_trait::async_trait;
 use diesel::sql_types::{Array, Bool, Integer, Jsonb, Nullable, Text, Timestamp};
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::models::{HubuumClassWithPath, HubuumObjectWithPath};
+use crate::db::DbPool;
+use crate::errors::ApiError;
+use crate::models::{HubuumClassID, HubuumClassWithPath, HubuumObjectID, HubuumObjectWithPath};
+use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
+use crate::traits::SelfAccessors;
 use crate::{schema::hubuumclass_relation, schema::hubuumobject_relation};
 
 crate::int_id_newtype! {
@@ -307,6 +312,128 @@ fn new_hubuum_object_relation_example() -> NewHubuumObjectRelation {
         from_hubuum_object_id: 10,
         to_hubuum_object_id: 20,
         class_relation_id: 3,
+    }
+}
+
+#[async_trait]
+impl AuthzTarget for HubuumClassRelation {
+    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        let from_class = HubuumClassID::new(self.from_hubuum_class_id)?
+            .instance(pool)
+            .await?;
+        let to_class = HubuumClassID::new(self.to_hubuum_class_id)?
+            .instance(pool)
+            .await?;
+        let same_collection = from_class.collection_id == to_class.collection_id;
+
+        Ok(ResourceRef {
+            kind: ResourceKind::ClassRelation,
+            id: self.id,
+            attrs: ResourceAttrs {
+                collection_id: same_collection.then_some(from_class.collection_id),
+                from_collection_id: Some(from_class.collection_id),
+                to_collection_id: Some(to_class.collection_id),
+                from_class_id: Some(self.from_hubuum_class_id),
+                to_class_id: Some(self.to_hubuum_class_id),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait]
+impl AuthzTarget for NewHubuumClassRelation {
+    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        let from_class = HubuumClassID::new(self.from_hubuum_class_id)?
+            .instance(pool)
+            .await?;
+        let to_class = HubuumClassID::new(self.to_hubuum_class_id)?
+            .instance(pool)
+            .await?;
+        Ok(ResourceRef {
+            kind: ResourceKind::ClassRelation,
+            id: 0,
+            attrs: ResourceAttrs {
+                collection_id: (from_class.collection_id == to_class.collection_id)
+                    .then_some(from_class.collection_id),
+                from_collection_id: Some(from_class.collection_id),
+                to_collection_id: Some(to_class.collection_id),
+                from_class_id: Some(from_class.id),
+                to_class_id: Some(to_class.id),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait]
+impl AuthzTarget for HubuumClassRelationID {
+    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        self.instance(pool).await?.to_resource_ref(pool).await
+    }
+}
+
+#[async_trait]
+impl AuthzTarget for HubuumObjectRelation {
+    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        let from_object = HubuumObjectID::new(self.from_hubuum_object_id)?
+            .instance(pool)
+            .await?;
+        let to_object = HubuumObjectID::new(self.to_hubuum_object_id)?
+            .instance(pool)
+            .await?;
+        let same_collection = from_object.collection_id == to_object.collection_id;
+
+        Ok(ResourceRef {
+            kind: ResourceKind::ObjectRelation,
+            id: self.id,
+            attrs: ResourceAttrs {
+                collection_id: same_collection.then_some(from_object.collection_id),
+                from_collection_id: Some(from_object.collection_id),
+                to_collection_id: Some(to_object.collection_id),
+                from_class_id: Some(from_object.hubuum_class_id),
+                to_class_id: Some(to_object.hubuum_class_id),
+                from_object_id: Some(self.from_hubuum_object_id),
+                to_object_id: Some(self.to_hubuum_object_id),
+                class_relation_id: Some(self.class_relation_id),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait]
+impl AuthzTarget for NewHubuumObjectRelation {
+    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        let from_object = HubuumObjectID::new(self.from_hubuum_object_id)?
+            .instance(pool)
+            .await?;
+        let to_object = HubuumObjectID::new(self.to_hubuum_object_id)?
+            .instance(pool)
+            .await?;
+        Ok(ResourceRef {
+            kind: ResourceKind::ObjectRelation,
+            id: 0,
+            attrs: ResourceAttrs {
+                collection_id: (from_object.collection_id == to_object.collection_id)
+                    .then_some(from_object.collection_id),
+                from_collection_id: Some(from_object.collection_id),
+                to_collection_id: Some(to_object.collection_id),
+                from_class_id: Some(from_object.hubuum_class_id),
+                to_class_id: Some(to_object.hubuum_class_id),
+                from_object_id: Some(from_object.id),
+                to_object_id: Some(to_object.id),
+                class_relation_id: Some(self.class_relation_id),
+                ..Default::default()
+            },
+        })
+    }
+}
+
+#[async_trait]
+impl AuthzTarget for HubuumObjectRelationID {
+    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+        self.instance(pool).await?.to_resource_ref(pool).await
     }
 }
 

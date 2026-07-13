@@ -78,6 +78,10 @@ impl Permissions {
         Permissions::ManageEventSubscription,
     ];
 
+    pub const fn all() -> &'static [Permissions] {
+        &Self::ALL
+    }
+
     /// ## Convert a string to a Permissions enum.
     ///
     /// ### Arguments

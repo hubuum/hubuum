@@ -2,19 +2,21 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::DbPool;
 use crate::db::traits::task::{
     TaskBackend, list_export_task_output_summaries, list_tasks_with_total_count,
 };
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
-use crate::models::search::parse_query_parameter_with_passthrough;
+use crate::models::search::{QueryOptions, parse_query_parameter_with_passthrough};
 use crate::models::{
     ExportOutputLookup, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus,
 };
-use crate::pagination::prepare_db_pagination;
+use crate::pagination::{
+    count_query_options, known_count_or_skipped, paginate_in_memory, prepare_db_pagination,
+};
+use crate::permissions::AppContext;
+use crate::permissions::{AuthzTarget, PermissionDecision, PrincipalRef};
 use crate::tasks::ensure_task_worker_running;
-use crate::traits::AuthzSubject;
 
 #[derive(Debug, Default)]
 struct TaskListFilters {
@@ -23,9 +25,7 @@ struct TaskListFilters {
     submitted_by: Option<i32>,
 }
 
-fn parse_task_list_query(
-    query_string: &str,
-) -> Result<(crate::models::search::QueryOptions, TaskListFilters), ApiError> {
+fn parse_task_list_query(query_string: &str) -> Result<(QueryOptions, TaskListFilters), ApiError> {
     let (query_options, mut passthrough) =
         parse_query_parameter_with_passthrough(query_string, &["kind", "status", "submitted_by"])?;
 
@@ -98,28 +98,60 @@ fn parse_task_list_query(
 #[get("")]
 #[get("/")]
 pub async fn get_tasks(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(pool.db_pool.clone());
     let (params, filters) = parse_task_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<TaskResponse>(&params)?;
-    let is_admin = requestor.principal.is_admin(&pool).await?;
+    let backend = pool.permission_backend();
+    let principal = PrincipalRef::load(&pool, &requestor.principal).await?;
+    let is_admin = backend.is_admin(&principal).await?;
     let submitted_by_filter = if is_admin {
         filters.submitted_by
-    } else {
+    } else if backend.supports_sql_visibility_pushdown() {
         Some(requestor.principal.id)
+    } else {
+        None
     };
-    let (tasks, total_count) = list_tasks_with_total_count(
-        &pool,
-        submitted_by_filter,
-        filters.kind.map(TaskKind::as_str),
-        filters.status.map(TaskStatus::as_str),
-        &search_params,
-    )
-    .await?;
-    let tasks = tasks.into_iter().collect::<Vec<_>>();
+    let (tasks, total_count) = if backend.supports_sql_visibility_pushdown() {
+        list_tasks_with_total_count(
+            &pool,
+            submitted_by_filter,
+            filters.kind.map(TaskKind::as_str),
+            filters.status.map(TaskStatus::as_str),
+            &search_params,
+        )
+        .await?
+    } else {
+        let mut candidate_options = count_query_options(&params);
+        candidate_options.include_total = false;
+        let (candidates, _) = list_tasks_with_total_count(
+            &pool,
+            submitted_by_filter,
+            filters.kind.map(TaskKind::as_str),
+            filters.status.map(TaskStatus::as_str),
+            &candidate_options,
+        )
+        .await?;
+        let resources = candidates
+            .iter()
+            .map(|task| task.to_resource_ref(&pool))
+            .collect::<Vec<_>>();
+        let mut task_resources = Vec::with_capacity(resources.len());
+        for resource in resources {
+            task_resources.push(resource.await?);
+        }
+        let decisions = backend.authorize_tasks(&principal, &task_resources).await?;
+        let authorized = candidates
+            .into_iter()
+            .zip(decisions)
+            .filter_map(|(task, decision)| (decision == PermissionDecision::Allow).then_some(task))
+            .collect::<Vec<_>>();
+        let total_count = known_count_or_skipped(&params, authorized.len() as i64);
+        (paginate_in_memory(authorized, &search_params)?, total_count)
+    };
     let export_task_ids = tasks
         .iter()
         .filter(|task| task.kind == TaskKind::Export.as_str())
@@ -169,15 +201,28 @@ pub async fn get_tasks(
 )]
 #[get("/{task_id}")]
 pub async fn get_task(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
-    let task = task_id
-        .into_inner()
-        .load_authorized(&pool, &requestor.principal)
-        .await?;
+    ensure_task_worker_running(pool.db_pool.clone());
+    let task_id = task_id.into_inner();
+    let task = if pool.permission_backend().uses_sql_permission_store() {
+        task_id.load_authorized(&pool, &requestor.principal).await?
+    } else {
+        let task = task_id.find_record(&pool).await?;
+        let principal = PrincipalRef::load(&pool, &requestor.principal).await?;
+        let resource = task.to_resource_ref(&pool).await?;
+        if pool
+            .permission_backend()
+            .authorize_task(&principal, &resource)
+            .await?
+            != PermissionDecision::Allow
+        {
+            return Err(ApiError::Forbidden("Permission denied".to_string()));
+        }
+        task
+    };
     let export_output = if task.kind == TaskKind::Export.as_str() {
         task.find_export_output_summary(&pool).await?
     } else {
@@ -206,14 +251,28 @@ pub async fn get_task(
 )]
 #[get("/{task_id}/events")]
 pub async fn get_task_events(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(pool.db_pool.clone());
     let task_id = task_id.into_inner();
-    task_id.load_authorized(&pool, &requestor.principal).await?;
+    if pool.permission_backend().uses_sql_permission_store() {
+        task_id.load_authorized(&pool, &requestor.principal).await?;
+    } else {
+        let task = task_id.find_record(&pool).await?;
+        let principal = PrincipalRef::load(&pool, &requestor.principal).await?;
+        let resource = task.to_resource_ref(&pool).await?;
+        if pool
+            .permission_backend()
+            .authorize_task(&principal, &resource)
+            .await?
+            != PermissionDecision::Allow
+        {
+            return Err(ApiError::Forbidden("Permission denied".to_string()));
+        }
+    }
     let (params, _) = parse_query_parameter_with_passthrough(req.query_string(), &[])?;
     let search_params = prepare_db_pagination::<TaskEventResponse>(&params)?;
     let (events, total_count) = task_id

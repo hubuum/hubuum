@@ -16,6 +16,7 @@ pub mod middlewares;
 pub mod models;
 pub mod observability;
 pub mod pagination;
+pub mod permissions;
 pub mod schema;
 pub mod tasks;
 #[cfg(test)]

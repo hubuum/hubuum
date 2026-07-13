@@ -2026,6 +2026,7 @@ dependencies = [
  "actix-service",
  "actix-web",
  "argon2",
+ "async-trait",
  "base64",
  "bytes",
  "chrono",
@@ -2077,6 +2078,7 @@ dependencies = [
  "tracing",
  "tracing-serde",
  "tracing-subscriber",
+ "treetop-client",
  "urlparse",
  "utoipa",
  "utoipa-swagger-ui",
@@ -3581,6 +3583,7 @@ version = "0.11.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fcb935c5bec503c2f0e306bdd3e58bb9029dcb14fa8d9ac76e3a5256ac0763e"
 dependencies = [
+ "aws-lc-rs",
  "bytes",
  "getrandom 0.3.4",
  "lru-slab",
@@ -3875,6 +3878,7 @@ dependencies = [
  "log",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
@@ -4145,6 +4149,16 @@ dependencies = [
  "pbkdf2",
  "salsa20",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
+ "serde",
+ "zeroize",
 ]
 
 [[package]]
@@ -4916,6 +4930,19 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "treetop-client"
+version = "0.0.1"
+source = "git+https://github.com/terjekv/treetop-client#5a1d176df790216983127b18af70f6ac6a91ce28"
+dependencies = [
+ "reqwest 0.13.4",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]
