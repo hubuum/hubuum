@@ -323,9 +323,9 @@ For example:
 ```
 
 Settings mutations are serialized with a principal row lock, so concurrent patches
-preserve unrelated changes. Each successful mutation records a complete before and
-after settings snapshot in an `updated` audit event for the target user or service
-account.
+preserve unrelated changes. Each mutation that changes the settings records a
+complete before and after snapshot in an `updated` audit event for the target user
+or service account. Unchanged mutations are no-ops and do not emit an event.
 
 ---
 

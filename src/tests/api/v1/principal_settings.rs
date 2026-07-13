@@ -2,9 +2,11 @@
 mod tests {
     use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test};
+    use chrono::NaiveDateTime;
     use rstest::rstest;
 
-    use crate::db::with_connection;
+    use crate::db::{DbPool, with_connection};
+    use crate::errors::ApiError;
     use crate::events::{Action, EntityType, Event};
     use crate::models::{Permissions, PrincipalID};
     use crate::tests::api_operations::{delete_request, get_request, patch_request, put_request};
@@ -27,6 +29,28 @@ mod tests {
             RouteFamily::Me => ME_SETTINGS.to_string(),
             RouteFamily::Principal => format!("{PRINCIPALS}/{principal_id}/settings"),
         }
+    }
+
+    async fn principal_mutation_state(pool: &DbPool, principal_id: i32) -> (NaiveDateTime, i64) {
+        use crate::schema::{events, principals};
+
+        with_connection(pool, async |conn| -> Result<_, ApiError> {
+            let updated_at = principals::table
+                .filter(principals::id.eq(principal_id))
+                .select(principals::updated_at)
+                .first::<NaiveDateTime>(conn)
+                .await?;
+            let event_count = events::table
+                .filter(events::entity_type.eq(EntityType::User.as_str()))
+                .filter(events::entity_id.eq(principal_id))
+                .filter(events::action.eq(Action::Updated.as_str()))
+                .count()
+                .get_result::<i64>(conn)
+                .await?;
+            Ok((updated_at, event_count))
+        })
+        .await
+        .unwrap()
     }
 
     #[rstest]
@@ -457,6 +481,55 @@ mod tests {
             Some(serde_json::json!({ "settings": before }))
         );
         assert_eq!(event.after, Some(serde_json::json!({ "settings": after })));
+    }
+
+    #[rstest]
+    #[case::put(Mutation::Put)]
+    #[case::patch(Mutation::Patch)]
+    #[case::delete(Mutation::Delete)]
+    #[actix_web::test]
+    async fn unchanged_settings_mutations_do_not_update_the_principal_or_emit_events(
+        #[case] mutation: Mutation,
+    ) {
+        let context = TestContext::new().await;
+        let principal_id = context.normal_user.id;
+        let initial = serde_json::json!({
+            "theme": "dark",
+            "layout": { "density": "comfortable" }
+        });
+
+        if matches!(mutation, Mutation::Put | Mutation::Patch) {
+            let setup =
+                put_request(&context.pool, &context.normal_token, ME_SETTINGS, &initial).await;
+            assert_eq!(setup.status(), StatusCode::OK);
+        }
+        let before = principal_mutation_state(&context.pool, principal_id).await;
+
+        let response = match mutation {
+            Mutation::Put => {
+                put_request(&context.pool, &context.normal_token, ME_SETTINGS, &initial).await
+            }
+            Mutation::Patch => {
+                patch_request(
+                    &context.pool,
+                    &context.normal_token,
+                    ME_SETTINGS,
+                    serde_json::json!({ "layout": { "density": "comfortable" } }),
+                )
+                .await
+            }
+            Mutation::Delete => {
+                delete_request(&context.pool, &context.normal_token, ME_SETTINGS).await
+            }
+        };
+        let expected_status = match mutation {
+            Mutation::Put | Mutation::Patch => StatusCode::OK,
+            Mutation::Delete => StatusCode::NO_CONTENT,
+        };
+        assert_eq!(response.status(), expected_status);
+
+        let after = principal_mutation_state(&context.pool, principal_id).await;
+        assert_eq!(after, before);
     }
 
     #[actix_web::test]
