@@ -17,6 +17,10 @@ an explicit version instead of using the moving `main` image tag.
 Hubuum requires PostgreSQL. The release is available as pre-built archives for Linux,
 macOS, and Windows, and as a Linux container image for AMD64 and ARM64.
 
+Linux archives contain stripped, statically linked executables and do not require a compatible
+system glibc, libpq, or OpenSSL installation. macOS and Windows archives bundle libpq and OpenSSL
+while retaining only their normal operating-system runtime dependencies.
+
 ```sh
 docker pull ghcr.io/hubuum/hubuum-server:v0.0.1
 ```
@@ -29,8 +33,7 @@ docker pull ghcr.io/hubuum/hubuum-server:v0.0.1
   [GitHub Releases](https://github.com/hubuum/hubuum/releases).
 - Check a running instance at `/healthz` and `/readyz`.
 
-The default container image includes the `rustls` and OpenSSL TLS backends. A smaller
-`v0.0.1-rustls-only` image is also published. See the
+The Alpine-based container image includes both the `rustls` and OpenSSL TLS backends. See the
 [release guide](docs/releasing.md#container-images) for the complete tag scheme.
 
 ## Concept
@@ -162,11 +165,10 @@ inspecting and releasing throttled scopes), see [docs/login_rate_limiting.md](do
 - If unset, Hubuum generates an ephemeral in-memory key at startup and logs a warning.
 - With an ephemeral key, all existing bearer tokens become invalid after each restart.
 
-### Container Image Variants
+### Container Image
 
 - The default container tags include both TLS backends and allow runtime selection with `HUBUUM_TLS_BACKEND`.
 - The default image can also run without TLS if no certificate and key are configured.
-- Slim container tags ending in `-rustls-only` include only the `rustls` backend.
 
 ### Configuration Reference
 

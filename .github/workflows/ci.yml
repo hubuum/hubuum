@@ -390,6 +390,19 @@ jobs:
     name: Container build (production features)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: hubuum_container_test
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hubuum_container_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -400,12 +413,74 @@ jobs:
         with:
           context: .
           file: Dockerfile
+          load: true
           push: false
+          tags: hubuum-server:ci
           build-args: |
             CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
             HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Export static release binaries
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          target: release-artifacts
+          outputs: type=local,dest=dist/release-smoke
+          build-args: |
+            CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
+            HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+      - name: Verify exported release binaries
+        run: |
+          for binary in dist/release-smoke/hubuum-server dist/release-smoke/hubuum-admin; do
+            if readelf --dynamic "$binary" | grep --quiet '(NEEDED)'; then
+              echo "$binary unexpectedly has dynamic runtime dependencies" >&2
+              readelf --dynamic "$binary" >&2
+              exit 1
+            fi
+            "$binary" --version
+          done
+      - name: Test embedded database migrations and readiness
+        env:
+          IMAGE: hubuum-server:ci
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hubuum_container_test?sslmode=disable
+        run: |
+          docker run --rm --entrypoint hubuum-admin "$IMAGE" --help \
+            | grep --quiet -- "--migrate"
+          docker run --rm --network host \
+            --entrypoint hubuum-admin \
+            --env HUBUUM_DATABASE_URL="$DATABASE_URL" \
+            "$IMAGE" --migrate
+          docker run --rm --network host \
+            --entrypoint hubuum-admin \
+            --env HUBUUM_DATABASE_URL="$DATABASE_URL" \
+            "$IMAGE" --database-ready
+          test "$(docker run --rm --network host \
+            --env PGPASSWORD=postgres \
+            postgres:18 psql \
+            --host 127.0.0.1 \
+            --username postgres \
+            --dbname hubuum_container_test \
+            --tuples-only \
+            --no-align \
+            --command "SELECT to_regclass('public.users') IS NOT NULL")" = "t"
+          container_id="$(docker run --rm --detach --network host \
+            --env HUBUUM_DATABASE_URL="$DATABASE_URL" \
+            --env HUBUUM_BIND_IP=127.0.0.1 \
+            "$IMAGE")"
+          trap 'docker stop "$container_id"' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8080/readyz; then
+              break
+            fi
+            if [[ "$attempt" == 30 ]]; then
+              docker logs "$container_id"
+              exit 1
+            fi
+            sleep 1
+          done
 
   verify-tag-main-ci-success:
     name: Verify tagged commit already passed CI on main
@@ -462,31 +537,80 @@ jobs:
       - name: Check release metadata
         run: ./scripts/check-release-readiness.sh "${GITHUB_REF_NAME}"
 
-  build-tag-artifacts:
-    name: Build release artifacts (${{ matrix.platform.name }})
+  build-tag-linux-artifacts:
+    name: Build static release artifacts (${{ matrix.platform.name }})
     if: startsWith(github.ref, 'refs/tags/v')
     needs: validate-tag-release
-    runs-on: ${{ matrix.platform.os }}
+    runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
         platform:
           - name: Linux-x86_64
-            target: x86_64-unknown-linux-gnu
+            arch: amd64
             os_name: linux-x86_64
-            os: ubuntu-24.04
+            runner: ubuntu-24.04
           - name: Linux-aarch64
-            target: aarch64-unknown-linux-gnu
+            arch: arm64
             os_name: linux-aarch64
-            os: ubuntu-24.04-arm
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Export stripped static binaries
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          target: release-artifacts
+          platforms: linux/${{ matrix.platform.arch }}
+          outputs: type=local,dest=dist/bin
+          build-args: |
+            CARGO_BUILD_FLAGS=--all-features --locked --release
+            HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=static-${{ matrix.platform.os_name }}-all-features
+          cache-to: type=gha,mode=max,scope=static-${{ matrix.platform.os_name }}-all-features
+      - name: Verify static linkage and package release archive
+        shell: bash
+        run: |
+          for binary in dist/bin/hubuum-server dist/bin/hubuum-admin; do
+            if readelf --dynamic "$binary" | grep --quiet '(NEEDED)'; then
+              echo "$binary unexpectedly has dynamic runtime dependencies" >&2
+              readelf --dynamic "$binary" >&2
+              exit 1
+            fi
+            "$binary" --version
+          done
+          archive_name="hubuum-${{ matrix.platform.os_name }}-all-features-${GITHUB_REF_NAME}.tar.gz"
+          tar czvf "dist/${archive_name}" -C dist/bin hubuum-server hubuum-admin
+          shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform.os_name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+  build-tag-native-artifacts:
+    name: Build native release artifacts (${{ matrix.platform.name }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: validate-tag-release
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
           - name: Windows-x86_64
             target: x86_64-pc-windows-msvc
             os_name: windows-x86_64
-            os: windows-latest
+            runner: windows-latest
           - name: macOS-ARM64
             target: aarch64-apple-darwin
             os_name: macos-aarch64
-            os: macos-latest
+            runner: macos-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -502,41 +626,41 @@ jobs:
         with:
           shared-key: ${{ matrix.platform.target }}-stable-release
       
-      - name: Install Linux dependencies
-        if: contains(matrix.platform.os, 'ubuntu')
-        run: |
-          sudo apt-get update --yes
-          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
-      
-      - name: Install macOS dependencies
-        if: contains(matrix.platform.os, 'macos')
-        run: |
-          brew install postgresql@17 mysql-client
-          # Configure library paths for linking
-          echo "LIBRARY_PATH=$(brew --prefix postgresql@17)/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=$(brew --prefix postgresql@17)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
-
-      - name: Install Windows PostgreSQL libraries
-        if: contains(matrix.platform.os, 'windows')
-        shell: pwsh
-        run: |
-          choco install postgresql --params '"/Password:postgres"' --no-progress -y
-          $pgRoot = Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          if (-not $pgRoot) { throw 'PostgreSQL installation directory not found' }
-          $libPath = Join-Path $pgRoot.FullName 'lib'
-          if (-not (Test-Path (Join-Path $libPath 'libpq.lib'))) { throw "libpq.lib not found in $libPath" }
-          "LIB=$libPath;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      
-      - name: Build release binaries (native, all features)
-        if: "!contains(matrix.platform.os, 'windows')"
+      - name: Build release binaries (macOS, all features)
+        if: contains(matrix.platform.os_name, 'macos')
+        env:
+          HUBUUM_BUILD_GIT_SHA: ${{ github.sha }}
         run: cargo build --all-features --locked --release --target ${{ matrix.platform.target }}
 
-      - name: Build release binaries (Windows, full release feature set)
-        if: contains(matrix.platform.os, 'windows')
-        run: cargo build -F tls-rustls,amqp,email,valkey --locked --release --target ${{ matrix.platform.target }}
+      - name: Build release binaries (Windows, self-contained feature set)
+        if: contains(matrix.platform.os_name, 'windows')
+        env:
+          HUBUUM_BUILD_GIT_SHA: ${{ github.sha }}
+        run: cargo build -F tls-rustls,amqp,email,valkey,embedded-migrations,vendored-openssl --locked --release --target ${{ matrix.platform.target }}
+
+      - name: Verify macOS runtime dependencies
+        if: contains(matrix.platform.os_name, 'macos')
+        shell: bash
+        run: |
+          for binary in hubuum-server hubuum-admin; do
+            binary_path="target/${{ matrix.platform.target }}/release/${binary}"
+            "$binary_path" --version
+            if xcrun otool -L "$binary_path" | grep --extended-regexp --quiet '(/opt/homebrew|/usr/local/opt|libpq|libssl|libcrypto)'; then
+              echo "$binary unexpectedly depends on a package-manager library" >&2
+              xcrun otool -L "$binary_path" >&2
+              exit 1
+            fi
+          done
+
+      - name: Verify Windows binaries start without third-party DLLs
+        if: contains(matrix.platform.os_name, 'windows')
+        shell: pwsh
+        run: |
+          & "target/${{ matrix.platform.target }}/release/hubuum-server.exe" --version
+          & "target/${{ matrix.platform.target }}/release/hubuum-admin.exe" --version
       
       - name: Package release archive (Unix)
-        if: "!contains(matrix.platform.os, 'windows')"
+        if: contains(matrix.platform.os_name, 'macos')
         shell: bash
         run: |
           mkdir -p dist
@@ -546,7 +670,7 @@ jobs:
           shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
       
       - name: Package release archive (Windows)
-        if: contains(matrix.platform.os, 'windows')
+        if: contains(matrix.platform.os_name, 'windows')
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist
@@ -564,7 +688,9 @@ jobs:
   publish-github-release:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build-tag-artifacts
+    needs:
+      - build-tag-linux-artifacts
+      - build-tag-native-artifacts
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -595,8 +721,8 @@ jobs:
           body_path: /tmp/release-notes.md
           files: dist/*
 
-  build-main-artifacts:
-    name: Build main artifacts (${{ matrix.platform.os_name }}, ${{ matrix.feature.ext }})
+  build-main-linux-artifacts:
+    name: Build static main artifacts (${{ matrix.platform.os_name }}, ${{ matrix.feature.ext }})
     if: github.ref == 'refs/heads/main'
     needs:
       - lint
@@ -610,21 +736,81 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - target: x86_64-unknown-linux-gnu
+          - arch: amd64
             os_name: linux-x86_64
-            os: ubuntu-24.04
             runner: ubuntu-24.04
-          - target: aarch64-unknown-linux-gnu
+          - arch: arm64
             os_name: linux-aarch64
-            os: ubuntu-24.04-arm
             runner: ubuntu-24.04-arm
+        feature:
+          - extra_args: "--all-features"
+            ext: all-features
+          - extra_args: "--no-default-features"
+            ext: no-tls
+          - extra_args: "-F tls-openssl"
+            ext: tls-openssl
+          - extra_args: "-F tls-rustls"
+            ext: tls-rustls
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Export stripped static binaries
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          target: release-artifacts
+          platforms: linux/${{ matrix.platform.arch }}
+          outputs: type=local,dest=dist/bin
+          build-args: |
+            CARGO_BUILD_FLAGS=${{ matrix.feature.extra_args }} --locked --release
+            HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=static-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}
+          cache-to: type=gha,mode=max,scope=static-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}
+      - name: Verify static linkage and package main archive
+        shell: bash
+        run: |
+          for binary in dist/bin/hubuum-server dist/bin/hubuum-admin; do
+            if readelf --dynamic "$binary" | grep --quiet '(NEEDED)'; then
+              echo "$binary unexpectedly has dynamic runtime dependencies" >&2
+              readelf --dynamic "$binary" >&2
+              exit 1
+            fi
+            "$binary" --version
+          done
+          archive_name="hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz"
+          tar czvf "dist/${archive_name}" -C dist/bin hubuum-server hubuum-admin
+          shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
+      - name: Upload main artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: main-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+  build-main-native-artifacts:
+    name: Build native main artifacts (${{ matrix.platform.os_name }}, ${{ matrix.feature.ext }})
+    if: github.ref == 'refs/heads/main'
+    needs:
+      - lint
+      - release-metadata
+      - openapi-contract
+      - feature-permutations
+      - test
+      - all-features-release-build
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
           - target: x86_64-pc-windows-msvc
             os_name: windows-x86_64
-            os: windows-latest
             runner: windows-latest
           - target: aarch64-apple-darwin
             os_name: macos-aarch64
-            os: macos-latest
             runner: macos-latest
         feature:
           - extra_args: "--all-features"
@@ -636,7 +822,6 @@ jobs:
           - extra_args: "-F tls-rustls"
             ext: tls-rustls
         exclude:
-          # tls-openssl requires libssl which is not straightforward on Windows
           - platform: { os_name: windows-x86_64 }
             feature: { ext: tls-openssl }
           - platform: { os_name: windows-x86_64 }
@@ -652,32 +837,31 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ${{ matrix.platform.target }}-stable-release
-      - name: Install Linux dependencies
-        if: contains(matrix.platform.os, 'ubuntu')
+      - name: Build self-contained main binaries
+        env:
+          HUBUUM_BUILD_GIT_SHA: ${{ github.sha }}
+        run: cargo build ${{ matrix.feature.extra_args }} -F embedded-migrations,vendored-openssl --locked --release --target ${{ matrix.platform.target }}
+      - name: Verify macOS runtime dependencies
+        if: contains(matrix.platform.os_name, 'macos')
+        shell: bash
         run: |
-          sudo apt-get update --yes
-          sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
-      - name: Install macOS dependencies
-        if: contains(matrix.platform.os, 'macos')
-        run: |
-          brew install postgresql@17 openssl@3
-          # Configure library paths for linking
-          echo "LIBRARY_PATH=$(brew --prefix postgresql@17)/lib:$(brew --prefix openssl@3)/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=$(brew --prefix postgresql@17)/lib/pkgconfig:$(brew --prefix openssl@3)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
-      - name: Install Windows PostgreSQL libraries
-        if: contains(matrix.platform.os, 'windows')
+          for binary in hubuum-server hubuum-admin; do
+            binary_path="target/${{ matrix.platform.target }}/release/${binary}"
+            "$binary_path" --version
+            if xcrun otool -L "$binary_path" | grep --extended-regexp --quiet '(/opt/homebrew|/usr/local/opt|libpq|libssl|libcrypto)'; then
+              echo "$binary unexpectedly depends on a package-manager library" >&2
+              xcrun otool -L "$binary_path" >&2
+              exit 1
+            fi
+          done
+      - name: Verify Windows binaries start without third-party DLLs
+        if: contains(matrix.platform.os_name, 'windows')
         shell: pwsh
         run: |
-          choco install postgresql --params '"/Password:postgres"' --no-progress -y
-          $pgRoot = Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          if (-not $pgRoot) { throw 'PostgreSQL installation directory not found' }
-          $libPath = Join-Path $pgRoot.FullName 'lib'
-          if (-not (Test-Path (Join-Path $libPath 'libpq.lib'))) { throw "libpq.lib not found in $libPath" }
-          "LIB=$libPath;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Build main binaries
-        run: cargo build ${{ matrix.feature.extra_args }} --locked --release --target ${{ matrix.platform.target }}
-      - name: Package main archive (Unix)
-        if: "!contains(matrix.platform.os, 'windows')"
+          & "target/${{ matrix.platform.target }}/release/hubuum-server.exe" --version
+          & "target/${{ matrix.platform.target }}/release/hubuum-admin.exe" --version
+      - name: Package main archive (macOS)
+        if: contains(matrix.platform.os_name, 'macos')
         shell: bash
         run: |
           mkdir -p dist
@@ -685,7 +869,7 @@ jobs:
           tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin
           shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
       - name: Package main archive (Windows)
-        if: contains(matrix.platform.os, 'windows')
+        if: contains(matrix.platform.os_name, 'windows')
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist
@@ -702,7 +886,9 @@ jobs:
   publish-main-release:
     name: Publish main-latest artifacts
     if: github.ref == 'refs/heads/main'
-    needs: build-main-artifacts
+    needs:
+      - build-main-linux-artifacts
+      - build-main-native-artifacts
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -724,7 +910,7 @@ jobs:
           files: dist/*
 
   publish-main-container-images:
-    name: Build main container (${{ matrix.variant.name }}, ${{ matrix.platform.arch }})
+    name: Build main container (${{ matrix.platform.arch }})
     if: github.ref == 'refs/heads/main'
     needs:
       - lint
@@ -739,11 +925,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant:
-          - name: full
-            build_args: "-F tls-rustls -F tls-openssl"
-          - name: rustls-only
-            build_args: "-F tls-rustls"
         platform:
           - arch: amd64
             runner: ubuntu-24.04
@@ -767,31 +948,25 @@ jobs:
           file: Dockerfile
           platforms: linux/${{ matrix.platform.arch }}
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/hubuum-server:main-${{ matrix.variant.name }}-${{ matrix.platform.arch }}
+          tags: ghcr.io/${{ github.repository_owner }}/hubuum-server:main-full-${{ matrix.platform.arch }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ github.ref_name }}
           build-args: |
-            CARGO_BUILD_FLAGS=${{ matrix.variant.build_args }} --locked --release
+            CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
             HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   publish-main-container-manifests:
-    name: Create main multi-arch manifest (${{ matrix.variant.name }})
+    name: Create main multi-arch manifest
     if: github.ref == 'refs/heads/main'
     needs: publish-main-container-images
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          - name: full
-          - name: rustls-only
     steps:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
@@ -804,24 +979,17 @@ jobs:
         run: |
           owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           image="ghcr.io/${owner}/hubuum-server"
-          variant="${{ matrix.variant.name }}"
-          
-          # Determine final tags
-          if [[ "$variant" == "full" ]]; then
-            final_tags=("${image}:main" "${image}:main-full")
-          else
-            final_tags=("${image}:main-${variant}")
-          fi
+          final_tags=("${image}:main" "${image}:main-full")
           
           # Create and push manifest for each tag
           for tag in "${final_tags[@]}"; do
             docker buildx imagetools create -t "$tag" \
-              "${image}:main-${variant}-amd64" \
-              "${image}:main-${variant}-arm64"
+              "${image}:main-full-amd64" \
+              "${image}:main-full-arm64"
           done
 
   publish-tag-container-images:
-    name: Build release container (${{ matrix.variant.name }}, ${{ matrix.platform.arch }})
+    name: Build release container (${{ matrix.platform.arch }})
     if: startsWith(github.ref, 'refs/tags/v')
     needs: validate-tag-release
     runs-on: ${{ matrix.platform.runner }}
@@ -831,11 +999,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant:
-          - name: full
-            build_args: "-F tls-rustls -F tls-openssl"
-          - name: rustls-only
-            build_args: "-F tls-rustls"
         platform:
           - arch: amd64
             runner: ubuntu-24.04
@@ -863,31 +1026,25 @@ jobs:
           file: Dockerfile
           platforms: linux/${{ matrix.platform.arch }}
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/hubuum-server:${{ github.ref_name }}-${{ matrix.variant.name }}-${{ matrix.platform.arch }}
+          tags: ghcr.io/${{ github.repository_owner }}/hubuum-server:${{ github.ref_name }}-full-${{ matrix.platform.arch }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ github.ref_name }}
           build-args: |
-            CARGO_BUILD_FLAGS=${{ matrix.variant.build_args }} --locked --release
+            CARGO_BUILD_FLAGS=-F tls-rustls -F tls-openssl --locked --release
             HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   publish-tag-container-manifests:
-    name: Create release multi-arch manifest (${{ matrix.variant.name }})
+    name: Create release multi-arch manifest
     if: startsWith(github.ref, 'refs/tags/v')
     needs: publish-tag-container-images
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          - name: full
-          - name: rustls-only
     steps:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
@@ -902,26 +1059,16 @@ jobs:
           image="ghcr.io/${owner}/hubuum-server"
           version_tag="${GITHUB_REF_NAME}"
           version="${version_tag#v}"
-          variant="${{ matrix.variant.name }}"
-          
-          # Determine final tags
-          if [[ "$variant" == "full" ]]; then
-            final_tags=(
-              "${image}:${version_tag}"
-              "${image}:${version}"
-              "${image}:${version_tag}-full"
-              "${image}:${version}-full"
-            )
-          else
-            final_tags=(
-              "${image}:${version_tag}-${variant}"
-              "${image}:${version}-${variant}"
-            )
-          fi
+          final_tags=(
+            "${image}:${version_tag}"
+            "${image}:${version}"
+            "${image}:${version_tag}-full"
+            "${image}:${version}-full"
+          )
           
           # Create and push manifest for each tag
           for tag in "${final_tags[@]}"; do
             docker buildx imagetools create -t "$tag" \
-              "${image}:${version_tag}-${variant}-amd64" \
-              "${image}:${version_tag}-${variant}-arm64"
+              "${image}:${version_tag}-full-amd64" \
+              "${image}:${version_tag}-full-arm64"
           done
