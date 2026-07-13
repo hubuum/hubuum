@@ -53,15 +53,33 @@ Once the tag is pushed, the CI workflow will:
 - use the matching changelog section as the GitHub Release notes
 - publish AMD64 and ARM64 GHCR images for the release tag
 
+## Native archives
+
+Linux AMD64 and ARM64 archives are exported from the same Alpine builder used by the production
+container. Both executables are stripped, statically linked musl binaries. CI rejects the archive
+if either binary declares a dynamic runtime dependency, so users do not need system copies of
+glibc, libpq, or OpenSSL.
+
+macOS and Windows use their native Rust targets. Their builds enable embedded migrations, bundled
+libpq, and vendored OpenSSL, so users do not need Homebrew, PostgreSQL client libraries, or OpenSSL
+packages. They retain the standard operating-system libraries expected by native executables.
+
+Both tagged releases and `main-latest` use these platform contracts. Every archive includes
+`hubuum-server`, `hubuum-admin`, and the embedded migration runner exposed through
+`hubuum-admin --migrate`.
+
 ## Container images
 
-The CI workflow publishes two container image variants:
+The CI workflow publishes one Alpine-based container image with both the `rustls` and OpenSSL TLS
+backends:
 
 - Default tags like `ghcr.io/hubuum/hubuum-server:v0.0.1` and `:main` are the full image.
-  This image includes both `rustls` and `openssl`, and it can also run plain HTTP when no TLS
-  certificate and key are configured.
-- Tags ending in `-rustls-only` are the slimmer image that only includes the `rustls` backend.
+  It can also run plain HTTP when no TLS certificate and key are configured.
 
 The full image also gets explicit aliases ending in `-full`.
+
+The image runs pending embedded Diesel migrations during startup unless
+`HUBUUM_SKIP_MIGRATIONS` is enabled. The image does not need the standalone Diesel CLI or `psql`;
+operators can run migrations explicitly with `hubuum-admin --migrate`.
 
 Publishing from `main` happens in the same workflow run and depends directly on the CI jobs passing.

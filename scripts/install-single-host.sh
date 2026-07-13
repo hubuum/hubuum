@@ -15,7 +15,7 @@ BACKEND_REPO="https://github.com/hubuum/hubuum.git"
 FRONTEND_REPO="https://github.com/hubuum/hubuum-frontend.git"
 BACKEND_IMAGE="ghcr.io/hubuum/hubuum-server:main"
 FRONTEND_IMAGE="ghcr.io/hubuum/hubuum-frontend:main"
-POSTGRES_IMAGE="docker.io/library/postgres:18-alpine"
+POSTGRES_IMAGE="docker.io/library/postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15"
 VALKEY_IMAGE="docker.io/valkey/valkey:9-alpine"
 CADDY_IMAGE="docker.io/library/caddy:2-alpine"
 EXTERNAL_DATABASE_URL=""
@@ -64,7 +64,7 @@ Options:
   --database-url URL      Existing Postgres URL. If set, no Postgres container is created
   --auth-config PATH      Host auth-provider TOML file to mount read-only in the API container
   --engine ENGINE         Container engine: auto, docker, or podman. Default: auto
-  --postgres-image IMAGE  Postgres image. Default: docker.io/library/postgres:18-alpine
+  --postgres-image IMAGE  Postgres image. Default: PostgreSQL 18.4 on Alpine 3.24 (digest-pinned)
   --valkey-image IMAGE    Valkey image. Default: docker.io/valkey/valkey:9-alpine
   --caddy-image IMAGE     Caddy image. Default: docker.io/library/caddy:2-alpine
   --network-subnet CIDR   Container bridge subnet. Default: 172.30.42.0/24
@@ -646,6 +646,13 @@ fi
 cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     container_name: hubuum-api
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
       HUBUUM_BIND_IP: ${HUBUUM_BIND_IP}
       HUBUUM_BIND_PORT: ${HUBUUM_BIND_PORT}

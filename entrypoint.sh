@@ -12,31 +12,22 @@ should_skip_migrations() {
     esac
 }
 
-# Function to wait for the database to be ready
-wait_for_db() {
-    echo "Waiting for database to be ready..."
+echo "Waiting for database to be ready..."
+until {
     if should_skip_migrations; then
-        while ! psql "$HUBUUM_DATABASE_URL" -c 'SELECT 1' >/dev/null 2>&1; do
-            echo "Database is unavailable - sleeping"
-            sleep 1
-        done
+        hubuum-admin --database-ready
     else
-        while ! diesel database setup --migration-dir /migrations --database-url "$HUBUUM_DATABASE_URL"; do
-            echo "Database is unavailable - sleeping"
-            sleep 1
-        done
+        hubuum-admin --migrate
     fi
-    echo "Database is up - executing command"
-}
-
-# Wait for the database to be ready
-wait_for_db
+}; do
+    echo "Database is unavailable - sleeping"
+    sleep 1
+done
 
 if should_skip_migrations; then
-    echo "HUBUUM_SKIP_MIGRATIONS is set; skipping database migrations."
+    echo "Database is ready; migrations were skipped."
 else
-    echo "Running database migrations... (shouldn't be needed)"
-    diesel migration run --migration-dir /migrations --database-url "$HUBUUM_DATABASE_URL"
+    echo "Database is ready; all pending migrations were applied."
 fi
 
 # Start the application

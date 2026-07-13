@@ -1,4 +1,11 @@
 use clap::Parser;
+use diesel::dsl::sql;
+use diesel::select;
+use diesel::sql_types::Integer;
+#[cfg(feature = "embedded-migrations")]
+use diesel::{Connection, PgConnection};
+#[cfg(feature = "embedded-migrations")]
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use std::collections::BTreeMap;
 
 use hubuum::config::{
@@ -7,6 +14,8 @@ use hubuum::config::{
 };
 use hubuum::db::prelude::*;
 use hubuum::db::{DbPool, init_pool_with_statement_timeout, with_connection};
+#[cfg(feature = "embedded-migrations")]
+use hubuum::errors::EXIT_CODE_DATABASE_ERROR;
 use hubuum::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use hubuum::logger;
 use hubuum::models::{ExportTaskOutputRecord, ExportTemplate, User};
@@ -14,6 +23,9 @@ use hubuum::schema::export_task_outputs::dsl::export_task_outputs;
 use hubuum::utilities::auth::generate_random_password;
 use hubuum::utilities::exporting::validate_template_with_limits;
 use hubuum::utilities::is_valid_log_level;
+
+#[cfg(feature = "embedded-migrations")]
+const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
 #[derive(Parser)]
 #[command(
@@ -34,6 +46,15 @@ struct AdminCli {
     /// Summarize stored export output health by template name
     #[arg(long, default_value_t = false)]
     export_template_health: bool,
+
+    /// Check that the database accepts connections
+    #[arg(long, default_value_t = false)]
+    database_ready: bool,
+
+    /// Run all pending embedded database migrations
+    #[cfg(feature = "embedded-migrations")]
+    #[arg(long, default_value_t = false)]
+    migrate: bool,
 
     /// Database URL
     #[arg(long, env = "HUBUUM_DATABASE_URL")]
@@ -83,6 +104,12 @@ async fn main() -> Result<(), ApiError> {
         })
     });
 
+    #[cfg(feature = "embedded-migrations")]
+    if admin_cli.migrate {
+        run_migrations(&database_url);
+        return Ok(());
+    }
+
     // Initialize database connection
     let pool =
         init_pool_with_statement_timeout(&database_url, 1, admin_cli.db_statement_timeout_ms);
@@ -98,10 +125,43 @@ async fn main() -> Result<(), ApiError> {
         .await?;
     } else if admin_cli.export_template_health {
         export_template_health(pool).await?;
+    } else if admin_cli.database_ready {
+        database_ready(pool).await?;
     } else {
         println!("No command specified. Use --help for usage information.");
     }
 
+    Ok(())
+}
+
+#[cfg(feature = "embedded-migrations")]
+fn run_migrations(database_url: &str) {
+    let mut connection = PgConnection::establish(database_url).unwrap_or_else(|error| {
+        fatal_error(
+            &format!("Failed to connect to the database for migrations: {error}"),
+            EXIT_CODE_DATABASE_ERROR,
+        )
+    });
+    let applied = connection
+        .run_pending_migrations(MIGRATIONS)
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Failed to run database migrations: {error}"),
+                EXIT_CODE_DATABASE_ERROR,
+            )
+        });
+
+    println!("Applied {} database migration(s).", applied.len());
+}
+
+async fn database_ready(pool: DbPool) -> Result<(), ApiError> {
+    with_connection(&pool, async |connection| {
+        select(sql::<Integer>("1"))
+            .get_result::<i32>(connection)
+            .await
+    })
+    .await?;
+    println!("Database is ready.");
     Ok(())
 }
 

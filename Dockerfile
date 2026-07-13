@@ -1,27 +1,17 @@
 # syntax=docker/dockerfile:1
-FROM rust:slim-trixie AS builder
+FROM docker.io/library/rust:1.97.0-alpine3.24@sha256:ec9c91e77119ce498cd1e87d96d77e0f75b2cee21655a29bc2bf75a51a2b20a4 AS builder
 
-ARG CARGO_BUILD_FLAGS="--locked --release"
+ARG CARGO_BUILD_FLAGS="-F tls-rustls -F tls-openssl --locked --release"
 
 WORKDIR /usr/src/hubuum
 
-# Install system dependencies and cargo-binstall in one layer
-RUN apt-get update && \
-    apt-get install -y pkg-config libpq-dev libpq5 libssl3 libssl-dev curl && \
-    rm -rf /var/lib/apt/lists/* && \
-    curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+# Rust's Alpine target produces static executables. pq-sys builds its bundled
+# libpq source, and the static OpenSSL archives retain TLS support for both the
+# server and embedded migration runner.
+RUN apk add --no-cache build-base openssl-dev openssl-libs-static perl pkgconf
 
-# Install diesel CLI using binstall (much faster)
-RUN cargo binstall --no-confirm diesel_cli
-
-# Copy manifests first for better layer caching. Workspace member manifests are
-# required for Cargo to load the workspace during the dependency-only build.
-#
-# NOTE: workspace members are listed explicitly (not auto-detected) so that only
-# crate manifests, not their sources, enter the dependency-cache layer. This
-# keeps that layer valid across crate source edits. When you add a crate under
-# crates/, add a COPY for its Cargo.toml here; the dependency-only build below
-# creates and cleans up dummy source files for every copied crate manifest.
+# Copy manifests first for dependency-layer caching. Keep this list in exact
+# parity with the workspace members in Cargo.toml.
 COPY Cargo.toml Cargo.lock ./
 COPY crates/hubuum-auth-core/Cargo.toml ./crates/hubuum-auth-core/Cargo.toml
 COPY crates/hubuum-auth-ldap/Cargo.toml ./crates/hubuum-auth-ldap/Cargo.toml
@@ -34,13 +24,13 @@ COPY crates/hubuum-events-core/Cargo.toml ./crates/hubuum-events-core/Cargo.toml
 COPY crates/hubuum-outbound-http/Cargo.toml ./crates/hubuum-outbound-http/Cargo.toml
 COPY crates/hubuum-query/Cargo.toml ./crates/hubuum-query/Cargo.toml
 COPY crates/hubuum-templates/Cargo.toml ./crates/hubuum-templates/Cargo.toml
-COPY migrations ./migrations
 
-# The production image only builds binaries. Strip benchmark targets from every
-# copied manifest so Cargo does not require benchmark files in the Docker build
-# context. Keep [dev-dependencies] intact so Cargo.lock stays in sync and
-# --locked succeeds.
-RUN find . -name Cargo.toml -exec sh -c ' \
+# Build dependencies against dummy targets. Benchmark targets are removed from
+# the copied manifests because benchmark sources are not present in this layer.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/usr/src/hubuum/target \
+    find . -name Cargo.toml -exec sh -c ' \
     for manifest do \
         awk '\'' \
             /^\[\[bench\]\]$/ { skip = 1; next } \
@@ -49,12 +39,7 @@ RUN find . -name Cargo.toml -exec sh -c ' \
             !skip { print } \
         '\'' "$manifest" > "$manifest.docker" && mv "$manifest.docker" "$manifest"; \
     done \
-    ' sh {} +
-
-# Build dependencies only (creates dummy project)
-# Use cache mounts to persist cargo registry/git between builds
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
+    ' sh {} + && \
     mkdir -p src/bin && \
     find crates -mindepth 2 -maxdepth 2 -name Cargo.toml \
         -exec sh -c 'mkdir -p "$(dirname "$1")/src" && echo "pub fn dummy() { }" > "$(dirname "$1")/src/lib.rs"' sh {} \; && \
@@ -62,16 +47,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     echo "pub fn dummy() {}" > src/lib.rs && \
     echo "fn main() {}" > src/bin/admin.rs && \
     echo "fn main() {}" > src/bin/openapi.rs && \
-    cargo build ${CARGO_BUILD_FLAGS} --bin hubuum-server --bin hubuum-admin && \
+    cargo build ${CARGO_BUILD_FLAGS} --features embedded-migrations \
+        --bin hubuum-server --bin hubuum-admin && \
     rm -rf src && \
     find crates -mindepth 2 -maxdepth 2 -type d -name src -exec rm -rf {} +
 
-# Copy the actual source code
 COPY . .
 
-# COPY restores the repository manifests; prune benchmark targets again before
-# the real production build so benchmark-only targets stay out of the image
-# build, while keeping [dev-dependencies] so --locked stays satisfied.
 RUN find . -name Cargo.toml -exec sh -c ' \
     for manifest do \
         awk '\'' \
@@ -83,29 +65,46 @@ RUN find . -name Cargo.toml -exec sh -c ' \
     done \
     ' sh {} +
 
-# Build the real application (dependencies are cached)
 ARG HUBUUM_BUILD_GIT_SHA="unknown"
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/usr/src/hubuum/target \
     HUBUUM_BUILD_GIT_SHA="${HUBUUM_BUILD_GIT_SHA}" \
-    cargo build ${CARGO_BUILD_FLAGS} --bin hubuum-server --bin hubuum-admin && \
+    find ./src ./crates -path '*/src/*' -type f -exec touch {} + && \
+    cargo build ${CARGO_BUILD_FLAGS} --features embedded-migrations \
+        --bin hubuum-server --bin hubuum-admin && \
     cp target/release/hubuum-server /tmp/ && \
     cp target/release/hubuum-admin /tmp/
 
-FROM debian:trixie-slim
+RUN strip /tmp/hubuum-server /tmp/hubuum-admin
 
-RUN apt-get update && apt-get install -y libpq5 libssl3 postgresql-client && rm -rf /var/lib/apt/lists/*
+FROM scratch AS release-artifacts
+
+COPY --from=builder /tmp/hubuum-server /hubuum-server
+COPY --from=builder /tmp/hubuum-admin /hubuum-admin
+
+FROM docker.io/library/alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+
+ARG HUBUUM_UID="10001"
+ARG HUBUUM_GID="10001"
+
+RUN apk add --no-cache ca-certificates && \
+    addgroup -S -g "${HUBUUM_GID}" hubuum && \
+    adduser -S -D -H -u "${HUBUUM_UID}" -G hubuum hubuum
 
 COPY --from=builder /tmp/hubuum-server /usr/local/bin/hubuum-server
 COPY --from=builder /tmp/hubuum-admin /usr/local/bin/hubuum-admin
-COPY --from=builder /usr/local/cargo/bin/diesel /usr/local/bin/diesel
-COPY --from=builder /usr/src/hubuum/migrations /migrations
-
-# Copy a start script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8080
+
+USER hubuum:hubuum
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD scheme=http; \
+        if [ -n "${HUBUUM_TLS_CERT_PATH:-}" ] && [ -n "${HUBUUM_TLS_KEY_PATH:-}" ]; then scheme=https; fi; \
+        wget --quiet --no-check-certificate --output-document=/dev/null \
+            "${scheme}://127.0.0.1:${HUBUUM_BIND_PORT:-8080}/healthz" || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

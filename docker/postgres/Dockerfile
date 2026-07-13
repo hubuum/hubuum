@@ -1,6 +1,1 @@
-FROM postgres:17
-
-ENV POSTGRES_USER=hubuum \
-    POSTGRES_PASSWORD=hubuum_password \
-    POSTGRES_DB=hubuum \
-    PGUSER=hubuum
+FROM docker.io/library/postgres:18.4@sha256:22c89fe0d0f507606260237fd55e51f6137f58b2d5bcf6152242b96d9fe8f9a4
