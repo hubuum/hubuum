@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::sync::{Mutex, Once, OnceLock};
+use std::sync::{LazyLock, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
 use actix_rt::time::{Instant as TokioInstant, sleep, sleep_until};
@@ -36,6 +36,14 @@ static TASK_RECOVERY_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static TASK_WORKER_SETTINGS: OnceLock<TaskWorkerSettings> = OnceLock::new();
 #[cfg(not(test))]
 static TASK_LEASE_POOL: OnceLock<DbPool> = OnceLock::new();
+static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_name("task-lease-heartbeat")
+        .enable_all()
+        .build()
+        .expect("task lease heartbeat runtime must start")
+});
 
 const TASK_LEASE_POOL_SIZE: u32 = 1;
 
@@ -356,15 +364,41 @@ fn start_task_lease_heartbeat(
     let claim_token = task.lease_token?;
     let settings = task_worker_settings();
     let task_id = task.id;
+    Some(spawn_task_lease_monitor(
+        task_id,
+        claim_token,
+        settings,
+        initial_confirmed_expiry,
+        move || {
+            let pool = pool.clone();
+            async move { renew_task_lease(&pool, task_id, claim_token, settings.lease_duration).await }
+        },
+    ))
+}
+
+fn spawn_task_lease_monitor<F, Fut>(
+    task_id: i32,
+    claim_token: uuid::Uuid,
+    settings: TaskWorkerSettings,
+    initial_confirmed_expiry: TokioInstant,
+    renew: F,
+) -> TaskLeaseHeartbeat
+where
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<bool, ApiError>> + Send + 'static,
+{
     let (stop_tx, mut stop_rx) = oneshot::channel();
     let (lost_tx, lost_rx) = oneshot::channel();
-    let handle = tokio::spawn(async move {
+    // Task execution runs on a current-thread Actix runtime and may spend long
+    // stretches in synchronous validation or rendering. Drive lease renewal on
+    // a dedicated runtime thread so that work cannot starve its own heartbeat.
+    let handle = TASK_LEASE_RUNTIME.spawn(async move {
         let lost = monitor_task_lease(
             task_id,
             claim_token,
             settings,
             initial_confirmed_expiry,
-            || renew_task_lease(&pool, task_id, claim_token, settings.lease_duration),
+            renew,
             &mut stop_rx,
         )
         .await;
@@ -372,11 +406,11 @@ fn start_task_lease_heartbeat(
             let _ = lost_tx.send(());
         }
     });
-    Some(TaskLeaseHeartbeat {
+    TaskLeaseHeartbeat {
         stop: stop_tx,
         handle,
         lost: lost_rx,
-    })
+    }
 }
 
 async fn monitor_task_lease<F, Fut>(
@@ -667,6 +701,77 @@ mod lease_heartbeat_tests {
     use actix_rt::time::timeout;
 
     use super::*;
+
+    #[test]
+    fn heartbeat_progresses_while_task_runtime_thread_is_blocked() {
+        let renewal_attempts = Arc::new(AtomicUsize::new(0));
+        let attempts = renewal_attempts.clone();
+        let settings = TaskWorkerSettings::new(
+            1,
+            Duration::from_millis(10),
+            Duration::from_millis(500),
+            Duration::from_millis(10),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        actix_rt::System::new().block_on(async move {
+            let heartbeat = spawn_task_lease_monitor(
+                1,
+                uuid::Uuid::new_v4(),
+                settings,
+                TokioInstant::now() + settings.lease_duration,
+                move || {
+                    attempts.fetch_add(1, Ordering::Relaxed);
+                    async { Ok(true) }
+                },
+            );
+
+            // This blocks the same current-thread runtime used by task
+            // execution. A heartbeat spawned with `tokio::spawn` here cannot
+            // make progress until the sleep finishes.
+            std::thread::sleep(Duration::from_millis(100));
+
+            assert!(renewal_attempts.load(Ordering::Relaxed) > 0);
+            heartbeat.stop().await;
+        });
+    }
+
+    #[test]
+    fn lease_loss_is_detected_while_task_runtime_thread_is_blocked() {
+        let settings = TaskWorkerSettings::new(
+            1,
+            Duration::from_millis(10),
+            Duration::from_millis(75),
+            Duration::from_millis(10),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        actix_rt::System::new().block_on(async move {
+            let mut heartbeat = spawn_task_lease_monitor(
+                1,
+                uuid::Uuid::new_v4(),
+                settings,
+                TokioInstant::now() + settings.lease_duration,
+                || async {
+                    Err(ApiError::DbConnectionError(
+                        "database unavailable".to_string(),
+                    ))
+                },
+            );
+
+            std::thread::sleep(Duration::from_millis(150));
+
+            heartbeat
+                .lost
+                .try_recv()
+                .expect("lease loss should be signalled by the dedicated runtime");
+            heartbeat.stop().await;
+        });
+    }
 
     #[tokio::test]
     async fn heartbeat_stays_running_until_failure_finalization_completes() {

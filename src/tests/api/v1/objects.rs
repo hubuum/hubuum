@@ -1623,7 +1623,7 @@ mod tests {
             &context.admin_token,
             &format!(
                 "{}/{}/{}/history/as-of?at={}",
-                OBJECT_ENDPOINT, class.id, created.id, &v1_from
+                OBJECT_ENDPOINT, class.id, created.id, v1_from
             ),
         )
         .await;

@@ -1273,7 +1273,7 @@ mod tests {
             &admin_token,
             &format!(
                 "{}/{}/history/as-of?at={}",
-                TEMPLATES_ENDPOINT, created.id, &v1_from
+                TEMPLATES_ENDPOINT, created.id, v1_from
             ),
         )
         .await;

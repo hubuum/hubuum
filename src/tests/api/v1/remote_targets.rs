@@ -1425,7 +1425,7 @@ mod tests {
             &context.admin_token,
             &format!(
                 "{}/{}/history/as-of?at={}",
-                RT_ENDPOINT, created.id, &v1_from
+                RT_ENDPOINT, created.id, v1_from
             ),
         )
         .await;

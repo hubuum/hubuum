@@ -34,7 +34,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &token,
-            &format!("{}/{}", GROUPS_ENDPOINT, &target.id),
+            &format!("{}/{}", GROUPS_ENDPOINT, target.id),
         )
         .await;
         let resp = assert_response_status(resp, expected_status).await;

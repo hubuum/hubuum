@@ -84,7 +84,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &token,
-            &format!("{}/{}", USERS_ENDPOINT, &target.id),
+            &format!("{}/{}", USERS_ENDPOINT, target.id),
         )
         .await;
         let resp = assert_response_status(resp, expected_status).await;
@@ -113,7 +113,7 @@ mod tests {
         let resp = get_request(
             &context.pool,
             &token,
-            &format!("{}/{}/tokens", PRINCIPALS_ENDPOINT, &target.id),
+            &format!("{}/{}/tokens", PRINCIPALS_ENDPOINT, target.id),
         )
         .await;
         let _ = assert_response_status(resp, expected_status).await;
