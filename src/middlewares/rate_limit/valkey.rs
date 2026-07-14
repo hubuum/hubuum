@@ -94,26 +94,36 @@ for i = 0, scope_count - 1 do
   local attempts, inflight, state = keys(raw)
   redis.call('ZREM', inflight, reservation)
   redis.call('ZREMRANGEBYSCORE', attempts, '-inf', now - window)
+  local locked_until = tonumber(redis.call('HGET', state, 'locked_until') or '0')
+  if locked_until > 0 and now >= locked_until and now - locked_until >= window then
+    redis.call('HDEL', state, 'locked_until', 'level')
+    locked_until = 0
+  end
   if outcome == 'failed' then
     redis.call('ZADD', attempts, now, reservation)
     if redis.call('ZCARD', attempts) >= threshold then
       local level = tonumber(redis.call('HGET', state, 'level') or '0') + 1
       local exponent = math.min(level - 1, 62)
       local duration = math.min(backoff_base * (2 ^ exponent), backoff_max)
-      local locked_until = now + duration
+      locked_until = now + duration
       redis.call('HSET', state, 'level', level, 'locked_until', locked_until)
       redis.call('DEL', attempts)
-      redis.call('ZADD', index, locked_until, raw)
       table.insert(lockouts, raw)
-    else
-      redis.call('ZADD', index, now, raw)
     end
-  else
-    redis.call('ZADD', index, now, raw)
   end
-  redis.call('PEXPIRE', attempts, state_ttl)
-  redis.call('PEXPIRE', inflight, state_ttl)
-  redis.call('PEXPIRE', state, state_ttl)
+
+  local attempt_count = redis.call('ZCARD', attempts)
+  local inflight_count = redis.call('ZCARD', inflight)
+  local cooling = locked_until > 0 and now - locked_until < window
+  if attempt_count > 0 or inflight_count > 0 or locked_until > now or cooling then
+    redis.call('ZADD', index, math.max(now, locked_until), raw)
+    redis.call('PEXPIRE', attempts, state_ttl)
+    redis.call('PEXPIRE', inflight, state_ttl)
+    redis.call('PEXPIRE', state, state_ttl)
+  else
+    redis.call('ZREM', index, raw)
+    redis.call('DEL', attempts, inflight, state)
+  end
 end
 
 if outcome == 'succeeded' then

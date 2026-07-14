@@ -158,14 +158,8 @@ async fn main() -> std::io::Result<()> {
             }
         };
 
-    if config.runtime_role.runs_background_workers() {
-        ensure_task_worker_running(pool.clone());
-        ensure_event_fanout_worker_running(pool.clone());
-        ensure_event_delivery_worker_running(pool.clone());
-        ensure_event_retention_worker_running(pool.clone());
-    }
-
     if !config.runtime_role.serves_http() {
+        start_background_workers(&pool);
         info!(
             message = "worker startup",
             version = env!("CARGO_PKG_VERSION"),
@@ -280,6 +274,10 @@ async fn main() -> std::io::Result<()> {
         _ => server.bind(&bind_address)?,
     };
 
+    if config.runtime_role.runs_background_workers() {
+        start_background_workers(&pool);
+    }
+
     info!(
         message = "server startup",
         version = env!("CARGO_PKG_VERSION"),
@@ -303,6 +301,13 @@ async fn main() -> std::io::Result<()> {
     shutdown_background_workers(Duration::from_secs(30)).await;
     drop(pool);
     result
+}
+
+fn start_background_workers(pool: &db::DbPool) {
+    ensure_task_worker_running(pool.clone());
+    ensure_event_fanout_worker_running(pool.clone());
+    ensure_event_delivery_worker_running(pool.clone());
+    ensure_event_retention_worker_running(pool.clone());
 }
 
 fn login_rate_limit_store_settings(

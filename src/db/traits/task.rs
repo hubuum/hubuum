@@ -1,7 +1,8 @@
 use crate::db::prelude::*;
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::Utc;
+use diesel::dsl::sql;
 use diesel::expression::AsExpression;
-use diesel::sql_types::{BigInt, Bool, Timestamp};
+use diesel::sql_types::{BigInt, Bool, Nullable, Timestamp};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
 use uuid::Uuid;
@@ -96,7 +97,7 @@ struct DatabaseTimeRow {
 async fn database_now(
     conn: &mut crate::db::DbConnection,
 ) -> Result<chrono::NaiveDateTime, ApiError> {
-    diesel::sql_query("SELECT CURRENT_TIMESTAMP::timestamp AS now")
+    diesel::sql_query("SELECT clock_timestamp()::timestamp AS now")
         .get_result::<DatabaseTimeRow>(conn)
         .await
         .map(|row| row.now)
@@ -375,14 +376,16 @@ pub trait TaskBackend: TaskIdentifier {
         let task_id_value = self.task_id();
         let task_lease_token = self.task_lease_token();
         let record = with_connection(pool, async |conn| -> Result<TaskRecord, ApiError> {
-            let now = database_now(conn).await?;
             let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
                 <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
             Ok(diesel::update(
                 tasks.filter(id.eq(task_id_value)).filter(
                     lease_token
                         .eq(task_lease_token)
-                        .and(lease_expires_at.gt(now))
+                        .and(
+                            lease_expires_at
+                                .gt(sql::<Nullable<Timestamp>>("clock_timestamp()::timestamp")),
+                        )
                         .or(lease_token.is_null().and(no_lease_token)),
                 ),
             )
@@ -394,7 +397,7 @@ pub trait TaskBackend: TaskIdentifier {
                 failed_items.eq(update.failed_items),
                 started_at.eq(update.started_at),
                 finished_at.eq(update.finished_at),
-                updated_at.eq(now),
+                updated_at.eq(sql::<Timestamp>("clock_timestamp()::timestamp")),
             ))
             .get_result::<TaskRecord>(conn)
             .await?)
@@ -438,7 +441,10 @@ pub trait TaskBackend: TaskIdentifier {
                 tasks.filter(id.eq(task_id_value)).filter(
                     lease_token
                         .eq(task_lease_token)
-                        .and(lease_expires_at.gt(event_record.occurred_at))
+                        .and(
+                            lease_expires_at
+                                .gt(sql::<Nullable<Timestamp>>("clock_timestamp()::timestamp")),
+                        )
                         .or(lease_token.is_null().and(no_lease_token)),
                 ),
             )
@@ -514,7 +520,10 @@ pub trait TaskBackend: TaskIdentifier {
                 tasks.filter(id.eq(task_id_value)).filter(
                     lease_token
                         .eq(task_lease_token)
-                        .and(lease_expires_at.gt(event_record.occurred_at))
+                        .and(
+                            lease_expires_at
+                                .gt(sql::<Nullable<Timestamp>>("clock_timestamp()::timestamp")),
+                        )
                         .or(lease_token.is_null().and(no_lease_token)),
                 ),
             )
@@ -893,16 +902,18 @@ pub async fn claim_next_queued_task(
             return Ok(None);
         };
 
-        let now = database_now(conn).await?;
         let claim_token = Uuid::new_v4();
+        let lease_milliseconds = lease_duration_milliseconds(lease_duration);
         let record = diesel::update(tasks.filter(id.eq(task_id_value)))
             .set((
                 status.eq(TaskStatus::Validating.as_str()),
-                started_at.eq(Some(now)),
+                started_at.eq(sql::<Nullable<Timestamp>>("clock_timestamp()::timestamp")),
                 lease_token.eq(Some(claim_token)),
-                lease_expires_at.eq(Some(task_lease_expiry(now, lease_duration))),
+                lease_expires_at.eq(sql::<Nullable<Timestamp>>("(clock_timestamp() + (")
+                    .bind::<BigInt, _>(lease_milliseconds)
+                    .sql(" * INTERVAL '1 millisecond'))::timestamp")),
                 attempt_count.eq(attempt_count + 1),
-                updated_at.eq(now),
+                updated_at.eq(sql::<Timestamp>("clock_timestamp()::timestamp")),
             ))
             .get_result::<TaskRecord>(conn)
             .await?;
@@ -940,13 +951,8 @@ pub async fn claim_next_queued_task(
     Ok(record)
 }
 
-fn task_lease_expiry(
-    now: chrono::NaiveDateTime,
-    lease_duration: std::time::Duration,
-) -> chrono::NaiveDateTime {
-    let lease_milliseconds = i64::try_from(lease_duration.as_millis()).unwrap_or(i64::MAX);
-    now.checked_add_signed(ChronoDuration::milliseconds(lease_milliseconds))
-        .unwrap_or(chrono::NaiveDateTime::MAX)
+fn lease_duration_milliseconds(lease_duration: std::time::Duration) -> i64 {
+    i64::try_from(lease_duration.as_millis()).unwrap_or(i64::MAX)
 }
 
 /// Extend an active task lease if this worker still owns it.
@@ -963,17 +969,21 @@ pub async fn renew_task_lease(
         TaskStatus::Running.as_str(),
     ];
     let updated = with_connection(pool, async |conn| -> Result<usize, ApiError> {
-        let now = database_now(conn).await?;
+        let lease_milliseconds = lease_duration_milliseconds(lease_duration);
         diesel::update(
             tasks
                 .filter(id.eq(task_id_value))
                 .filter(lease_token.eq(Some(claim_token)))
-                .filter(lease_expires_at.gt(now))
+                .filter(
+                    lease_expires_at.gt(sql::<Nullable<Timestamp>>("clock_timestamp()::timestamp")),
+                )
                 .filter(status.eq_any(active_statuses)),
         )
         .set((
-            lease_expires_at.eq(Some(task_lease_expiry(now, lease_duration))),
-            updated_at.eq(now),
+            lease_expires_at.eq(sql::<Nullable<Timestamp>>("(clock_timestamp() + (")
+                .bind::<BigInt, _>(lease_milliseconds)
+                .sql(" * INTERVAL '1 millisecond'))::timestamp")),
+            updated_at.eq(sql::<Timestamp>("clock_timestamp()::timestamp")),
         ))
         .execute(conn)
         .await
@@ -1010,7 +1020,7 @@ async fn recover_expired_task_leases_matching(
         TaskStatus::Validating.as_str(),
         TaskStatus::Running.as_str(),
     ];
-    with_transaction(pool, async |conn| -> Result<Vec<TaskRecord>, ApiError> {
+    let recovered = with_transaction(pool, async |conn| -> Result<Vec<TaskRecord>, ApiError> {
         let now = database_now(conn).await?;
         let stale_tasks = if let Some(task_id_filter) = task_id_filter {
             tasks
@@ -1080,7 +1090,12 @@ async fn recover_expired_task_leases_matching(
 
         Ok(recovered)
     })
-    .await
+    .await?;
+
+    for record in &recovered {
+        record_task_completion_metrics(record);
+    }
+    Ok(recovered)
 }
 
 #[cfg(test)]
@@ -1590,6 +1605,60 @@ mod tests {
             )
             .await
             .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_task_lease_cannot_be_renewed() {
+        let context = TestContext::new().await;
+        let leased = create_leased_task(
+            &context,
+            "expired-lease-renewal",
+            Utc::now().naive_utc() - ChronoDuration::seconds(1),
+        )
+        .await;
+
+        assert!(
+            !renew_task_lease(
+                &context.pool,
+                leased.id,
+                leased.lease_token.unwrap(),
+                std::time::Duration::from_secs(60),
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_task_lease_cannot_update_state_before_recovery() {
+        let context = TestContext::new().await;
+        let leased = create_leased_task(
+            &context,
+            "expired-lease-state-update",
+            Utc::now().naive_utc() - ChronoDuration::seconds(1),
+        )
+        .await;
+
+        let result = leased
+            .update_state(
+                &context.pool,
+                TaskStateUpdate {
+                    status: TaskStatus::Running,
+                    summary: None,
+                    processed_items: 0,
+                    success_items: 0,
+                    failed_items: 0,
+                    started_at: leased.started_at,
+                    finished_at: None,
+                },
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            leased.find_record(&context.pool).await.unwrap().status,
+            TaskStatus::Validating.as_str()
         );
     }
 

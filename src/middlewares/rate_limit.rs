@@ -337,19 +337,17 @@ impl LoginRateLimitStore for ActiveLoginRateLimitStore {
         match self {
             Self::Memory(store) => store.release_entry(key).await,
             #[cfg(feature = "login-rate-limit-valkey")]
-            Self::Shared(store) => {
-                store.local.release_entry(key).await?;
-                match store.valkey.release_entry(key).await {
-                    Ok(removed) => {
-                        store.record_success();
-                        Ok(removed)
-                    }
-                    Err(error) => {
-                        store.record_failure("release", &error);
-                        Err(error)
-                    }
+            Self::Shared(store) => match store.valkey.release_entry(key).await {
+                Ok(removed) => {
+                    store.record_success();
+                    store.local.release_entry(key).await?;
+                    Ok(removed)
                 }
-            }
+                Err(error) => {
+                    store.record_failure("release", &error);
+                    Err(error)
+                }
+            },
         }
     }
 
@@ -357,19 +355,17 @@ impl LoginRateLimitStore for ActiveLoginRateLimitStore {
         match self {
             Self::Memory(store) => store.clear_all().await,
             #[cfg(feature = "login-rate-limit-valkey")]
-            Self::Shared(store) => {
-                store.local.clear_all().await?;
-                match store.valkey.clear_all().await {
-                    Ok(removed) => {
-                        store.record_success();
-                        Ok(removed)
-                    }
-                    Err(error) => {
-                        store.record_failure("clear", &error);
-                        Err(error)
-                    }
+            Self::Shared(store) => match store.valkey.clear_all().await {
+                Ok(removed) => {
+                    store.record_success();
+                    store.local.clear_all().await?;
+                    Ok(removed)
                 }
-            }
+                Err(error) => {
+                    store.record_failure("clear", &error);
+                    Err(error)
+                }
+            },
         }
     }
 }
@@ -837,6 +833,17 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "login-rate-limit-valkey")]
+    async fn shared_local_snapshot(
+        store: &ActiveLoginRateLimitStore,
+        config: &LoginRateLimitConfig,
+    ) -> Vec<ScopeSnapshot> {
+        match store {
+            ActiveLoginRateLimitStore::Shared(store) => store.local.snapshot(config).await.unwrap(),
+            ActiveLoginRateLimitStore::Memory(_) => unreachable!(),
+        }
+    }
+
     async fn assert_store_contract(store: &impl LoginRateLimitStore, username: &str) {
         let mut config = cfg();
         config.max_attempts = 2;
@@ -866,7 +873,7 @@ mod tests {
             .finish(&released, LoginAttemptOutcome::Aborted, &config)
             .await
             .unwrap();
-        store.clear_all().await.unwrap();
+        assert_eq!(store.clear_all().await.unwrap(), 0);
     }
 
     #[tokio::test]
@@ -1162,6 +1169,12 @@ mod tests {
             enabled: true,
         };
         assert!(!shared.begin(&blocked, &config).await.unwrap());
+
+        assert_eq!(shared_local_snapshot(&shared, &config).await.len(), 1);
+        assert!(shared.release_entry(&blocked.user_ip_key).await.is_err());
+        assert_eq!(shared_local_snapshot(&shared, &config).await.len(), 1);
+        assert!(shared.clear_all().await.is_err());
+        assert_eq!(shared_local_snapshot(&shared, &config).await.len(), 1);
         reset_login_rate_limit_for_tests().await;
     }
 }
