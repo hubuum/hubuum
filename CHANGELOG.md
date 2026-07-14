@@ -19,6 +19,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   processing, and inventory.
 - Added the admin-only `GET /api/v1/admin/config` endpoint for inspecting a
   deny-by-default, redacted view of the effective runtime configuration.
+- Added first-class distributed deployment support with `all`, `api`, and
+  `worker` runtime roles, explicit one-shot migration ownership, supervised
+  background workers, and a deployment guide for scaling API and worker
+  replicas independently.
+- Added durable PostgreSQL task leases with heartbeats, stale-worker fencing,
+  terminal recovery without unsafe task replay, and lease recovery metrics.
+- Added an optional Valkey/Redis login-rate-limit backend for sharing login
+  attempts and lockouts across API replicas while retaining local enforcement
+  during shared-backend outages.
 - Added `include_total=false` to cursor-paginated API requests so
   latency-sensitive clients can skip the exact count query and omit the
   `X-Total-Count` response header.
@@ -53,6 +62,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Server shutdown now cancels and joins task, event, retention, and PostgreSQL
   notification workers before dropping the database pool. Interrupted active
   tasks are marked failed instead of remaining active.
+- **Breaking:** Before applying the task-lease migration, stop old-version
+  worker replicas or let their active tasks drain. Then run the one-shot
+  migration before starting the new workers; mixed old and new task workers are
+  unsupported during this upgrade.
 
 ### Fixed
 
