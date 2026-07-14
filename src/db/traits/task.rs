@@ -22,6 +22,11 @@ use crate::models::{
 use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
 
+const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
+const DATABASE_UTC_NOW_QUERY: &str = "SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now";
+const DATABASE_UTC_LEASE_EXPIRY_SQL_PREFIX: &str = "((clock_timestamp() AT TIME ZONE 'UTC') + (";
+const DATABASE_LEASE_EXPIRY_SQL_SUFFIX: &str = " * INTERVAL '1 millisecond'))";
+
 pub struct TaskStateUpdate {
     pub status: TaskStatus,
     pub summary: Option<String>,
@@ -97,7 +102,7 @@ struct DatabaseTimeRow {
 async fn database_now(
     conn: &mut crate::db::DbConnection,
 ) -> Result<chrono::NaiveDateTime, ApiError> {
-    diesel::sql_query("SELECT clock_timestamp()::timestamp AS now")
+    diesel::sql_query(DATABASE_UTC_NOW_QUERY)
         .get_result::<DatabaseTimeRow>(conn)
         .await
         .map(|row| row.now)
@@ -382,10 +387,7 @@ pub trait TaskBackend: TaskIdentifier {
                 tasks.filter(id.eq(task_id_value)).filter(
                     lease_token
                         .eq(task_lease_token)
-                        .and(
-                            lease_expires_at
-                                .gt(sql::<Nullable<Timestamp>>("clock_timestamp()::timestamp")),
-                        )
+                        .and(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
                         .or(lease_token.is_null().and(no_lease_token)),
                 ),
             )
@@ -397,7 +399,7 @@ pub trait TaskBackend: TaskIdentifier {
                 failed_items.eq(update.failed_items),
                 started_at.eq(update.started_at),
                 finished_at.eq(update.finished_at),
-                updated_at.eq(sql::<Timestamp>("clock_timestamp()::timestamp")),
+                updated_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL)),
             ))
             .get_result::<TaskRecord>(conn)
             .await?)
@@ -441,10 +443,7 @@ pub trait TaskBackend: TaskIdentifier {
                 tasks.filter(id.eq(task_id_value)).filter(
                     lease_token
                         .eq(task_lease_token)
-                        .and(
-                            lease_expires_at
-                                .gt(sql::<Nullable<Timestamp>>("clock_timestamp()::timestamp")),
-                        )
+                        .and(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
                         .or(lease_token.is_null().and(no_lease_token)),
                 ),
             )
@@ -520,10 +519,7 @@ pub trait TaskBackend: TaskIdentifier {
                 tasks.filter(id.eq(task_id_value)).filter(
                     lease_token
                         .eq(task_lease_token)
-                        .and(
-                            lease_expires_at
-                                .gt(sql::<Nullable<Timestamp>>("clock_timestamp()::timestamp")),
-                        )
+                        .and(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
                         .or(lease_token.is_null().and(no_lease_token)),
                 ),
             )
@@ -907,13 +903,15 @@ pub async fn claim_next_queued_task(
         let record = diesel::update(tasks.filter(id.eq(task_id_value)))
             .set((
                 status.eq(TaskStatus::Validating.as_str()),
-                started_at.eq(sql::<Nullable<Timestamp>>("clock_timestamp()::timestamp")),
+                started_at.eq(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)),
                 lease_token.eq(Some(claim_token)),
-                lease_expires_at.eq(sql::<Nullable<Timestamp>>("(clock_timestamp() + (")
-                    .bind::<BigInt, _>(lease_milliseconds)
-                    .sql(" * INTERVAL '1 millisecond'))::timestamp")),
+                lease_expires_at.eq(sql::<Nullable<Timestamp>>(
+                    DATABASE_UTC_LEASE_EXPIRY_SQL_PREFIX,
+                )
+                .bind::<BigInt, _>(lease_milliseconds)
+                .sql(DATABASE_LEASE_EXPIRY_SQL_SUFFIX)),
                 attempt_count.eq(attempt_count + 1),
-                updated_at.eq(sql::<Timestamp>("clock_timestamp()::timestamp")),
+                updated_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL)),
             ))
             .get_result::<TaskRecord>(conn)
             .await?;
@@ -974,16 +972,16 @@ pub async fn renew_task_lease(
             tasks
                 .filter(id.eq(task_id_value))
                 .filter(lease_token.eq(Some(claim_token)))
-                .filter(
-                    lease_expires_at.gt(sql::<Nullable<Timestamp>>("clock_timestamp()::timestamp")),
-                )
+                .filter(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
                 .filter(status.eq_any(active_statuses)),
         )
         .set((
-            lease_expires_at.eq(sql::<Nullable<Timestamp>>("(clock_timestamp() + (")
-                .bind::<BigInt, _>(lease_milliseconds)
-                .sql(" * INTERVAL '1 millisecond'))::timestamp")),
-            updated_at.eq(sql::<Timestamp>("clock_timestamp()::timestamp")),
+            lease_expires_at.eq(
+                sql::<Nullable<Timestamp>>(DATABASE_UTC_LEASE_EXPIRY_SQL_PREFIX)
+                    .bind::<BigInt, _>(lease_milliseconds)
+                    .sql(DATABASE_LEASE_EXPIRY_SQL_SUFFIX),
+            ),
+            updated_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL)),
         ))
         .execute(conn)
         .await
@@ -1347,7 +1345,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        TaskBackend, TaskCreateRequest, TaskStateUpdate, claim_next_queued_task,
+        TaskBackend, TaskCreateRequest, TaskStateUpdate, claim_next_queued_task, database_now,
         insert_import_results, recover_expired_task_lease, renew_task_lease,
         task_capacity_lock_key, task_kind_claim_order,
     };
@@ -1361,6 +1359,25 @@ mod tests {
         StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskStatus,
     };
     use crate::tests::{TestContext, create_test_user};
+
+    #[tokio::test]
+    async fn database_time_is_naive_utc_under_non_utc_session_timezone() {
+        let context = TestContext::new().await;
+        let now = with_transaction(
+            &context.pool,
+            async |conn| -> Result<chrono::NaiveDateTime, ApiError> {
+                diesel::sql_query("SET LOCAL TIME ZONE 'Pacific/Honolulu'")
+                    .execute(conn)
+                    .await?;
+                database_now(conn).await
+            },
+        )
+        .await
+        .unwrap();
+
+        let skew = (Utc::now().naive_utc() - now).num_seconds().abs();
+        assert!(skew < 5, "database UTC clock skew was {skew} seconds");
+    }
 
     async fn create_leased_task(
         context: &TestContext,

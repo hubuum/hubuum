@@ -60,7 +60,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   side-effecting work when renewal failures outlive the confirmed lease, keep
   renewing through failure finalization, and reconstruct recovered-task
   progress from durable import results or terminal single-item failure
-  accounting.
+  accounting. Lease timestamps are anchored to UTC independently of the
+  PostgreSQL session timezone.
+- Initialized replicas now skip generating and hashing an unused default
+  administrator password during startup.
 - Shared login limiting now honors administrative releases across replicas,
   preserves active reservations and lockouts when its key index is full, and
   reuses an asynchronously multiplexed Valkey connection instead of opening a

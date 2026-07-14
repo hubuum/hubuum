@@ -3,7 +3,7 @@ use diesel::sql_types::{BigInt, Bool};
 use crate::db::prelude::*;
 use crate::db::traits::identity::identity_scope_id_by_name_conn;
 use crate::db::traits::principal::InsertPrincipalRecord;
-use crate::db::{DbPool, with_transaction};
+use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::identity::{
     LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND, MANUAL_MEMBERSHIP_SOURCE,
@@ -16,6 +16,39 @@ const DEFAULT_ADMIN_BOOTSTRAP_LOCK_KEY: i64 = 4_801_000_000_100;
 struct AdvisoryLockRow {
     #[diesel(sql_type = Bool)]
     locked: bool,
+}
+
+async fn default_admin_bootstrap_required_conn(
+    conn: &mut crate::db::DbConnection,
+) -> Result<bool, ApiError> {
+    let user_exists = diesel::select(diesel::dsl::exists(
+        crate::schema::users::table.select(crate::schema::users::id),
+    ))
+    .get_result::<bool>(conn)
+    .await?;
+    if user_exists {
+        return Ok(false);
+    }
+
+    let group_exists = diesel::select(diesel::dsl::exists(
+        crate::schema::groups::table.select(crate::schema::groups::id),
+    ))
+    .get_result::<bool>(conn)
+    .await?;
+    Ok(!group_exists)
+}
+
+/// Check whether the database is empty enough to require initial administrator
+/// bootstrap.
+///
+/// This is an optimization only. [`bootstrap_default_admin`] repeats the check
+/// while holding the bootstrap advisory lock so concurrent replicas remain
+/// correct.
+pub async fn default_admin_bootstrap_required(pool: &DbPool) -> Result<bool, ApiError> {
+    with_connection(pool, async |conn| {
+        default_admin_bootstrap_required_conn(conn).await
+    })
+    .await
 }
 
 /// Create the initial local administrator atomically when the database is empty.
@@ -39,15 +72,7 @@ pub async fn bootstrap_default_admin(
             ));
         }
 
-        let user_count = crate::schema::users::table
-            .count()
-            .get_result::<i64>(conn)
-            .await?;
-        let group_count = crate::schema::groups::table
-            .count()
-            .get_result::<i64>(conn)
-            .await?;
-        if user_count != 0 || group_count != 0 {
+        if !default_admin_bootstrap_required_conn(conn).await? {
             return Ok(false);
         }
 
