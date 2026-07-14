@@ -824,7 +824,7 @@ pub mod tests {
             &context.admin_token,
             &format!(
                 "{}/{}/history/as-of?at={}",
-                CLASSES_ENDPOINT, created.id, &v1_from
+                CLASSES_ENDPOINT, created.id, v1_from
             ),
         )
         .await;

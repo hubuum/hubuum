@@ -29,6 +29,14 @@ pub fn task_claimed(kind: &str, queue_wait: Option<Duration>) {
     }
 }
 
+pub fn task_lease_recovered(kind: &str) {
+    if let Some(metrics) = current() {
+        metrics
+            .task_lease_recoveries
+            .add(1, &[KeyValue::new("kind", kind.to_string())]);
+    }
+}
+
 pub fn task_completed(kind: &str, final_status: &str, execution: Option<Duration>) {
     if let Some(metrics) = current() {
         let attrs = [

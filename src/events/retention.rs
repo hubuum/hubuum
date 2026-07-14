@@ -133,6 +133,9 @@ fn spawn_event_retention_worker_loop(pool: DbPool, config: EventRetentionWorkerC
 }
 
 pub fn ensure_event_retention_worker_running(pool: DbPool) {
+    if get_config().is_ok_and(|config| !config.runtime_role.runs_background_workers()) {
+        return;
+    }
     let config = configured_event_retention_worker();
     if !config.enabled {
         return;

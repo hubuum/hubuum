@@ -29,6 +29,9 @@ docker pull ghcr.io/hubuum/hubuum-server:v0.0.1
   administrator setup.
 - Follow the [deployment guide](docs/deployment.md) for Docker or Podman Compose
   installation.
+- Follow the [distributed deployment guide](docs/distributed_deployment.md) for
+  multiple API/worker replicas, one-shot migrations, and optional shared login
+  throttling.
 - Download native binaries and checksums from
   [GitHub Releases](https://github.com/hubuum/hubuum/releases).
 - Check a running instance at `/healthz` and `/readyz`.
@@ -152,6 +155,8 @@ exponentially (doubling from the backoff base up to the backoff maximum).
 - `HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS` maximum lockout duration in seconds; defaults to `86400`.
 - `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4` IPv4 prefix length for subnet aggregation; defaults to `24`.
 - `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6` IPv6 prefix length for subnet aggregation; defaults to `64`.
+- `HUBUUM_LOGIN_RATE_LIMIT_BACKEND` selects local `memory` (default) or shared `valkey` state.
+- `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL` configures the shared Valkey/Redis service when selected.
 
 Accurate throttling behind a reverse proxy depends on correct client-IP resolution; see
 [Resolving the Real Client IP Behind a Proxy](#resolving-the-real-client-ip-behind-a-proxy).
@@ -178,6 +183,7 @@ inspecting and releasing throttled scopes), see [docs/login_rate_limiting.md](do
 ### Deployment
 
 - Single-host Docker/Podman Compose deployment scripts are documented in [docs/deployment.md](docs/deployment.md).
+- Multi-replica topology and upgrade sequencing are documented in [docs/distributed_deployment.md](docs/distributed_deployment.md).
 - The scripts support all-in-one frontend/backend installs, backend-only installs, managed Postgres, and an existing external Postgres URL.
 - All-in-one installs expose both frontend and backend API hostnames; browser frontend flows can still use the frontend BFF routes.
 - Published container images are used by default; local repository cloning/building is opt-in for source builds.

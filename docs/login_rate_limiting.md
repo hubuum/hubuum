@@ -127,6 +127,10 @@ the peer is the attacker's own untrusted address, so it becomes the client regar
 | `HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS` | `86400` | Maximum lockout duration |
 | `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4` | `24` | IPv4 prefix length for subnet aggregation |
 | `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6` | `64` | IPv6 prefix length for subnet aggregation |
+| `HUBUUM_LOGIN_RATE_LIMIT_BACKEND` | `memory` | State backend: `memory` or `valkey` |
+| `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL` | *(empty)* | Valkey/Redis URL; required for the `valkey` backend |
+| `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_PREFIX` | `hubuum:login-rate-limit` | Namespace for shared limiter keys |
+| `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS` | `1000` | Connect, read, and write timeout for shared operations |
 | `HUBUUM_TRUST_IP_HEADERS` | `false` | Master switch for trusting `X-Forwarded-For` |
 | `HUBUUM_TRUSTED_PROXIES` | *(empty)* | Trusted reverse-proxy IPs/CIDRs |
 | `HUBUUM_TRUSTED_PROXY_HOPS` | `0` | Trusted hop count (used when no allowlist is set) |
@@ -158,7 +162,7 @@ configuration, those counts, and the matching scopes:
 ```jsonc
 {
   "config": {
-    "enabled": true, "max_attempts": 5, "max_attempts_per_ip": 20,
+    "enabled": true, "backend": "memory", "max_attempts": 5, "max_attempts_per_ip": 20,
     "max_attempts_per_subnet": 100, "window_seconds": 300,
     "backoff_base_seconds": 300, "backoff_max_seconds": 86400,
     "subnet_prefix_v4": 24, "subnet_prefix_v6": 64
@@ -199,17 +203,26 @@ DELETE /api/v0/meta/login-rate-limit
 
 Clears all tracked scopes, returning `{ "cleared": <count> }`.
 
-## Operational notes and limitations
+## State backends and outages
 
-Throttling state is held in memory, in the server process. This has two consequences:
+The default `memory` backend preserves the local behavior: state is shared by
+threads in one process, is not shared with other replicas, and is lost on
+restart. It has no Valkey/Redis dependency.
 
-- *Per instance.* State is shared across worker threads within one process but not across
-  multiple horizontally-scaled instances. Each instance throttles independently.
-- *Not persistent.* State is lost on restart.
+The `valkey` backend coordinates the same reservations, failure windows,
+lockouts, admin releases, and clear operations across API replicas. Redis server
+time is used for the shared clock, and Lua scripts make multi-scope operations
+atomic.
 
-For single-instance deployments this is sufficient. A shared, persistent backend (for
-example Valkey/Redis) is tracked as a future option in
-[issue #53](https://github.com/hubuum/hubuum/issues/53).
+The in-memory limiter remains active alongside Valkey. During a shared-backend
+outage, password logins continue under per-instance limits. Hubuum logs once on
+the transition into degraded mode, increments
+`hubuum_login_limiter_backend_failures_total`, and logs recovery when shared
+enforcement resumes. Bearer-token authentication does not use the limiter.
+
+Admin inspection and mutation do not silently fall back because presenting or
+clearing only one replica's state would be misleading. They return a service
+error until the shared backend recovers.
 
 To recover from accidental lockouts you can release scopes via the admin endpoints above,
 relax the relevant thresholds, or (as a blunt instrument) set

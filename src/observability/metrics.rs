@@ -31,12 +31,16 @@ pub use self::export::{
 };
 pub use self::http::{api_error, extraction_failure, http_request_finished, http_request_started};
 pub use self::import::{import_items, import_phase_duration};
+#[cfg(feature = "login-rate-limit-valkey")]
+pub use self::login::login_limiter_backend_failure;
 pub use self::login::{login_attempt, login_lockout};
 pub use self::registry::init;
 pub use self::remote_call::remote_call_finished;
 pub use self::scrape::scrape;
 pub use self::security::client_allowlist_rejected;
-pub use self::task::{task_claimed, task_completed, task_worker_config, task_worker_iteration};
+pub use self::task::{
+    task_claimed, task_completed, task_lease_recovered, task_worker_config, task_worker_iteration,
+};
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
 
@@ -75,6 +79,7 @@ struct Metrics {
     db_operation_errors: Counter<u64>,
     task_worker_iterations: Counter<u64>,
     task_claims: Counter<u64>,
+    task_lease_recoveries: Counter<u64>,
     task_completions: Counter<u64>,
     task_queue_wait_duration: Histogram<f64>,
     task_execution_duration: Histogram<f64>,
@@ -96,6 +101,8 @@ struct Metrics {
     remote_call_results: Counter<u64>,
     login_attempts: Counter<u64>,
     login_lockouts: Counter<u64>,
+    #[cfg(feature = "login-rate-limit-valkey")]
+    login_limiter_backend_failures: Counter<u64>,
     login_limiter_entries: Gauge<u64>,
     client_allowlist_rejections: Counter<u64>,
     event_queue_items: Gauge<i64>,

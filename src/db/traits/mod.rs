@@ -1,5 +1,6 @@
 pub mod active_tokens;
 pub mod authz;
+pub mod bootstrap;
 pub mod class;
 pub mod collection;
 pub mod event_delivery;

@@ -80,6 +80,10 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_task_claims")
             .with_description("Tasks claimed by workers")
             .build(),
+        task_lease_recoveries: meter
+            .u64_counter("hubuum_task_lease_recoveries")
+            .with_description("Tasks failed after worker lease expiry")
+            .build(),
         task_completions: meter
             .u64_counter("hubuum_task_completions")
             .with_description("Tasks completed by terminal status")
@@ -169,6 +173,11 @@ pub fn init() -> Result<(), ApiError> {
         login_lockouts: meter
             .u64_counter("hubuum_login_lockouts")
             .with_description("Login limiter lockout transitions by scope kind")
+            .build(),
+        #[cfg(feature = "login-rate-limit-valkey")]
+        login_limiter_backend_failures: meter
+            .u64_counter("hubuum_login_limiter_backend_failures")
+            .with_description("Login limiter backend failures by operation")
             .build(),
         login_limiter_entries: meter
             .u64_gauge("hubuum_login_limiter_entries")

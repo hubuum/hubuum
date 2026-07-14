@@ -44,7 +44,13 @@ fn wake_event_delivery_worker_from_postgres() {
 
 fn configured_event_delivery_worker_count() -> usize {
     get_config()
-        .map(|config| config.event_delivery_workers)
+        .map(|config| {
+            if config.runtime_role.runs_background_workers() {
+                config.event_delivery_workers
+            } else {
+                0
+            }
+        })
         .unwrap_or(DEFAULT_EVENT_DELIVERY_WORKERS)
 }
 

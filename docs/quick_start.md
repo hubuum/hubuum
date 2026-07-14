@@ -44,6 +44,7 @@ the standalone Diesel CLI are not installed. Set
 | `HUBUUM_BIND_PORT` | `8080` | Port the server listens on |
 | `HUBUUM_LOG_LEVEL` | `info` | JSON log verbosity (`trace`, `debug`, `info`, `warn`, `error`) |
 | `HUBUUM_ACTIX_WORKERS` | Detected CPU count | Number of Actix worker threads |
+| `HUBUUM_RUNTIME_ROLE` | `all` | Process role: `all`, `api`, or `worker` |
 | `HUBUUM_METRICS_ENABLED` | `true` | Enables the Prometheus metrics scrape endpoint |
 | `HUBUUM_METRICS_PATH` | `/metrics` | Literal absolute path for the Prometheus metrics scrape endpoint |
 
@@ -72,7 +73,7 @@ examples.
 | `HUBUUM_DATABASE_URL` | `postgres://localhost` | PostgreSQL connection URL |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |
 | `HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS` | `2000` | Maximum wait for a free pooled connection before failing the request |
-| `HUBUUM_SKIP_MIGRATIONS` | `false` | If true, the container waits for the database but does not run Diesel migrations on startup |
+| `HUBUUM_SKIP_MIGRATIONS` | `false` | If true, the container waits for the database but does not run migrations; `api` and `worker` roles always skip them |
 | `HUBUUM_DB_STATEMENT_TIMEOUT_MS` | `30000` | Pool-global Postgres `statement_timeout` in ms (`0` disables). Cancels any query exceeding it server-side; applies to **all** DB work, not just exports |
 
 See [Database Pool Tuning and Load Testing](performance.md) for connection
@@ -84,6 +85,9 @@ budgeting, pool observability, and a repeatable k6 scenario.
 | -------- | ------- | ----------- |
 | `HUBUUM_TASK_WORKERS` | About half the detected CPU count, minimum `1` | Number of background task workers |
 | `HUBUUM_TASK_POLL_INTERVAL_MS` | `200` | Idle polling interval for background task workers |
+| `HUBUUM_TASK_LEASE_SECONDS` | `60` | Durable task lease duration |
+| `HUBUUM_TASK_HEARTBEAT_SECONDS` | `20` | Lease renewal interval; must be shorter than the lease |
+| `HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS` | `30` | Minimum interval between abandoned-task recovery scans |
 | `HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running import tasks one user may have at once |
 
 Background workers and PostgreSQL notification listeners participate in
@@ -152,8 +156,6 @@ delivery semantics, operational health, and retention behavior.
 | `HUBUUM_ADMIN_IDENTITY_SCOPE` | `local` | Identity scope containing the admin group |
 | `HUBUUM_AUTH_CONFIG_PATH` | *(empty)* | Optional TOML file for external auth providers such as LDAP |
 | `HUBUUM_TOKEN_LIFETIME_HOURS` | `24` | Token lifetime in hours |
-
-See [External Authentication](external_auth.md) for LDAP scopes.
 | `HUBUUM_LOGIN_RATE_LIMIT_ENABLED` | `true` | Master switch for login throttling |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed attempts per `(name, IP)` per window |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` | `20` | Max failed attempts per client IP per window (`0` disables) |
@@ -163,11 +165,21 @@ See [External Authentication](external_auth.md) for LDAP scopes.
 | `HUBUUM_LOGIN_RATE_LIMIT_BACKOFF_MAX_SECONDS` | `86400` | Maximum lockout duration for exponential backoff |
 | `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V4` | `24` | IPv4 prefix length for per-subnet aggregation |
 | `HUBUUM_LOGIN_RATE_LIMIT_SUBNET_PREFIX_V6` | `64` | IPv6 prefix length for per-subnet aggregation |
+| `HUBUUM_LOGIN_RATE_LIMIT_BACKEND` | `memory` | Limiter state backend: local `memory` or shared `valkey` |
+| `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL` | *(empty)* | Valkey/Redis URL required by the shared backend |
+| `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_PREFIX` | `hubuum:login-rate-limit` | Shared limiter key namespace |
+| `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_IO_TIMEOUT_MS` | `1000` | Shared backend I/O timeout |
 | `HUBUUM_TOKEN_HASH_KEY` | *(generated per startup if unset)* | Key used for deterministic token hashing at rest |
+
+See [External Authentication](external_auth.md) for LDAP scopes.
 
 **Login rate-limit note**: These settings throttle failed logins across layered scopes with exponential backoff. For the full model, client-IP resolution behind proxies, and the admin endpoints for inspecting and releasing throttled scopes, see [login_rate_limiting.md](login_rate_limiting.md).
 
-**Token hash key note**: If `HUBUUM_TOKEN_HASH_KEY` is not set, Hubuum generates an ephemeral key on startup and logs a warning. Tokens issued before restart will be invalid after restart.
+**Token hash key note**: If `HUBUUM_TOKEN_HASH_KEY` is not set, Hubuum generates an ephemeral key on startup and logs a warning. Tokens issued before restart will be invalid after restart. All API replicas must use the same stable value.
+
+For runtime roles, one-shot migrations, task recovery, database connection
+budgeting, and shared limiter behavior, see
+[Distributed Deployment](distributed_deployment.md).
 
 ### TLS Configuration
 

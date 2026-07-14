@@ -55,6 +55,7 @@ futures-util = "0.3"
 jsonschema = "0"
 rand = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+redis = { version = "1.3.0", default-features = false, features = ["connection-manager", "tokio-rustls-comp"], optional = true }
 rustls-platform-verifier = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -75,7 +76,7 @@ minijinja = { version = "2", features = ["loader", "fuel"] }
 opentelemetry = { version = "0.32", default-features = false, features = ["metrics"] }
 opentelemetry-prometheus = "0.32"
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["metrics"] }
-tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util"] }
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "net", "io-util", "signal"] }
 tokio-postgres = "0.7"
 tokio-postgres-rustls = "0.13"
 tracing = "0.1"
@@ -110,13 +111,14 @@ rstest = "0.26"
 tokio-rustls = "0.26"
 
 [features]
-default = ["swagger-ui"]
+default = ["swagger-ui", "login-rate-limit-valkey"]
 amqp = ["dep:hubuum-event-sink-amqp"]
 email = ["dep:hubuum-event-sink-email"]
 swagger-ui = ["dep:utoipa-swagger-ui"]
 tls-rustls = ["actix-web/rustls-0_23"]
 tls-openssl = ["dep:openssl", "actix-web/openssl"]
-valkey = ["dep:hubuum-event-sink-valkey"]
+login-rate-limit-valkey = ["dep:redis"]
+valkey = ["dep:hubuum-event-sink-valkey", "login-rate-limit-valkey"]
 permissions-treetop = ["dep:treetop-client"]
 embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
 vendored-openssl = ["openssl/vendored"]

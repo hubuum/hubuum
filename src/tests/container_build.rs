@@ -1,6 +1,49 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::process::{Command, Output};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(unix)]
+use rstest::rstest;
+
+#[cfg(unix)]
+fn run_entrypoint(runtime_role: &str, arguments: &[&str]) -> Output {
+    use std::os::unix::fs::PermissionsExt;
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let commands = std::env::temp_dir().join(format!(
+        "hubuum-entrypoint-test-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&commands).expect("fake command directory should be created");
+    for (name, body) in [
+        ("hubuum-admin", "#!/bin/sh\nprintf 'admin:%s\\n' \"$*\"\n"),
+        ("hubuum-server", "#!/bin/sh\nprintf 'server:%s\\n' \"$*\"\n"),
+        ("wget", "#!/bin/sh\nprintf 'wget:%s\\n' \"$*\"\n"),
+    ] {
+        let path = commands.join(name);
+        fs::write(&path, body).expect("fake command should be written");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .expect("fake command should be executable");
+    }
+
+    let output = Command::new("/bin/sh")
+        .arg(repository.join("entrypoint.sh"))
+        .args(arguments)
+        .env("PATH", &commands)
+        .env("HUBUUM_RUNTIME_ROLE", runtime_role)
+        .env_remove("HUBUUM_SKIP_MIGRATIONS")
+        .output()
+        .expect("entrypoint should run");
+    fs::remove_dir_all(commands).expect("fake command directory should be removed");
+    output
+}
 
 #[test]
 fn dockerfile_copies_every_workspace_manifest() {
@@ -81,11 +124,66 @@ fn production_container_has_a_healthcheck() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let dockerfile = fs::read_to_string(repository.join("Dockerfile"))
         .expect("repository Dockerfile should be readable");
+    let entrypoint = fs::read_to_string(repository.join("entrypoint.sh"))
+        .expect("repository entrypoint should be readable");
 
     assert!(
-        dockerfile.contains("HEALTHCHECK") && dockerfile.contains("/healthz"),
-        "production Dockerfile must probe the unauthenticated liveness endpoint"
+        dockerfile.contains("HEALTHCHECK")
+            && dockerfile.contains("--container-healthcheck")
+            && dockerfile.contains("/proc/1/cmdline"),
+        "production Dockerfile must health-check the effective runtime role"
     );
+    assert!(
+        entrypoint.contains("kill -0 1"),
+        "worker health must follow the supervised server process"
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case("all", "worker", "admin:--database-ready")]
+#[case("worker", "all", "admin:--migrate")]
+fn entrypoint_cli_runtime_role_overrides_environment_for_migrations(
+    #[case] environment_role: &str,
+    #[case] cli_role: &str,
+    #[case] expected_admin_command: &str,
+) {
+    let output = run_entrypoint(
+        environment_role,
+        &["--runtime-role", cli_role, "--log-level", "debug"],
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(output.status.success(), "entrypoint failed: {stdout}");
+    assert!(stdout.contains(expected_admin_command));
+    assert!(stdout.contains(&format!(
+        "server:--runtime-role {cli_role} --log-level debug"
+    )));
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case("all", "worker", false)]
+#[case("worker", "api", true)]
+fn healthcheck_uses_cli_runtime_role_over_environment(
+    #[case] environment_role: &str,
+    #[case] cli_role: &str,
+    #[case] expects_http_probe: bool,
+) {
+    let output = run_entrypoint(
+        environment_role,
+        &[
+            "--container-healthcheck",
+            "hubuum-server",
+            &format!("--runtime-role={cli_role}"),
+        ],
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    if expects_http_probe {
+        assert!(output.status.success(), "healthcheck failed: {stdout}");
+    }
+    assert_eq!(stdout.contains("wget:"), expects_http_probe);
 }
 
 #[test]

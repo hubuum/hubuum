@@ -102,9 +102,6 @@ EXPOSE 8080
 USER hubuum:hubuum
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD scheme=http; \
-        if [ -n "${HUBUUM_TLS_CERT_PATH:-}" ] && [ -n "${HUBUUM_TLS_KEY_PATH:-}" ]; then scheme=https; fi; \
-        wget --quiet --no-check-certificate --output-document=/dev/null \
-            "${scheme}://127.0.0.1:${HUBUUM_BIND_PORT:-8080}/healthz" || exit 1
+    CMD xargs -0 /entrypoint.sh --container-healthcheck < /proc/1/cmdline
 
 ENTRYPOINT ["/entrypoint.sh"]

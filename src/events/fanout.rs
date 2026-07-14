@@ -33,7 +33,13 @@ fn wake_event_fanout_worker_from_postgres() {
 
 fn configured_event_fanout_worker_count() -> usize {
     get_config()
-        .map(|config| config.event_fanout_workers)
+        .map(|config| {
+            if config.runtime_role.runs_background_workers() {
+                config.event_fanout_workers
+            } else {
+                0
+            }
+        })
         .unwrap_or(DEFAULT_EVENT_FANOUT_WORKERS)
 }
 
