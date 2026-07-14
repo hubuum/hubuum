@@ -11,7 +11,7 @@ It is intentionally implementation-focused. For public API behavior, see:
 
 The task system provides a generic framework for long-running server-side work.
 
-Current task kind:
+Current task kinds:
 
 - `import`
 - `export`
@@ -19,7 +19,6 @@ Current task kind:
 
 Reserved task kinds already modeled in the schema:
 
-- `export`
 - `reindex`
 
 The goal is to keep task lifecycle, queueing, polling, and audit history generic, while letting each task kind supply its own execution logic and its own typed result storage.
@@ -248,13 +247,17 @@ After a task is claimed, `process_one_task` dispatches by `task.kind`.
 Current dispatch:
 
 - `import` -> import executor
-- anything else -> unimplemented error
+- `export` -> export executor
+- `remote_call` -> remote HTTP invocation executor
+- reserved task kinds -> unimplemented error
 
 This logic is in:
 
 - [process_one_task](../src/tasks/worker.rs)
 
-The task framework is generic even though only imports execute today.
+Task workers carry the same permission-backend context as API handlers. Execution
+therefore rechecks the submitting principal through the configured local or
+Treetop backend while preserving the submitted token's scope snapshot.
 
 ## Import execution pipeline
 

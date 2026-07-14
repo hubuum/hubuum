@@ -16,7 +16,6 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
-use crate::traits::CollectionAccessors;
 
 #[utoipa::path(
     post,

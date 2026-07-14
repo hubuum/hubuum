@@ -21,13 +21,18 @@ use crate::models::{
     StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, authorize_remote_invocation,
 };
 use crate::observability::metrics;
+use crate::traits::BackendContext;
 
-pub(super) async fn execute_remote_call_task(
-    pool: &DbPool,
+pub(super) async fn execute_remote_call_task<C>(
+    backend: &C,
     task: &TaskRecord,
     user: &impl crate::db::traits::authz::AuthzSubject,
     scopes: Option<&[crate::models::Permissions]>,
-) -> Result<(), ApiError> {
+) -> Result<(), ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = backend.db_pool();
     let payload = task
         .request_payload
         .clone()
@@ -48,7 +53,7 @@ pub(super) async fn execute_remote_call_task(
     )
     .await?;
 
-    let result = execute_remote_call(pool, task.id, user, scopes, &request).await;
+    let result = execute_remote_call(backend, task.id, user, scopes, &request).await;
     match result {
         Ok(success) => finalize_remote_task(pool, task, success).await,
         Err(error) => {
@@ -102,16 +107,20 @@ struct RemoteFailureContext<'a> {
     method: &'a str,
 }
 
-async fn execute_remote_call(
-    pool: &DbPool,
+async fn execute_remote_call<C>(
+    backend: &C,
     task_id: i32,
     user: &impl crate::db::traits::authz::AuthzSubject,
     scopes: Option<&[crate::models::Permissions]>,
     request: &StoredRemoteCallTaskPayload,
-) -> Result<RemoteExecutionOutcome, ApiError> {
+) -> Result<RemoteExecutionOutcome, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = backend.db_pool();
     let target = request.target_id.instance(pool).await?;
     let resolved =
-        authorize_remote_invocation(pool, user, scopes, &target, &request.subject).await?;
+        authorize_remote_invocation(backend, user, scopes, &target, &request.subject).await?;
 
     let context = invocation_context(
         resolved.context,

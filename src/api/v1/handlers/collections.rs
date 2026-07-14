@@ -24,9 +24,7 @@ use actix_web::{
 };
 use tracing::{debug, info};
 
-use crate::traits::{
-    CanDelete, CanSave, CanUpdate, CollectionAccessors, PermissionController, Search, SelfAccessors,
-};
+use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController, Search, SelfAccessors};
 
 #[utoipa::path(
     get,

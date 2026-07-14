@@ -11,7 +11,7 @@ Hubuum exposes unauthenticated probe endpoints for container schedulers and load
 | Endpoint | Purpose |
 | -------- | ------- |
 | `/healthz` | Liveness probe. Returns `200 OK` when the process can serve HTTP. Does not touch the database. |
-| `/readyz` | Readiness probe. Returns `200 OK` only after a simple database query succeeds. Returns `503 Service Unavailable` when the service should not receive traffic. |
+| `/readyz` | Readiness probe. Returns `200 OK` only after the database is reachable and the migration required by this binary is applied. Returns `503 Service Unavailable` when the service should not receive traffic. |
 
 Probe paths bypass the client IP allowlist so platform health checks are not rejected before reaching the handler.
 

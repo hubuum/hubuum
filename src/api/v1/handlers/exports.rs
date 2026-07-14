@@ -3,7 +3,6 @@ use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, pos
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::DbPool;
 use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
 use crate::exports::submit_export_task;
@@ -12,6 +11,7 @@ use crate::models::{
     ExportContentType, ExportJsonResponse, ExportMeta, ExportOutputLookup, ExportRequest,
     ExportTaskOutputRecord, ExportWarning, TaskID, TaskResponse,
 };
+use crate::permissions::AppContext;
 use crate::tasks::{ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker};
 
 const EXPORT_WARNINGS_HEADER: &str = "X-Hubuum-Export-Warnings";
@@ -60,7 +60,7 @@ fn render_export_task_output(output: ExportTaskOutputRecord) -> Result<HttpRespo
 )]
 #[post("")]
 pub async fn run_export(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     export: web::Json<ExportRequest>,
@@ -78,7 +78,7 @@ pub async fn run_export(
     .await?;
 
     let response = task.to_response()?;
-    kick_task_worker(pool.get_ref().clone());
+    kick_task_worker(pool.clone());
 
     Ok(ApiResponse::accepted_at(
         response,
@@ -102,11 +102,11 @@ pub async fn run_export(
 )]
 #[get("/{task_id}")]
 pub async fn get_export(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(pool.clone());
     let task = task_id
         .into_inner()
         .load_authorized_export(&pool, &requestor.principal)
@@ -144,11 +144,11 @@ pub async fn get_export(
 )]
 #[get("/{task_id}/output")]
 pub async fn get_export_output(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(pool.clone());
     let task_id = task_id.into_inner();
     task_id
         .load_authorized_export(&pool, &requestor.principal)

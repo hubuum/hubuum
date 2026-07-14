@@ -32,7 +32,7 @@ use crate::permissions::{AppContext, PrincipalRef};
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
-use crate::traits::{ClassAccessors, CollectionAccessors};
+use crate::traits::ClassAccessors;
 
 #[utoipa::path(
     post,
@@ -312,7 +312,7 @@ pub async fn invoke_remote_target(
     target_id: web::Path<RemoteTargetID>,
     body: web::Json<RemoteTargetInvokeRequest>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.db_pool.clone());
+    ensure_task_worker_running(pool.clone());
     let user = &requestor.principal;
     let target_id = target_id.into_inner();
     let invoke = body.into_inner();
@@ -347,7 +347,7 @@ pub async fn invoke_remote_target(
         resolved.subject_id,
     )
     .await?;
-    kick_task_worker(pool.db_pool.clone());
+    kick_task_worker(pool.clone());
 
     debug!(
         message = "Remote target invocation queued",

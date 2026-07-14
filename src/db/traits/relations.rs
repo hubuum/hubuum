@@ -84,18 +84,40 @@ pub async fn class_relation_authorization_resources(
         .collect()
 }
 
-/// Build Cedar authorization resources for object relations with one bulk
-/// object lookup, rather than issuing endpoint lookups for every row.
-pub async fn object_relation_authorization_resources(
+/// Build Cedar authorization resources for object IDs with one bulk lookup.
+pub async fn object_authorization_resources(
     pool: &DbPool,
-    relations: &[HubuumObjectRelation],
+    object_ids: &[i32],
 ) -> Result<Vec<ResourceRef>, ApiError> {
+    let by_id = load_objects_by_id(pool, object_ids).await?;
+    object_ids
+        .iter()
+        .map(|object_id| {
+            let object = by_id.get(object_id).ok_or_else(|| {
+                ApiError::InternalServerError(format!(
+                    "authorization candidate references missing object {object_id}"
+                ))
+            })?;
+            Ok(ResourceRef {
+                kind: ResourceKind::Object,
+                id: object.id,
+                attrs: ResourceAttrs {
+                    collection_id: Some(object.collection_id),
+                    class_id: Some(object.hubuum_class_id),
+                    name: Some(object.name.clone()),
+                    ..Default::default()
+                },
+            })
+        })
+        .collect()
+}
+
+async fn load_objects_by_id(
+    pool: &DbPool,
+    object_ids: &[i32],
+) -> Result<HashMap<i32, HubuumObject>, ApiError> {
     use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
-    let object_ids = relations
-        .iter()
-        .flat_map(|relation| [relation.from_hubuum_object_id, relation.to_hubuum_object_id])
-        .collect::<Vec<_>>();
     let objects = with_connection(pool, async |conn| {
         hubuumobject
             .filter(id.eq_any(object_ids))
@@ -103,10 +125,23 @@ pub async fn object_relation_authorization_resources(
             .await
     })
     .await?;
-    let by_id = objects
+    Ok(objects
         .into_iter()
         .map(|object| (object.id, object))
-        .collect::<HashMap<_, _>>();
+        .collect())
+}
+
+/// Build Cedar authorization resources for object relations with one bulk
+/// object lookup, rather than issuing endpoint lookups for every row.
+pub async fn object_relation_authorization_resources(
+    pool: &DbPool,
+    relations: &[HubuumObjectRelation],
+) -> Result<Vec<ResourceRef>, ApiError> {
+    let object_ids = relations
+        .iter()
+        .flat_map(|relation| [relation.from_hubuum_object_id, relation.to_hubuum_object_id])
+        .collect::<Vec<_>>();
+    let by_id = load_objects_by_id(pool, &object_ids).await?;
 
     relations
         .iter()

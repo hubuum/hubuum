@@ -10,6 +10,7 @@ use crate::models::{
     NewTaskEventRecord, TaskRecord, TaskStatus,
 };
 use crate::observability::metrics;
+use crate::traits::BackendContext;
 
 use super::helpers::{
     flush_import_result_batches, sanitize_error_for_storage, should_abort_best_effort_execution,
@@ -29,12 +30,16 @@ use crate::db::traits::task_import::{
     update_collection_db, update_object_db,
 };
 
-pub(super) async fn execute_import_task(
-    pool: &DbPool,
+pub(super) async fn execute_import_task<C>(
+    backend: &C,
     task: &TaskRecord,
     user: &impl crate::db::traits::authz::AuthzSubject,
     scopes: Option<&[crate::models::Permissions]>,
-) -> Result<(), ApiError> {
+) -> Result<(), ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = backend.db_pool();
     let payload = task
         .request_payload
         .clone()
@@ -63,7 +68,7 @@ pub(super) async fn execute_import_task(
     async {
         let total_start = Instant::now();
         let planning_start = Instant::now();
-        let planning = plan_import(pool, user, scopes, &request)
+        let planning = plan_import(backend, user, scopes, &request)
             .instrument(info_span!("import_planning"))
             .await;
         let planning_time = planning_start.elapsed();

@@ -7,7 +7,7 @@ use super::helpers::{
     class_to_resolution, planned_result, sanitize_error_for_storage,
     should_abort_best_effort_execution,
 };
-use super::planning::{plan_class, plan_collection, plan_object};
+use super::planning::{plan_class, plan_collection, plan_import, plan_object};
 use super::request_hash;
 use super::resolution::{
     remember_class, remember_collection, resolve_class_planning, resolve_collection_by_id_planning,
@@ -23,16 +23,53 @@ use crate::db::traits::task_import::{create_class_db, create_object_db};
 use crate::db::with_connection;
 use crate::errors::ApiError;
 use crate::models::{
-    ClassKey, CollectionID, CollectionKey, ImportAtomicity, ImportClassInput,
-    ImportCollectionInput, ImportCollisionPolicy, ImportMode, ImportObjectInput,
-    ImportPermissionPolicy, NewCollectionWithAssignee, NewImportTaskResultRecord, NewTaskRecord,
-    ObjectKey, TaskKind, TaskStatus,
+    CURRENT_IMPORT_VERSION, ClassKey, CollectionID, CollectionKey, ImportAtomicity,
+    ImportClassInput, ImportCollectionInput, ImportCollisionPolicy, ImportGraph, ImportMode,
+    ImportObjectInput, ImportPermissionPolicy, ImportRequest, NewCollectionWithAssignee,
+    NewImportTaskResultRecord, NewTaskRecord, ObjectKey, TaskKind, TaskStatus,
 };
+use crate::permissions::test_support::MockTreetopBackend;
+use crate::permissions::{AppContext, PermissionBackend};
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
 use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
 use crate::tests::TestContext;
 use crate::traits::CanSave;
+use std::sync::Arc;
+
+#[tokio::test]
+async fn import_planning_uses_the_task_execution_permission_backend() {
+    let context = TestContext::new().await;
+    let fixture = context
+        .collection_fixture("external_task_authorization")
+        .await;
+    let permissions: Arc<dyn PermissionBackend> = Arc::new(MockTreetopBackend::new());
+    let backend = AppContext::new(context.pool.get_ref().clone(), permissions);
+    let request = ImportRequest {
+        version: CURRENT_IMPORT_VERSION,
+        dry_run: Some(true),
+        mode: Some(ImportMode {
+            collision_policy: Some(ImportCollisionPolicy::Overwrite),
+            ..ImportMode::default()
+        }),
+        graph: ImportGraph {
+            collections: vec![ImportCollectionInput {
+                ref_: Some("collection:existing".to_string()),
+                name: fixture.collection.name.clone(),
+                description: "updated by import".to_string(),
+                parent_collection_ref: None,
+                parent_collection_key: None,
+            }],
+            ..ImportGraph::default()
+        },
+    };
+
+    let planning = plan_import(&backend, &context.admin_user, None, &request).await;
+
+    assert!(planning.aborted);
+    assert_eq!(planning.failures.len(), 1);
+    assert!(matches!(planning.failures[0].kind, FailureKind::Permission));
+}
 
 #[tokio::test]
 async fn test_execute_import_strict_rolls_back_on_runtime_failure() {

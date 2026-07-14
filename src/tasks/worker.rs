@@ -23,6 +23,10 @@ use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus};
 use crate::observability::metrics;
+use crate::permissions::AppContext;
+#[cfg(test)]
+use crate::permissions::LocalPermissionBackend;
+use crate::traits::BackendContext;
 
 use super::execution::execute_import_task;
 use super::helpers::sanitize_error_for_storage;
@@ -180,12 +184,12 @@ async fn wait_for_task_worker_wakeup(poll_interval: Duration, shutdown: &Shutdow
     }
 }
 
-async fn task_worker_loop(pool: DbPool, poll_interval: Duration, shutdown: ShutdownSignal) {
+async fn task_worker_loop(context: AppContext, poll_interval: Duration, shutdown: ShutdownSignal) {
     loop {
         if shutdown.is_requested() {
             break;
         }
-        let result = process_one_task(&pool, Some(&shutdown)).await;
+        let result = process_one_task(&context, Some(&shutdown)).await;
         if shutdown.is_requested() {
             break;
         }
@@ -200,7 +204,7 @@ async fn task_worker_loop(pool: DbPool, poll_interval: Duration, shutdown: Shutd
     }
 }
 
-fn spawn_task_worker_loop(pool: DbPool, poll_interval: Duration, worker_index: usize) {
+fn spawn_task_worker_loop(context: AppContext, poll_interval: Duration, worker_index: usize) {
     spawn_background_worker(format!("task-worker-{worker_index}"), move |shutdown| {
         info!(
             message = "Starting task worker loop",
@@ -209,15 +213,15 @@ fn spawn_task_worker_loop(pool: DbPool, poll_interval: Duration, worker_index: u
         );
         let system = actix_rt::System::new();
         system.block_on(async move {
-            let pool = task_worker_pool(pool);
-            task_worker_loop(pool, poll_interval, shutdown).await;
+            let context = task_worker_context(context);
+            task_worker_loop(context, poll_interval, shutdown).await;
         });
     });
 }
 
 #[cfg(not(test))]
-fn task_worker_pool(pool: DbPool) -> DbPool {
-    pool
+fn task_worker_context(context: AppContext) -> AppContext {
+    context
 }
 
 /// Async Postgres connections are tied to the runtime that established them.
@@ -225,13 +229,18 @@ fn task_worker_pool(pool: DbPool) -> DbPool {
 /// thread is process-global. Build the test worker's pool on its own long-lived
 /// runtime so it never inherits connections driven by a completed test runtime.
 #[cfg(test)]
-fn task_worker_pool(pool: DbPool) -> DbPool {
-    drop(pool);
+fn task_worker_context(context: AppContext) -> AppContext {
+    drop(context);
     let config = get_config().expect("test task worker requires database configuration");
-    crate::db::init_pool(&config.database_url, config.db_pool_size)
+    let pool = crate::db::init_pool(&config.database_url, config.db_pool_size);
+    let permissions = std::sync::Arc::new(LocalPermissionBackend::new(
+        pool.clone(),
+        config.admin_groupname.clone(),
+    ));
+    AppContext::new(pool, permissions)
 }
 
-pub fn ensure_task_worker_running(pool: DbPool) {
+pub fn ensure_task_worker_running(context: AppContext) {
     let worker_count = configured_task_worker_count();
     if worker_count == 0 {
         return;
@@ -245,20 +254,24 @@ pub fn ensure_task_worker_running(pool: DbPool) {
         );
         metrics::task_worker_config(worker_count, poll_interval);
         for worker_index in 0..worker_count {
-            spawn_task_worker_loop(pool.clone(), poll_interval, worker_index);
+            spawn_task_worker_loop(context.clone(), poll_interval, worker_index);
         }
     });
 }
 
-pub fn kick_task_worker(pool: DbPool) {
-    ensure_task_worker_running(pool);
+pub fn kick_task_worker(context: AppContext) {
+    ensure_task_worker_running(context);
     get_task_worker_notify().notify_one();
 }
 
-pub(super) async fn process_one_task(
-    pool: &DbPool,
+pub(super) async fn process_one_task<C>(
+    context: &C,
     shutdown: Option<&ShutdownSignal>,
-) -> Result<bool, ApiError> {
+) -> Result<bool, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = context.db_pool();
     maybe_recover_expired_task_leases(pool).await?;
 
     if let Err(error) = maybe_cleanup_expired_export_outputs(pool).await {
@@ -304,10 +317,10 @@ pub(super) async fn process_one_task(
                     _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
                         "Task interrupted by graceful server shutdown".to_string(),
                     )),
-                    result = process_claimed_task(pool, &task) => result,
+                    result = process_claimed_task(context, &task) => result,
                 }
             }
-            None => process_claimed_task(pool, &task).await,
+            None => process_claimed_task(context, &task).await,
         }
     };
     let mut ownership_lost = false;
@@ -590,7 +603,11 @@ fn duration_since(timestamp: chrono::NaiveDateTime) -> Option<Duration> {
     (elapsed >= 0).then(|| Duration::from_millis(elapsed as u64))
 }
 
-async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), ApiError> {
+async fn process_claimed_task<C>(context: &C, task: &TaskRecord) -> Result<(), ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = context.db_pool();
     let submitted_by = task.submitted_by.ok_or_else(|| {
         ApiError::BadRequest(
             "Submitting principal is no longer available for this task".to_string(),
@@ -637,9 +654,9 @@ async fn process_claimed_task(pool: &DbPool, task: &TaskRecord) -> Result<(), Ap
     );
 
     match TaskKind::from_db(&task.kind)? {
-        TaskKind::Import => execute_import_task(pool, task, &principal, scopes).await,
-        TaskKind::Export => execute_export_task(pool, task, &principal, scopes).await,
-        TaskKind::RemoteCall => execute_remote_call_task(pool, task, &principal, scopes).await,
+        TaskKind::Import => execute_import_task(context, task, &principal, scopes).await,
+        TaskKind::Export => execute_export_task(context, task, &principal, scopes).await,
+        TaskKind::RemoteCall => execute_remote_call_task(context, task, &principal, scopes).await,
         other => Err(ApiError::BadRequest(format!(
             "Task kind '{}' is not implemented",
             other.as_str()

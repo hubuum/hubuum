@@ -69,6 +69,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Background task workers now use the configured permission backend for
+  execution-time authorization, including worker-only replicas, rather than
+  falling back to local SQL permissions when Treetop is authoritative.
+- In-memory login limiting now rejects new high-cardinality scopes at its key
+  cap instead of evicting active failures or lockouts, preserving both the
+  default limiter and the local Valkey-outage safety state. CI now executes the
+  Valkey limiter contract against a real service.
+- Distributed API and worker startup, the admin database-readiness command, and
+  `/readyz` now require the latest application migration instead of checking
+  database connectivity alone.
 - Task workers now renew leases through a dedicated database pool and runtime
   thread, stop side-effecting work when renewal failures outlive the confirmed
   lease, keep renewing through failure finalization, and reconstruct

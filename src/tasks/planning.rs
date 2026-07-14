@@ -29,33 +29,53 @@ use crate::models::{
     ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy, ImportRequest,
     Permissions,
 };
+use crate::permissions::PrincipalRef;
+use crate::traits::BackendContext;
 
-async fn is_import_admin(
-    pool: &DbPool,
+async fn is_import_admin<C>(
+    backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
     state: &mut PlanningState,
-) -> Result<bool, String> {
+) -> Result<bool, String>
+where
+    C: BackendContext + ?Sized,
+{
     if let Some(is_admin) = state.is_admin {
         return Ok(is_admin);
     }
 
-    let is_admin = user.is_admin(pool).await.map_err(|err| err.to_string())?;
+    let pool = backend.db_pool();
+    let is_admin = match backend.permission_backend() {
+        Some(permission_backend) if !permission_backend.uses_sql_permission_store() => {
+            let principal = PrincipalRef::load(pool, user)
+                .await
+                .map_err(|err| err.to_string())?;
+            permission_backend
+                .is_admin(&principal)
+                .await
+                .map_err(|err| err.to_string())?
+        }
+        _ => user.is_admin(pool).await.map_err(|err| err.to_string())?,
+    };
     state.is_admin = Some(is_admin);
     Ok(is_admin)
 }
 
-async fn ensure_collection_permission_cached(
-    pool: &DbPool,
+async fn ensure_collection_permission_cached<C>(
+    backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
     state: &mut PlanningState,
     collection_id: i32,
     collection_exists_in_db: bool,
     permission: Permissions,
-) -> Result<(), String> {
+) -> Result<(), String>
+where
+    C: BackendContext + ?Sized,
+{
     if !collection_exists_in_db {
         // Admin-bypass for newly-created collections applies only to unscoped
         // tokens; a scoped import can never operate on new collections.
-        if state.scopes.is_none() && is_import_admin(pool, user, state).await? {
+        if state.scopes.is_none() && is_import_admin(backend, user, state).await? {
             return Ok(());
         }
         return Err("Only admins may operate on newly created collections within an import".into());
@@ -68,10 +88,12 @@ async fn ensure_collection_permission_cached(
 
     let collection = CollectionID::new(collection_id).map_err(|err| err.to_string())?;
     let scopes = state.scopes.clone();
-    let result = user
-        .can(pool, vec![permission], vec![collection], scopes.as_deref())
-        .await
-        .map_err(|err| err.to_string());
+    let result: Result<(), crate::errors::ApiError> = async {
+        crate::can!(backend, user, scopes.as_deref(), [permission], collection);
+        Ok(())
+    }
+    .await;
+    let result = result.map_err(|err| err.to_string());
     state
         .collection_permission_cache
         .insert(key, result.clone());
@@ -122,12 +144,16 @@ async fn object_relation_exists_cached(
     Ok(exists)
 }
 
-pub(super) async fn plan_import(
-    pool: &DbPool,
+pub(super) async fn plan_import<C>(
+    backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
     scopes: Option<&[Permissions]>,
     request: &ImportRequest,
-) -> PlanningOutcome {
+) -> PlanningOutcome
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = backend.db_pool();
     let mode = request.mode();
     let mut state = PlanningState::new();
     state.scopes = scopes.map(|s| s.to_vec());
@@ -162,7 +188,9 @@ pub(super) async fn plan_import(
     let collection_start = Instant::now();
     async {
         for collection in &request.graph.collections {
-            push_or_stop!(plan_collection(pool, user, &mode, &mut state, collection));
+            push_or_stop!(plan_collection(
+                backend, user, &mode, &mut state, collection
+            ));
         }
     }
     .instrument(info_span!(
@@ -205,7 +233,7 @@ pub(super) async fn plan_import(
     let class_start = Instant::now();
     async {
         for class in &request.graph.classes {
-            push_or_stop!(plan_class(pool, user, &mode, &mut state, class));
+            push_or_stop!(plan_class(backend, user, &mode, &mut state, class));
         }
     }
     .instrument(info_span!(
@@ -248,7 +276,7 @@ pub(super) async fn plan_import(
     let object_start = Instant::now();
     async {
         for object in &request.graph.objects {
-            push_or_stop!(plan_object(pool, user, &mode, &mut state, object));
+            push_or_stop!(plan_object(backend, user, &mode, &mut state, object));
         }
     }
     .instrument(info_span!(
@@ -277,7 +305,9 @@ pub(super) async fn plan_import(
     let class_relation_start = Instant::now();
     async {
         for relation in &request.graph.class_relations {
-            push_or_stop!(plan_class_relation(pool, user, &mode, &mut state, relation));
+            push_or_stop!(plan_class_relation(
+                backend, user, &mode, &mut state, relation
+            ));
         }
     }
     .instrument(info_span!(
@@ -307,7 +337,7 @@ pub(super) async fn plan_import(
     async {
         for relation in &request.graph.object_relations {
             push_or_stop!(plan_object_relation(
-                pool, user, &mode, &mut state, relation
+                backend, user, &mode, &mut state, relation
             ));
         }
     }
@@ -338,7 +368,7 @@ pub(super) async fn plan_import(
     async {
         for acl in &request.graph.collection_permissions {
             push_or_stop!(plan_collection_permission(
-                pool, user, &mode, &mut state, acl
+                backend, user, &mode, &mut state, acl
             ));
         }
     }
@@ -365,13 +395,17 @@ pub(super) async fn plan_import(
     }
 }
 
-pub(super) async fn plan_collection(
-    pool: &DbPool,
+pub(super) async fn plan_collection<C>(
+    backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportCollectionInput,
-) -> Result<PlannedItem, PlanningFailure> {
+) -> Result<PlannedItem, PlanningFailure>
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = backend.db_pool();
     if let Some(reference) = &input.ref_
         && state.collections_by_ref.contains_key(reference)
     {
@@ -454,7 +488,7 @@ pub(super) async fn plan_collection(
 
     if let Some(collection) = existing {
         ensure_collection_permission_cached(
-            pool,
+            backend,
             user,
             state,
             collection.id,
@@ -554,13 +588,17 @@ pub(super) async fn plan_collection(
     }
 }
 
-pub(super) async fn plan_class(
-    pool: &DbPool,
+pub(super) async fn plan_class<C>(
+    backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportClassInput,
-) -> Result<PlannedItem, PlanningFailure> {
+) -> Result<PlannedItem, PlanningFailure>
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = backend.db_pool();
     if let Some(reference) = &input.ref_
         && state.classes_by_ref.contains_key(reference)
     {
@@ -640,7 +678,7 @@ pub(super) async fn plan_class(
 
     if let Some(class) = existing {
         ensure_collection_permission_cached(
-            pool,
+            backend,
             user,
             state,
             collection.id,
@@ -697,7 +735,7 @@ pub(super) async fn plan_class(
         })
     } else {
         ensure_collection_permission_cached(
-            pool,
+            backend,
             user,
             state,
             collection.id,
@@ -733,13 +771,17 @@ pub(super) async fn plan_class(
     }
 }
 
-pub(super) async fn plan_object(
-    pool: &DbPool,
+pub(super) async fn plan_object<C>(
+    backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportObjectInput,
-) -> Result<PlannedItem, PlanningFailure> {
+) -> Result<PlannedItem, PlanningFailure>
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = backend.db_pool();
     if let Some(reference) = &input.ref_
         && state.objects_by_ref.contains_key(reference)
     {
@@ -846,7 +888,7 @@ pub(super) async fn plan_object(
 
     if let Some(object) = existing {
         ensure_collection_permission_cached(
-            pool,
+            backend,
             user,
             state,
             collection.id,
@@ -899,7 +941,7 @@ pub(super) async fn plan_object(
         })
     } else {
         ensure_collection_permission_cached(
-            pool,
+            backend,
             user,
             state,
             collection.id,
@@ -934,13 +976,17 @@ pub(super) async fn plan_object(
     }
 }
 
-pub(super) async fn plan_class_relation(
-    pool: &DbPool,
+pub(super) async fn plan_class_relation<C>(
+    backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportClassRelationInput,
-) -> Result<PlannedItem, PlanningFailure> {
+) -> Result<PlannedItem, PlanningFailure>
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = backend.db_pool();
     let from_class = resolve_class_planning(
         pool,
         state,
@@ -994,7 +1040,7 @@ pub(super) async fn plan_class_relation(
         })?;
 
     ensure_collection_permission_cached(
-        pool,
+        backend,
         user,
         state,
         from_collection.id,
@@ -1013,7 +1059,7 @@ pub(super) async fn plan_class_relation(
         message,
     })?;
     ensure_collection_permission_cached(
-        pool,
+        backend,
         user,
         state,
         to_collection.id,
@@ -1072,13 +1118,17 @@ pub(super) async fn plan_class_relation(
     })
 }
 
-pub(super) async fn plan_object_relation(
-    pool: &DbPool,
+pub(super) async fn plan_object_relation<C>(
+    backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportObjectRelationInput,
-) -> Result<PlannedItem, PlanningFailure> {
+) -> Result<PlannedItem, PlanningFailure>
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = backend.db_pool();
     let from_object = resolve_object_planning(
         pool,
         state,
@@ -1121,7 +1171,7 @@ pub(super) async fn plan_object_relation(
         })?;
 
     ensure_collection_permission_cached(
-        pool,
+        backend,
         user,
         state,
         from_collection.id,
@@ -1135,7 +1185,7 @@ pub(super) async fn plan_object_relation(
         message,
     })?;
     ensure_collection_permission_cached(
-        pool,
+        backend,
         user,
         state,
         to_collection.id,
@@ -1203,13 +1253,17 @@ pub(super) async fn plan_object_relation(
     })
 }
 
-pub(super) async fn plan_collection_permission(
-    pool: &DbPool,
+pub(super) async fn plan_collection_permission<C>(
+    backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
     _mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportCollectionPermissionInput,
-) -> Result<PlannedItem, PlanningFailure> {
+) -> Result<PlannedItem, PlanningFailure>
+where
+    C: BackendContext + ?Sized,
+{
+    let pool = backend.db_pool();
     let collection = resolve_collection_planning(
         pool,
         state,
@@ -1229,7 +1283,7 @@ pub(super) async fn plan_collection_permission(
     })?;
 
     ensure_collection_permission_cached(
-        pool,
+        backend,
         user,
         state,
         collection.id,

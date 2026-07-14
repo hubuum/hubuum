@@ -25,8 +25,8 @@ use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{
     AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef, authorize_resources,
 };
-use crate::tasks::idempotency_key_from_headers;
-use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors, SelfAccessors};
+use crate::tasks::{idempotency_key_from_headers, kick_task_worker};
+use crate::traits::{CanDelete, CanSave, CanUpdate, SelfAccessors};
 
 #[utoipa::path(
     post,
@@ -267,6 +267,7 @@ pub async fn run_template_export(
         Some(template),
     )
     .await?;
+    kick_task_worker(pool.clone());
     let response = task.to_response()?;
 
     Ok(ApiResponse::accepted_at(

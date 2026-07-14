@@ -102,7 +102,7 @@ pub async fn get_tasks(
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.db_pool.clone());
+    ensure_task_worker_running(pool.clone());
     let (params, filters) = parse_task_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<TaskResponse>(&params)?;
     let backend = pool.permission_backend();
@@ -205,7 +205,7 @@ pub async fn get_task(
     requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.db_pool.clone());
+    ensure_task_worker_running(pool.clone());
     let task_id = task_id.into_inner();
     let task = if pool.permission_backend().uses_sql_permission_store() {
         task_id.load_authorized(&pool, &requestor.principal).await?
@@ -256,7 +256,7 @@ pub async fn get_task_events(
     req: HttpRequest,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.db_pool.clone());
+    ensure_task_worker_running(pool.clone());
     let task_id = task_id.into_inner();
     if pool.permission_backend().uses_sql_permission_store() {
         task_id.load_authorized(&pool, &requestor.principal).await?;

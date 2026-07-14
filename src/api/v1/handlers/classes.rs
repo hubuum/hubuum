@@ -41,7 +41,7 @@ use crate::models::{
     NewHubuumObjectRelation, Permissions, RelatedClassGraph, RelatedObjectGraph,
     RelatedObjectGraphRow, UpdateHubuumClass, UpdateHubuumObject,
 };
-use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors, Search, SelfAccessors};
+use crate::traits::{CanDelete, CanSave, CanUpdate, Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
 
 use crate::models::search::{

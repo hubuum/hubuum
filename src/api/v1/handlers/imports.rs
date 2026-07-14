@@ -14,6 +14,7 @@ use crate::models::{
     TaskResponse,
 };
 use crate::pagination::prepare_db_pagination;
+use crate::permissions::AppContext;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
@@ -58,12 +59,12 @@ async fn find_or_create_import_task(
 )]
 #[post("")]
 pub async fn create_import(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     import_request: web::Json<ImportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(pool.clone());
 
     let import_request = import_request.into_inner();
     if import_request.version != CURRENT_IMPORT_VERSION {
@@ -90,7 +91,7 @@ pub async fn create_import(
     .await?;
 
     let response = task.to_response()?;
-    kick_task_worker(pool.get_ref().clone());
+    kick_task_worker(pool.clone());
 
     Ok(ApiResponse::accepted_at(
         response,
@@ -121,11 +122,11 @@ fn max_active_import_tasks_per_user() -> usize {
 )]
 #[get("/{task_id}")]
 pub async fn get_import(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(pool.clone());
     let task = task_id
         .into_inner()
         .load_authorized_import(&pool, &requestor.principal)
@@ -150,12 +151,12 @@ pub async fn get_import(
 )]
 #[get("/{task_id}/results")]
 pub async fn get_import_results(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(pool.clone());
     let task_id = task_id.into_inner();
     task_id
         .load_authorized_import(&pool, &requestor.principal)
