@@ -28,6 +28,12 @@ worker replicas rather than `/healthz`; the image's built-in Docker health check
 accounts for the worker role. API replicas expose `/healthz` and `/readyz` as
 documented in [Quick Start](quick_start.md#health-probes).
 
+Worker-only processes require at least one configured background worker and
+supervise every worker thread they start. If any worker stops unexpectedly, the
+server process exits so the container liveness check fails and the orchestrator
+can replace the replica. The `all` role applies the same supervision whenever it
+starts background workers.
+
 The `all` role is the default, so existing single-instance deployments continue
 to behave as before.
 
@@ -151,10 +157,17 @@ known to be safe.
 
 ## Capacity Planning
 
-Each process owns its own database pool. Start with this upper-bound budget:
+Each process owns its main database pool. A `worker` or `all` process with
+`HUBUUM_TASK_WORKERS > 0` also lazily creates a dedicated one-connection task
+lease pool so lease renewals cannot be starved by task execution. Start with
+this upper-bound budget:
 
 ```text
-connections = (api replicas + worker replicas) * HUBUUM_DB_POOL_SIZE
+connections = (api replicas + worker replicas + all-role replicas)
+              * HUBUUM_DB_POOL_SIZE
+              + (worker replicas with task workers
+                 + all-role replicas with task workers)
+                * 1 task lease connection
               + migration/administration connections
               + operational headroom
 ```

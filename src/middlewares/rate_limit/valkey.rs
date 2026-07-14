@@ -1,6 +1,7 @@
 use std::time::Duration;
 
-use redis::{Client, Connection, FromRedisValue};
+use redis::aio::{ConnectionManager, ConnectionManagerConfig};
+use redis::{Client, FromRedisValue};
 
 use super::{
     LoginAttemptOutcome, LoginAttemptPermit, LoginRateLimitConfig, LoginRateLimitStore,
@@ -45,18 +46,68 @@ for i = 0, scope_count - 1 do
 end
 
 redis.call('ZREMRANGEBYSCORE', index, '-inf', now - state_ttl)
+local incoming = {}
+local new_scopes = 0
 for i = 0, scope_count - 1 do
   local raw = ARGV[8 + (i * 2)]
-  if not redis.call('ZSCORE', index, raw) then
-    while redis.call('ZCARD', index) >= max_keys do
-      local evicted = redis.call('ZPOPMIN', index, 1)
-      if #evicted == 0 then
-        return 0
-      end
-      local attempts, inflight, state = keys(evicted[1])
-      redis.call('DEL', attempts, inflight, state)
+  if not incoming[raw] then
+    incoming[raw] = true
+    if not redis.call('ZSCORE', index, raw) then
+      new_scopes = new_scopes + 1
     end
   end
+end
+
+local capacity_needed = redis.call('ZCARD', index) + new_scopes - max_keys
+local inactive_before = now - math.max(window, reservation_ttl)
+while capacity_needed > 0 do
+  -- At most scope_count candidates can belong to this request and be re-added
+  -- below, so inspect one more than that to find an entry that creates capacity.
+  local candidates = redis.call(
+    'ZRANGEBYSCORE', index, '-inf', inactive_before,
+    'LIMIT', 0, scope_count + 1
+  )
+  local evicted = nil
+  local refreshed = false
+  for _, candidate in ipairs(candidates) do
+    if not incoming[candidate] then
+      local attempts, inflight, state = keys(candidate)
+      redis.call('ZREMRANGEBYSCORE', attempts, '-inf', now - window)
+      redis.call('ZREMRANGEBYSCORE', inflight, '-inf', now - reservation_ttl)
+      local locked_until = tonumber(redis.call('HGET', state, 'locked_until') or '0')
+      if locked_until > 0 and now >= locked_until and now - locked_until >= window then
+        redis.call('HDEL', state, 'locked_until', 'level')
+        locked_until = 0
+      end
+      local cooling = locked_until > 0 and now - locked_until < window
+      local active = redis.call('ZCARD', attempts) > 0
+        or redis.call('ZCARD', inflight) > 0
+        or locked_until > now
+        or cooling
+      if not active then
+        evicted = candidate
+        break
+      end
+      -- Repair a stale index score without weakening the active protection.
+      redis.call('ZADD', index, math.max(now, locked_until), candidate)
+      refreshed = true
+    end
+  end
+  if not evicted then
+    if not refreshed then
+      return 0
+    end
+    -- Re-query after moving stale active candidates out of the eviction range.
+  else
+    local attempts, inflight, state = keys(evicted)
+    redis.call('ZREM', index, evicted)
+    redis.call('DEL', attempts, inflight, state)
+    capacity_needed = capacity_needed - 1
+  end
+end
+
+for i = 0, scope_count - 1 do
+  local raw = ARGV[8 + (i * 2)]
   local attempts, inflight, state = keys(raw)
   redis.call('ZADD', inflight, now, reservation)
   redis.call('ZADD', index, now, raw)
@@ -205,9 +256,8 @@ return #members
 "#;
 
 pub(super) struct ValkeyLoginRateLimitStore {
-    client: Client,
+    connection: ConnectionManager,
     prefix: String,
-    io_timeout: Duration,
 }
 
 impl ValkeyLoginRateLimitStore {
@@ -219,38 +269,19 @@ impl ValkeyLoginRateLimitStore {
         let client = Client::open(url).map_err(|error| {
             ApiError::BadRequest(format!("Invalid login rate-limit Valkey URL: {error}"))
         })?;
-        let store = Self {
-            client,
-            prefix,
-            io_timeout,
-        };
-        Ok(store)
-    }
-
-    async fn run<T, F>(&self, operation: &'static str, query: F) -> Result<T, ApiError>
-    where
-        T: Send + 'static,
-        F: FnOnce(&mut Connection) -> redis::RedisResult<T> + Send + 'static,
-    {
-        let client = self.client.clone();
-        let io_timeout = self.io_timeout;
-        tokio::task::spawn_blocking(move || {
-            let mut connection = client.get_connection_with_timeout(io_timeout)?;
-            connection.set_read_timeout(Some(io_timeout))?;
-            connection.set_write_timeout(Some(io_timeout))?;
-            query(&mut connection)
-        })
-        .await
-        .map_err(|error| {
-            ApiError::ServiceUnavailable(format!(
-                "Login rate-limit Valkey {operation} task failed: {error}"
-            ))
-        })?
-        .map_err(|error| {
-            ApiError::ServiceUnavailable(format!(
-                "Login rate-limit Valkey {operation} failed: {error}"
-            ))
-        })
+        let connection = client
+            .get_connection_manager_lazy(
+                ConnectionManagerConfig::new()
+                    .set_connection_timeout(Some(io_timeout))
+                    .set_response_timeout(Some(io_timeout))
+                    .set_number_of_retries(0),
+            )
+            .map_err(|error| {
+                ApiError::ServiceUnavailable(format!(
+                    "Failed to initialize login rate-limit Valkey connection manager: {error}"
+                ))
+            })?;
+        Ok(Self { connection, prefix })
     }
 
     fn window_ms(config: &LoginRateLimitConfig) -> u64 {
@@ -276,25 +307,26 @@ impl ValkeyLoginRateLimitStore {
         arguments: Vec<String>,
     ) -> Result<T, ApiError>
     where
-        T: FromRedisValue + Send + 'static,
+        T: FromRedisValue,
     {
-        self.run(operation, move |connection| {
-            let mut command = redis::cmd("EVAL");
-            command.arg(script).arg(0);
-            for argument in arguments {
-                command.arg(argument);
-            }
-            command.query(connection)
+        let mut command = redis::cmd("EVAL");
+        command.arg(script).arg(0);
+        for argument in arguments {
+            command.arg(argument);
+        }
+        let mut connection = self.connection.clone();
+        command.query_async(&mut connection).await.map_err(|error| {
+            ApiError::ServiceUnavailable(format!(
+                "Login rate-limit Valkey {operation} failed: {error}"
+            ))
         })
-        .await
     }
-}
 
-impl LoginRateLimitStore for ValkeyLoginRateLimitStore {
-    async fn begin(
+    pub(super) async fn begin_with_max_keys(
         &self,
         permit: &LoginAttemptPermit,
         config: &LoginRateLimitConfig,
+        max_keys: usize,
     ) -> Result<bool, ApiError> {
         let mut arguments = vec![
             self.prefix.clone(),
@@ -302,7 +334,7 @@ impl LoginRateLimitStore for ValkeyLoginRateLimitStore {
             Self::reservation_ttl_ms(config).to_string(),
             Self::state_ttl_ms(config).to_string(),
             permit.reservation_id.to_string(),
-            super::MAX_LOGIN_ATTEMPT_KEYS.to_string(),
+            max_keys.to_string(),
             permit.scopes.len().to_string(),
         ];
         for (key, threshold) in &permit.scopes {
@@ -312,6 +344,17 @@ impl LoginRateLimitStore for ValkeyLoginRateLimitStore {
         self.eval::<i64>("begin", BEGIN_SCRIPT, arguments)
             .await
             .map(|available| available == 1)
+    }
+}
+
+impl LoginRateLimitStore for ValkeyLoginRateLimitStore {
+    async fn begin(
+        &self,
+        permit: &LoginAttemptPermit,
+        config: &LoginRateLimitConfig,
+    ) -> Result<bool, ApiError> {
+        self.begin_with_max_keys(permit, config, super::MAX_LOGIN_ATTEMPT_KEYS)
+            .await
     }
 
     async fn finish(

@@ -56,6 +56,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Task workers now renew leases through a dedicated database pool, stop
+  side-effecting work when renewal failures outlive the confirmed lease, keep
+  renewing through failure finalization, and reconstruct recovered-task
+  progress from durable import results or terminal single-item failure
+  accounting.
+- Shared login limiting now honors administrative releases across replicas,
+  preserves active reservations and lockouts when its key index is full, and
+  reuses an asynchronously multiplexed Valkey connection instead of opening a
+  connection for every limiter operation.
+- Container migration and health-check behavior now honors `--runtime-role`
+  command-line overrides as well as `HUBUUM_RUNTIME_ROLE`, and worker processes
+  exit when their supervised background workers stop unexpectedly.
 - Audited mutations that leave domain state unchanged are now treated as
   no-ops, avoiding misleading lifecycle events and `updated_at` changes. This
   includes entity updates, principal settings, collection moves, permission

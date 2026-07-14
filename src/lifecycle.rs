@@ -7,6 +7,7 @@ use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
 const JOIN_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const SUPERVISION_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Clone, Debug)]
 pub struct ShutdownSignal {
@@ -65,6 +66,21 @@ pub struct ShutdownReport {
     pub joined: usize,
     pub panicked: Vec<String>,
     pub timed_out: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BackgroundWorkerExit {
+    NoWorkers,
+    Stopped { name: String },
+}
+
+impl std::fmt::Display for BackgroundWorkerExit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoWorkers => formatter.write_str("no background workers were started"),
+            Self::Stopped { name } => write!(formatter, "background worker '{name}' stopped"),
+        }
+    }
 }
 
 impl BackgroundWorkers {
@@ -158,6 +174,38 @@ impl BackgroundWorkers {
 
         report
     }
+
+    fn worker_count(&self) -> usize {
+        self.handles
+            .lock()
+            .expect("background worker handle lock poisoned")
+            .len()
+    }
+
+    async fn wait_for_unexpected_exit(&self) -> BackgroundWorkerExit {
+        loop {
+            let exit = {
+                let handles = self
+                    .handles
+                    .lock()
+                    .expect("background worker handle lock poisoned");
+                if handles.is_empty() {
+                    Some(BackgroundWorkerExit::NoWorkers)
+                } else {
+                    handles
+                        .iter()
+                        .find(|worker| worker.handle.is_finished())
+                        .map(|worker| BackgroundWorkerExit::Stopped {
+                            name: worker.name.clone(),
+                        })
+                }
+            };
+            if let Some(exit) = exit {
+                return exit;
+            }
+            tokio::time::sleep(SUPERVISION_POLL_INTERVAL).await;
+        }
+    }
 }
 
 static BACKGROUND_WORKERS: LazyLock<BackgroundWorkers> = LazyLock::new(BackgroundWorkers::new);
@@ -171,6 +219,14 @@ where
 
 pub async fn shutdown_background_workers(timeout: Duration) -> ShutdownReport {
     BACKGROUND_WORKERS.shutdown(timeout).await
+}
+
+pub fn background_worker_count() -> usize {
+    BACKGROUND_WORKERS.worker_count()
+}
+
+pub async fn wait_for_background_worker_exit() -> BackgroundWorkerExit {
+    BACKGROUND_WORKERS.wait_for_unexpected_exit().await
 }
 
 #[cfg(test)]
@@ -239,5 +295,33 @@ mod tests {
 
         assert_eq!(report.joined, 1);
         assert!(iteration_dropped.load(Ordering::Acquire));
+    }
+
+    #[actix_rt::test]
+    async fn supervision_rejects_an_empty_worker_set() {
+        let workers = BackgroundWorkers::new();
+
+        let exit = workers.wait_for_unexpected_exit().await;
+
+        assert_eq!(exit, BackgroundWorkerExit::NoWorkers);
+    }
+
+    #[actix_rt::test]
+    async fn supervision_reports_a_worker_that_stops() {
+        let workers = BackgroundWorkers::new();
+        workers.spawn("stopping-worker", |_| {});
+
+        let exit = tokio::time::timeout(Duration::from_secs(1), workers.wait_for_unexpected_exit())
+            .await
+            .expect("supervision should notice the stopped worker");
+
+        assert_eq!(
+            exit,
+            BackgroundWorkerExit::Stopped {
+                name: "stopping-worker".to_string(),
+            }
+        );
+        let report = workers.shutdown(Duration::from_secs(1)).await;
+        assert_eq!(report.joined, 1);
     }
 }

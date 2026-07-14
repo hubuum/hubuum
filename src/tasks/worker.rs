@@ -1,23 +1,23 @@
+use std::future::Future;
 use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
-use actix_rt::time::sleep;
+use actix_rt::time::{Instant as TokioInstant, sleep, sleep_until};
 use chrono::Utc;
 use tokio::sync::{Notify, oneshot};
 use tracing::{error, info, warn};
 
-#[cfg(test)]
 use crate::config::get_config;
 use crate::config::{
     DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS, DEFAULT_TASK_HEARTBEAT_SECONDS,
     DEFAULT_TASK_LEASE_SECONDS, DEFAULT_TASK_POLL_INTERVAL_MS,
     DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS,
 };
-use crate::db::DbPool;
 use crate::db::traits::task::{
     TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_export_outputs,
     recover_expired_task_leases, renew_task_lease,
 };
+use crate::db::{DatabasePoolSettings, DbPool, init_pool_with_settings};
 use crate::errors::ApiError;
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
@@ -34,6 +34,10 @@ static TASK_WORKER_NOTIFY: OnceLock<Notify> = OnceLock::new();
 static EXPORT_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static TASK_RECOVERY_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static TASK_WORKER_SETTINGS: OnceLock<TaskWorkerSettings> = OnceLock::new();
+#[cfg(not(test))]
+static TASK_LEASE_POOL: OnceLock<DbPool> = OnceLock::new();
+
+const TASK_LEASE_POOL_SIZE: u32 = 1;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TaskWorkerSettings {
@@ -123,6 +127,29 @@ fn configured_task_worker_count() -> usize {
 
 fn configured_task_poll_interval() -> Duration {
     task_worker_settings().poll_interval
+}
+
+fn new_task_lease_pool() -> DbPool {
+    let config = get_config().expect("task lease renewal requires database configuration");
+    let settings = DatabasePoolSettings::builder(config.database_url.clone())
+        .max_size(TASK_LEASE_POOL_SIZE)
+        .statement_timeout_ms(config.db_statement_timeout_ms)
+        .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+        .build()
+        .expect("task lease pool settings must be valid");
+    init_pool_with_settings(&settings)
+}
+
+#[cfg(not(test))]
+fn task_lease_pool() -> DbPool {
+    TASK_LEASE_POOL.get_or_init(new_task_lease_pool).clone()
+}
+
+// Test runtimes are short-lived, so do not retain async Postgres connections in
+// a process-global pool after the runtime that established them has stopped.
+#[cfg(test)]
+fn task_lease_pool() -> DbPool {
+    new_task_lease_pool()
 }
 
 pub(super) fn background_worker_action(result: &Result<bool, ApiError>) -> WorkerLoopAction {
@@ -231,7 +258,9 @@ pub(super) async fn process_one_task(
         return Err(error);
     }
 
-    let task = match claim_next_queued_task(pool, task_worker_settings().lease_duration).await {
+    let settings = task_worker_settings();
+    let claim_started_at = TokioInstant::now();
+    let task = match claim_next_queued_task(pool, settings.lease_duration).await {
         Ok(task) => task,
         Err(error) => {
             metrics::task_worker_iteration("error");
@@ -254,7 +283,11 @@ pub(super) async fn process_one_task(
         worker = std::thread::current().name().unwrap_or("task-worker")
     );
 
-    let mut heartbeat = start_task_lease_heartbeat(pool.clone(), &task);
+    let mut heartbeat = start_task_lease_heartbeat(
+        task_lease_pool(),
+        &task,
+        claim_started_at + settings.lease_duration,
+    );
     let execution = async {
         match shutdown {
             Some(shutdown) => {
@@ -279,13 +312,24 @@ pub(super) async fn process_one_task(
             ))
         }
     };
-    if let Some(heartbeat) = heartbeat {
-        heartbeat.stop().await;
-    }
-    if let Err(err) = result
+    if let Err(err) = &result
         && !ownership_lost
     {
-        mark_claimed_task_failed(pool, &task, &err).await?;
+        let finalized = finalize_failure_while_lease_owned(
+            &mut heartbeat,
+            mark_claimed_task_failed(pool, &task, err),
+        )
+        .await?;
+        if !finalized {
+            warn!(
+                message = "Task failure finalization stopped because its worker lease was lost",
+                task_id = task.id,
+                claim_token = ?task.lease_token,
+            );
+        }
+    }
+    if let Some(heartbeat) = heartbeat {
+        heartbeat.stop().await;
     }
 
     Ok(true)
@@ -304,42 +348,28 @@ impl TaskLeaseHeartbeat {
     }
 }
 
-fn start_task_lease_heartbeat(pool: DbPool, task: &TaskRecord) -> Option<TaskLeaseHeartbeat> {
+fn start_task_lease_heartbeat(
+    pool: DbPool,
+    task: &TaskRecord,
+    initial_confirmed_expiry: TokioInstant,
+) -> Option<TaskLeaseHeartbeat> {
     let claim_token = task.lease_token?;
     let settings = task_worker_settings();
     let task_id = task.id;
     let (stop_tx, mut stop_rx) = oneshot::channel();
     let (lost_tx, lost_rx) = oneshot::channel();
     let handle = tokio::spawn(async move {
-        let mut lost_tx = Some(lost_tx);
-        loop {
-            tokio::select! {
-                _ = sleep(settings.heartbeat_interval) => {
-                    match renew_task_lease(&pool, task_id, claim_token, settings.lease_duration).await {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            warn!(
-                                message = "Task lease is no longer owned by this worker",
-                                task_id,
-                                claim_token = %claim_token,
-                            );
-                            if let Some(lost_tx) = lost_tx.take() {
-                                let _ = lost_tx.send(());
-                            }
-                            break;
-                        }
-                        Err(error) => {
-                            warn!(
-                                message = "Failed to renew task worker lease",
-                                task_id,
-                                claim_token = %claim_token,
-                                error = %error,
-                            );
-                        }
-                    }
-                }
-                _ = &mut stop_rx => break,
-            }
+        let lost = monitor_task_lease(
+            task_id,
+            claim_token,
+            settings,
+            initial_confirmed_expiry,
+            || renew_task_lease(&pool, task_id, claim_token, settings.lease_duration),
+            &mut stop_rx,
+        )
+        .await;
+        if lost {
+            let _ = lost_tx.send(());
         }
     });
     Some(TaskLeaseHeartbeat {
@@ -349,12 +379,100 @@ fn start_task_lease_heartbeat(pool: DbPool, task: &TaskRecord) -> Option<TaskLea
     })
 }
 
+async fn monitor_task_lease<F, Fut>(
+    task_id: i32,
+    claim_token: uuid::Uuid,
+    settings: TaskWorkerSettings,
+    mut confirmed_expiry: TokioInstant,
+    mut renew: F,
+    stop_rx: &mut oneshot::Receiver<()>,
+) -> bool
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<bool, ApiError>>,
+{
+    let mut next_heartbeat = TokioInstant::now() + settings.heartbeat_interval;
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut *stop_rx => return false,
+            _ = sleep_until(confirmed_expiry) => {
+                warn!(
+                    message = "Task lease renewal deadline expired",
+                    task_id,
+                    claim_token = %claim_token,
+                );
+                return true;
+            }
+            _ = sleep_until(next_heartbeat) => {
+                let renewal_started_at = TokioInstant::now();
+                let renewal = renew();
+                let result = tokio::select! {
+                    biased;
+                    _ = &mut *stop_rx => return false,
+                    _ = sleep_until(confirmed_expiry) => {
+                        warn!(
+                            message = "Task lease renewal did not complete before the lease expired",
+                            task_id,
+                            claim_token = %claim_token,
+                        );
+                        return true;
+                    }
+                    result = renewal => result,
+                };
+                match result {
+                    Ok(true) => {
+                        // PostgreSQL extends the lease after this request starts, so anchoring the
+                        // new deadline at request start is conservative even if the response is
+                        // delayed in transit.
+                        confirmed_expiry = renewal_started_at + settings.lease_duration;
+                    }
+                    Ok(false) => {
+                        warn!(
+                            message = "Task lease is no longer owned by this worker",
+                            task_id,
+                            claim_token = %claim_token,
+                        );
+                        return true;
+                    }
+                    Err(error) => {
+                        warn!(
+                            message = "Failed to renew task worker lease",
+                            task_id,
+                            claim_token = %claim_token,
+                            error = %error,
+                        );
+                    }
+                }
+                next_heartbeat = TokioInstant::now() + settings.heartbeat_interval;
+            }
+        }
+    }
+}
+
 async fn wait_for_lost_task_lease(heartbeat: &mut Option<TaskLeaseHeartbeat>) {
     match heartbeat {
         Some(heartbeat) => {
             let _ = (&mut heartbeat.lost).await;
         }
         None => std::future::pending().await,
+    }
+}
+
+async fn finalize_failure_while_lease_owned<Fut>(
+    heartbeat: &mut Option<TaskLeaseHeartbeat>,
+    finalization: Fut,
+) -> Result<bool, ApiError>
+where
+    Fut: Future<Output = Result<(), ApiError>>,
+{
+    tokio::select! {
+        biased;
+        result = finalization => {
+            result?;
+            Ok(true)
+        }
+        _ = wait_for_lost_task_lease(heartbeat) => Ok(false),
     }
 }
 
@@ -539,4 +657,102 @@ pub(super) async fn mark_claimed_task_failed(
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod lease_heartbeat_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use actix_rt::time::timeout;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn heartbeat_stays_running_until_failure_finalization_completes() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stopped_by_handle = stopped.clone();
+        let (stop_tx, stop_rx) = oneshot::channel();
+        let (_lost_tx, lost_rx) = oneshot::channel();
+        let handle = tokio::spawn(async move {
+            let _ = stop_rx.await;
+            stopped_by_handle.store(true, Ordering::Release);
+        });
+        let mut heartbeat = Some(TaskLeaseHeartbeat {
+            stop: stop_tx,
+            handle,
+            lost: lost_rx,
+        });
+
+        let finalized = finalize_failure_while_lease_owned(&mut heartbeat, async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            assert!(!stopped.load(Ordering::Acquire));
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        assert!(finalized);
+        heartbeat.unwrap().stop().await;
+        assert!(stopped.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn lease_pool_remains_available_when_execution_pool_is_exhausted() {
+        let config = get_config().expect("test requires database configuration");
+        let execution_settings = DatabasePoolSettings::builder(config.database_url.clone())
+            .max_size(1)
+            .statement_timeout_ms(config.db_statement_timeout_ms)
+            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+            .build()
+            .unwrap();
+        let execution_pool = init_pool_with_settings(&execution_settings);
+        let _execution_connection = execution_pool.get().await.unwrap();
+
+        let lease_pool = new_task_lease_pool();
+        timeout(Duration::from_secs(5), lease_pool.get())
+            .await
+            .expect("lease checkout must not wait for the execution pool")
+            .expect("lease pool should connect to the test database");
+    }
+
+    #[tokio::test]
+    async fn renewal_errors_signal_loss_at_the_confirmed_expiry() {
+        let settings = TaskWorkerSettings::new(
+            1,
+            Duration::from_millis(10),
+            Duration::from_millis(60),
+            Duration::from_millis(10),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let renewal_attempts = AtomicUsize::new(0);
+        let (_stop_tx, mut stop_rx) = oneshot::channel();
+        let confirmed_expiry = TokioInstant::now() + settings.lease_duration;
+
+        let lost = timeout(
+            Duration::from_millis(250),
+            monitor_task_lease(
+                1,
+                uuid::Uuid::new_v4(),
+                settings,
+                confirmed_expiry,
+                || {
+                    renewal_attempts.fetch_add(1, Ordering::Relaxed);
+                    async {
+                        Err(ApiError::DbConnectionError(
+                            "database unavailable".to_string(),
+                        ))
+                    }
+                },
+                &mut stop_rx,
+            ),
+        )
+        .await
+        .expect("heartbeat must stop no later than the confirmed lease expiry");
+
+        assert!(lost);
+        assert!(renewal_attempts.load(Ordering::Relaxed) > 0);
+    }
 }

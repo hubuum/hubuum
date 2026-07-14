@@ -820,6 +820,18 @@ impl AppConfig {
             ));
         }
 
+        if self.runtime_role == RuntimeRole::Worker
+            && self.task_workers == 0
+            && self.event_fanout_workers == 0
+            && self.event_delivery_workers == 0
+            && !self.event_retention_purge_enabled
+        {
+            return Err(ApiError::BadRequest(
+                "runtime_role=worker requires at least one enabled task, event fan-out, event delivery, or event retention worker"
+                    .to_string(),
+            ));
+        }
+
         if self.task_poll_interval_ms == 0 {
             return Err(ApiError::BadRequest(
                 "task_poll_interval_ms must be greater than 0".to_string(),
@@ -1849,6 +1861,24 @@ mod tests {
         assert_eq!(loaded.runtime_role, RuntimeRole::Worker);
         assert!(!loaded.runtime_role.serves_http());
         assert!(loaded.runtime_role.runs_background_workers());
+    }
+
+    #[test]
+    fn worker_runtime_role_requires_at_least_one_enabled_worker() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _role_guard = EnvVarGuard::set("HUBUUM_RUNTIME_ROLE", Some("worker"));
+        let _task_guard = EnvVarGuard::set("HUBUUM_TASK_WORKERS", Some("0"));
+        let _fanout_guard = EnvVarGuard::set("HUBUUM_EVENT_FANOUT_WORKERS", Some("0"));
+        let _delivery_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_WORKERS", Some("0"));
+        let _retention_guard =
+            EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_ENABLED", Some("false"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "runtime_role=worker requires at least one enabled task, event fan-out, event delivery, or event retention worker"
+        );
     }
 
     #[test]

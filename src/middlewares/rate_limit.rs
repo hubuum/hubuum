@@ -263,23 +263,24 @@ impl LoginRateLimitStore for ActiveLoginRateLimitStore {
             Self::Memory(store) => store.begin(permit, config).await,
             #[cfg(feature = "login-rate-limit-valkey")]
             Self::Shared(store) => {
-                if !store.local.begin(permit, config).await? {
-                    return Ok(false);
-                }
+                let locally_available = store.local.begin(permit, config).await?;
                 match store.valkey.begin(permit, config).await {
                     Ok(available) => {
                         store.record_success();
-                        if !available {
+                        if !available && locally_available {
                             store
                                 .local
                                 .finish(permit, LoginAttemptOutcome::Aborted, config)
                                 .await?;
                         }
+                        // The shared store is authoritative while it is healthy. A local
+                        // lockout can be stale when another replica handled an administrative
+                        // release, so it must not reject a request that Valkey accepts.
                         Ok(available)
                     }
                     Err(error) => {
                         store.record_failure("begin", &error);
-                        Ok(true)
+                        Ok(locally_available)
                     }
                 }
             }
@@ -296,19 +297,17 @@ impl LoginRateLimitStore for ActiveLoginRateLimitStore {
             Self::Memory(store) => store.finish(permit, outcome, config).await,
             #[cfg(feature = "login-rate-limit-valkey")]
             Self::Shared(store) => {
-                let mut lockouts = store.local.finish(permit, outcome, config).await?;
+                let local_lockouts = store.local.finish(permit, outcome, config).await?;
                 match store.valkey.finish(permit, outcome, config).await {
                     Ok(shared_lockouts) => {
                         store.record_success();
-                        for key in shared_lockouts {
-                            if !lockouts.contains(&key) {
-                                lockouts.push(key);
-                            }
-                        }
+                        Ok(shared_lockouts)
                     }
-                    Err(error) => store.record_failure("finish", &error),
+                    Err(error) => {
+                        store.record_failure("finish", &error);
+                        Ok(local_lockouts)
+                    }
                 }
-                Ok(lockouts)
             }
         }
     }
@@ -894,6 +893,142 @@ mod tests {
         .await
         .unwrap();
         assert_store_contract(&store, "valkey-contract").await;
+    }
+
+    #[cfg(feature = "login-rate-limit-valkey")]
+    #[tokio::test]
+    #[ignore = "requires Valkey or Redis at redis://127.0.0.1:6379/"]
+    async fn valkey_capacity_does_not_evict_in_flight_reservations() {
+        let mut config = cfg();
+        config.max_attempts_per_ip = 0;
+        config.max_attempts_per_subnet = 0;
+        let store = valkey::ValkeyLoginRateLimitStore::connect(
+            "redis://127.0.0.1:6379/".to_string(),
+            format!("hubuum:test-capacity-inflight:{}", Uuid::new_v4()),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        let protected = permit_for("protected-inflight", &config);
+        let newcomer = permit_for("newcomer", &config);
+
+        assert!(
+            store
+                .begin_with_max_keys(&protected, &config, 1)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .begin_with_max_keys(&newcomer, &config, 1)
+                .await
+                .unwrap()
+        );
+        let snapshots = store.snapshot(&config).await.unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].key, protected.user_ip_key);
+
+        store.clear_all().await.unwrap();
+    }
+
+    #[cfg(feature = "login-rate-limit-valkey")]
+    #[tokio::test]
+    #[ignore = "requires Valkey or Redis at redis://127.0.0.1:6379/"]
+    async fn valkey_capacity_does_not_evict_active_lockouts() {
+        let mut config = cfg();
+        config.max_attempts = 1;
+        config.max_attempts_per_ip = 0;
+        config.max_attempts_per_subnet = 0;
+        let store = valkey::ValkeyLoginRateLimitStore::connect(
+            "redis://127.0.0.1:6379/".to_string(),
+            format!("hubuum:test-capacity-lock:{}", Uuid::new_v4()),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        let protected = permit_for("protected-lock", &config);
+        let newcomer = permit_for("newcomer", &config);
+
+        assert!(
+            store
+                .begin_with_max_keys(&protected, &config, 1)
+                .await
+                .unwrap()
+        );
+        store
+            .finish(&protected, LoginAttemptOutcome::Failed, &config)
+            .await
+            .unwrap();
+        assert!(
+            !store
+                .begin_with_max_keys(&newcomer, &config, 1)
+                .await
+                .unwrap()
+        );
+        let snapshots = store.snapshot(&config).await.unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].key, protected.user_ip_key);
+        assert!(snapshots[0].locked);
+
+        store.clear_all().await.unwrap();
+    }
+
+    #[cfg(feature = "login-rate-limit-valkey")]
+    #[tokio::test]
+    #[ignore = "requires Valkey or Redis at redis://127.0.0.1:6379/"]
+    async fn shared_store_accepts_remote_admin_release_despite_stale_local_lockout() {
+        let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+        reset_login_rate_limit_for_tests().await;
+        let mut config = cfg();
+        config.max_attempts = 2;
+        config.max_attempts_per_ip = 0;
+        config.max_attempts_per_subnet = 0;
+        let prefix = format!("hubuum:test-remote-release:{}", Uuid::new_v4());
+        let shared = ActiveLoginRateLimitStore::Shared(Box::new(SharedLoginRateLimitStore::new(
+            valkey::ValkeyLoginRateLimitStore::connect(
+                "redis://127.0.0.1:6379/".to_string(),
+                prefix.clone(),
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap(),
+        )));
+        let remote_admin = valkey::ValkeyLoginRateLimitStore::connect(
+            "redis://127.0.0.1:6379/".to_string(),
+            prefix,
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        for _ in 0..config.max_attempts {
+            let permit = permit_for("remote-release", &config);
+            assert!(shared.begin(&permit, &config).await.unwrap());
+            shared
+                .finish(&permit, LoginAttemptOutcome::Failed, &config)
+                .await
+                .unwrap();
+        }
+
+        let blocked = permit_for("remote-release", &config);
+        assert!(!shared.begin(&blocked, &config).await.unwrap());
+        assert!(
+            remote_admin
+                .release_entry(&blocked.user_ip_key)
+                .await
+                .unwrap()
+        );
+        assert!(shared_local_snapshot(&shared, &config).await[0].locked);
+
+        let released = permit_for("remote-release", &config);
+        assert!(shared.begin(&released, &config).await.unwrap());
+        shared
+            .finish(&released, LoginAttemptOutcome::Aborted, &config)
+            .await
+            .unwrap();
+
+        remote_admin.clear_all().await.unwrap();
+        reset_login_rate_limit_for_tests().await;
     }
 
     #[test]

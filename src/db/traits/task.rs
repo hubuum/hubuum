@@ -1006,6 +1006,38 @@ pub async fn recover_expired_task_leases(
     recover_expired_task_leases_matching(pool, batch_size, None).await
 }
 
+async fn recovered_task_result_counts(
+    conn: &mut crate::db::DbConnection,
+    task: &TaskRecord,
+) -> Result<TaskResultCounts, ApiError> {
+    match TaskKind::from_db(&task.kind)? {
+        TaskKind::Import => {
+            use crate::schema::import_task_results::dsl::{
+                import_task_results, outcome as result_outcome, task_id as result_task_id,
+            };
+
+            let processed = import_task_results
+                .filter(result_task_id.eq(task.id))
+                .count()
+                .get_result::<i64>(conn)
+                .await?;
+            let failed = import_task_results
+                .filter(result_task_id.eq(task.id))
+                .filter(result_outcome.eq("failed"))
+                .count()
+                .get_result::<i64>(conn)
+                .await?;
+            TaskResultCounts::new(processed, processed - failed, failed)
+        }
+        TaskKind::Export | TaskKind::RemoteCall => TaskResultCounts::new(1, 0, 1),
+        TaskKind::Reindex => Ok(TaskResultCounts {
+            processed: task.processed_items,
+            success: task.success_items,
+            failed: task.failed_items,
+        }),
+    }
+}
+
 async fn recover_expired_task_leases_matching(
     pool: &DbPool,
     batch_size: i64,
@@ -1013,7 +1045,7 @@ async fn recover_expired_task_leases_matching(
 ) -> Result<Vec<TaskRecord>, ApiError> {
     use crate::schema::tasks::dsl::{
         deleted_at, failed_items, finished_at, id, lease_expires_at, lease_token, processed_items,
-        request_payload, request_redacted_at, status, summary, tasks, updated_at,
+        request_payload, request_redacted_at, status, success_items, summary, tasks, updated_at,
     };
 
     let active_statuses = [
@@ -1051,6 +1083,7 @@ async fn recover_expired_task_leases_matching(
         for stale_task in stale_tasks {
             let previous_status = stale_task.status.clone();
             let message = "Task worker lease expired; task failed without automatic replay";
+            let counts = recovered_task_result_counts(conn, &stale_task).await?;
             emit_task_lifecycle_event(
                 conn,
                 &NewTaskEventRecord {
@@ -1074,8 +1107,9 @@ async fn recover_expired_task_leases_matching(
                 .set((
                     status.eq(TaskStatus::Failed.as_str()),
                     summary.eq(Some(message.to_string())),
-                    processed_items.eq(stale_task.processed_items),
-                    failed_items.eq(stale_task.failed_items),
+                    processed_items.eq(counts.processed),
+                    success_items.eq(counts.success),
+                    failed_items.eq(counts.failed),
                     finished_at.eq(Some(now)),
                     request_payload.eq::<Option<serde_json::Value>>(None),
                     request_redacted_at.eq(Some(now)),
@@ -1308,22 +1342,23 @@ fn log_task_queued(task: &TaskRecord) {
 mod tests {
     use crate::db::prelude::*;
     use chrono::{Duration as ChronoDuration, Utc};
+    use rstest::rstest;
     use tokio::sync::oneshot;
     use uuid::Uuid;
 
     use super::{
         TaskBackend, TaskCreateRequest, TaskStateUpdate, claim_next_queued_task,
-        recover_expired_task_lease, renew_task_lease, task_capacity_lock_key,
-        task_kind_claim_order,
+        insert_import_results, recover_expired_task_lease, renew_task_lease,
+        task_capacity_lock_key, task_kind_claim_order,
     };
     use crate::db::traits::user::DeleteUserRecord;
     use crate::db::{with_connection, with_transaction};
     use crate::errors::ApiError;
     use crate::models::search::QueryOptions;
     use crate::models::{
-        CollectionID, NewTaskRecord, RemoteInvocationBodyOverride, RemoteInvocationParameters,
-        RemoteInvocationSubject, RemoteTargetID, StoredRemoteCallTaskPayload, TaskID, TaskKind,
-        TaskStatus,
+        CollectionID, NewImportTaskResultRecord, NewTaskRecord, RemoteInvocationBodyOverride,
+        RemoteInvocationParameters, RemoteInvocationSubject, RemoteTargetID,
+        StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskStatus,
     };
     use crate::tests::{TestContext, create_test_user};
 
@@ -1332,8 +1367,17 @@ mod tests {
         name: &str,
         lease_expires_at_value: chrono::NaiveDateTime,
     ) -> crate::models::TaskRecord {
+        create_leased_task_of_kind(context, name, TaskKind::Import, lease_expires_at_value).await
+    }
+
+    async fn create_leased_task_of_kind(
+        context: &TestContext,
+        name: &str,
+        kind: TaskKind,
+        lease_expires_at_value: chrono::NaiveDateTime,
+    ) -> crate::models::TaskRecord {
         let task = NewTaskRecord {
-            kind: TaskKind::Import.as_str().to_string(),
+            kind: kind.as_str().to_string(),
             status: TaskStatus::Validating.as_str().to_string(),
             submitted_by: Some(context.admin_user.id),
             submitted_token_id: None,
@@ -1343,7 +1387,7 @@ mod tests {
             request_hash: None,
             request_payload: Some(serde_json::json!({"items": []})),
             summary: None,
-            total_items: 0,
+            total_items: i32::from(matches!(kind, TaskKind::Export | TaskKind::RemoteCall)),
             processed_items: 0,
             success_items: 0,
             failed_items: 0,
@@ -1539,6 +1583,75 @@ mod tests {
                 .as_deref()
                 .is_some_and(|summary| summary.contains("without automatic replay"))
         );
+    }
+
+    #[tokio::test]
+    async fn expired_import_task_recomputes_counts_from_durable_results() {
+        let context = TestContext::new().await;
+        let leased = create_leased_task(
+            &context,
+            "expired-import-progress",
+            Utc::now().naive_utc() - ChronoDuration::seconds(1),
+        )
+        .await;
+        insert_import_results(
+            &context.pool,
+            &[
+                NewImportTaskResultRecord {
+                    task_id: leased.id,
+                    item_ref: Some("one".to_string()),
+                    entity_kind: "collection".to_string(),
+                    action: "create".to_string(),
+                    identifier: Some("one".to_string()),
+                    outcome: "succeeded".to_string(),
+                    error: None,
+                    details: None,
+                },
+                NewImportTaskResultRecord {
+                    task_id: leased.id,
+                    item_ref: Some("two".to_string()),
+                    entity_kind: "class".to_string(),
+                    action: "create".to_string(),
+                    identifier: Some("two".to_string()),
+                    outcome: "failed".to_string(),
+                    error: Some("failed".to_string()),
+                    details: None,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+
+        let recovered = recover_expired_task_lease(&context.pool, leased.id)
+            .await
+            .unwrap();
+
+        assert_eq!(recovered[0].processed_items, 2);
+        assert_eq!(recovered[0].success_items, 1);
+        assert_eq!(recovered[0].failed_items, 1);
+    }
+
+    #[rstest]
+    #[case(TaskKind::Export)]
+    #[case(TaskKind::RemoteCall)]
+    #[tokio::test]
+    async fn expired_single_item_task_records_terminal_failure(#[case] kind: TaskKind) {
+        let context = TestContext::new().await;
+        let leased = create_leased_task_of_kind(
+            &context,
+            &format!("expired-{}-progress", kind.as_str()),
+            kind,
+            Utc::now().naive_utc() - ChronoDuration::seconds(1),
+        )
+        .await;
+
+        let recovered = recover_expired_task_lease(&context.pool, leased.id)
+            .await
+            .unwrap();
+
+        assert_eq!(recovered[0].processed_items, 1);
+        assert_eq!(recovered[0].success_items, 0);
+        assert_eq!(recovered[0].failed_items, 1);
     }
 
     #[tokio::test]

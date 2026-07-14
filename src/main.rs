@@ -32,7 +32,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
 #[cfg(test)]
@@ -50,7 +50,9 @@ use crate::events::{
     ensure_event_delivery_worker_running, ensure_event_fanout_worker_running,
     ensure_event_retention_worker_running,
 };
-use crate::lifecycle::shutdown_background_workers;
+use crate::lifecycle::{
+    background_worker_count, shutdown_background_workers, wait_for_background_worker_exit,
+};
 use crate::middlewares::rate_limit::{
     LoginRateLimitStoreSettings, initialize_login_rate_limit_store,
 };
@@ -171,9 +173,26 @@ async fn main() -> std::io::Result<()> {
             db_backend = "postgresql",
             active_event_sinks,
         );
-        wait_for_shutdown_signal().await?;
+        let worker_exit = tokio::select! {
+            shutdown = wait_for_shutdown_signal() => {
+                shutdown?;
+                None
+            }
+            exit = wait_for_background_worker_exit() => Some(exit),
+        };
+        if let Some(exit) = &worker_exit {
+            error!(
+                message = "Background worker supervision failed",
+                reason = %exit,
+            );
+        }
         shutdown_background_workers(Duration::from_secs(30)).await;
         drop(pool);
+        if let Some(exit) = worker_exit {
+            return Err(std::io::Error::other(format!(
+                "Background worker supervision failed: {exit}"
+            )));
+        }
         return Ok(());
     }
 
@@ -297,7 +316,23 @@ async fn main() -> std::io::Result<()> {
         active_event_sinks,
     );
 
-    let result = server.workers(config.actix_workers).run().await;
+    let server = server.workers(config.actix_workers).run();
+    let result = if background_worker_count() > 0 {
+        tokio::select! {
+            result = server => result,
+            exit = wait_for_background_worker_exit() => {
+                error!(
+                    message = "Background worker supervision failed",
+                    reason = %exit,
+                );
+                Err(std::io::Error::other(format!(
+                    "Background worker supervision failed: {exit}"
+                )))
+            }
+        }
+    } else {
+        server.await
+    };
     shutdown_background_workers(Duration::from_secs(30)).await;
     drop(pool);
     result
