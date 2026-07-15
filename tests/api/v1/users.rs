@@ -1,11 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use crate::auth::{ConfiguredLdapScope, sync_external_user};
+    use crate::auth::ConfiguredLdapScope;
     use crate::db::traits::ActiveTokens;
     use crate::models::group::NewGroup;
     use crate::models::user::{LoginUser, NewUser, UpdateUser, User, UserID, UserResponse};
     use crate::models::{GroupResponse, PrincipalTokenMetadata};
     use crate::pagination::NEXT_CURSOR_HEADER;
+    use crate::test_support::sync_external_user;
     use actix_web::{http::StatusCode, test};
     use hubuum_auth_core::{AuthenticatedExternalUser, ExternalUserProfile};
     use hubuum_auth_ldap::{LdapScopeConfig, LdapSearchScope};
@@ -784,7 +785,7 @@ mod tests {
         let context = test_context;
 
         // Create a throwaway user to anonymize.
-        let uname = format!("api_anon_{}", context.scope.scope_id);
+        let uname = context.scoped_name("api_anon");
         let new_user = crate::models::NewUser {
             identity_scope: None,
             name: uname.clone(),

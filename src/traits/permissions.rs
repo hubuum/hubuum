@@ -93,7 +93,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// infrastructure paths such as bootstrap/setup, fixture construction,
     /// cleanup, and event-system tests. Normal application code should use
     /// [`PermissionController::grant`] so event subscribers observe the change.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn grant_without_events<C>(
         &self,
         backend: &C,
@@ -131,7 +131,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// cleanup, and event-system tests. Normal application code should use
     /// [`PermissionController::apply_permissions`] so event subscribers observe
     /// the change.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn apply_permissions_without_events<C>(
         &self,
         backend: &C,
@@ -196,7 +196,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// infrastructure paths such as bootstrap/setup, fixture construction,
     /// cleanup, and event-system tests. Normal application code should use
     /// [`PermissionController::revoke`] so event subscribers observe the change.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn revoke_without_events<C>(
         &self,
         backend: &C,
@@ -253,7 +253,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// ## Returns
     ///
     /// The permission object that holds the permissions for the group.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn grant_one<C>(
         &self,
         backend: &C,
@@ -290,7 +290,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     ///
     /// The permission object that holds the permissions for the group. If the group
     /// did not have the permission, an ApiError::NotFound is returned.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn revoke_one<C>(
         &self,
         backend: &C,
@@ -332,7 +332,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// cleanup, and event-system tests. Normal application code should use
     /// [`PermissionController::set_permissions`] so event subscribers observe
     /// the change.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn set_permissions_without_events<C>(
         &self,
         backend: &C,
@@ -380,7 +380,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// event-system tests. Normal application code should use
     /// [`PermissionController::revoke_all`] so event subscribers observe the
     /// change.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn revoke_all_without_events<C>(
         &self,
         backend: &C,

@@ -27,9 +27,6 @@ mod tests {
     use crate::db::with_connection;
     use crate::errors::ApiError;
     use crate::events::{Action, EntityType};
-    use crate::middlewares::rate_limit::{
-        LOGIN_RATE_LIMIT_TEST_LOCK, reset_login_rate_limit_for_tests,
-    };
     use crate::models::Collection;
     use crate::models::collection::user_can_on_any;
     use crate::models::principal::load_principal_by_id;
@@ -39,6 +36,9 @@ mod tests {
         GroupResponse, NewServiceAccount, NewTaskRecord, Permissions, PrincipalID,
         PrincipalMemberResponse, PrincipalTokenMetadata, ServiceAccount, ServiceAccountID,
         ServiceAccountResponse, TaskID, TaskKind, TaskRecord, TaskStatus,
+    };
+    use crate::test_support::{
+        LOGIN_RATE_LIMIT_TEST_LOCK, reset_login_rate_limit as reset_login_rate_limit_for_tests,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;
@@ -71,6 +71,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(context.pool.clone())
+                .app_data(crate::tests::app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -1200,7 +1201,7 @@ mod tests {
         )
         .await;
         assert!(
-            !crate::db::traits::task::executable_task_kind_values().contains(&task.kind.as_str()),
+            !crate::test_support::executable_task_kind_values().contains(&task.kind.as_str()),
             "synthetic task kind must stay outside the worker claim filter"
         );
 

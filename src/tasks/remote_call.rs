@@ -3,6 +3,8 @@ use hubuum_outbound_http::{
     OutboundHeaders, OutboundHttpError, OutboundMethod, OutboundRequest, validate_outbound_url,
 };
 use hubuum_templates::prepare_template;
+#[cfg(feature = "integration-test-support")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 use tracing::warn;
 
@@ -22,6 +24,30 @@ use crate::models::{
 };
 use crate::observability::metrics;
 use crate::traits::{AuthzSubject, BackendContext};
+
+#[cfg(feature = "integration-test-support")]
+static LOCAL_REMOTE_TARGET_TESTS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "integration-test-support")]
+pub(crate) fn enter_local_remote_target_test() {
+    LOCAL_REMOTE_TARGET_TESTS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(feature = "integration-test-support")]
+pub(crate) fn exit_local_remote_target_test() {
+    LOCAL_REMOTE_TARGET_TESTS.fetch_sub(1, Ordering::Relaxed);
+}
+
+fn local_remote_targets_enabled_for_tests() -> bool {
+    #[cfg(test)]
+    return true;
+
+    #[cfg(all(not(test), feature = "integration-test-support"))]
+    return LOCAL_REMOTE_TARGET_TESTS.load(Ordering::Relaxed) > 0;
+
+    #[cfg(all(not(test), not(feature = "integration-test-support")))]
+    false
+}
 
 pub(super) async fn execute_remote_call_task<C>(
     backend: &C,
@@ -163,14 +189,7 @@ where
         .map(|config| config.remote_call_allow_private_targets)
         .unwrap_or(DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS);
 
-    #[cfg(test)]
-    let dangerous_accept_invalid_certs = true;
-    #[cfg(not(test))]
-    let dangerous_accept_invalid_certs = false;
-    #[cfg(test)]
-    let dangerous_allow_localhost = true;
-    #[cfg(not(test))]
-    let dangerous_allow_localhost = false;
+    let local_test_target = local_remote_targets_enabled_for_tests();
 
     let response_result = OutboundRequest::new(
         outbound_method(target.method),
@@ -181,8 +200,8 @@ where
     .body(rendered_body)
     .max_response_bytes(preview_limit)
     .allow_private_targets(allow_private_targets)
-    .dangerous_accept_invalid_certs(dangerous_accept_invalid_certs)
-    .dangerous_allow_localhost(dangerous_allow_localhost)
+    .dangerous_accept_invalid_certs(local_test_target)
+    .dangerous_allow_localhost(local_test_target)
     .send()
     .await;
 

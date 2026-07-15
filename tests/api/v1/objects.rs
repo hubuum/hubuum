@@ -13,10 +13,11 @@ mod tests {
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::constants::{SchemaType, get_schema};
-    use crate::tests::{ObjectFixture, TestContext, create_object_fixture, test_context};
+    use crate::tests::{
+        ObjectFixture, TestContext, cleanup_test_classes as cleanup, create_object_fixture,
+        create_test_classes, test_context,
+    };
     // use crate::{assert_contains_all, assert_contains_same_ids};
-
-    use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
 
     const OBJECT_ENDPOINT: &str = "/api/v1/classes";
     fn object_in_class_endpoint(class_id: i32, object_id: i32) -> String {

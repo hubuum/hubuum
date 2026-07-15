@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use crate::config::get_config;
     use crate::db::prelude::*;
     use crate::db::traits::ActiveTokens;
     use crate::db::{init_pool, with_connection};
     use crate::middlewares::ProxyTrust;
-    use crate::middlewares::rate_limit::{
-        LOGIN_RATE_LIMIT_TEST_LOCK, reset_login_rate_limit_for_tests,
-    };
     use crate::models::user::LoginUser;
+    use crate::test_support::{
+        LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config,
+        reset_login_rate_limit as reset_login_rate_limit_for_tests,
+    };
     use crate::tests::{TestMutexGuard, create_test_admin, create_test_user, lock_test_mutex};
     use crate::{api, assert_not_contains};
     use actix_web::http::header;
@@ -27,6 +27,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_auth_providers_are_publicly_discoverable() {
+        integration_test_config().unwrap();
         let app = test::init_service(App::new().configure(api::config)).await;
 
         let resp = test::TestRequest::get()
@@ -50,7 +51,7 @@ mod tests {
     async fn test_valid_login() {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
-        let config = get_config().unwrap();
+        let config = integration_test_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;
@@ -61,6 +62,7 @@ mod tests {
                     crate::middlewares::actor_context,
                 ))
                 .app_data(Data::new(pool.clone()))
+                .app_data(crate::tests::app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -169,7 +171,7 @@ mod tests {
     async fn test_invalid_login_credentials() {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
-        let config = get_config().unwrap();
+        let config = integration_test_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
             App::new()
@@ -177,6 +179,7 @@ mod tests {
                     crate::middlewares::actor_context,
                 ))
                 .app_data(Data::new(pool.clone()))
+                .app_data(crate::tests::app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -206,7 +209,7 @@ mod tests {
     async fn test_invalid_login_parameters() {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
-        let config = get_config().unwrap();
+        let config = integration_test_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let app = test::init_service(
@@ -215,6 +218,7 @@ mod tests {
                     crate::middlewares::actor_context,
                 ))
                 .app_data(Data::new(pool.clone()))
+                .app_data(crate::tests::app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -269,7 +273,7 @@ mod tests {
     async fn test_logout_single_token() {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
-        let config = get_config().unwrap();
+        let config = integration_test_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;
@@ -285,6 +289,7 @@ mod tests {
                     crate::middlewares::actor_context,
                 ))
                 .app_data(Data::new(pool.clone()))
+                .app_data(crate::tests::app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -339,7 +344,7 @@ mod tests {
     async fn test_logout_all_tokens_from_user() {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
-        let config = get_config().unwrap();
+        let config = integration_test_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;
@@ -366,6 +371,7 @@ mod tests {
                     crate::middlewares::actor_context,
                 ))
                 .app_data(Data::new(pool.clone()))
+                .app_data(crate::tests::app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -426,7 +432,7 @@ mod tests {
 
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
-        let config = get_config().unwrap();
+        let config = integration_test_config().unwrap();
         let pool = init_pool(&config.database_url, config.db_pool_size);
 
         let new_user = create_test_user(&pool).await;
@@ -456,6 +462,7 @@ mod tests {
                     crate::middlewares::actor_context,
                 ))
                 .app_data(Data::new(pool.clone()))
+                .app_data(crate::tests::app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -508,13 +515,11 @@ mod tests {
     async fn test_login_rate_limit_uses_trusted_forwarded_ip_when_enabled() {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
-        let mut config = get_config().unwrap();
+        let config = integration_test_config().unwrap();
         // Trust forwarded headers, but only behind the known proxy at 203.0.113.1.
-        config.trust_ip_headers = true;
-        config.trusted_proxies = "203.0.113.1/32".parse().unwrap();
         let proxy_trust = ProxyTrust::new(
-            config.trust_ip_headers,
-            config.trusted_proxies.nets().to_vec(),
+            true,
+            vec!["203.0.113.1/32".parse().unwrap()],
             config.trusted_proxy_hops,
         );
         let max_attempts = config.login_rate_limit_max_attempts;
@@ -526,6 +531,7 @@ mod tests {
                 ))
                 .app_data(Data::new(proxy_trust))
                 .app_data(Data::new(pool.clone()))
+                .app_data(crate::tests::app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -574,12 +580,10 @@ mod tests {
         // be ignored so all attempts collapse onto the peer's bucket and get throttled.
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
-        let mut config = get_config().unwrap();
-        config.trust_ip_headers = true;
-        config.trusted_proxies = "203.0.113.1/32".parse().unwrap();
+        let config = integration_test_config().unwrap();
         let proxy_trust = ProxyTrust::new(
-            config.trust_ip_headers,
-            config.trusted_proxies.nets().to_vec(),
+            true,
+            vec!["203.0.113.1/32".parse().unwrap()],
             config.trusted_proxy_hops,
         );
         let max_attempts = config.login_rate_limit_max_attempts;
@@ -591,6 +595,7 @@ mod tests {
                 ))
                 .app_data(Data::new(proxy_trust))
                 .app_data(Data::new(pool.clone()))
+                .app_data(crate::tests::app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -637,12 +642,10 @@ mod tests {
         // the per-IP counter must still throttle the source.
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
-        let mut config = get_config().unwrap();
-        config.trust_ip_headers = true;
-        config.trusted_proxies = "203.0.113.1/32".parse().unwrap();
+        let config = integration_test_config().unwrap();
         let proxy_trust = ProxyTrust::new(
-            config.trust_ip_headers,
-            config.trusted_proxies.nets().to_vec(),
+            true,
+            vec!["203.0.113.1/32".parse().unwrap()],
             config.trusted_proxy_hops,
         );
         let per_ip = config.login_rate_limit_max_attempts_per_ip;
@@ -654,6 +657,7 @@ mod tests {
                 ))
                 .app_data(Data::new(proxy_trust))
                 .app_data(Data::new(pool.clone()))
+                .app_data(crate::tests::app_context(&pool))
                 .configure(api::config),
         )
         .await;
@@ -699,7 +703,7 @@ mod tests {
     async fn test_login_is_rate_limited_after_repeated_failures() {
         let _guard = lock_auth_test_state().await;
         reset_login_rate_limit_for_tests().await;
-        let config = get_config().unwrap();
+        let config = integration_test_config().unwrap();
         let max_attempts = config.login_rate_limit_max_attempts;
         let pool = init_pool(&config.database_url, config.db_pool_size);
         let app = test::init_service(
@@ -708,6 +712,7 @@ mod tests {
                     crate::middlewares::actor_context,
                 ))
                 .app_data(Data::new(pool.clone()))
+                .app_data(crate::tests::app_context(&pool))
                 .configure(api::config),
         )
         .await;

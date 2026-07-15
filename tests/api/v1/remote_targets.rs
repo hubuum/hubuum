@@ -845,6 +845,7 @@ mod tests {
 
     #[actix_web::test]
     async fn invoke_success_records_sanitized_https_result_and_sends_auth() {
+        let _local_target = crate::test_support::allow_local_remote_target();
         unsafe {
             std::env::set_var(
                 "HUBUUM_REMOTE_SECRET_REMOTE_SUCCESS_TOKEN",
@@ -922,6 +923,7 @@ mod tests {
 
     #[actix_web::test]
     async fn invoke_stores_sanitized_response_body_preview_with_nul() {
+        let _local_target = crate::test_support::allow_local_remote_target();
         let context = TestContext::new().await;
         let (port, request_rx) =
             spawn_https_remote_server_with_body(b"before\0after".to_vec()).await;

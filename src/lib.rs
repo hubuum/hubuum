@@ -21,6 +21,9 @@ pub mod permissions;
 pub mod restores;
 pub mod schema;
 pub mod tasks;
+#[cfg(feature = "integration-test-support")]
+#[doc(hidden)]
+pub mod test_support;
 #[cfg(test)]
 pub mod tests;
 pub mod tls;

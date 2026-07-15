@@ -1,29 +1,15 @@
-pub mod acl;
-#[path = "../../tests/support/api_operations.rs"]
 pub mod api_operations;
-#[path = "../../tests/support/asserts.rs"]
+pub use api_operations::app_context;
 pub mod asserts;
-pub mod client_allowlist;
+#[path = "../../src/tests/constants.rs"]
 pub mod constants;
-pub mod docs_examples;
-pub mod id_newtypes;
-pub mod permissions;
-pub mod search;
-pub mod storage_performance;
-pub mod temporal;
-pub mod validation;
-pub mod workspace_boundaries;
-
-pub fn integration_test_config() -> Result<crate::config::AppConfig, crate::errors::ApiError> {
-    crate::config::get_config()
-}
 
 use crate::db::prelude::*;
 use actix_web::web;
 #[cfg(test)]
 use rstest::fixture;
 
-use crate::config::{AppConfig, get_config};
+use crate::config::AppConfig;
 use crate::db::DbPool;
 use crate::db::{init_pool, with_connection};
 use crate::errors::ApiError;
@@ -47,8 +33,12 @@ static TEST_ADMIN_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
     hash_password("testadminpassword").expect("test admin password must be hashable")
 });
 
+pub fn integration_test_config() -> Result<&'static AppConfig, ApiError> {
+    crate::test_support::integration_test_config()
+}
+
 fn new_test_pool() -> DbPool {
-    let config = get_config().unwrap();
+    let config = integration_test_config().unwrap();
     init_pool(&config.database_url, 20)
 }
 
@@ -408,6 +398,51 @@ pub(crate) async fn create_class_fixture(
     })
 }
 
+/// Create the shared six-class fixture used by the class, object, relation,
+/// and export request suites.
+pub async fn create_test_classes(context: &TestContext, prefix: &str) -> ClassFixture {
+    use self::constants::{SchemaType, get_schema};
+
+    let mut classes = Vec::new();
+    for i in 1..7 {
+        let schema = if i == 6 {
+            get_schema(SchemaType::Geo).clone()
+        } else if i > 3 {
+            get_schema(SchemaType::Address).clone()
+        } else {
+            get_schema(SchemaType::Blog).clone()
+        };
+
+        classes.push(NewHubuumClass {
+            name: format!("{prefix}_api_class_{i}"),
+            description: format!("{prefix}_api_description_{i}"),
+            collection_id: 0,
+            json_schema: Some(schema),
+            validate_schema: Some(false),
+        });
+    }
+
+    create_class_fixture(
+        &context.pool,
+        context
+            .collection_fixture(&format!("{prefix}_api_create_test_classes"))
+            .await,
+        classes,
+    )
+    .await
+    .unwrap()
+}
+
+pub async fn cleanup_test_classes(classes: &ClassFixture) {
+    let collection_id = classes.collection.collection.id;
+    assert!(
+        classes
+            .iter()
+            .all(|class| class.collection_id == collection_id)
+    );
+    classes.cleanup().await.unwrap();
+}
+
 pub(crate) async fn create_object_fixture(
     pool: &DbPool,
     collection: CollectionFixture,
@@ -624,7 +659,7 @@ pub async fn ensure_normal_user(pool: &DbPool) -> User {
 
 pub async fn ensure_admin_group(pool: &DbPool) -> Group {
     use crate::schema::groups::dsl::*;
-    let admin_groupname = get_config()
+    let admin_groupname = crate::test_support::integration_test_config()
         .map(|config| config.admin_groupname.clone())
         .unwrap_or_else(|_| "admin".to_string());
 
@@ -668,7 +703,7 @@ pub async fn ensure_admin_group(pool: &DbPool) -> Group {
 }
 
 pub async fn get_pool_and_config() -> (DbPool, AppConfig) {
-    let config = get_config().unwrap();
+    let config = crate::test_support::integration_test_config().unwrap();
     let pool = new_test_pool();
 
     (pool, config.clone())
@@ -735,40 +770,4 @@ pub fn generate_all_subsets<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
     }
 
     subsets
-}
-
-#[cfg(test)]
-mod test {
-
-    use super::*;
-    use crate::{models::collection::UpdateCollection, traits::CanUpdate};
-
-    #[actix_rt::test]
-    async fn test_updated_and_created_at() {
-        let scope = TestScope::new();
-        let pool = scope.pool.clone();
-        let collection = scope.collection_fixture("test_updated_at").await;
-        let original_updated_at = collection.collection.updated_at;
-        let original_created_at = collection.collection.created_at;
-
-        let update = UpdateCollection {
-            name: Some("test update 2".to_string()),
-            description: None,
-        };
-
-        let updated_collection = update
-            .update_without_events(&pool, collection.collection.id)
-            .await
-            .unwrap();
-        let new_created_at = updated_collection.created_at;
-        let new_updated_at = updated_collection.updated_at;
-
-        assert_eq!(updated_collection.id, collection.collection.id);
-        assert_eq!(updated_collection.name, "test update 2");
-        assert_eq!(original_created_at, new_created_at);
-        assert_ne!(original_updated_at, new_updated_at);
-        assert!(new_updated_at > original_updated_at);
-
-        collection.cleanup().await.unwrap();
-    }
 }

@@ -7,9 +7,18 @@ use crate::config::{
 };
 use crate::db::DbPool;
 use crate::middlewares::tracing::TracingMiddleware;
+use crate::permissions::{AppContext, LocalPermissionBackend};
 use crate::restores::RestoreSettings;
 use actix_web::{App, http, test, web::Data};
 use serde::Serialize;
+use std::sync::Arc;
+
+pub fn app_context(pool: &DbPool) -> Data<AppContext> {
+    let config = crate::tests::integration_test_config()
+        .expect("integration test configuration must be valid");
+    let permissions = LocalPermissionBackend::new(pool.clone(), config.admin_groupname.clone());
+    Data::new(AppContext::new(pool.clone(), Arc::new(permissions)))
+}
 
 fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
     (http::header::AUTHORIZATION, format!("Bearer {token}"))
@@ -64,6 +73,7 @@ pub async fn get_request_with_headers(
             .app_data(Data::new(backup_settings()))
             .app_data(Data::new(restore_settings()))
             .app_data(Data::new(pool.clone()))
+            .app_data(app_context(pool))
             .configure(prod_api::config),
     )
     .await;
@@ -104,6 +114,7 @@ where
             .app_data(Data::new(backup_settings()))
             .app_data(Data::new(restore_settings()))
             .app_data(Data::new(pool.clone()))
+            .app_data(app_context(pool))
             .configure(prod_api::config),
     )
     .await;
@@ -146,6 +157,7 @@ pub async fn delete_request(
             ))
             .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
+            .app_data(app_context(pool))
             .configure(prod_api::config),
     )
     .await;
@@ -174,6 +186,7 @@ where
             ))
             .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
+            .app_data(app_context(pool))
             .configure(prod_api::config),
     )
     .await;
@@ -203,6 +216,7 @@ where
             ))
             .wrap(TracingMiddleware::new())
             .app_data(Data::new(pool.clone()))
+            .app_data(app_context(pool))
             .configure(prod_api::config),
     )
     .await;

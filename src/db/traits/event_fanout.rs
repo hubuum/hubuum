@@ -74,7 +74,7 @@ pub async fn claim_events_for_fanout(
     .await
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "integration-test-support"))]
 pub async fn fanout_event(pool: &DbPool, event_id: i64) -> Result<usize, ApiError> {
     fanout_events(pool, &[event_id]).await
 }

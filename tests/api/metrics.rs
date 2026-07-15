@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 use crate::db::{DbConnection, DbPool};
 use crate::models::{TaskKind, TaskStatus};
 use crate::observability::metrics;
+use crate::test_support::clear_metrics_scrape_cache;
 use crate::tests::{TestContext, test_context};
 
 static METRICS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -20,7 +21,7 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
     let _lock = METRICS_TEST_LOCK.lock().await;
     let context = test_context;
     metrics::init().unwrap();
-    metrics::clear_scrape_cache_for_tests();
+    clear_metrics_scrape_cache();
     metrics::http_request_started();
     metrics::http_request_finished("GET", "/test", 200, std::time::Duration::from_millis(1));
 
@@ -50,7 +51,7 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
 async fn metrics_endpoint_is_best_effort_when_database_refresh_fails() {
     let _lock = METRICS_TEST_LOCK.lock().await;
     metrics::init().unwrap();
-    metrics::clear_scrape_cache_for_tests();
+    clear_metrics_scrape_cache();
 
     let app = test::init_service(
         App::new()
@@ -77,7 +78,7 @@ async fn metrics_endpoint_is_best_effort_when_database_refresh_fails() {
 async fn metrics_endpoint_exports_representative_bounded_families() {
     let _lock = METRICS_TEST_LOCK.lock().await;
     metrics::init().unwrap();
-    metrics::clear_scrape_cache_for_tests();
+    clear_metrics_scrape_cache();
 
     metrics::export_completed("objects_in_class", "application/json");
     metrics::export_truncated("objects_in_class", "application/json");
@@ -120,7 +121,7 @@ async fn metrics_endpoint_exports_representative_bounded_families() {
 async fn task_queue_wait_uses_kind_only_labels() {
     let _lock = METRICS_TEST_LOCK.lock().await;
     metrics::init().unwrap();
-    metrics::clear_scrape_cache_for_tests();
+    clear_metrics_scrape_cache();
 
     metrics::task_claimed("remote_call", Some(Duration::from_millis(25)));
     metrics::task_completed("remote_call", "succeeded", Some(Duration::from_millis(5)));
@@ -151,7 +152,7 @@ async fn task_gauges_export_zero_for_bounded_kind_status_pairs(
     let _lock = METRICS_TEST_LOCK.lock().await;
     let context = test_context;
     metrics::init().unwrap();
-    metrics::clear_scrape_cache_for_tests();
+    clear_metrics_scrape_cache();
 
     let app = test::init_service(
         App::new()

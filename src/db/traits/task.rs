@@ -691,7 +691,7 @@ fn duration_between(
     (elapsed >= 0).then(|| std::time::Duration::from_millis(elapsed as u64))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "integration-test-support"))]
 impl NewTaskRecord {
     /// Insert this new task row and return the persisted record.
     pub async fn create(self, pool: &DbPool) -> Result<TaskRecord, ApiError> {

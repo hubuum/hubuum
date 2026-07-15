@@ -129,6 +129,7 @@ query-capture = []
 # Enables the opt-in PostgreSQL Criterion target. It remains separate from the
 # self-contained benchmark fan-out because it needs a migrated database.
 postgres-bench = []
+integration-test-support = []
 
 [profile.release]
 codegen-units = 1

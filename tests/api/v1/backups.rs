@@ -12,7 +12,11 @@ mod tests {
     };
     use crate::tests::api_operations::{get_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
-    use crate::tests::{TestContext, scoped_token, test_context};
+    use crate::tests::{
+        TestContext, TestMutex, lock_test_mutex, scoped_token, test_context, test_mutex,
+    };
+
+    static BACKUP_TASK_TEST_LOCK: TestMutex = test_mutex();
 
     #[derive(Clone, Copy)]
     enum RejectedBackupCaller {
@@ -52,6 +56,7 @@ mod tests {
     #[rstest]
     #[actix_web::test]
     async fn full_backup_is_consistent_and_refetchable(#[future(awt)] test_context: TestContext) {
+        let _guard = lock_test_mutex(&BACKUP_TASK_TEST_LOCK).await;
         let context = test_context;
         let request = BackupRequest {
             include_history: false,
@@ -123,6 +128,7 @@ mod tests {
     async fn generic_task_projections_include_backup_output_summaries(
         #[future(awt)] test_context: TestContext,
     ) {
+        let _guard = lock_test_mutex(&BACKUP_TASK_TEST_LOCK).await;
         let context = test_context;
         let response = post_request(
             &context.pool,
@@ -236,6 +242,7 @@ mod tests {
         #[future(awt)] test_context: TestContext,
         #[case] suffix: &str,
     ) {
+        let _guard = lock_test_mutex(&BACKUP_TASK_TEST_LOCK).await;
         let context = test_context;
         let response = post_request(
             &context.pool,
