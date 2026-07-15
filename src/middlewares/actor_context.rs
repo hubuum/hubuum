@@ -28,6 +28,7 @@ fn bearer_token(req: &ServiceRequest) -> Option<Token> {
 
 fn is_public_path(path: &str) -> bool {
     matches!(path, "/healthz" | "/readyz" | "/api/v0/auth/login")
+        || (path.starts_with("/api/v1/restores/") && path.ends_with("/status"))
         || path.starts_with("/api-doc/")
         || path == "/swagger-ui"
         || path.starts_with("/swagger-ui/")

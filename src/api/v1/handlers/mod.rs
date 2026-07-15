@@ -1,3 +1,4 @@
+pub mod backups;
 pub mod classes;
 pub mod collections;
 pub mod event_deliveries;
@@ -13,6 +14,7 @@ pub mod me;
 pub mod principals;
 pub mod relations;
 pub mod remote_targets;
+pub mod restores;
 pub mod runtime_config;
 pub mod search;
 pub mod service_accounts;

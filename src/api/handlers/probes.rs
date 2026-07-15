@@ -6,6 +6,7 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::{DbPool, ensure_database_schema_ready};
 use crate::errors::ApiError;
+use crate::restores::maintenance_state;
 
 #[derive(Serialize, ToSchema)]
 pub struct ProbeResponse {
@@ -47,6 +48,13 @@ pub async fn readyz(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError>
     ensure_database_schema_ready(pool.get_ref())
         .await
         .map_err(|_| ApiError::ServiceUnavailable("Database schema is not ready".to_string()))?;
+
+    let maintenance = maintenance_state(&pool).await?;
+    if maintenance != "normal" {
+        return Err(ApiError::ServiceUnavailable(format!(
+            "Service is in '{maintenance}' maintenance"
+        )));
+    }
 
     Ok(ApiResponse::new(ProbeResponse::ok("ready"), StatusCode::OK))
 }

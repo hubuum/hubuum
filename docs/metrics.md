@@ -45,9 +45,9 @@ Use admin JSON/API endpoints for detailed high-cardinality views.
 | `hubuum_task_worker_config` | `setting` | Configured task worker count and poll interval |
 | `hubuum_tasks` | `kind`, `status` | Current tasks by bounded kind and status |
 | `hubuum_task_oldest_age_seconds` | `state` | Oldest queued and active task age |
-| `hubuum_export_output_cleanup_runs_total` | none | Export output cleanup runs |
-| `hubuum_export_output_cleanup_failures_total` | none | Export output cleanup failures |
-| `hubuum_export_output_cleanup_deleted_total` | none | Export outputs deleted by cleanup |
+| `hubuum_export_output_cleanup_runs_total` | none | Stored export and backup artifact cleanup runs (legacy metric name) |
+| `hubuum_export_output_cleanup_failures_total` | none | Stored export and backup artifact cleanup failures (legacy metric name) |
+| `hubuum_export_output_cleanup_deleted_total` | none | Stored export and backup artifacts deleted by cleanup (legacy metric name) |
 | `hubuum_export_phase_duration_seconds` | `phase` | Export query, hydration, render, and total phase duration |
 | `hubuum_export_completions_total` | `scope`, `content_type` | Successfully persisted export outputs |
 | `hubuum_export_truncations_total` | `scope`, `content_type` | Successfully persisted truncated exports |

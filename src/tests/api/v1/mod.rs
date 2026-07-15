@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod backups;
 pub mod classes;
 pub mod collections;
 pub mod event_deliveries;
@@ -14,6 +15,7 @@ pub mod querying;
 pub mod relations;
 pub mod remote_targets;
 pub mod request_and_correlation;
+pub mod restores;
 pub mod runtime_config;
 pub mod search;
 pub mod service_accounts;

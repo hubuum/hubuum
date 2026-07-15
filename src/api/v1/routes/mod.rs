@@ -1,6 +1,7 @@
 use crate::api::v1::handlers::{event_deliveries, event_sinks, event_subscriptions, events, me};
 use actix_web::web;
 
+pub mod backups;
 pub mod classes;
 pub mod collections;
 pub mod export_templates;
@@ -9,6 +10,7 @@ pub mod groups;
 pub mod imports;
 pub mod relations;
 pub mod remote_targets;
+pub mod restores;
 pub mod search;
 pub mod tasks;
 pub mod users;
@@ -25,6 +27,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         )
         .service(web::scope("/iam/me").configure(me::config))
         .service(web::scope("/imports").configure(imports::config))
+        .service(web::scope("/backups").configure(backups::config))
+        .service(web::scope("/restores").configure(restores::config))
         .service(
             web::scope("/collections")
                 .configure(collections::config)

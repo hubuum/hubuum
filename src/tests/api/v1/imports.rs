@@ -11,9 +11,11 @@ mod tests {
 
     use crate::db::with_connection;
     use crate::models::{
-        CURRENT_IMPORT_VERSION, GroupKey, ImportAtomicity, ImportClassInput, ImportCollectionInput,
-        ImportCollectionPermissionInput, ImportCollisionPolicy, ImportGraph, ImportMode,
-        ImportObjectInput, ImportPermissionPolicy, ImportRequest, ImportTaskResultResponse,
+        CURRENT_IMPORT_VERSION, GroupKey, IdentityScopeKey, ImportAtomicity, ImportClassInput,
+        ImportCollectionInput, ImportCollectionPermissionInput, ImportCollisionPolicy,
+        ImportEventSubscriptionInput, ImportGraph, ImportGroupInput, ImportGroupMembershipInput,
+        ImportIdentityScopeInput, ImportMode, ImportObjectInput, ImportPermissionPolicy,
+        ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest, ImportTaskResultResponse,
         NewTaskRecord, Permissions, TaskEventResponse, TaskKind, TaskResponse, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
@@ -85,6 +87,271 @@ mod tests {
                 ..ImportGraph::default()
             },
         }
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn administrator_imports_deterministic_identity_and_permission_graph(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let scope_name = context.scoped_name("import_identity_scope");
+        let group_name = context.scoped_name("import_identity_group");
+        let user_name = context.scoped_name("import_identity_user");
+        let collection_name = context.scoped_name("import_identity_collection");
+        let body = ImportRequest {
+            version: 1,
+            dry_run: Some(false),
+            mode: Some(ImportMode {
+                atomicity: Some(ImportAtomicity::Strict),
+                collision_policy: Some(ImportCollisionPolicy::Abort),
+                permission_policy: Some(ImportPermissionPolicy::Abort),
+            }),
+            graph: ImportGraph {
+                identity_scopes: vec![ImportIdentityScopeInput {
+                    ref_: Some("identity:benchmark".to_string()),
+                    name: scope_name.clone(),
+                    provider_kind: "local".to_string(),
+                    timestamps: None,
+                }],
+                groups: vec![ImportGroupInput {
+                    ref_: Some("group:benchmark".to_string()),
+                    groupname: group_name.clone(),
+                    description: "Benchmark permission group".to_string(),
+                    identity_scope_ref: Some("identity:benchmark".to_string()),
+                    identity_scope_key: None,
+                    managed_by: "local".to_string(),
+                    external_key: None,
+                    last_sync_attempted_at: None,
+                    last_sync_success_at: None,
+                    timestamps: None,
+                }],
+                principals: vec![ImportPrincipalInput {
+                    ref_: Some("principal:benchmark".to_string()),
+                    name: user_name.clone(),
+                    identity_scope_ref: None,
+                    identity_scope_key: Some(IdentityScopeKey {
+                        name: scope_name.clone(),
+                    }),
+                    provider_managed: false,
+                    settings: serde_json::json!({}),
+                    external_subject: None,
+                    last_sync_attempted_at: None,
+                    last_sync_success_at: None,
+                    subtype: ImportPrincipalSubtype::Human {
+                        password: Some("benchmark-password".to_string()),
+                        password_hash: None,
+                        proper_name: Some("Benchmark User".to_string()),
+                        email: None,
+                        anonymized_at: None,
+                    },
+                    timestamps: None,
+                }],
+                group_memberships: vec![ImportGroupMembershipInput {
+                    ref_: Some("membership:benchmark".to_string()),
+                    principal_ref: Some("principal:benchmark".to_string()),
+                    principal_key: None,
+                    group_ref: Some("group:benchmark".to_string()),
+                    group_key: None,
+                    sources: Vec::new(),
+                    timestamps: None,
+                }],
+                collections: vec![ImportCollectionInput {
+                    ref_: Some("collection:benchmark".to_string()),
+                    name: collection_name,
+                    description: "Benchmark collection".to_string(),
+                    parent_collection_ref: None,
+                    parent_collection_key: None,
+                }],
+                collection_permissions: vec![ImportCollectionPermissionInput {
+                    ref_: Some("permission:benchmark".to_string()),
+                    collection_ref: Some("collection:benchmark".to_string()),
+                    collection_key: None,
+                    group_key: GroupKey {
+                        identity_scope: Some(scope_name),
+                        groupname: group_name,
+                    },
+                    permissions: vec![Permissions::ReadCollection, Permissions::ReadClass],
+                    replace_existing: Some(false),
+                }],
+                ..ImportGraph::default()
+            },
+        };
+
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &body,
+            Vec::new(),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(response).await;
+        let completed = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        assert_eq!(completed.progress.success_items, 6);
+        assert_eq!(completed.progress.failed_items, 0);
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn dry_run_rejects_an_unresolved_extended_graph_reference(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let body = ImportRequest {
+            version: 1,
+            dry_run: Some(true),
+            mode: Some(ImportMode {
+                atomicity: Some(ImportAtomicity::Strict),
+                collision_policy: Some(ImportCollisionPolicy::Abort),
+                permission_policy: Some(ImportPermissionPolicy::Abort),
+            }),
+            graph: ImportGraph {
+                groups: vec![ImportGroupInput {
+                    ref_: Some("group:unresolved".to_string()),
+                    groupname: context.scoped_name("dry_run_unresolved_group"),
+                    description: "Unresolved dry-run group".to_string(),
+                    identity_scope_ref: Some("identity:missing".to_string()),
+                    identity_scope_key: None,
+                    managed_by: "local".to_string(),
+                    external_key: None,
+                    last_sync_attempted_at: None,
+                    last_sync_success_at: None,
+                    timestamps: None,
+                }],
+                ..ImportGraph::default()
+            },
+        };
+
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &body,
+            Vec::new(),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(response).await;
+        let completed = wait_for_task(&context, task.id, &[TaskStatus::Failed]).await;
+        assert_eq!(completed.progress.failed_items, 1);
+
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/imports/{}/results", task.id),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let results: Vec<ImportTaskResultResponse> = test::read_body_json(response).await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entity_kind, "group");
+        assert_eq!(results[0].outcome, "failed");
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn import_rejects_duplicate_extended_refs(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let body = ImportRequest {
+            version: 1,
+            dry_run: Some(true),
+            mode: Some(ImportMode {
+                atomicity: Some(ImportAtomicity::BestEffort),
+                collision_policy: Some(ImportCollisionPolicy::Overwrite),
+                permission_policy: Some(ImportPermissionPolicy::Continue),
+            }),
+            graph: ImportGraph {
+                identity_scopes: vec![
+                    ImportIdentityScopeInput {
+                        ref_: Some("identity:duplicate".to_string()),
+                        name: context.scoped_name("duplicate_identity_scope_one"),
+                        provider_kind: "local".to_string(),
+                        timestamps: None,
+                    },
+                    ImportIdentityScopeInput {
+                        ref_: Some("identity:duplicate".to_string()),
+                        name: context.scoped_name("duplicate_identity_scope_two"),
+                        provider_kind: "local".to_string(),
+                        timestamps: None,
+                    },
+                ],
+                ..ImportGraph::default()
+            },
+        };
+
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &body,
+            Vec::new(),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(response).await;
+        let completed = wait_for_task(&context, task.id, &[TaskStatus::Failed]).await;
+        assert_eq!(completed.progress.failed_items, 1);
+
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/imports/{}/results", task.id),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let results: Vec<ImportTaskResultResponse> = test::read_body_json(response).await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entity_kind, "identity_scope");
+        assert!(
+            results[0]
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Duplicate identity_scope ref"))
+        );
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn import_rejects_an_invalid_event_subscription_filter(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let body = ImportRequest {
+            version: 1,
+            dry_run: Some(false),
+            mode: None,
+            graph: ImportGraph {
+                event_subscriptions: vec![ImportEventSubscriptionInput {
+                    ref_: Some("subscription:invalid-filter".to_string()),
+                    collection_ref: None,
+                    collection_key: None,
+                    sink_ref: None,
+                    sink_key: None,
+                    name: context.scoped_name("invalid_filter_subscription"),
+                    description: "Invalid filter fixture".to_string(),
+                    entity_types: vec!["collection".to_string()],
+                    actions: vec!["created".to_string()],
+                    filter: serde_json::json!({"collection_ids": "invalid"}),
+                    routing: serde_json::json!({}),
+                    enabled: true,
+                    timestamps: None,
+                }],
+                ..ImportGraph::default()
+            },
+        };
+
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &body,
+            Vec::new(),
+        )
+        .await;
+
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
     }
 
     #[rstest]

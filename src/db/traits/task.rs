@@ -14,10 +14,11 @@ use crate::errors::ApiError;
 use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
 use crate::models::search::QueryOptions;
 use crate::models::{
-    ExportOutputLookup, ExportTaskOutputRecord, ExportTaskOutputSummaryRecord,
-    ImportTaskResultRecord, NewExportTaskOutputRecord, NewImportTaskResultRecord,
-    NewTaskEventRecord, NewTaskRecord, TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResponse,
-    TaskResultCounts, TaskStatus,
+    BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
+    ExportTaskOutputRecord, ExportTaskOutputSummaryRecord, ImportTaskResultRecord,
+    NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewImportTaskResultRecord,
+    NewTaskEventRecord, NewTaskRecord, Permissions, TaskEventRecord, TaskID, TaskKind, TaskRecord,
+    TaskResponse, TaskResultCounts, TaskStatus,
 };
 use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
@@ -53,7 +54,7 @@ pub struct TaskCreateRequest {
 
 /// Encode a token scope set as the persisted snapshot JSON (an array of
 /// permission strings; empty array for unscoped or deny-all).
-pub fn scope_snapshot_json(scopes: Option<&[crate::models::Permissions]>) -> serde_json::Value {
+pub fn scope_snapshot_json(scopes: Option<&[Permissions]>) -> serde_json::Value {
     let strings: Vec<String> = scopes
         .map(|s| s.iter().map(|p| p.to_string()).collect())
         .unwrap_or_default();
@@ -75,10 +76,7 @@ pub struct TaskScopeSnapshot {
 
 impl TaskScopeSnapshot {
     /// Build from the submitting token id and its live scope set.
-    pub fn from_request(
-        token_id: Option<i32>,
-        scopes: Option<&[crate::models::Permissions]>,
-    ) -> Self {
+    pub fn from_request(token_id: Option<i32>, scopes: Option<&[Permissions]>) -> Self {
         Self {
             token_id,
             scoped: scopes.is_some(),
@@ -347,6 +345,59 @@ pub trait TaskBackend: TaskIdentifier {
         })
     }
 
+    async fn find_backup_output(
+        &self,
+        pool: &DbPool,
+    ) -> Result<BackupOutputLookup<BackupTaskOutputRecord>, ApiError> {
+        use crate::schema::backup_task_outputs::dsl::{backup_task_outputs, task_id};
+
+        let task_id_value = self.task_id();
+        let now = Utc::now().naive_utc();
+        let record = with_connection(pool, async |conn| {
+            backup_task_outputs
+                .filter(task_id.eq(task_id_value))
+                .first::<BackupTaskOutputRecord>(conn)
+                .await
+                .optional()
+        })
+        .await?;
+
+        Ok(match record {
+            Some(record) if record.output_expires_at > now => BackupOutputLookup::Available(record),
+            Some(record) => BackupOutputLookup::Expired {
+                expires_at: record.output_expires_at,
+            },
+            None => BackupOutputLookup::Missing,
+        })
+    }
+
+    async fn find_backup_output_summary(
+        &self,
+        pool: &DbPool,
+    ) -> Result<BackupOutputLookup<BackupTaskOutputSummaryRecord>, ApiError> {
+        use crate::schema::backup_task_outputs::dsl::{backup_task_outputs, task_id};
+
+        let task_id_value = self.task_id();
+        let now = Utc::now().naive_utc();
+        let record = with_connection(pool, async |conn| {
+            backup_task_outputs
+                .filter(task_id.eq(task_id_value))
+                .select(BackupTaskOutputSummaryRecord::as_select())
+                .first::<BackupTaskOutputSummaryRecord>(conn)
+                .await
+                .optional()
+        })
+        .await?;
+
+        Ok(match record {
+            Some(record) if record.output_expires_at > now => BackupOutputLookup::Available(record),
+            Some(record) => BackupOutputLookup::Expired {
+                expires_at: record.output_expires_at,
+            },
+            None => BackupOutputLookup::Missing,
+        })
+    }
+
     async fn count_import_results(&self, pool: &DbPool) -> Result<TaskResultCounts, ApiError> {
         use crate::schema::import_task_results::dsl::{import_task_results, outcome, task_id};
 
@@ -556,6 +607,68 @@ pub trait TaskBackend: TaskIdentifier {
 
         Ok(record)
     }
+
+    async fn finalize_backup_with_output(
+        &self,
+        pool: &DbPool,
+        update: TaskStateUpdate,
+        event: NewTaskEventRecord,
+        output: NewBackupTaskOutputRecord,
+    ) -> Result<TaskRecord, ApiError> {
+        use crate::schema::backup_task_outputs::dsl::{
+            backup_task_outputs, task_id as backup_output_task_id,
+        };
+        use crate::schema::tasks::dsl::{
+            failed_items, finished_at, id, lease_expires_at, lease_token, processed_items,
+            request_payload, request_redacted_at, started_at, status, success_items, summary,
+            tasks, updated_at,
+        };
+
+        let task_id_value = self.task_id();
+        let task_lease_token = self.task_lease_token();
+        let record = with_transaction(pool, async |conn| -> Result<TaskRecord, ApiError> {
+            diesel::insert_into(backup_task_outputs)
+                .values(output)
+                .on_conflict(backup_output_task_id)
+                .do_nothing()
+                .execute(conn)
+                .await?;
+
+            let event_record =
+                emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None).await?;
+            let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
+                <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
+
+            Ok(diesel::update(
+                tasks.filter(id.eq(task_id_value)).filter(
+                    lease_token
+                        .eq(task_lease_token)
+                        .and(lease_expires_at.gt(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)))
+                        .or(lease_token.is_null().and(no_lease_token)),
+                ),
+            )
+            .set((
+                status.eq(update.status.as_str()),
+                summary.eq(update.summary),
+                processed_items.eq(update.processed_items),
+                success_items.eq(update.success_items),
+                failed_items.eq(update.failed_items),
+                started_at.eq(update.started_at),
+                finished_at.eq(Some(event_record.occurred_at)),
+                request_payload.eq::<Option<serde_json::Value>>(None),
+                request_redacted_at.eq(event_record.occurred_at),
+                lease_token.eq::<Option<Uuid>>(None),
+                lease_expires_at.eq::<Option<chrono::NaiveDateTime>>(None),
+                updated_at.eq(event_record.occurred_at),
+            ))
+            .get_result::<TaskRecord>(conn)
+            .await?)
+        })
+        .await?;
+
+        record_task_completion_metrics(&record);
+        Ok(record)
+    }
 }
 
 impl<T: TaskIdentifier + ?Sized> TaskBackend for T {}
@@ -690,6 +803,26 @@ pub async fn list_export_task_output_summaries(
     .await
 }
 
+pub async fn list_backup_task_output_summaries(
+    pool: &DbPool,
+    task_ids: &[i32],
+) -> Result<Vec<BackupTaskOutputSummaryRecord>, ApiError> {
+    use crate::schema::backup_task_outputs::dsl::{backup_task_outputs, task_id};
+
+    if task_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    with_connection(pool, async |conn| {
+        backup_task_outputs
+            .filter(task_id.eq_any(task_ids))
+            .select(BackupTaskOutputSummaryRecord::as_select())
+            .load(conn)
+            .await
+    })
+    .await
+}
+
 pub async fn purge_expired_export_outputs(pool: &DbPool) -> Result<Vec<i32>, ApiError> {
     use crate::schema::export_task_outputs::dsl::{
         export_task_outputs, output_expires_at, task_id,
@@ -738,6 +871,38 @@ pub async fn purge_expired_export_outputs(pool: &DbPool) -> Result<Vec<i32>, Api
     }
 
     Ok(expired_task_ids)
+}
+
+pub async fn purge_expired_backup_outputs(pool: &DbPool) -> Result<Vec<i32>, ApiError> {
+    use crate::schema::backup_task_outputs::dsl::{
+        backup_task_outputs, output_expires_at, task_id,
+    };
+
+    let now = Utc::now().naive_utc();
+    with_transaction(pool, async |conn| -> Result<Vec<i32>, ApiError> {
+        let expired_task_ids =
+            diesel::delete(backup_task_outputs.filter(output_expires_at.le(now)))
+                .returning(task_id)
+                .get_results::<i32>(conn)
+                .await?;
+        for expired_task_id in &expired_task_ids {
+            emit_task_lifecycle_event(
+                conn,
+                &NewTaskEventRecord {
+                    task_id: *expired_task_id,
+                    event_type: "cleanup".to_string(),
+                    message: "Stored backup output expired and was cleaned up".to_string(),
+                    data: Some(serde_json::json!({ "cleaned_at": now })),
+                },
+                ActorKind::System,
+                None,
+                Some(TaskKind::Backup.as_str()),
+            )
+            .await?;
+        }
+        Ok(expired_task_ids)
+    })
+    .await
 }
 
 fn decode_task_event_cursor_id(query_options: &QueryOptions) -> Result<Option<i64>, ApiError> {
@@ -850,17 +1015,18 @@ pub async fn insert_import_results(
     .await
 }
 
-pub(crate) fn executable_task_kind_values() -> [&'static str; 3] {
+pub(crate) fn executable_task_kind_values() -> [&'static str; 4] {
     [
         TaskKind::Import.as_str(),
         TaskKind::Export.as_str(),
+        TaskKind::Backup.as_str(),
         TaskKind::RemoteCall.as_str(),
     ]
 }
 
 static NEXT_TASK_KIND: AtomicUsize = AtomicUsize::new(0);
 
-fn task_kind_claim_order(start: usize) -> [&'static str; 3] {
+fn task_kind_claim_order(start: usize) -> [&'static str; 4] {
     let kinds = executable_task_kind_values();
     std::array::from_fn(|offset| kinds[(start + offset) % kinds.len()])
 }
@@ -1027,7 +1193,9 @@ async fn recovered_task_result_counts(
                 .await?;
             TaskResultCounts::new(processed, processed - failed, failed)
         }
-        TaskKind::Export | TaskKind::RemoteCall => TaskResultCounts::new(1, 0, 1),
+        TaskKind::Export | TaskKind::Backup | TaskKind::RemoteCall => {
+            TaskResultCounts::new(1, 0, 1)
+        }
         TaskKind::Reindex => Ok(TaskResultCounts {
             processed: task.processed_items,
             success: task.success_items,
@@ -1295,6 +1463,7 @@ fn task_capacity_lock_key(submitted_by: i32, kind: TaskKind) -> i64 {
     let kind_slot = match kind {
         TaskKind::Export => 1_i64,
         TaskKind::RemoteCall => 2_i64,
+        TaskKind::Backup => 3_i64,
         TaskKind::Import | TaskKind::Reindex => 9_i64,
     };
     BASE_KEY + (kind_slot * KIND_STRIDE) + i64::from(submitted_by)
@@ -1354,9 +1523,10 @@ mod tests {
     use crate::errors::ApiError;
     use crate::models::search::QueryOptions;
     use crate::models::{
-        CollectionID, NewImportTaskResultRecord, NewTaskRecord, RemoteInvocationBodyOverride,
-        RemoteInvocationParameters, RemoteInvocationSubject, RemoteTargetID,
-        StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskStatus,
+        CollectionID, NewBackupTaskOutputRecord, NewImportTaskResultRecord, NewTaskEventRecord,
+        NewTaskRecord, RemoteInvocationBodyOverride, RemoteInvocationParameters,
+        RemoteInvocationSubject, RemoteTargetID, StoredRemoteCallTaskPayload, TaskID, TaskKind,
+        TaskStatus,
     };
     use crate::tests::{TestContext, create_test_user};
 
@@ -1462,11 +1632,13 @@ mod tests {
             [
                 TaskKind::Import.as_str(),
                 TaskKind::Export.as_str(),
+                TaskKind::Backup.as_str(),
                 TaskKind::RemoteCall.as_str(),
             ]
         );
         assert_eq!(task_kind_claim_order(1)[0], TaskKind::Export.as_str());
-        assert_eq!(task_kind_claim_order(2)[0], TaskKind::RemoteCall.as_str());
+        assert_eq!(task_kind_claim_order(2)[0], TaskKind::Backup.as_str());
+        assert_eq!(task_kind_claim_order(3)[0], TaskKind::RemoteCall.as_str());
     }
 
     #[tokio::test]
@@ -1650,6 +1822,7 @@ mod tests {
 
     #[rstest]
     #[case(TaskKind::Export)]
+    #[case(TaskKind::Backup)]
     #[case(TaskKind::RemoteCall)]
     #[tokio::test]
     async fn expired_single_item_task_records_terminal_failure(#[case] kind: TaskKind) {
@@ -1703,6 +1876,68 @@ mod tests {
         assert_eq!(
             leased.find_record(&context.pool).await.unwrap().status,
             TaskStatus::Failed.as_str()
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_backup_worker_cannot_finalize_recovered_task() {
+        let context = TestContext::new().await;
+        let stale_document = b"stale backup".to_vec();
+        let leased = create_leased_task_of_kind(
+            &context,
+            "stale-backup-finalization-fence",
+            TaskKind::Backup,
+            Utc::now().naive_utc() - ChronoDuration::seconds(1),
+        )
+        .await;
+        recover_expired_task_lease(&context.pool, leased.id)
+            .await
+            .unwrap();
+
+        let result = leased
+            .finalize_backup_with_output(
+                &context.pool,
+                TaskStateUpdate {
+                    status: TaskStatus::Succeeded,
+                    summary: Some("stale backup completion".to_string()),
+                    processed_items: 1,
+                    success_items: 1,
+                    failed_items: 0,
+                    started_at: leased.started_at,
+                    finished_at: None,
+                },
+                NewTaskEventRecord {
+                    task_id: leased.id,
+                    event_type: TaskStatus::Succeeded.as_str().to_string(),
+                    message: "stale backup completion".to_string(),
+                    data: None,
+                },
+                NewBackupTaskOutputRecord {
+                    task_id: leased.id,
+                    byte_size: i64::try_from(stale_document.len()).unwrap(),
+                    document: stale_document,
+                    sha256: "0".repeat(64),
+                    output_expires_at: Utc::now().naive_utc() + ChronoDuration::hours(1),
+                },
+            )
+            .await;
+
+        let persisted = leased.find_record(&context.pool).await.unwrap();
+        let output_count = with_connection(&context.pool, async |conn| {
+            use crate::schema::backup_task_outputs::dsl::{backup_task_outputs, task_id};
+
+            backup_task_outputs
+                .filter(task_id.eq(leased.id))
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            (result.is_err(), persisted.status.as_str(), output_count),
+            (true, TaskStatus::Failed.as_str(), 0)
         );
     }
 

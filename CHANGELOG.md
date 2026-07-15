@@ -13,6 +13,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   default and is available in every build, while opt-in Treetop support makes
   Cedar policies authoritative across point checks, list and search visibility,
   tasks, relations, templates, and reverse permission queries.
+- Added consistent, versioned full-system logical backups with durable history
+  by default, expiring task outputs, and an administrator CLI path.
+- Added staged full restore through the API and admin CLI with document digest
+  verification, a hashed recovery capability, an exact destructive
+  confirmation phrase, coordinated maintenance mode, and transactional
+  rollback on failure. Successful restores leave exactly the restored
+  application data plus one `restore.succeeded` provenance event containing the
+  backup digest and initiating administrator snapshot. Extended imports can
+  merge identity and integration data for administrators and seed deterministic
+  benchmark datasets.
 - Added a Prometheus-compatible runtime metrics endpoint, enabled by default at
   `/metrics`, with low-cardinality metrics for HTTP traffic, database activity,
   background tasks, imports, exports, remote calls, authentication, event
@@ -40,6 +50,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   group with unscoped tokens; service accounts remain excluded from human/IAM
   administration. Workers recheck runtime-admin authority before execution, so
   queued tasks fail closed if that authority is revoked.
+- **Breaking:** Backup documents are now version 2 and always represent a
+  full-system disaster-recovery snapshot. Collection-scoped backup and embedded
+  import representations were removed; use export/import for selective or
+  merge-oriented transfers, and create new version 2 backups before relying on
+  the logical restore workflow. Backup creation and artifact access, plus
+  restore staging and confirmation, now require an unscoped administrator
+  token; history is included unless explicitly omitted.
+- Expired export and backup artifacts now share one cleanup schedule and metric
+  family. The existing export-prefixed environment variable and metric names
+  are retained for compatibility.
 - **Breaking:** Operational logs from the server and admin CLI are now
   newline-delimited JSON only. Update log collectors and parsers that expect the
   previous text format. Records now include request and correlation IDs,
@@ -85,6 +105,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Distributed API and worker startup, the admin database-readiness command, and
   `/readyz` now require the latest application migration instead of checking
   database connectivity alone.
+- Restore coordination now registers API-only replicas in the drain barrier and
+  gives live confirmations an ownership grace period before interrupted-restore
+  reconciliation. Backup completion is fenced by the active task lease so a
+  stale worker cannot overwrite recovered task state or publish an artifact.
+- Extended imports now enforce collection ownership for class-scoped templates
+  and remote targets, validate composed templates against existing and
+  same-import dependencies, and apply collision policy and restored timestamps
+  to group memberships and their sources. Restore uploads are also described as
+  `BackupDocument` objects in OpenAPI, and the backup migration can be rolled
+  back after backup tasks have been created.
+- Interrupted restores are reconciled after restart, full snapshots missing the
+  local identity scope or root collection are rejected before draining, import
+  dry runs validate extended references and collisions, and generic task
+  responses include backup output metadata.
+- Restore drain coordination now keeps instance heartbeats fresh, confirmation
+  cannot rewrite confirmed or terminal jobs as expired, and merge imports
+  preserve restored timestamps while rejecting ambiguous extended references
+  and timestamps where `updated_at` predates `created_at`.
 - Task workers now renew leases through a dedicated database pool and runtime
   thread, stop side-effecting work when renewal failures outlive the confirmed
   lease, keep renewing through failure finalization, and reconstruct
@@ -108,6 +146,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Backup files created by the admin CLI are restricted to the owning user on
+  Unix and Windows, failed and expired restore jobs erase their staged
+  documents, successful restores remove all staging records, and
+  imported templates, remote targets, event sinks, and subscriptions receive
+  the same validation as API-created rows. Downloaded backups are served as
+  attachments, and backup artifacts plus restore responses use
+  `Cache-Control: no-store`.
+- Backup creation, output retrieval, deferred backup execution, and extended
+  identity imports now authorize through the configured permission backend.
+- Backup and restore dynamic SQL accepts only closed internal identifier lists;
+  backup JSON and restore values remain bound parameters. Full backup artifacts
+  contain password hashes, while authentication tokens and environment-backed
+  secret values are intentionally excluded.
 - Hardened login handling against username enumeration and concurrent
   rate-limit bypasses, and stopped exposing internal database, hashing, and
   service details in public error responses.

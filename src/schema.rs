@@ -1,6 +1,19 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    backup_task_outputs (id) {
+        id -> Int4,
+        task_id -> Int4,
+        document -> Bytea,
+        byte_size -> Int8,
+        #[max_length = 64]
+        sha256 -> Varchar,
+        output_expires_at -> Timestamp,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     collection_closure (ancestor_collection_id, descendant_collection_id) {
         ancestor_collection_id -> Int4,
         descendant_collection_id -> Int4,
@@ -485,6 +498,39 @@ diesel::table! {
 }
 
 diesel::table! {
+    restore_jobs (id) {
+        id -> Int8,
+        status -> Varchar,
+        requested_by -> Nullable<Int4>,
+        requested_by_identity_scope -> Varchar,
+        requested_by_name -> Varchar,
+        document -> Bytea,
+        byte_size -> Int8,
+        #[max_length = 64]
+        sha256 -> Varchar,
+        #[max_length = 64]
+        capability_hash -> Varchar,
+        validation_summary -> Jsonb,
+        error -> Nullable<Text>,
+        expires_at -> Timestamp,
+        confirmed_at -> Nullable<Timestamp>,
+        finished_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    server_instances (instance_id) {
+        instance_id -> Uuid,
+        maintenance_generation -> Int8,
+        drained -> Bool,
+        last_heartbeat_at -> Timestamp,
+        started_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     service_accounts (id) {
         id -> Int4,
         kind -> Varchar,
@@ -493,6 +539,17 @@ diesel::table! {
         created_by -> Nullable<Int4>,
         disabled_at -> Nullable<Timestamp>,
         created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    system_maintenance (id) {
+        id -> Int2,
+        generation -> Int8,
+        state -> Varchar,
+        restore_job_id -> Nullable<Int8>,
+        entered_at -> Nullable<Timestamp>,
         updated_at -> Timestamp,
     }
 }
@@ -562,6 +619,7 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(backup_task_outputs -> tasks (task_id));
 diesel::joinable!(event_deliveries -> event_subscriptions (subscription_id));
 diesel::joinable!(event_deliveries -> events (event_id));
 diesel::joinable!(event_subscriptions -> collections (collection_id));
@@ -588,11 +646,13 @@ diesel::joinable!(remote_call_results -> tasks (task_id));
 diesel::joinable!(remote_targets -> collections (collection_id));
 diesel::joinable!(remote_targets -> hubuumclass (class_id));
 diesel::joinable!(service_accounts -> groups (owner_group_id));
+diesel::joinable!(system_maintenance -> restore_jobs (restore_job_id));
 diesel::joinable!(tasks -> tokens (submitted_token_id));
 diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    backup_task_outputs,
     collection_closure,
     collections,
     collections_history,
@@ -622,7 +682,10 @@ diesel::allow_tables_to_appear_in_same_query!(
     remote_call_results,
     remote_targets,
     remote_targets_history,
+    restore_jobs,
+    server_instances,
     service_accounts,
+    system_maintenance,
     tasks,
     token_scopes,
     tokens,

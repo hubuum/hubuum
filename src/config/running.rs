@@ -15,6 +15,8 @@ pub struct RunningConfig {
     pub tasks: TaskConfig,
     pub events: EventConfig,
     pub exports: ExportConfig,
+    pub backups: BackupConfig,
+    pub restores: RestoreConfig,
     pub remote_calls: RemoteCallConfig,
     pub authentication: AuthenticationConfig,
     pub permissions: PermissionConfig,
@@ -102,6 +104,19 @@ pub struct ExportConfig {
     pub max_output_bytes: usize,
     pub stage_timeout_ms: u64,
     pub database_statement_timeout_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct BackupConfig {
+    pub output_retention_hours: i64,
+    pub max_active_tasks_per_user: usize,
+    pub max_output_bytes: usize,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct RestoreConfig {
+    pub stage_retention_minutes: i64,
+    pub max_upload_bytes: usize,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -254,6 +269,15 @@ impl From<&AppConfig> for RunningConfig {
                 max_output_bytes: config.export_max_output_bytes,
                 stage_timeout_ms: config.export_stage_timeout_ms,
                 database_statement_timeout_ms: config.export_db_statement_timeout_ms,
+            },
+            backups: BackupConfig {
+                output_retention_hours: config.backup_output_retention_hours,
+                max_active_tasks_per_user: config.backup_max_active_tasks_per_user,
+                max_output_bytes: config.backup_max_output_bytes,
+            },
+            restores: RestoreConfig {
+                stage_retention_minutes: config.restore_stage_retention_minutes,
+                max_upload_bytes: config.restore_max_upload_bytes,
             },
             remote_calls: RemoteCallConfig {
                 timeout_ms: config.remote_call_timeout_ms,

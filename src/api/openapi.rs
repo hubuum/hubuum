@@ -1,40 +1,47 @@
 use crate::api::handlers::{auth, meta, probes};
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::api::v1::handlers::{
-    classes, collections, event_deliveries, event_sinks, event_subscriptions, events,
+    backups, classes, collections, event_deliveries, event_sinks, event_subscriptions, events,
     export_templates, exports, groups, imports, me, principals, relations, remote_targets,
-    runtime_config, search, service_accounts, tasks, users,
+    restores, runtime_config, search, service_accounts, tasks, users,
 };
 use crate::config::running::{
-    AuthenticationConfig, ClientAllowlistStatus, DatabaseConfig, EventConfig, ExportConfig,
-    LoginRateLimitConfig as RunningLoginRateLimitConfig, NetworkConfig, PaginationConfig,
-    RemoteCallConfig, RunningConfig, SecretStatus, ServerConfig, TaskConfig, TlsConfig,
+    AuthenticationConfig, BackupConfig, ClientAllowlistStatus, DatabaseConfig, EventConfig,
+    ExportConfig, LoginRateLimitConfig as RunningLoginRateLimitConfig, NetworkConfig,
+    PaginationConfig, RemoteCallConfig, RestoreConfig, RunningConfig, SecretStatus, ServerConfig,
+    TaskConfig, TlsConfig,
 };
 use crate::events::EventResponse;
 use crate::models::{
+    BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState, BackupTaskDetails,
     ClassKey, Collection, CollectionHistory, CollectionKey, EventDelivery,
     EventDeliveryHealthResponse, EventDeliveryQueueHealth, EventDeliveryStatus,
     EventDeliveryStatusCounts, EventDeliveryUpdateResponse, EventFanoutHealth, EventSink,
-    EventSinkDeliveryHealth, EventSinkKind, EventSubscription, EventSubscriptionDeliveryHealth,
-    EventWorkerHealth, EventWorkerWakeupStats, ExportContentType, ExportJsonResponse, ExportLimits,
-    ExportMeta, ExportMissingDataPolicy, ExportRequest, ExportScope, ExportScopeKind,
-    ExportTaskDetails, ExportTemplate, ExportTemplateHistory, ExportTemplateID, ExportTemplateKind,
-    ExportTemplateRunRequest, ExportWarning, Group, GroupKey, GroupPermission, GroupResponse,
-    HubuumClass, HubuumClassExpanded, HubuumClassHistory, HubuumClassRelation, HubuumClassWithPath,
-    HubuumObject, HubuumObjectHistory, HubuumObjectRelation, HubuumObjectWithPath, ImportAtomicity,
+    EventSinkDeliveryHealth, EventSinkKey, EventSinkKind, EventSubscription,
+    EventSubscriptionDeliveryHealth, EventWorkerHealth, EventWorkerWakeupStats, ExportContentType,
+    ExportJsonResponse, ExportLimits, ExportMeta, ExportMissingDataPolicy, ExportRequest,
+    ExportScope, ExportScopeKind, ExportTaskDetails, ExportTemplate, ExportTemplateHistory,
+    ExportTemplateID, ExportTemplateKind, ExportTemplateRunRequest, ExportWarning, Group, GroupKey,
+    GroupPermission, GroupResponse, HubuumClass, HubuumClassExpanded, HubuumClassHistory,
+    HubuumClassRelation, HubuumClassWithPath, HubuumObject, HubuumObjectHistory,
+    HubuumObjectRelation, HubuumObjectWithPath, IdentityScopeKey, ImportAtomicity,
     ImportClassInput, ImportClassRelationInput, ImportCollectionInput,
-    ImportCollectionPermissionInput, ImportCollisionPolicy, ImportGraph, ImportMode,
-    ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy, ImportRequest,
-    ImportTaskDetails, ImportTaskResultResponse, LoginUser, NewCollectionWithAssignee,
-    NewEventSink, NewEventSubscription, NewExportTemplate, NewGroup, NewHubuumClass,
-    NewHubuumClassRelation, NewHubuumClassRelationFromClass, NewHubuumObject,
-    NewHubuumObjectRelation, NewRemoteTarget, NewServiceAccount, NewUser, ObjectKey,
-    ObjectsByClass, Permission, Permissions, PrincipalMemberResponse, PrincipalSettings,
-    PrincipalToken, PrincipalTokenMetadata, RelatedClassGraph, RelatedObjectGraph,
-    RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride,
-    RemoteInvocationParameters, RemoteInvocationSubject, RemoteTarget, RemoteTargetHistory,
-    RemoteTargetID, RemoteTargetInvokeRequest, RemoteTargetSubjectType, ServiceAccountResponse,
-    TaskDetails, TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse, TaskStatus,
+    ImportCollectionPermissionInput, ImportCollisionPolicy, ImportEventSinkInput,
+    ImportEventSubscriptionInput, ImportExportTemplateInput, ImportGraph, ImportGroupInput,
+    ImportGroupMembershipInput, ImportIdentityScopeInput, ImportMembershipSourceInput, ImportMode,
+    ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalInput,
+    ImportPrincipalSubtype, ImportRemoteTargetInput, ImportRequest, ImportTaskDetails,
+    ImportTaskResultResponse, LoginUser, NewCollectionWithAssignee, NewEventSink,
+    NewEventSubscription, NewExportTemplate, NewGroup, NewHubuumClass, NewHubuumClassRelation,
+    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, NewRemoteTarget,
+    NewServiceAccount, NewUser, ObjectKey, ObjectsByClass, Permission, Permissions, PrincipalKey,
+    PrincipalMemberResponse, PrincipalSettings, PrincipalToken, PrincipalTokenMetadata,
+    RelatedClassGraph, RelatedObjectGraph, RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod,
+    RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteInvocationSubject,
+    RemoteTarget, RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest,
+    RemoteTargetSubjectType, RestoreConfirmRequest, RestoreJobStatus, RestoreStageResponse,
+    RestoreTimestamps, RestoreValidationSummary, ServiceAccountResponse, TaskDetails,
+    TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse, TaskStatus,
     UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
     UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateCollection, UpdateEventSink,
     UpdateEventSubscription, UpdateExportTemplate, UpdateGroup, UpdateHubuumClass,
@@ -47,7 +54,7 @@ use serde::Serialize;
 use utoipa::openapi::OpenApi as OpenApiDoc;
 use utoipa::openapi::header::Header;
 use utoipa::openapi::path::{Operation, Parameter, ParameterBuilder, ParameterIn, PathItem};
-use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
+use utoipa::openapi::security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityScheme};
 use utoipa::openapi::{Object, RefOr, Required, Type};
 use utoipa::{Modify, OpenApi, ToSchema};
 
@@ -148,6 +155,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
         exports::run_export,
         exports::get_export,
         exports::get_export_output,
+        backups::create_backup,
+        backups::get_backup,
+        backups::get_backup_output,
         tasks::get_tasks,
         tasks::get_task,
         tasks::get_task_events,
@@ -177,6 +187,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
         imports::create_import,
         imports::get_import,
         imports::get_import_results,
+        restores::create_restore_stage,
+        restores::confirm_restore_stage,
+        restores::get_restore_status,
         export_templates::get_templates,
         export_templates::create_template,
         export_templates::get_template,
@@ -242,6 +255,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
             TaskConfig,
             EventConfig,
             ExportConfig,
+            BackupConfig,
+            RestoreConfig,
             RemoteCallConfig,
             AuthenticationConfig,
             RunningLoginRateLimitConfig,
@@ -306,6 +321,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             TaskLinks,
             ImportTaskDetails,
             ExportTaskDetails,
+            BackupTaskDetails,
             TaskDetails,
             TaskResponse,
             TaskEventResponse,
@@ -334,6 +350,10 @@ use utoipa::{Modify, OpenApi, ToSchema};
             ImportCollisionPolicy,
             ImportPermissionPolicy,
             ImportMode,
+            IdentityScopeKey,
+            PrincipalKey,
+            EventSinkKey,
+            RestoreTimestamps,
             CollectionKey,
             CollectionHistory,
             GroupKey,
@@ -345,8 +365,27 @@ use utoipa::{Modify, OpenApi, ToSchema};
             ImportClassRelationInput,
             ImportObjectRelationInput,
             ImportCollectionPermissionInput,
+            ImportIdentityScopeInput,
+            ImportGroupInput,
+            ImportPrincipalSubtype,
+            ImportPrincipalInput,
+            ImportMembershipSourceInput,
+            ImportGroupMembershipInput,
+            ImportExportTemplateInput,
+            ImportRemoteTargetInput,
+            ImportEventSinkInput,
+            ImportEventSubscriptionInput,
             ImportGraph,
             ImportRequest,
+            BackupRequest,
+            BackupManifest,
+            BackupState,
+            BackupHistory,
+            BackupDocument,
+            RestoreJobStatus,
+            RestoreValidationSummary,
+            RestoreStageResponse,
+            RestoreConfirmRequest,
             ExportScopeKind,
             ExportScope,
             ExportContentType,
@@ -400,6 +439,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         (name = "tasks", description = "Generic long-running task endpoints"),
         (name = "imports", description = "Import submission and import-specific result endpoints"),
         (name = "exports", description = "Server-side export execution endpoints"),
+        (name = "backups", description = "Administrator-only full-system logical backup creation and retrieval endpoints"),
+        (name = "restores", description = "Administrator-only staged, destructive full-system restore endpoints"),
         (name = "export-templates", description = "Stored export template management endpoints"),
         (name = "remote-targets", description = "Collection-scoped remote target management and invocation endpoints")
     )
@@ -493,6 +534,13 @@ impl Modify for SecurityAddon {
         components.add_security_scheme(
             "bearer_auth",
             SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
+        );
+        components.add_security_scheme(
+            "restore_capability",
+            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description(
+                "X-Hubuum-Restore-Capability",
+                "One-time restore capability returned when a backup document is staged",
+            ))),
         );
     }
 }
@@ -909,6 +957,12 @@ mod tests {
             "/api/v1/exports",
             "/api/v1/exports/{task_id}",
             "/api/v1/exports/{task_id}/output",
+            "/api/v1/backups",
+            "/api/v1/backups/{task_id}",
+            "/api/v1/backups/{task_id}/output",
+            "/api/v1/restores",
+            "/api/v1/restores/{restore_id}/confirm",
+            "/api/v1/restores/{restore_id}/status",
             "/api/v1/search",
             "/api/v1/search/stream",
             "/api/v1/tasks",
@@ -969,6 +1023,19 @@ mod tests {
     }
 
     #[test]
+    fn restore_upload_schema_references_backup_document() {
+        let json = openapi_json();
+
+        assert_eq!(
+            json.pointer(
+                "/paths/~1api~1v1~1restores/post/requestBody/content/application~1json/schema/$ref"
+            )
+            .and_then(Value::as_str),
+            Some("#/components/schemas/BackupDocument")
+        );
+    }
+
+    #[test]
     fn openapi_contains_expected_operations_and_security_scheme() {
         let json = openapi_json();
 
@@ -1008,6 +1075,16 @@ mod tests {
             json.pointer("/components/securitySchemes/bearer_auth/scheme")
                 .and_then(Value::as_str)
                 == Some("bearer")
+        );
+        assert!(
+            json.pointer("/components/securitySchemes/restore_capability/type")
+                .and_then(Value::as_str)
+                == Some("apiKey")
+        );
+        assert!(
+            json.pointer("/components/securitySchemes/restore_capability/name")
+                .and_then(Value::as_str)
+                == Some("X-Hubuum-Restore-Capability")
         );
     }
 
@@ -1107,7 +1184,24 @@ mod tests {
                     matches!(path.as_str(), "/healthz" | "/readyz") && method == "get";
                 let is_login = path == "/api/v0/auth/login" && method == "post";
                 let is_provider_discovery = path == "/api/v0/auth/providers" && method == "get";
-                if !is_login && !is_provider_discovery && !is_public_probe {
+                let is_restore_status =
+                    path == "/api/v1/restores/{restore_id}/status" && method == "get";
+                if is_restore_status {
+                    let security = operation
+                        .get("security")
+                        .and_then(Value::as_array)
+                        .expect("security must be present for restore status endpoint");
+                    let has_capability = security.iter().any(|entry| {
+                        entry
+                            .as_object()
+                            .map(|obj| obj.contains_key("restore_capability"))
+                            .unwrap_or(false)
+                    });
+                    assert!(
+                        has_capability,
+                        "missing restore_capability security for {method} {path}"
+                    );
+                } else if !is_login && !is_provider_discovery && !is_public_probe {
                     let security = operation
                         .get("security")
                         .and_then(Value::as_array)

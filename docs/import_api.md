@@ -217,12 +217,32 @@ selected with:
 
 ## Supported graph sections
 
+Collection graph imports support:
+
 - `collections`
 - `classes`
 - `objects`
 - `class_relations`
 - `object_relations`
 - `collection_permissions`
+
+An unscoped administrator token can additionally import identity and integration
+state:
+
+- `identity_scopes`
+- `groups`
+- `principals`
+- `group_memberships`
+- `export_templates`
+- `remote_targets`
+- `event_sinks`
+- `event_subscriptions`
+
+Class-scoped export templates and remote targets must select a class from their
+own target collection. Imported export templates receive the same composed
+load-and-render validation as templates created through the template API.
+Includes, imports, and inheritance can resolve both existing templates and
+templates in the same import, but only within the selected collection.
 
 Section shapes:
 
@@ -373,6 +393,34 @@ Allowed permission values:
 - `UpdateTemplate`
 - `DeleteTemplate`
 
+### Administrator-only section schemas
+
+The extended identity and integration sections are available only to an
+unscoped administrator. Their complete request schemas, including enum values
+and nested configuration objects, are published in OpenAPI under the component
+names below.
+
+| Section | OpenAPI item schema | Linking and validation notes |
+| --- | --- | --- |
+| `identity_scopes` | `ImportIdentityScopeInput` | `ref` can be used by later identity records; `name` and `provider_kind` are required. |
+| `groups` | `ImportGroupInput` | Select the identity scope with exactly one of `identity_scope_ref` or `identity_scope_key`. |
+| `principals` | `ImportPrincipalInput` | Select an identity scope and use the flattened `kind` discriminator. Human records accept either `password` or an Argon2 `password_hash`, never both. Service accounts require an owner group selector. |
+| `group_memberships` | `ImportGroupMembershipInput` | Select exactly one principal and one group. Each optional source selects its own identity scope. |
+| `export_templates` | `ImportExportTemplateInput` | Select one collection and, for class-scoped exports, one class in that collection. Template composition is validated against existing and same-import templates in the collection. |
+| `remote_targets` | `ImportRemoteTargetInput` | Select one collection and any required class in that collection. URL, header, body, authentication, subject, and timeout validation matches the normal API. |
+| `event_sinks` | `ImportEventSinkInput` | Sink kind, configuration, secret reference, and feature availability are validated before persistence. |
+| `event_subscriptions` | `ImportEventSubscriptionInput` | Select one collection and one sink. Entity types, actions, filters, and routing use the normal subscription validators. |
+
+Selector pairs follow the same exactly-one rule as the core graph. For example,
+send `principal_ref` or `principal_key`, `group_ref` or `group_key`, and
+`sink_ref` or `sink_key`, but never both members of a pair.
+
+Extended records can carry a `timestamps` object with `created_at` and
+`updated_at`. It is intended for trusted migration data. On overwrite, supplied
+timestamps replace the stored values; when timestamps are omitted, existing
+values are preserved. `updated_at` cannot be earlier than `created_at`.
+Membership sources can carry their own timestamps.
+
 ## Execution options
 
 ### `dry_run`
@@ -402,6 +450,8 @@ Allowed permission values:
   - matching records are updated instead of rejected
   - for classes, omitted optional schema settings keep their existing values
   - for objects, the supplied `name`, `description`, and `data` replace the existing values
+  - matching group memberships and membership sources preserve existing
+    timestamps when omitted and apply supplied restore timestamps when present
 
 ### `mode.permission_policy`
 

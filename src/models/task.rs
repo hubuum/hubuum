@@ -8,9 +8,10 @@ use crate::db::DbPool;
 use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
 use crate::events::Event;
+use crate::models::BackupOutputLookup;
 use crate::models::search::{FilterField, SortParam};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
-use crate::schema::{export_task_outputs, import_task_results, tasks};
+use crate::schema::{backup_task_outputs, export_task_outputs, import_task_results, tasks};
 use crate::traits::SelfAccessors;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
@@ -22,17 +23,25 @@ use crate::traits::{
 pub enum TaskKind {
     Import,
     Export,
+    Backup,
     Reindex,
     RemoteCall,
 }
 
 impl TaskKind {
-    pub const ALL: [Self; 4] = [Self::Import, Self::Export, Self::Reindex, Self::RemoteCall];
+    pub const ALL: [Self; 5] = [
+        Self::Import,
+        Self::Export,
+        Self::Backup,
+        Self::Reindex,
+        Self::RemoteCall,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             TaskKind::Import => "import",
             TaskKind::Export => "export",
+            TaskKind::Backup => "backup",
             TaskKind::Reindex => "reindex",
             TaskKind::RemoteCall => "remote_call",
         }
@@ -42,6 +51,7 @@ impl TaskKind {
         match value {
             "import" => Ok(TaskKind::Import),
             "export" => Ok(TaskKind::Export),
+            "backup" => Ok(TaskKind::Backup),
             "reindex" => Ok(TaskKind::Reindex),
             "remote_call" => Ok(TaskKind::RemoteCall),
             _ => Err(ApiError::InternalServerError(format!(
@@ -261,6 +271,8 @@ pub struct TaskLinks {
     pub import_results: Option<String>,
     pub export: Option<String>,
     pub export_output: Option<String>,
+    pub backup: Option<String>,
+    pub backup_output: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -283,9 +295,20 @@ pub struct ExportTaskDetails {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BackupTaskDetails {
+    pub output_url: String,
+    pub output_available: bool,
+    pub output_expired: bool,
+    pub output_expires_at: Option<NaiveDateTime>,
+    pub byte_size: Option<i64>,
+    pub sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct TaskDetails {
     pub import: Option<ImportTaskDetails>,
     pub export: Option<ExportTaskDetails>,
+    pub backup: Option<BackupTaskDetails>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -411,14 +434,38 @@ pub struct ExportTaskOutputSummaryRecord {
     pub created_at: NaiveDateTime,
 }
 
+#[derive(Debug, Clone, Queryable, Selectable)]
+#[diesel(table_name = backup_task_outputs)]
+pub struct BackupTaskOutputSummaryRecord {
+    pub task_id: i32,
+    pub byte_size: i64,
+    pub sha256: String,
+    pub output_expires_at: NaiveDateTime,
+}
+
 impl TaskRecord {
     pub fn to_response(&self) -> Result<TaskResponse, ApiError> {
-        self.to_response_with_export_output(ExportOutputLookup::Missing)
+        self.to_response_with_outputs(ExportOutputLookup::Missing, BackupOutputLookup::Missing)
     }
 
     pub fn to_response_with_export_output(
         &self,
         export_output: ExportOutputLookup<&ExportTaskOutputSummaryRecord>,
+    ) -> Result<TaskResponse, ApiError> {
+        self.to_response_with_outputs(export_output, BackupOutputLookup::Missing)
+    }
+
+    pub fn to_response_with_backup_output(
+        &self,
+        backup_output: BackupOutputLookup<&BackupTaskOutputSummaryRecord>,
+    ) -> Result<TaskResponse, ApiError> {
+        self.to_response_with_outputs(ExportOutputLookup::Missing, backup_output)
+    }
+
+    pub(crate) fn to_response_with_outputs(
+        &self,
+        export_output: ExportOutputLookup<&ExportTaskOutputSummaryRecord>,
+        backup_output: BackupOutputLookup<&BackupTaskOutputSummaryRecord>,
     ) -> Result<TaskResponse, ApiError> {
         let kind = TaskKind::from_db(&self.kind)?;
         let status = TaskStatus::from_db(&self.status)?;
@@ -433,6 +480,7 @@ impl TaskRecord {
             TaskKind::Import => import_results.clone().map(|results_url| TaskDetails {
                 import: Some(ImportTaskDetails { results_url }),
                 export: None,
+                backup: None,
             }),
             TaskKind::Export => export_output_url.clone().map(|output_url| {
                 let (output_summary, output_expired, expired_expires_at) = match export_output {
@@ -456,8 +504,31 @@ impl TaskRecord {
                         warning_count: output_summary.map(|summary| summary.warning_count),
                         truncated: output_summary.map(|summary| summary.truncated),
                     }),
+                    backup: None,
                 }
             }),
+            TaskKind::Backup => {
+                let output_url = format!("/api/v1/backups/{}/output", self.id);
+                let (output_summary, output_expired, expired_expires_at) = match backup_output {
+                    BackupOutputLookup::Available(summary) => (Some(summary), false, None),
+                    BackupOutputLookup::Expired { expires_at } => (None, true, Some(expires_at)),
+                    BackupOutputLookup::Missing => (None, false, None),
+                };
+                Some(TaskDetails {
+                    import: None,
+                    export: None,
+                    backup: Some(BackupTaskDetails {
+                        output_url,
+                        output_available: output_summary.is_some(),
+                        output_expired,
+                        output_expires_at: output_summary
+                            .map(|summary| summary.output_expires_at)
+                            .or(expired_expires_at),
+                        byte_size: output_summary.map(|summary| summary.byte_size),
+                        sha256: output_summary.map(|summary| summary.sha256.clone()),
+                    }),
+                })
+            }
             _ => None,
         };
 
@@ -484,6 +555,9 @@ impl TaskRecord {
                 import_results: import_results.clone(),
                 export: export_url,
                 export_output: export_output_url,
+                backup: (kind == TaskKind::Backup).then(|| format!("/api/v1/backups/{}", self.id)),
+                backup_output: (kind == TaskKind::Backup)
+                    .then(|| format!("/api/v1/backups/{}/output", self.id)),
             },
             details,
         })

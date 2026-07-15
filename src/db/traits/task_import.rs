@@ -2,12 +2,16 @@ use crate::db::prelude::*;
 
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
+use crate::models::event_subscription::validate_subscription_parts;
 use crate::models::{
     Collection, CollectionKey, Group, HubuumClass, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, ImportClassInput, ImportCollectionInput, ImportObjectInput,
-    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-    NewPermission, Permission, Permissions, PermissionsList, UpdateCollection, UpdateHubuumClass,
-    UpdateHubuumObject, UpdatePermission,
+    HubuumObjectRelation, IdentityScope, ImportClassInput, ImportCollectionInput,
+    ImportEventSinkInput, ImportEventSubscriptionInput, ImportExportTemplateInput,
+    ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
+    ImportPrincipalInput, ImportPrincipalSubtype, ImportRemoteTargetInput, NewHubuumClass,
+    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission,
+    Permissions, PermissionsList, Principal, ServiceAccount, UpdateCollection, UpdateHubuumClass,
+    UpdateHubuumObject, UpdatePermission, User,
 };
 use crate::utilities::aliases::normalize_template_alias;
 
@@ -349,6 +353,54 @@ pub async fn lookup_group_by_name_db(
         .map_err(ApiError::from)
 }
 
+pub async fn lookup_identity_scope_id_by_name_db(
+    conn: &mut crate::db::DbConnection,
+    scope_name: &str,
+) -> Result<Option<i32>, ApiError> {
+    use crate::schema::identity_scopes::dsl::{id, identity_scopes, name};
+
+    identity_scopes
+        .filter(name.eq(scope_name))
+        .select(id)
+        .first::<i32>(conn)
+        .await
+        .optional()
+        .map_err(ApiError::from)
+}
+
+pub async fn lookup_principal_id_by_name_db(
+    conn: &mut crate::db::DbConnection,
+    identity_scope: &str,
+    principal_name: &str,
+) -> Result<Option<i32>, ApiError> {
+    use crate::schema::{identity_scopes, principals};
+
+    principals::table
+        .inner_join(identity_scopes::table)
+        .filter(principals::name.eq(principal_name))
+        .filter(identity_scopes::name.eq(identity_scope))
+        .select(principals::id)
+        .first::<i32>(conn)
+        .await
+        .optional()
+        .map_err(ApiError::from)
+}
+
+pub async fn lookup_event_sink_id_by_name_db(
+    conn: &mut crate::db::DbConnection,
+    sink_name: &str,
+) -> Result<Option<i32>, ApiError> {
+    use crate::schema::event_sinks::dsl::{event_sinks, id, name};
+
+    event_sinks
+        .filter(name.eq(sink_name))
+        .select(id)
+        .first::<i32>(conn)
+        .await
+        .optional()
+        .map_err(ApiError::from)
+}
+
 pub async fn create_collection_db(
     conn: &mut crate::db::DbConnection,
     input: &ImportCollectionInput,
@@ -493,6 +545,816 @@ pub async fn update_object_db(
     )
     .await
     .map_err(ApiError::from)
+}
+
+fn imported_timestamps(
+    timestamps: Option<&crate::models::RestoreTimestamps>,
+) -> (chrono::NaiveDateTime, chrono::NaiveDateTime) {
+    let now = chrono::Utc::now().naive_utc();
+    timestamps
+        .map(|value| (value.created_at, value.updated_at))
+        .unwrap_or((now, now))
+}
+
+async fn preserve_imported_timestamps(
+    conn: &mut crate::db::DbConnection,
+    preserve: bool,
+) -> Result<(), ApiError> {
+    let value = if preserve { "on" } else { "off" };
+    diesel::sql_query("SELECT set_config('hubuum.preserve_imported_timestamps', $1, true)")
+        .bind::<diesel::sql_types::Text, _>(value)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+pub async fn upsert_identity_scope_db(
+    conn: &mut crate::db::DbConnection,
+    input: &ImportIdentityScopeInput,
+    overwrite: bool,
+) -> Result<i32, ApiError> {
+    use crate::schema::identity_scopes::dsl::{
+        created_at, id, identity_scopes, name, provider_kind, updated_at,
+    };
+    let existing = identity_scopes
+        .filter(name.eq(&input.name))
+        .first::<IdentityScope>(conn)
+        .await
+        .optional()?;
+    let row = match existing {
+        Some(_) if !overwrite => {
+            return Err(ApiError::Conflict(format!(
+                "Identity scope '{}' already exists",
+                input.name
+            )));
+        }
+        Some(existing) => {
+            let (created, updated) = input
+                .timestamps
+                .as_ref()
+                .map(|value| (value.created_at, value.updated_at))
+                .unwrap_or((existing.created_at, existing.updated_at));
+            conn.transaction::<IdentityScope, ApiError, _>(async |conn| {
+                preserve_imported_timestamps(conn, true).await?;
+                let row = diesel::update(identity_scopes.filter(id.eq(existing.id)))
+                    .set((
+                        provider_kind.eq(&input.provider_kind),
+                        created_at.eq(created),
+                        updated_at.eq(updated),
+                    ))
+                    .get_result::<IdentityScope>(conn)
+                    .await?;
+                preserve_imported_timestamps(conn, false).await?;
+                Ok(row)
+            })
+            .await?
+        }
+        None => {
+            let (created, updated) = imported_timestamps(input.timestamps.as_ref());
+            diesel::insert_into(identity_scopes)
+                .values((
+                    name.eq(&input.name),
+                    provider_kind.eq(&input.provider_kind),
+                    created_at.eq(created),
+                    updated_at.eq(updated),
+                ))
+                .get_result::<IdentityScope>(conn)
+                .await?
+        }
+    };
+    Ok(row.id)
+}
+
+pub async fn upsert_group_db(
+    conn: &mut crate::db::DbConnection,
+    input: &ImportGroupInput,
+    identity_scope_id_value: i32,
+    overwrite: bool,
+) -> Result<i32, ApiError> {
+    use crate::schema::groups::dsl::*;
+    let existing = groups
+        .filter(identity_scope_id.eq(identity_scope_id_value))
+        .filter(groupname.eq(&input.groupname))
+        .first::<Group>(conn)
+        .await
+        .optional()?;
+    let row = match existing {
+        Some(_) if !overwrite => {
+            return Err(ApiError::Conflict(format!(
+                "Group '{}' already exists in its identity scope",
+                input.groupname
+            )));
+        }
+        Some(existing) => {
+            let (created, updated) = input
+                .timestamps
+                .as_ref()
+                .map(|value| (value.created_at, value.updated_at))
+                .unwrap_or((existing.created_at, existing.updated_at));
+            conn.transaction::<Group, ApiError, _>(async |conn| {
+                preserve_imported_timestamps(conn, true).await?;
+                let row = diesel::update(groups.filter(id.eq(existing.id)))
+                    .set((
+                        description.eq(&input.description),
+                        managed_by.eq(&input.managed_by),
+                        external_key.eq(&input.external_key),
+                        last_sync_attempted_at.eq(input.last_sync_attempted_at),
+                        last_sync_success_at.eq(input.last_sync_success_at),
+                        created_at.eq(created),
+                        updated_at.eq(updated),
+                    ))
+                    .get_result::<Group>(conn)
+                    .await?;
+                preserve_imported_timestamps(conn, false).await?;
+                Ok(row)
+            })
+            .await?
+        }
+        None => {
+            let (created, updated) = imported_timestamps(input.timestamps.as_ref());
+            diesel::insert_into(groups)
+                .values((
+                    groupname.eq(&input.groupname),
+                    description.eq(&input.description),
+                    identity_scope_id.eq(identity_scope_id_value),
+                    managed_by.eq(&input.managed_by),
+                    external_key.eq(&input.external_key),
+                    last_sync_attempted_at.eq(input.last_sync_attempted_at),
+                    last_sync_success_at.eq(input.last_sync_success_at),
+                    created_at.eq(created),
+                    updated_at.eq(updated),
+                ))
+                .get_result::<Group>(conn)
+                .await?
+        }
+    };
+    Ok(row.id)
+}
+
+pub async fn upsert_principal_db(
+    conn: &mut crate::db::DbConnection,
+    input: &ImportPrincipalInput,
+    identity_scope_id_value: i32,
+    owner_group_id_value: Option<i32>,
+    created_by_value: Option<i32>,
+    overwrite: bool,
+) -> Result<i32, ApiError> {
+    input.validate_credentials()?;
+    use crate::schema::principals::dsl as p;
+    let expected_kind = match &input.subtype {
+        ImportPrincipalSubtype::Human { .. } => "human",
+        ImportPrincipalSubtype::ServiceAccount { .. } => "service_account",
+    };
+    let existing = p::principals
+        .filter(p::identity_scope_id.eq(identity_scope_id_value))
+        .filter(p::name.eq(&input.name))
+        .first::<Principal>(conn)
+        .await
+        .optional()?;
+    if let Some(existing) = &existing {
+        if !overwrite {
+            return Err(ApiError::Conflict(format!(
+                "Principal '{}' already exists in its identity scope",
+                input.name
+            )));
+        }
+        if existing.kind != expected_kind {
+            return Err(ApiError::Conflict(format!(
+                "Principal '{}' exists with kind '{}' instead of '{}'",
+                input.name, existing.kind, expected_kind
+            )));
+        }
+    }
+    let principal = match existing {
+        Some(existing) => {
+            let (created, updated) = input
+                .timestamps
+                .as_ref()
+                .map(|value| (value.created_at, value.updated_at))
+                .unwrap_or((existing.created_at, existing.updated_at));
+            conn.transaction::<Principal, ApiError, _>(async |conn| {
+                preserve_imported_timestamps(conn, true).await?;
+                let principal = diesel::update(p::principals.filter(p::id.eq(existing.id)))
+                    .set((
+                        p::provider_managed.eq(input.provider_managed),
+                        p::settings.eq(&input.settings),
+                        p::external_subject.eq(&input.external_subject),
+                        p::last_sync_attempted_at.eq(input.last_sync_attempted_at),
+                        p::last_sync_success_at.eq(input.last_sync_success_at),
+                        p::created_at.eq(created),
+                        p::updated_at.eq(updated),
+                    ))
+                    .get_result::<Principal>(conn)
+                    .await?;
+                preserve_imported_timestamps(conn, false).await?;
+                Ok(principal)
+            })
+            .await?
+        }
+        None => {
+            let (created, updated) = imported_timestamps(input.timestamps.as_ref());
+            diesel::insert_into(p::principals)
+                .values((
+                    p::kind.eq(expected_kind),
+                    p::name.eq(&input.name),
+                    p::identity_scope_id.eq(identity_scope_id_value),
+                    p::provider_managed.eq(input.provider_managed),
+                    p::settings.eq(&input.settings),
+                    p::external_subject.eq(&input.external_subject),
+                    p::last_sync_attempted_at.eq(input.last_sync_attempted_at),
+                    p::last_sync_success_at.eq(input.last_sync_success_at),
+                    p::created_at.eq(created),
+                    p::updated_at.eq(updated),
+                ))
+                .get_result::<Principal>(conn)
+                .await?
+        }
+    };
+
+    match &input.subtype {
+        ImportPrincipalSubtype::Human {
+            password,
+            password_hash,
+            proper_name,
+            email,
+            anonymized_at,
+        } => {
+            if password.is_some() && password_hash.is_some() {
+                return Err(ApiError::BadRequest(
+                    "A human principal import accepts password or password_hash, not both"
+                        .to_string(),
+                ));
+            }
+            let supplied_password = match (password, password_hash) {
+                (Some(password), None) => Some(
+                    crate::utilities::auth::hash_password(password)
+                        .map_err(|error| ApiError::HashError(error.to_string()))?,
+                ),
+                (None, hash) => hash.clone(),
+                _ => None,
+            };
+            use crate::schema::users::dsl as u;
+            let existing_user = u::users
+                .filter(u::id.eq(principal.id))
+                .first::<User>(conn)
+                .await
+                .optional()?;
+            let (created, updated) = input
+                .timestamps
+                .as_ref()
+                .map(|value| (value.created_at, value.updated_at))
+                .or_else(|| {
+                    existing_user
+                        .as_ref()
+                        .map(|row| (row.created_at, row.updated_at))
+                })
+                .unwrap_or_else(|| imported_timestamps(None));
+            if let Some(existing_user) = existing_user {
+                conn.transaction::<(), ApiError, _>(async |conn| {
+                    preserve_imported_timestamps(conn, true).await?;
+                    diesel::update(u::users.filter(u::id.eq(principal.id)))
+                        .set((
+                            u::password.eq(supplied_password.or(existing_user.password)),
+                            u::proper_name.eq(proper_name),
+                            u::email.eq(email),
+                            u::anonymized_at.eq(*anonymized_at),
+                            u::created_at.eq(created),
+                            u::updated_at.eq(updated),
+                        ))
+                        .execute(conn)
+                        .await?;
+                    preserve_imported_timestamps(conn, false).await?;
+                    Ok(())
+                })
+                .await?;
+            } else {
+                diesel::insert_into(u::users)
+                    .values((
+                        u::id.eq(principal.id),
+                        u::kind.eq("human"),
+                        u::password.eq(supplied_password),
+                        u::proper_name.eq(proper_name),
+                        u::email.eq(email),
+                        u::anonymized_at.eq(*anonymized_at),
+                        u::created_at.eq(created),
+                        u::updated_at.eq(updated),
+                    ))
+                    .execute(conn)
+                    .await?;
+            }
+        }
+        ImportPrincipalSubtype::ServiceAccount {
+            description: account_description,
+            disabled_at,
+            ..
+        } => {
+            let owner_group_id_value = owner_group_id_value.ok_or_else(|| {
+                ApiError::BadRequest("Service-account import requires an owner group".to_string())
+            })?;
+            use crate::schema::service_accounts::dsl as s;
+            let existing_account = s::service_accounts
+                .filter(s::id.eq(principal.id))
+                .first::<ServiceAccount>(conn)
+                .await
+                .optional()?;
+            let (created, updated) = input
+                .timestamps
+                .as_ref()
+                .map(|value| (value.created_at, value.updated_at))
+                .or_else(|| {
+                    existing_account
+                        .as_ref()
+                        .map(|row| (row.created_at, row.updated_at))
+                })
+                .unwrap_or_else(|| imported_timestamps(None));
+            if existing_account.is_some() {
+                conn.transaction::<(), ApiError, _>(async |conn| {
+                    preserve_imported_timestamps(conn, true).await?;
+                    diesel::update(s::service_accounts.filter(s::id.eq(principal.id)))
+                        .set((
+                            s::description.eq(account_description),
+                            s::owner_group_id.eq(owner_group_id_value),
+                            s::created_by.eq(created_by_value),
+                            s::disabled_at.eq(*disabled_at),
+                            s::created_at.eq(created),
+                            s::updated_at.eq(updated),
+                        ))
+                        .execute(conn)
+                        .await?;
+                    preserve_imported_timestamps(conn, false).await?;
+                    Ok(())
+                })
+                .await?;
+            } else {
+                diesel::insert_into(s::service_accounts)
+                    .values((
+                        s::id.eq(principal.id),
+                        s::kind.eq("service_account"),
+                        s::description.eq(account_description),
+                        s::owner_group_id.eq(owner_group_id_value),
+                        s::created_by.eq(created_by_value),
+                        s::disabled_at.eq(*disabled_at),
+                        s::created_at.eq(created),
+                        s::updated_at.eq(updated),
+                    ))
+                    .execute(conn)
+                    .await?;
+            }
+        }
+    }
+    Ok(principal.id)
+}
+
+pub async fn upsert_group_membership_db(
+    conn: &mut crate::db::DbConnection,
+    input: &ImportGroupMembershipInput,
+    principal_id_value: i32,
+    group_id_value: i32,
+    source_scope_ids: &[i32],
+    overwrite: bool,
+) -> Result<(), ApiError> {
+    use crate::schema::group_membership_sources::dsl as s;
+    use crate::schema::group_memberships::dsl as m;
+
+    let existing_membership = m::group_memberships
+        .filter(m::principal_id.eq(principal_id_value))
+        .filter(m::group_id.eq(group_id_value))
+        .select((m::created_at, m::updated_at))
+        .first::<(chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+        .await
+        .optional()?;
+    if existing_membership.is_some() && !overwrite {
+        return Err(ApiError::Conflict(format!(
+            "Principal {principal_id_value} is already a member of group {group_id_value}"
+        )));
+    }
+
+    conn.transaction::<(), ApiError, _>(async |conn| {
+        preserve_imported_timestamps(conn, true).await?;
+        let membership_timestamps = input
+            .timestamps
+            .as_ref()
+            .map(|value| (value.created_at, value.updated_at))
+            .or(existing_membership)
+            .unwrap_or_else(|| imported_timestamps(None));
+        match existing_membership {
+            Some(_) => {
+                diesel::update(
+                    m::group_memberships
+                        .filter(m::principal_id.eq(principal_id_value))
+                        .filter(m::group_id.eq(group_id_value)),
+                )
+                .set((
+                    m::created_at.eq(membership_timestamps.0),
+                    m::updated_at.eq(membership_timestamps.1),
+                ))
+                .execute(conn)
+                .await?;
+            }
+            None => {
+                diesel::insert_into(m::group_memberships)
+                    .values((
+                        m::principal_id.eq(principal_id_value),
+                        m::group_id.eq(group_id_value),
+                        m::created_at.eq(membership_timestamps.0),
+                        m::updated_at.eq(membership_timestamps.1),
+                    ))
+                    .execute(conn)
+                    .await?;
+            }
+        }
+
+        for (source, source_scope_id_value) in input.sources.iter().zip(source_scope_ids) {
+            let existing_source = s::group_membership_sources
+                .filter(s::principal_id.eq(principal_id_value))
+                .filter(s::group_id.eq(group_id_value))
+                .filter(s::source.eq(&source.source))
+                .filter(s::source_scope_id.eq(*source_scope_id_value))
+                .filter(s::source_key.eq(&source.source_key))
+                .select((s::created_at, s::updated_at))
+                .first::<(chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+                .await
+                .optional()?;
+            let source_timestamps = source
+                .timestamps
+                .as_ref()
+                .map(|value| (value.created_at, value.updated_at))
+                .or(existing_source)
+                .unwrap_or_else(|| imported_timestamps(None));
+            if existing_source.is_some() {
+                diesel::update(
+                    s::group_membership_sources
+                        .filter(s::principal_id.eq(principal_id_value))
+                        .filter(s::group_id.eq(group_id_value))
+                        .filter(s::source.eq(&source.source))
+                        .filter(s::source_scope_id.eq(*source_scope_id_value))
+                        .filter(s::source_key.eq(&source.source_key)),
+                )
+                .set((
+                    s::created_at.eq(source_timestamps.0),
+                    s::updated_at.eq(source_timestamps.1),
+                ))
+                .execute(conn)
+                .await?;
+            } else {
+                diesel::insert_into(s::group_membership_sources)
+                    .values((
+                        s::principal_id.eq(principal_id_value),
+                        s::group_id.eq(group_id_value),
+                        s::source.eq(&source.source),
+                        s::source_scope_id.eq(*source_scope_id_value),
+                        s::source_key.eq(&source.source_key),
+                        s::created_at.eq(source_timestamps.0),
+                        s::updated_at.eq(source_timestamps.1),
+                    ))
+                    .execute(conn)
+                    .await?;
+            }
+        }
+        preserve_imported_timestamps(conn, false).await?;
+        Ok(())
+    })
+    .await
+}
+
+pub async fn load_export_template_sources_db(
+    conn: &mut crate::db::DbConnection,
+    collection_id_value: i32,
+) -> Result<Vec<(String, String)>, ApiError> {
+    use crate::schema::export_templates::dsl as t;
+
+    Ok(t::export_templates
+        .filter(t::collection_id.eq(collection_id_value))
+        .order(t::id.asc())
+        .select((t::name, t::template))
+        .load::<(String, String)>(conn)
+        .await?)
+}
+
+pub async fn upsert_export_template_db(
+    conn: &mut crate::db::DbConnection,
+    input: &ImportExportTemplateInput,
+    collection_id_value: i32,
+    class_id_value: Option<i32>,
+    overwrite: bool,
+) -> Result<i32, ApiError> {
+    use crate::schema::export_templates::dsl as t;
+    let existing = t::export_templates
+        .filter(t::collection_id.eq(collection_id_value))
+        .filter(t::name.eq(&input.name))
+        .select((t::id, t::created_at, t::updated_at))
+        .first::<(i32, chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+        .await
+        .optional()?;
+    if existing.is_some() && !overwrite {
+        return Err(ApiError::Conflict(format!(
+            "Export template '{}' already exists in the collection",
+            input.name
+        )));
+    }
+    let include = input
+        .include
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()?;
+    let relation_context = input
+        .relation_context
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()?;
+    let default_limits = input
+        .default_limits
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()?;
+    let scope_kind = input.scope_kind.map(|value| value.as_str().to_string());
+    let missing_policy = input
+        .default_missing_data_policy
+        .map(|value| value.as_str().to_string());
+    match existing {
+        Some((existing_id, existing_created, existing_updated)) => {
+            let (created, updated) = input
+                .timestamps
+                .as_ref()
+                .map(|value| (value.created_at, value.updated_at))
+                .unwrap_or((existing_created, existing_updated));
+            conn.transaction::<(), ApiError, _>(async |conn| {
+                preserve_imported_timestamps(conn, true).await?;
+                diesel::update(t::export_templates.filter(t::id.eq(existing_id)))
+                    .set((
+                        t::description.eq(&input.description),
+                        t::content_type.eq(input.content_type.as_mime()),
+                        t::template.eq(&input.template),
+                        t::kind.eq(input.kind.as_str()),
+                        t::scope_kind.eq(scope_kind),
+                        t::class_id.eq(class_id_value),
+                        t::default_query.eq(&input.default_query),
+                        t::include.eq(include),
+                        t::relation_context.eq(relation_context),
+                        t::default_missing_data_policy.eq(missing_policy),
+                        t::default_limits.eq(default_limits),
+                        t::created_at.eq(created),
+                        t::updated_at.eq(updated),
+                    ))
+                    .execute(conn)
+                    .await?;
+                preserve_imported_timestamps(conn, false).await?;
+                Ok(())
+            })
+            .await?;
+            Ok(existing_id)
+        }
+        None => {
+            let (created, updated) = imported_timestamps(input.timestamps.as_ref());
+            Ok(diesel::insert_into(t::export_templates)
+                .values((
+                    t::collection_id.eq(collection_id_value),
+                    t::name.eq(&input.name),
+                    t::description.eq(&input.description),
+                    t::content_type.eq(input.content_type.as_mime()),
+                    t::template.eq(&input.template),
+                    t::kind.eq(input.kind.as_str()),
+                    t::scope_kind.eq(scope_kind),
+                    t::class_id.eq(class_id_value),
+                    t::default_query.eq(&input.default_query),
+                    t::include.eq(include),
+                    t::relation_context.eq(relation_context),
+                    t::default_missing_data_policy.eq(missing_policy),
+                    t::default_limits.eq(default_limits),
+                    t::created_at.eq(created),
+                    t::updated_at.eq(updated),
+                ))
+                .returning(t::id)
+                .get_result::<i32>(conn)
+                .await?)
+        }
+    }
+}
+
+pub async fn upsert_remote_target_db(
+    conn: &mut crate::db::DbConnection,
+    input: &ImportRemoteTargetInput,
+    collection_id_value: i32,
+    class_id_value: Option<i32>,
+    overwrite: bool,
+) -> Result<i32, ApiError> {
+    use crate::schema::remote_targets::dsl as r;
+    let existing = r::remote_targets
+        .filter(r::collection_id.eq(collection_id_value))
+        .filter(r::name.eq(&input.name))
+        .select((r::id, r::created_at, r::updated_at))
+        .first::<(i32, chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+        .await
+        .optional()?;
+    if existing.is_some() && !overwrite {
+        return Err(ApiError::Conflict(format!(
+            "Remote target '{}' already exists in the collection",
+            input.name
+        )));
+    }
+    let auth_config = serde_json::to_value(&input.auth_config)?;
+    let subject_types = serde_json::to_value(&input.allowed_subject_types)?;
+    match existing {
+        Some((existing_id, existing_created, existing_updated)) => {
+            let (created, updated) = input
+                .timestamps
+                .as_ref()
+                .map(|value| (value.created_at, value.updated_at))
+                .unwrap_or((existing_created, existing_updated));
+            conn.transaction::<(), ApiError, _>(async |conn| {
+                preserve_imported_timestamps(conn, true).await?;
+                diesel::update(r::remote_targets.filter(r::id.eq(existing_id)))
+                    .set((
+                        r::class_id.eq(class_id_value),
+                        r::description.eq(&input.description),
+                        r::method.eq(input.method.as_str()),
+                        r::url_template.eq(&input.url_template),
+                        r::headers_template.eq(&input.headers_template),
+                        r::body_template.eq(&input.body_template),
+                        r::auth_config.eq(auth_config),
+                        r::allowed_subject_types.eq(subject_types),
+                        r::timeout_ms.eq(input.timeout_ms),
+                        r::enabled.eq(input.enabled),
+                        r::created_at.eq(created),
+                        r::updated_at.eq(updated),
+                    ))
+                    .execute(conn)
+                    .await?;
+                preserve_imported_timestamps(conn, false).await?;
+                Ok(())
+            })
+            .await?;
+            Ok(existing_id)
+        }
+        None => {
+            let (created, updated) = imported_timestamps(input.timestamps.as_ref());
+            Ok(diesel::insert_into(r::remote_targets)
+                .values((
+                    r::collection_id.eq(collection_id_value),
+                    r::class_id.eq(class_id_value),
+                    r::name.eq(&input.name),
+                    r::description.eq(&input.description),
+                    r::method.eq(input.method.as_str()),
+                    r::url_template.eq(&input.url_template),
+                    r::headers_template.eq(&input.headers_template),
+                    r::body_template.eq(&input.body_template),
+                    r::auth_config.eq(auth_config),
+                    r::allowed_subject_types.eq(subject_types),
+                    r::timeout_ms.eq(input.timeout_ms),
+                    r::enabled.eq(input.enabled),
+                    r::created_at.eq(created),
+                    r::updated_at.eq(updated),
+                ))
+                .returning(r::id)
+                .get_result::<i32>(conn)
+                .await?)
+        }
+    }
+}
+
+pub async fn upsert_event_sink_db(
+    conn: &mut crate::db::DbConnection,
+    input: &ImportEventSinkInput,
+    overwrite: bool,
+) -> Result<i32, ApiError> {
+    use crate::schema::event_sinks::dsl as s;
+    let existing = s::event_sinks
+        .filter(s::name.eq(&input.name))
+        .select((s::id, s::created_at, s::updated_at))
+        .first::<(i32, chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+        .await
+        .optional()?;
+    if existing.is_some() && !overwrite {
+        return Err(ApiError::Conflict(format!(
+            "Event sink '{}' already exists",
+            input.name
+        )));
+    }
+    match existing {
+        Some((existing_id, existing_created, existing_updated)) => {
+            let (created, updated) = input
+                .timestamps
+                .as_ref()
+                .map(|value| (value.created_at, value.updated_at))
+                .unwrap_or((existing_created, existing_updated));
+            conn.transaction::<(), ApiError, _>(async |conn| {
+                preserve_imported_timestamps(conn, true).await?;
+                diesel::update(s::event_sinks.filter(s::id.eq(existing_id)))
+                    .set((
+                        s::kind.eq(input.kind.as_str()),
+                        s::config.eq(&input.config),
+                        s::secret_ref.eq(&input.secret_ref),
+                        s::enabled.eq(input.enabled),
+                        s::created_at.eq(created),
+                        s::updated_at.eq(updated),
+                    ))
+                    .execute(conn)
+                    .await?;
+                preserve_imported_timestamps(conn, false).await?;
+                Ok(())
+            })
+            .await?;
+            Ok(existing_id)
+        }
+        None => {
+            let (created, updated) = imported_timestamps(input.timestamps.as_ref());
+            Ok(diesel::insert_into(s::event_sinks)
+                .values((
+                    s::name.eq(&input.name),
+                    s::kind.eq(input.kind.as_str()),
+                    s::config.eq(&input.config),
+                    s::secret_ref.eq(&input.secret_ref),
+                    s::enabled.eq(input.enabled),
+                    s::created_at.eq(created),
+                    s::updated_at.eq(updated),
+                ))
+                .returning(s::id)
+                .get_result::<i32>(conn)
+                .await?)
+        }
+    }
+}
+
+pub async fn upsert_event_subscription_db(
+    conn: &mut crate::db::DbConnection,
+    input: &ImportEventSubscriptionInput,
+    collection_id_value: i32,
+    sink_id_value: i32,
+    overwrite: bool,
+) -> Result<i32, ApiError> {
+    let filter =
+        serde_json::from_value::<hubuum_events_core::EventSubscriptionFilter>(input.filter.clone())
+            .map_err(|error| {
+                ApiError::BadRequest(format!("Invalid event subscription filter: {error}"))
+            })?;
+    validate_subscription_parts(&input.entity_types, &input.actions, &filter, &input.routing)?;
+
+    use crate::schema::event_subscriptions::dsl as s;
+    let existing = s::event_subscriptions
+        .filter(s::collection_id.eq(collection_id_value))
+        .filter(s::name.eq(&input.name))
+        .select((s::id, s::created_at, s::updated_at))
+        .first::<(i32, chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+        .await
+        .optional()?;
+    if existing.is_some() && !overwrite {
+        return Err(ApiError::Conflict(format!(
+            "Event subscription '{}' already exists in the collection",
+            input.name
+        )));
+    }
+    let entity_types = serde_json::to_value(&input.entity_types)?;
+    let actions = serde_json::to_value(&input.actions)?;
+    match existing {
+        Some((existing_id, existing_created, existing_updated)) => {
+            let (created, updated) = input
+                .timestamps
+                .as_ref()
+                .map(|value| (value.created_at, value.updated_at))
+                .unwrap_or((existing_created, existing_updated));
+            conn.transaction::<(), ApiError, _>(async |conn| {
+                preserve_imported_timestamps(conn, true).await?;
+                diesel::update(s::event_subscriptions.filter(s::id.eq(existing_id)))
+                    .set((
+                        s::sink_id.eq(sink_id_value),
+                        s::description.eq(&input.description),
+                        s::entity_types.eq(entity_types),
+                        s::actions.eq(actions),
+                        s::filter.eq(&input.filter),
+                        s::routing.eq(&input.routing),
+                        s::enabled.eq(input.enabled),
+                        s::created_at.eq(created),
+                        s::updated_at.eq(updated),
+                    ))
+                    .execute(conn)
+                    .await?;
+                preserve_imported_timestamps(conn, false).await?;
+                Ok(())
+            })
+            .await?;
+            Ok(existing_id)
+        }
+        None => {
+            let (created, updated) = imported_timestamps(input.timestamps.as_ref());
+            Ok(diesel::insert_into(s::event_subscriptions)
+                .values((
+                    s::collection_id.eq(collection_id_value),
+                    s::sink_id.eq(sink_id_value),
+                    s::name.eq(&input.name),
+                    s::description.eq(&input.description),
+                    s::entity_types.eq(entity_types),
+                    s::actions.eq(actions),
+                    s::filter.eq(&input.filter),
+                    s::routing.eq(&input.routing),
+                    s::enabled.eq(input.enabled),
+                    s::created_at.eq(created),
+                    s::updated_at.eq(updated),
+                ))
+                .returning(s::id)
+                .get_result::<i32>(conn)
+                .await?)
+        }
+    }
 }
 
 pub async fn create_class_relation_db(

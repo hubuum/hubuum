@@ -3,13 +3,15 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::traits::task::{
-    TaskBackend, list_export_task_output_summaries, list_tasks_with_total_count,
+    TaskBackend, list_backup_task_output_summaries, list_export_task_output_summaries,
+    list_tasks_with_total_count,
 };
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::{QueryOptions, parse_query_parameter_with_passthrough};
 use crate::models::{
-    ExportOutputLookup, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus,
+    BackupOutputLookup, ExportOutputLookup, TaskEventResponse, TaskID, TaskKind, TaskResponse,
+    TaskStatus,
 };
 use crate::pagination::{
     count_query_options, known_count_or_skipped, paginate_in_memory, prepare_db_pagination,
@@ -35,7 +37,7 @@ fn parse_task_list_query(query_string: &str) -> Result<(QueryOptions, TaskListFi
         }
         Some(mut values) => Some(TaskKind::from_db(values.remove(0).as_str()).map_err(|_| {
             ApiError::BadRequest(
-                "invalid kind filter; expected one of import, export, reindex, remote_call"
+                "invalid kind filter; expected one of import, export, backup, reindex, remote_call"
                     .to_string(),
             )
         })?),
@@ -81,7 +83,7 @@ fn parse_task_list_query(query_string: &str) -> Result<(QueryOptions, TaskListFi
     tag = "tasks",
     security(("bearer_auth" = [])),
     params(
-        ("kind" = String, Query, description = "Optional task kind filter (import|export|reindex|remote_call)"),
+        ("kind" = String, Query, description = "Optional task kind filter (import|export|backup|reindex|remote_call)"),
         ("status" = String, Query, description = "Optional task status filter"),
         ("submitted_by" = i32, Query, description = "Optional submitter user id filter (effective only for admins)"),
         ("limit" = usize, Query, description = "Cursor page size"),
@@ -162,6 +164,16 @@ pub async fn get_tasks(
         .into_iter()
         .map(|output| (output.task_id, output))
         .collect::<std::collections::HashMap<_, _>>();
+    let backup_task_ids = tasks
+        .iter()
+        .filter(|task| task.kind == TaskKind::Backup.as_str())
+        .map(|task| task.id)
+        .collect::<Vec<_>>();
+    let backup_outputs = list_backup_task_output_summaries(&pool, &backup_task_ids)
+        .await?
+        .into_iter()
+        .map(|output| (output.task_id, output))
+        .collect::<std::collections::HashMap<_, _>>();
     let now = chrono::Utc::now().naive_utc();
     let tasks = tasks
         .into_iter()
@@ -177,7 +189,16 @@ pub async fn get_tasks(
                 },
                 None => ExportOutputLookup::Missing,
             };
-            task.to_response_with_export_output(export_output)
+            let backup_output = match backup_outputs.get(&task.id) {
+                Some(summary) if summary.output_expires_at > now => {
+                    BackupOutputLookup::Available(summary)
+                }
+                Some(summary) => BackupOutputLookup::Expired {
+                    expires_at: summary.output_expires_at,
+                },
+                None => BackupOutputLookup::Missing,
+            };
+            task.to_response_with_outputs(export_output, backup_output)
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -228,8 +249,13 @@ pub async fn get_task(
     } else {
         ExportOutputLookup::Missing
     };
+    let backup_output = if task.kind == TaskKind::Backup.as_str() {
+        task.find_backup_output_summary(&pool).await?
+    } else {
+        BackupOutputLookup::Missing
+    };
     Ok(ApiResponse::new(
-        task.to_response_with_export_output(export_output.as_ref())?,
+        task.to_response_with_outputs(export_output.as_ref(), backup_output.as_ref())?,
         StatusCode::OK,
     ))
 }

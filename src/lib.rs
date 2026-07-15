@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod backups;
 pub mod config;
 pub mod db;
 pub mod errors;
@@ -17,6 +18,7 @@ pub mod models;
 pub mod observability;
 pub mod pagination;
 pub mod permissions;
+pub mod restores;
 pub mod schema;
 pub mod tasks;
 #[cfg(test)]

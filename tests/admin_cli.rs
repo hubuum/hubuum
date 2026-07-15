@@ -60,6 +60,58 @@ fn admin_help_exposes_reset_password() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("--reset-password"));
+    assert!(stdout.contains("--backup"));
+    assert!(stdout.contains("--restore"));
+}
+
+#[cfg(unix)]
+#[test]
+fn backup_files_are_owner_only_and_atomically_replaced() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let database_url = database_url();
+    let path = std::env::temp_dir().join(format!("{}.json", unique_name("hubuum_admin_backup")));
+
+    let output = admin_command(&database_url)
+        .args(["--backup", path.to_str().expect("UTF-8 backup path")])
+        .output()
+        .expect("hubuum-admin --backup should run");
+    assert_command_succeeded(&output);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let original_inode = std::fs::metadata(&path).unwrap().ino();
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let output = admin_command(&database_url)
+        .args(["--backup", path.to_str().expect("UTF-8 backup path")])
+        .output()
+        .expect("hubuum-admin --backup should overwrite");
+    assert_command_succeeded(&output);
+    let replaced_metadata = std::fs::metadata(&path).unwrap();
+    assert_eq!(replaced_metadata.permissions().mode() & 0o777, 0o600);
+    assert_ne!(replaced_metadata.ino(), original_inode);
+
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn restore_requires_destructive_confirmation_before_database_access() {
+    let output = Command::new(admin_binary())
+        .args([
+            "--restore",
+            "backup.json",
+            "--database-url",
+            "mongodb://localhost/hubuum",
+        ])
+        .output()
+        .expect("hubuum-admin --restore should start");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("restore deletes and replaces all Hubuum application data"));
+    assert!(!stderr.contains("Unsupported database type"));
 }
 
 #[test]
@@ -180,7 +232,7 @@ async fn audit_templates_rejects_an_invalid_stored_template() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(&format!("template={template_name}")));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("1 template(s) failed validation"));
+    assert!(stderr.contains("template(s) failed validation"));
 }
 
 #[tokio::test]

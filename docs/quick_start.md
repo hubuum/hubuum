@@ -129,7 +129,7 @@ delivery semantics, operational health, and retention behavior.
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS` | `168` | How long successful async export outputs remain refetchable before cleanup |
-| `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS` | `300` | How often workers attempt cleanup of expired stored export outputs |
+| `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS` | `300` | How often workers attempt cleanup of expired stored export and backup outputs (legacy variable name) |
 | `HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running export tasks one user may have at once |
 | `HUBUUM_EXPORT_TEMPLATE_RECURSION_LIMIT` | `64` | MiniJinja recursion and template composition depth limit |
 | `HUBUUM_EXPORT_TEMPLATE_FUEL` | `50000` | MiniJinja fuel budget for one render |
@@ -139,6 +139,22 @@ delivery semantics, operational health, and retention behavior.
 | `HUBUUM_EXPORT_DB_STATEMENT_TIMEOUT_MS` | `0` | Export-scoped Postgres `statement_timeout` in ms (`0` disables). Cancels slow queries in-flight **only while executing exports** (applied as a transaction-local `SET LOCAL`), without affecting imports or other DB work. Typically set `<= HUBUUM_EXPORT_STAGE_TIMEOUT_MS` |
 
 **Export/template note**: These settings control async export task behavior, including stored output retention, template execution limits, and relation hydration guardrails. See [Export API](export_api.md) and [Export Template Guide](export_template_guide.md) for the user-facing behavior these limits affect.
+
+### Backup and Restore Configuration
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS` | `24` | How long a successful full-system backup remains downloadable |
+| `HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER` | `1` | Maximum active backup tasks one unscoped administrator may own |
+| `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` | `268435456` | Maximum stored backup document size in bytes |
+| `HUBUUM_RESTORE_STAGE_RETENTION_MINUTES` | `60` | How long a validated restore stage remains confirmable |
+| `HUBUUM_RESTORE_MAX_UPLOAD_BYTES` | `268435456` | Maximum full-system restore document size accepted by the API |
+
+Backups and restores are unscoped administrator-only disaster-recovery
+operations. A confirmed restore puts every instance into maintenance mode and
+replaces all application data. See [Backup and Restore](backup-restore.md) for
+the destructive confirmation flow, locking behavior, and export/import
+alternative for selective transfers.
 
 ### Pagination Configuration
 
@@ -282,6 +298,7 @@ services:
 - [Event And Audit](events.md) - Audit log, event delivery, sink subscriptions, retention, and operational health
 - [Relationships](relationship_endpoints.md) - Working with object relationships
 - [Task System](task_system.md) - Background workers, queue claiming, and task execution flow
+- [Backup and Restore](backup-restore.md) - Full-system disaster recovery and selective-transfer alternatives
 - [Export API](export_api.md) - Server-side export execution and templated output
 - [Remote Target API](remote_targets.md) - Collection-scoped outbound subject actions
 - [Export Template Guide](export_template_guide.md) - Stored template syntax, context, and examples

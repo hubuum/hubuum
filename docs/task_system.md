@@ -205,7 +205,8 @@ Defaults:
 - `HUBUUM_TASK_LEASE_SECONDS`: `60`
 - `HUBUUM_TASK_HEARTBEAT_SECONDS`: `20`
 - `HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS`: `30`
-- `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`: `300`
+- `HUBUUM_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS`: `300` (shared by stored
+  export and backup artifacts; the variable name is retained for compatibility)
 
 The HTTP worker count and background task worker count are intentionally separate.
 

@@ -15,6 +15,7 @@ use crate::db::traits::event_fanout::{EventFanoutSettings, process_event_fanout_
 use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::EventWorkerWakeupStats;
+use crate::restores::{MaintenanceActivityGuard, maintenance_state};
 
 static EVENT_FANOUT_WORKER: Once = Once::new();
 static EVENT_FANOUT_LISTENER: Once = Once::new();
@@ -94,11 +95,18 @@ async fn event_fanout_worker_loop(
     shutdown: ShutdownSignal,
 ) {
     loop {
+        let activity = MaintenanceActivityGuard::begin();
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = process_event_fanout_batch(&pool, settings) => result,
+            result = async {
+                if maintenance_state(&pool).await? != "normal" {
+                    return Ok(0);
+                }
+                process_event_fanout_batch(&pool, settings).await
+            } => result,
         };
+        drop(activity);
         if fanout_worker_should_continue(&result) {
             continue;
         }

@@ -67,6 +67,23 @@ impl UpdateHubuumClass {
     }
 }
 
+impl HubuumClass {
+    /// Enforce the collection boundary shared by class-scoped domain records.
+    pub(crate) fn ensure_in_collection(
+        &self,
+        target_collection_id: i32,
+        entity_kind: &str,
+    ) -> Result<(), ApiError> {
+        if self.collection_id != target_collection_id {
+            return Err(ApiError::BadRequest(format!(
+                "{entity_kind} class {} belongs to collection {}, not target collection {}",
+                self.id, self.collection_id, target_collection_id
+            )));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct HubuumClassWithPath {
     pub id: i32,
