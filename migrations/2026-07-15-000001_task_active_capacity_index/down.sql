@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY idx_tasks_active_capacity;

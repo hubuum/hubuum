@@ -44,6 +44,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Active task admission now uses a partial per-submitter and per-kind index so
+  capacity checks remain bounded by queued, validating, and running work rather
+  than scanning a submitter's completed task history.
 - **Breaking:** Import and export submission now requires an unscoped runtime
   administrator. Non-admin and scoped tokens now receive `403 Forbidden`.
   Automation should use dedicated service accounts in the configured admin
