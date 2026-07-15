@@ -1,5 +1,10 @@
 pub mod traits;
 
+#[cfg(any(test, feature = "query-capture"))]
+mod query_capture;
+#[cfg(any(test, feature = "query-capture"))]
+pub use query_capture::{QueryCaptureSnapshot, capture_queries};
+
 /// Diesel query-building traits paired with diesel-async's I/O traits.
 ///
 /// Importing this prelude avoids bringing the synchronous `Connection` and
@@ -287,6 +292,10 @@ async fn acquire_connection(pool: &DbPool) -> Result<PooledConnection<'_, DbConn
     let start = std::time::Instant::now();
     match pool.get().await {
         Ok(conn) => {
+            #[cfg(any(test, feature = "query-capture"))]
+            let mut conn = conn;
+            #[cfg(any(test, feature = "query-capture"))]
+            query_capture::configure_connection(&mut conn);
             metrics::db_connection_acquired(start.elapsed());
             Ok(conn)
         }

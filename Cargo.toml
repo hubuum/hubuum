@@ -122,6 +122,13 @@ valkey = ["dep:hubuum-event-sink-valkey", "login-rate-limit-valkey"]
 permissions-treetop = ["dep:treetop-client"]
 embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
 vendored-openssl = ["openssl/vendored"]
+# Test/diagnostic-only Diesel instrumentation used by PostgreSQL query-budget
+# checks. Keeping this opt-in avoids adding instrumentation work to production
+# pool checkouts.
+query-capture = []
+# Enables the opt-in PostgreSQL Criterion target. It remains separate from the
+# self-contained benchmark fan-out because it needs a migrated database.
+postgres-bench = []
 
 [profile.release]
 codegen-units = 1
@@ -186,3 +193,9 @@ harness = false
 [[bench]]
 name = "password_hashing_criterion"
 harness = false
+
+[[bench]]
+name = "storage_postgres_criterion"
+path = "benches/postgres/storage_postgres_criterion.rs"
+harness = false
+required-features = ["postgres-bench"]
