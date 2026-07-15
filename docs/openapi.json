@@ -774,6 +774,267 @@
         ]
       }
     },
+    "/api/v1/backups": {
+      "post": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Post Api V1 Backups",
+        "description": "Auto-generated documentation for POST /api/v1/backups.",
+        "operationId": "postApiV1Backups",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Backup task accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped administrator access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many active backup tasks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/backups/{task_id}": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Get Api V1 Backups By Task Id",
+        "description": "Auto-generated documentation for GET /api/v1/backups/{task_id}.",
+        "operationId": "getApiV1BackupsByTaskId",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Backup task ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Backup task projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped administrator access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Backup task not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/backups/{task_id}/output": {
+      "get": {
+        "tags": [
+          "backups"
+        ],
+        "summary": "Get Api V1 Backups By Task Id Output",
+        "description": "Auto-generated documentation for GET /api/v1/backups/{task_id}/output.",
+        "operationId": "getApiV1BackupsByTaskIdOutput",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Backup task ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored backup document",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always no-store for credential-bearing artifacts"
+              },
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Attachment filename for the backup document"
+              },
+              "Digest": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Base64-encoded SHA-256 content digest"
+              },
+              "X-Hubuum-Backup-SHA256": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Lowercase hexadecimal SHA-256 digest"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupDocument"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Unscoped administrator access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Backup output not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Backup output expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes": {
       "get": {
         "tags": [
@@ -12381,6 +12642,276 @@
         ]
       }
     },
+    "/api/v1/restores": {
+      "post": {
+        "tags": [
+          "restores"
+        ],
+        "summary": "Post Api V1 Restores",
+        "description": "Auto-generated documentation for POST /api/v1/restores.",
+        "operationId": "postApiV1Restores",
+        "requestBody": {
+          "description": "Full BackupDocument JSON bytes",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Restore document staged and validated",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always no-store for restore capabilities and metadata"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreStageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid backup document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Restore upload too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/restores/{restore_id}/confirm": {
+      "post": {
+        "tags": [
+          "restores"
+        ],
+        "summary": "Post Api V1 Restores By Restore Id Confirm",
+        "description": "Auto-generated documentation for POST /api/v1/restores/{restore_id}/confirm.",
+        "operationId": "postApiV1RestoresByRestoreIdConfirm",
+        "parameters": [
+          {
+            "name": "restore_id",
+            "in": "path",
+            "description": "Restore stage ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Restore completed",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always no-store for restore metadata"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreStageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Confirmation phrase is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator or capability rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stage state or SHA-256 mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Restore stage expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/restores/{restore_id}/status": {
+      "get": {
+        "tags": [
+          "restores"
+        ],
+        "summary": "Get Api V1 Restores By Restore Id Status",
+        "description": "Auto-generated documentation for GET /api/v1/restores/{restore_id}/status.",
+        "operationId": "getApiV1RestoresByRestoreIdStatus",
+        "parameters": [
+          {
+            "name": "restore_id",
+            "in": "path",
+            "description": "Restore stage ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Restore status",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Always no-store for restore metadata"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreStageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Restore capability header is missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Capability rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Restore stage not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "restore_capability": []
+          }
+        ]
+      }
+    },
     "/api/v1/search": {
       "get": {
         "tags": [
@@ -12630,7 +13161,7 @@
           {
             "name": "kind",
             "in": "query",
-            "description": "Optional task kind filter (import|export|reindex|remote_call)",
+            "description": "Optional task kind filter (import|export|backup|reindex|remote_call)",
             "required": true,
             "schema": {
               "type": "string"
@@ -13011,6 +13542,159 @@
           "token_lifetime_hours": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "BackupConfig": {
+        "type": "object",
+        "required": [
+          "output_retention_hours",
+          "max_active_tasks_per_user",
+          "max_output_bytes"
+        ],
+        "properties": {
+          "max_active_tasks_per_user": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_output_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_retention_hours": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BackupDocument": {
+        "type": "object",
+        "required": [
+          "backup_version",
+          "created_at",
+          "source_version",
+          "state",
+          "manifest"
+        ],
+        "properties": {
+          "backup_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "history": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BackupHistory"
+              }
+            ]
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/BackupManifest"
+          },
+          "source_version": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/BackupState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BackupHistory": {
+        "type": "object",
+        "description": "Privileged, restore-only table snapshots. In backup version 2, each section\nname and row shape corresponds to the PostgreSQL table restored from it.\nThese are versioned disaster-recovery internals, not portable import data.",
+        "required": [
+          "sections"
+        ],
+        "properties": {
+          "sections": {
+            "type": "object"
+          }
+        }
+      },
+      "BackupManifest": {
+        "type": "object",
+        "required": [
+          "item_counts",
+          "exclusions"
+        ],
+        "properties": {
+          "exclusions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "item_counts": {
+            "type": "object"
+          }
+        }
+      },
+      "BackupRequest": {
+        "type": "object",
+        "properties": {
+          "include_history": {
+            "type": "boolean",
+            "description": "Full-system backups include durable audit, task, delivery, and temporal\nhistory by default. Set this explicitly to false only when the eventual\nrestore is intended to reset that history."
+          }
+        },
+        "additionalProperties": false
+      },
+      "BackupState": {
+        "type": "object",
+        "description": "Exact logical rows used by the destructive full-system restore path.",
+        "required": [
+          "sections"
+        ],
+        "properties": {
+          "sections": {
+            "type": "object"
+          }
+        }
+      },
+      "BackupTaskDetails": {
+        "type": "object",
+        "required": [
+          "output_url",
+          "output_available",
+          "output_expired"
+        ],
+        "properties": {
+          "byte_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "output_available": {
+            "type": "boolean"
+          },
+          "output_expired": {
+            "type": "boolean"
+          },
+          "output_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "output_url": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -13994,6 +14678,17 @@
         "type": "integer",
         "format": "int32",
         "description": "Identifier wrapper for an event sink."
+      },
+      "EventSinkKey": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
       },
       "EventSinkKind": {
         "type": "string",
@@ -16116,6 +16811,17 @@
           }
         }
       },
+      "IdentityScopeKey": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "ImportAtomicity": {
         "type": "string",
         "enum": [
@@ -16312,6 +17018,262 @@
           "overwrite"
         ]
       },
+      "ImportEventSinkInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "enabled"
+        ],
+        "properties": {
+          "config": {},
+          "enabled": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EventSinkKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
+          }
+        }
+      },
+      "ImportEventSubscriptionInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "entity_types",
+          "actions",
+          "enabled"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "collection_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CollectionKey"
+              }
+            ]
+          },
+          "collection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "entity_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filter": {},
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "routing": {},
+          "sink_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventSinkKey"
+              }
+            ]
+          },
+          "sink_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
+          }
+        }
+      },
+      "ImportExportTemplateInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "content_type",
+          "template",
+          "kind"
+        ],
+        "properties": {
+          "class_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClassKey"
+              }
+            ]
+          },
+          "class_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "collection_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CollectionKey"
+              }
+            ]
+          },
+          "collection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_type": {
+            "$ref": "#/components/schemas/ExportContentType"
+          },
+          "default_limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportLimits"
+              }
+            ]
+          },
+          "default_missing_data_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportMissingDataPolicy"
+              }
+            ]
+          },
+          "default_query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "include": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportInclude"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ExportTemplateKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "relation_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportRelationContext"
+              }
+            ]
+          },
+          "scope_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExportScopeKind"
+              }
+            ]
+          },
+          "template": {
+            "type": "string"
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
+          }
+        }
+      },
       "ImportGraph": {
         "type": "object",
         "properties": {
@@ -16339,6 +17301,42 @@
               "$ref": "#/components/schemas/ImportCollectionInput"
             }
           },
+          "event_sinks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportEventSinkInput"
+            }
+          },
+          "event_subscriptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportEventSubscriptionInput"
+            }
+          },
+          "export_templates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportExportTemplateInput"
+            }
+          },
+          "group_memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportGroupMembershipInput"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportGroupInput"
+            }
+          },
+          "identity_scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportIdentityScopeInput"
+            }
+          },
           "object_relations": {
             "type": "array",
             "items": {
@@ -16350,6 +17348,220 @@
             "items": {
               "$ref": "#/components/schemas/ImportObjectInput"
             }
+          },
+          "principals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportPrincipalInput"
+            }
+          },
+          "remote_targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportRemoteTargetInput"
+            }
+          }
+        }
+      },
+      "ImportGroupInput": {
+        "type": "object",
+        "required": [
+          "groupname",
+          "description",
+          "managed_by"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "external_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "groupname": {
+            "type": "string"
+          },
+          "identity_scope_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IdentityScopeKey"
+              }
+            ]
+          },
+          "identity_scope_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_sync_attempted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_sync_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "managed_by": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
+          }
+        }
+      },
+      "ImportGroupMembershipInput": {
+        "type": "object",
+        "properties": {
+          "group_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GroupKey"
+              }
+            ]
+          },
+          "group_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "principal_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PrincipalKey"
+              }
+            ]
+          },
+          "principal_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportMembershipSourceInput"
+            }
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
+          }
+        }
+      },
+      "ImportIdentityScopeInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "provider_kind"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "provider_kind": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
+          }
+        }
+      },
+      "ImportMembershipSourceInput": {
+        "type": "object",
+        "required": [
+          "source",
+          "source_key"
+        ],
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "source_key": {
+            "type": "string"
+          },
+          "source_scope_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IdentityScopeKey"
+              }
+            ]
+          },
+          "source_scope_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
           }
         }
       },
@@ -16476,6 +17688,284 @@
           "abort",
           "continue"
         ]
+      },
+      "ImportPrincipalInput": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ImportPrincipalSubtype"
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "provider_managed"
+            ],
+            "properties": {
+              "external_subject": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "identity_scope_key": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IdentityScopeKey"
+                  }
+                ]
+              },
+              "identity_scope_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "last_sync_attempted_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "last_sync_success_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "name": {
+                "type": "string"
+              },
+              "provider_managed": {
+                "type": "boolean"
+              },
+              "ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "settings": {},
+              "timestamps": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RestoreTimestamps"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ImportPrincipalSubtype": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "anonymized_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "email": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "human"
+                ]
+              },
+              "password": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "password_hash": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proper_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "description",
+              "kind"
+            ],
+            "properties": {
+              "created_by_key": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PrincipalKey"
+                  }
+                ]
+              },
+              "created_by_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "disabled_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "service_account"
+                ]
+              },
+              "owner_group_key": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/GroupKey"
+                  }
+                ]
+              },
+              "owner_group_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ImportRemoteTargetInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "method",
+          "url_template",
+          "allowed_subject_types",
+          "timeout_ms",
+          "enabled"
+        ],
+        "properties": {
+          "allowed_subject_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemoteTargetSubjectType"
+            }
+          },
+          "auth_config": {
+            "$ref": "#/components/schemas/RemoteAuthConfig"
+          },
+          "body_template": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "class_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClassKey"
+              }
+            ]
+          },
+          "class_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "collection_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CollectionKey"
+              }
+            ]
+          },
+          "collection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "headers_template": {},
+          "method": {
+            "$ref": "#/components/schemas/RemoteHttpMethod"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
+          },
+          "url_template": {
+            "type": "string"
+          }
+        }
       },
       "ImportRequest": {
         "type": "object",
@@ -17794,6 +19284,23 @@
           }
         }
       },
+      "PrincipalKey": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "identity_scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "PrincipalMemberResponse": {
         "type": "object",
         "description": "Public representation of a group member (a principal of either kind).",
@@ -18516,6 +20023,188 @@
           "object_relation"
         ]
       },
+      "RestoreConfig": {
+        "type": "object",
+        "required": [
+          "stage_retention_minutes",
+          "max_upload_bytes"
+        ],
+        "properties": {
+          "max_upload_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stage_retention_minutes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "RestoreConfirmRequest": {
+        "type": "object",
+        "required": [
+          "restore_capability",
+          "sha256",
+          "confirmation"
+        ],
+        "properties": {
+          "confirmation": {
+            "type": "string"
+          },
+          "restore_capability": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RestoreJobStatus": {
+        "type": "string",
+        "enum": [
+          "validated",
+          "confirmed",
+          "succeeded",
+          "failed",
+          "expired"
+        ]
+      },
+      "RestoreStageResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "requested_by_identity_scope",
+          "requested_by_name",
+          "sha256",
+          "byte_size",
+          "expires_at",
+          "created_at",
+          "updated_at",
+          "validation"
+        ],
+        "properties": {
+          "byte_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "requested_by": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "requested_by_identity_scope": {
+            "type": "string"
+          },
+          "requested_by_name": {
+            "type": "string"
+          },
+          "restore_capability": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Returned only when a stage is created. It is stored only as a hash and\nmust be supplied to confirm or inspect the restore while its staging\nrecord exists. A successful restore deletes every staging record."
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RestoreJobStatus"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/RestoreValidationSummary"
+          }
+        }
+      },
+      "RestoreTimestamps": {
+        "type": "object",
+        "required": [
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RestoreValidationSummary": {
+        "type": "object",
+        "required": [
+          "backup_version",
+          "source_version",
+          "includes_history",
+          "total_items"
+        ],
+        "properties": {
+          "backup_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "includes_history": {
+            "type": "boolean"
+          },
+          "source_version": {
+            "type": "string"
+          },
+          "total_items": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "RunningConfig": {
         "type": "object",
         "required": [
@@ -18524,6 +20213,8 @@
           "tasks",
           "events",
           "exports",
+          "backups",
+          "restores",
           "remote_calls",
           "authentication",
           "permissions",
@@ -18533,6 +20224,9 @@
         "properties": {
           "authentication": {
             "$ref": "#/components/schemas/AuthenticationConfig"
+          },
+          "backups": {
+            "$ref": "#/components/schemas/BackupConfig"
           },
           "database": {
             "$ref": "#/components/schemas/DatabaseConfig"
@@ -18554,6 +20248,9 @@
           },
           "remote_calls": {
             "$ref": "#/components/schemas/RemoteCallConfig"
+          },
+          "restores": {
+            "$ref": "#/components/schemas/RestoreConfig"
           },
           "server": {
             "$ref": "#/components/schemas/ServerConfig"
@@ -18725,6 +20422,16 @@
       "TaskDetails": {
         "type": "object",
         "properties": {
+          "backup": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BackupTaskDetails"
+              }
+            ]
+          },
           "export": {
             "oneOf": [
               {
@@ -18783,6 +20490,7 @@
         "enum": [
           "import",
           "export",
+          "backup",
           "reindex",
           "remote_call"
         ]
@@ -18794,6 +20502,18 @@
           "events"
         ],
         "properties": {
+          "backup": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "backup_output": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "events": {
             "type": "string"
           },
@@ -19767,6 +21487,12 @@
       "bearer_auth": {
         "type": "http",
         "scheme": "bearer"
+      },
+      "restore_capability": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Hubuum-Restore-Capability",
+        "description": "One-time restore capability returned when a backup document is staged"
       }
     }
   },
@@ -19826,6 +21552,14 @@
     {
       "name": "exports",
       "description": "Server-side export execution endpoints"
+    },
+    {
+      "name": "backups",
+      "description": "Administrator-only full-system logical backup creation and retrieval endpoints"
+    },
+    {
+      "name": "restores",
+      "description": "Administrator-only staged, destructive full-system restore endpoints"
     },
     {
       "name": "export-templates",

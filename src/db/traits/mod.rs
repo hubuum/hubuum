@@ -1,5 +1,6 @@
 pub mod active_tokens;
 pub mod authz;
+pub mod backup;
 pub mod bootstrap;
 pub mod class;
 pub mod collection;
@@ -21,6 +22,7 @@ pub mod permissions;
 pub mod principal;
 pub mod relations;
 pub mod remote_target;
+pub mod restore;
 pub mod service_account;
 pub mod task;
 pub mod task_import;

@@ -241,12 +241,7 @@ async fn validate_remote_target_class_scope(
         return Ok(());
     };
     let class = HubuumClassID::new(class_id)?.class(pool).await?;
-    if class.collection_id != collection_id {
-        return Err(ApiError::BadRequest(
-            "class_id must belong to the remote target collection".to_string(),
-        ));
-    }
-    Ok(())
+    class.ensure_in_collection(collection_id, "Remote target")
 }
 
 #[utoipa::path(

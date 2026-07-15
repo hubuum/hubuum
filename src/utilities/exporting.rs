@@ -6,7 +6,8 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use hubuum_templates::{
-    MissingValue, MissingValueRecorder, SizeLimitedWriter, TemplateLimits, register_curated_helpers,
+    MissingValue, MissingValueRecorder, SizeLimitedWriter, TemplateLimits, prepare_template,
+    register_curated_helpers,
 };
 use lru::LruCache;
 use minijinja::value::Value;
@@ -62,6 +63,7 @@ pub fn validate_template(
     collection_templates: &[ExportTemplate],
     content_type: ExportContentType,
 ) -> Result<(), ApiError> {
+    validate_template_syntax(template_name, template_source)?;
     let (recursion_limit, fuel) = template_limits_from_config();
     validate_template_with_limits(
         template_name,
@@ -72,6 +74,22 @@ pub fn validate_template(
         recursion_limit,
         fuel,
     )
+}
+
+pub fn validate_template_syntax(
+    template_name: &str,
+    template_source: &str,
+) -> Result<(), ApiError> {
+    let (recursion_limit, fuel) = template_limits_from_config();
+    prepare_template(template_source)
+        .limit_recursion(recursion_limit)
+        .limit_fuel(fuel)
+        .validate()
+        .map_err(|error| {
+            ApiError::BadRequest(format!(
+                "Invalid export template '{template_name}': {error}"
+            ))
+        })
 }
 
 pub fn validate_template_with_limits(
@@ -88,6 +106,37 @@ pub fn validate_template_with_limits(
         template_source,
         collection_id,
         collection_templates,
+        content_type,
+        ExportMissingDataPolicy::Omit,
+        TemplateLimits::new(recursion_limit, fuel),
+    )?;
+
+    env.env
+        .get_template(&env.template_name)
+        .map_err(|error| template_error("Template validation failed", error))?
+        .render(validation_context(content_type))
+        .map_err(|error| template_error("Template validation failed", error))?;
+
+    Ok(())
+}
+
+pub(crate) fn validate_template_sources(
+    template_name: &str,
+    template_source: &str,
+    collection_templates: &[(String, String)],
+    content_type: ExportContentType,
+) -> Result<(), ApiError> {
+    validate_template_syntax(template_name, template_source)?;
+    let (recursion_limit, fuel) = template_limits_from_config();
+    let mut template_map = collection_templates
+        .iter()
+        .cloned()
+        .collect::<HashMap<_, _>>();
+    template_map.insert(template_name.to_string(), template_source.to_string());
+    let env = build_environment_from_map(
+        template_name,
+        template_source,
+        template_map,
         content_type,
         ExportMissingDataPolicy::Omit,
         TemplateLimits::new(recursion_limit, fuel),
@@ -244,13 +293,32 @@ fn build_environment(
     missing_data_policy: ExportMissingDataPolicy,
     limits: TemplateLimits,
 ) -> Result<CachedTemplateEnvironment, ApiError> {
-    let mut env = Environment::new();
-    let template_map = Arc::new(build_collection_template_map(
+    let template_map = build_collection_template_map(
         collection_id,
         template_name,
         template_source,
         collection_templates,
-    ));
+    );
+    build_environment_from_map(
+        template_name,
+        template_source,
+        template_map,
+        content_type,
+        missing_data_policy,
+        limits,
+    )
+}
+
+fn build_environment_from_map(
+    template_name: &str,
+    template_source: &str,
+    template_map: HashMap<String, String>,
+    content_type: ExportContentType,
+    missing_data_policy: ExportMissingDataPolicy,
+    limits: TemplateLimits,
+) -> Result<CachedTemplateEnvironment, ApiError> {
+    let mut env = Environment::new();
+    let template_map = Arc::new(template_map);
 
     env.set_keep_trailing_newline(true);
     env.set_undefined_behavior(undefined_behavior(missing_data_policy));
@@ -430,6 +498,7 @@ mod tests {
     use super::*;
     use crate::models::{ExportScopeKind, ExportTemplateKind};
     use crate::tests::docs_examples::required_labeled_block;
+    use rstest::rstest;
 
     const TEMPLATE_GUIDE: &str = include_str!("../../docs/export_template_guide.md");
 
@@ -511,6 +580,26 @@ mod tests {
                 "query": "name__contains=srv-&sort=name"
             }
         })
+    }
+
+    #[rstest]
+    #[case::same_import(
+        vec![("fragment.txt".to_string(), "fragment".to_string())],
+        true
+    )]
+    #[case::missing(Vec::new(), false)]
+    fn validates_composed_template_sources(
+        #[case] sources: Vec<(String, String)>,
+        #[case] expected_valid: bool,
+    ) {
+        let result = validate_template_sources(
+            "export.txt",
+            "{% include \"fragment.txt\" %}",
+            &sources,
+            ExportContentType::TextPlain,
+        );
+
+        assert_eq!(result.is_ok(), expected_valid);
     }
 
     fn template_guide_block(label: &str) -> String {

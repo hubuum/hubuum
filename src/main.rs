@@ -2,6 +2,7 @@
 
 mod api;
 mod auth;
+mod backups;
 mod config;
 pub mod db;
 mod errors;
@@ -16,6 +17,7 @@ pub mod models;
 mod observability;
 mod pagination;
 pub mod permissions;
+mod restores;
 mod schema;
 mod tasks;
 #[cfg(test)]
@@ -35,6 +37,7 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
+use crate::backups::BackupSettings;
 #[cfg(test)]
 use crate::config::get_config;
 #[cfg(not(test))]
@@ -57,8 +60,9 @@ use crate::middlewares::rate_limit::{
     LoginRateLimitStoreSettings, initialize_login_rate_limit_store,
 };
 use crate::permissions::{AppContext, build_permission_backend};
+use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
 use crate::tasks::{
-    TaskWorkerSettings, ensure_task_worker_running, initialize_task_worker_settings,
+    TaskWorkerSettings, ensure_task_worker_running_with_settings, initialize_task_worker_settings,
 };
 use crate::utilities::is_valid_log_level;
 
@@ -129,6 +133,18 @@ async fn main() -> std::io::Result<()> {
             )
         });
 
+    let backup_settings = BackupSettings::new(
+        config.backup_output_retention_hours,
+        config.backup_max_active_tasks_per_user,
+        config.backup_max_output_bytes,
+    )
+    .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+    let restore_settings = RestoreSettings::new(
+        config.restore_stage_retention_minutes,
+        config.restore_max_upload_bytes,
+    )
+    .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+
     let task_worker_count = if config.runtime_role.runs_background_workers() {
         config.task_workers
     } else {
@@ -167,6 +183,11 @@ async fn main() -> std::io::Result<()> {
     let app_context = AppContext::new(pool.clone(), permission_backend);
     let authorization_backend = app_context.permission_backend().kind();
 
+    // Every process that can serve or originate work must participate in the
+    // restore drain barrier. In particular, API-only replicas need their own
+    // heartbeat even though they do not run task or event workers.
+    ensure_restore_coordinator_running(app_context.db_pool.clone());
+
     let active_event_sinks =
         match db::traits::event_subscription::enabled_event_sink_count(&pool).await {
             Ok(count) => Some(count),
@@ -180,7 +201,7 @@ async fn main() -> std::io::Result<()> {
         };
 
     if !config.runtime_role.serves_http() {
-        start_background_workers(&app_context);
+        start_background_workers(&app_context, &backup_settings);
         info!(
             message = "worker startup",
             version = env!("CARGO_PKG_VERSION"),
@@ -239,10 +260,14 @@ async fn main() -> std::io::Result<()> {
     let metrics_path = config.metrics_path.clone();
     let app_pool = pool.clone();
     let server_app_context = app_context.clone();
+    let background_worker_context = app_context.clone();
+    let app_backup_settings = backup_settings.clone();
+    let app_restore_settings = restore_settings.clone();
 
     let server = HttpServer::new(move || {
         let app = App::new()
             .wrap(from_fn(middlewares::actor_context))
+            .wrap(from_fn(middlewares::reject_during_maintenance))
             // Actix runs the last registered middleware first. Reject disallowed
             // clients before bearer-token resolution can touch the database.
             .wrap(middlewares::ClientAllowlistMiddleware::new_with_trust(
@@ -254,6 +279,8 @@ async fn main() -> std::io::Result<()> {
             ))
             .app_data(Data::new(proxy_trust.clone()))
             .app_data(Data::new(running_config.clone()))
+            .app_data(Data::new(app_backup_settings.clone()))
+            .app_data(Data::new(app_restore_settings.clone()))
             .app_data(Data::new(app_pool.clone()))
             .app_data(Data::new(server_app_context.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
@@ -306,7 +333,7 @@ async fn main() -> std::io::Result<()> {
     };
 
     if config.runtime_role.runs_background_workers() {
-        start_background_workers(&app_context);
+        start_background_workers(&background_worker_context, &backup_settings);
     }
 
     info!(
@@ -351,8 +378,8 @@ async fn main() -> std::io::Result<()> {
     result
 }
 
-fn start_background_workers(context: &AppContext) {
-    ensure_task_worker_running(context.clone());
+fn start_background_workers(context: &AppContext, backup_settings: &BackupSettings) {
+    ensure_task_worker_running_with_settings(context.clone(), backup_settings.clone());
     ensure_event_fanout_worker_running(context.db_pool.clone());
     ensure_event_delivery_worker_running(context.db_pool.clone());
     ensure_event_retention_worker_running(context.db_pool.clone());

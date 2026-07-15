@@ -47,6 +47,17 @@ impl<T> ApiResponse<T> {
         }
     }
 
+    pub fn new_no_store(data: T, status: StatusCode) -> Self {
+        Self::Json {
+            data,
+            status,
+            headers: Some(HashMap::from([(
+                header::CACHE_CONTROL.to_string(),
+                "no-store".to_string(),
+            )])),
+        }
+    }
+
     pub fn ok(data: T) -> Self {
         Self::new(data, StatusCode::OK)
     }

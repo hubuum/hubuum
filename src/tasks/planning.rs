@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Instant;
 
 use chrono::Utc;
@@ -17,20 +18,206 @@ use super::types::{
     ClassResolution, CollectionResolution, FailureKind, ObjectResolution, PlannedExecution,
     PlannedItem, PlanningFailure, PlanningOutcome, PlanningState,
 };
+use crate::db::prelude::AsyncConnection;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::task_import::{
     lookup_class_by_collection_and_name, lookup_direct_class_relation, lookup_group_by_name,
     lookup_object_by_class_and_name, lookup_object_relation,
 };
 use crate::db::{DbPool, with_connection};
+use crate::errors::ApiError;
 use crate::models::{
     Collection, CollectionID, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
     ImportCollectionInput, ImportCollectionPermissionInput, ImportCollisionPolicy, ImportMode,
-    ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy, ImportRequest,
-    Permissions,
+    ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
+    ImportRequest, Permissions,
 };
 use crate::permissions::PrincipalRef;
 use crate::traits::BackendContext;
+
+fn extended_graph_items(request: &ImportRequest) -> usize {
+    request.graph.identity_scopes.len()
+        + request.graph.groups.len()
+        + request.graph.principals.len()
+        + request.graph.group_memberships.len()
+        + request.graph.export_templates.len()
+        + request.graph.remote_targets.len()
+        + request.graph.event_sinks.len()
+        + request.graph.event_subscriptions.len()
+}
+
+fn duplicate_ref<'a>(references: impl Iterator<Item = Option<&'a str>>) -> Option<String> {
+    let mut seen = HashSet::new();
+    references
+        .flatten()
+        .find(|reference| !seen.insert((*reference).to_string()))
+        .map(str::to_string)
+}
+
+fn duplicate_extended_ref(request: &ImportRequest) -> Option<(&'static str, String)> {
+    [
+        (
+            "identity_scope",
+            duplicate_ref(
+                request
+                    .graph
+                    .identity_scopes
+                    .iter()
+                    .map(|input| input.ref_.as_deref()),
+            ),
+        ),
+        (
+            "group",
+            duplicate_ref(
+                request
+                    .graph
+                    .groups
+                    .iter()
+                    .map(|input| input.ref_.as_deref()),
+            ),
+        ),
+        (
+            "principal",
+            duplicate_ref(
+                request
+                    .graph
+                    .principals
+                    .iter()
+                    .map(|input| input.ref_.as_deref()),
+            ),
+        ),
+        (
+            "event_sink",
+            duplicate_ref(
+                request
+                    .graph
+                    .event_sinks
+                    .iter()
+                    .map(|input| input.ref_.as_deref()),
+            ),
+        ),
+    ]
+    .into_iter()
+    .find_map(|(kind, reference)| reference.map(|reference| (kind, reference)))
+}
+
+fn plan_system_item(
+    entity_kind: &str,
+    reference: Option<String>,
+    identifier: String,
+    execution: PlannedExecution,
+) -> PlannedItem {
+    PlannedItem {
+        result: planned_result(entity_kind, "upsert", reference, Some(identifier)),
+        execution: Some(execution),
+    }
+}
+
+const DRY_RUN_ROLLBACK: &str = "hubuum import dry-run rollback";
+
+fn preflight_failure_kind(error: &ApiError) -> FailureKind {
+    match error {
+        ApiError::Forbidden(_) | ApiError::Unauthorized(_) => FailureKind::Permission,
+        ApiError::Conflict(_) => FailureKind::Collision,
+        ApiError::NotFound(_) | ApiError::Gone(_) => FailureKind::Resolution,
+        ApiError::BadRequest(_)
+        | ApiError::ValidationError(_)
+        | ApiError::NotAcceptable(_)
+        | ApiError::PayloadTooLarge(_)
+        | ApiError::OperatorMismatch(_)
+        | ApiError::InvalidIntegerRange(_) => FailureKind::Validation,
+        ApiError::InternalServerError(_)
+        | ApiError::DatabaseError(_)
+        | ApiError::NotImplemented(_)
+        | ApiError::PermissionBackendUnavailable(_)
+        | ApiError::TooManyRequests(_)
+        | ApiError::ServiceUnavailable(_)
+        | ApiError::DbConnectionError(_)
+        | ApiError::HashError(_) => FailureKind::Runtime,
+    }
+}
+
+async fn preflight_dry_run(
+    pool: &DbPool,
+    mode: &ImportMode,
+    planned_items: Vec<PlannedItem>,
+) -> Result<PlanningOutcome, ApiError> {
+    let atomicity = mode.atomicity.unwrap_or(ImportAtomicity::Strict);
+    let permission_policy = mode
+        .permission_policy
+        .unwrap_or(ImportPermissionPolicy::Abort);
+    let collision_policy = mode
+        .collision_policy
+        .unwrap_or(ImportCollisionPolicy::Abort);
+
+    with_connection(
+        pool,
+        async move |conn| -> Result<PlanningOutcome, ApiError> {
+            let mut valid_items = Vec::with_capacity(planned_items.len());
+            let mut failures = Vec::new();
+            let mut aborted = false;
+            let mut runtime = super::types::RuntimeState::for_planned_items(&planned_items);
+
+            let transaction = conn
+                .transaction::<(), ApiError, _>(async |conn| {
+                    for item in planned_items {
+                        let result = match &item.execution {
+                            Some(execution) => {
+                                conn.transaction::<(), ApiError, _>(async |conn| {
+                                    super::execution::execute_planned_item(
+                                        conn,
+                                        &mut runtime,
+                                        execution,
+                                    )
+                                    .await
+                                })
+                                .await
+                            }
+                            None => Ok(()),
+                        };
+                        match result {
+                            Ok(()) => valid_items.push(item),
+                            Err(error) => {
+                                let kind = preflight_failure_kind(&error);
+                                failures.push(PlanningFailure {
+                                    kind,
+                                    item: item.result,
+                                    message: sanitize_error_for_storage(&error),
+                                });
+                                if should_abort_import(
+                                    atomicity,
+                                    permission_policy,
+                                    collision_policy,
+                                    kind,
+                                ) {
+                                    aborted = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    Err(ApiError::InternalServerError(DRY_RUN_ROLLBACK.to_string()))
+                })
+                .await;
+
+            match transaction {
+                Err(ApiError::InternalServerError(message)) if message == DRY_RUN_ROLLBACK => {
+                    Ok(PlanningOutcome {
+                        planned_items: valid_items,
+                        failures,
+                        aborted,
+                    })
+                }
+                Err(error) => Err(error),
+                Ok(()) => Err(ApiError::InternalServerError(
+                    "Import dry run unexpectedly committed".to_string(),
+                )),
+            }
+        },
+    )
+    .await
+}
 
 async fn is_import_admin<C>(
     backend: &C,
@@ -185,6 +372,143 @@ where
     let mut planned_items = Vec::with_capacity(request.total_items() as usize);
     let mut failures = Vec::new();
     let mut aborted = false;
+    let overwrite = matches!(
+        mode.collision_policy,
+        Some(ImportCollisionPolicy::Overwrite)
+    );
+
+    if extended_graph_items(request) > 0 {
+        let authorized = scopes.is_none()
+            && is_import_admin(backend, user, &mut state)
+                .await
+                .unwrap_or(false);
+        if !authorized {
+            failures.push(PlanningFailure {
+                kind: FailureKind::Permission,
+                item: planned_result("system", "import", None, None),
+                message: "Identity and integration imports require an unscoped administrator token"
+                    .to_string(),
+            });
+            return PlanningOutcome {
+                planned_items,
+                failures,
+                aborted: true,
+            };
+        }
+
+        if let Some((kind, reference)) = duplicate_extended_ref(request) {
+            failures.push(PlanningFailure {
+                kind: FailureKind::Validation,
+                item: planned_result(kind, "create", Some(reference.clone()), None),
+                message: format!("Duplicate {kind} ref '{reference}'"),
+            });
+            return PlanningOutcome {
+                planned_items,
+                failures,
+                aborted: true,
+            };
+        }
+
+        for input in &request.graph.identity_scopes {
+            if let Some(reference) = &input.ref_ {
+                state
+                    .planned_identity_scope_names_by_ref
+                    .insert(reference.clone(), input.name.clone());
+            }
+            planned_items.push(plan_system_item(
+                "identity_scope",
+                input.ref_.clone(),
+                input.name.clone(),
+                PlannedExecution::UpsertIdentityScope {
+                    input: input.clone(),
+                    overwrite,
+                },
+            ));
+        }
+        for input in &request.graph.groups {
+            let scope = input
+                .identity_scope_key
+                .as_ref()
+                .map(|key| key.name.clone())
+                .or_else(|| {
+                    input.identity_scope_ref.as_ref().and_then(|reference| {
+                        state
+                            .planned_identity_scope_names_by_ref
+                            .get(reference)
+                            .cloned()
+                    })
+                });
+            if let Some(scope) = &scope {
+                state
+                    .planned_group_keys
+                    .insert((scope.clone(), input.groupname.clone()));
+            }
+            let identifier = scope
+                .as_deref()
+                .map(|scope| format!("{scope}/{}", input.groupname))
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}/{}",
+                        input.identity_scope_ref.as_deref().unwrap_or("unresolved"),
+                        input.groupname
+                    )
+                });
+            planned_items.push(plan_system_item(
+                "group",
+                input.ref_.clone(),
+                identifier,
+                PlannedExecution::UpsertGroup {
+                    input: input.clone(),
+                    overwrite,
+                },
+            ));
+        }
+        for input in request
+            .graph
+            .principals
+            .iter()
+            .filter(|input| matches!(input.subtype, ImportPrincipalSubtype::Human { .. }))
+        {
+            planned_items.push(plan_system_item(
+                "principal",
+                input.ref_.clone(),
+                input.name.clone(),
+                PlannedExecution::UpsertPrincipal {
+                    input: input.clone(),
+                    overwrite,
+                },
+            ));
+        }
+        for input in
+            request.graph.principals.iter().filter(|input| {
+                matches!(input.subtype, ImportPrincipalSubtype::ServiceAccount { .. })
+            })
+        {
+            planned_items.push(plan_system_item(
+                "principal",
+                input.ref_.clone(),
+                input.name.clone(),
+                PlannedExecution::UpsertPrincipal {
+                    input: input.clone(),
+                    overwrite,
+                },
+            ));
+        }
+        for input in &request.graph.group_memberships {
+            planned_items.push(plan_system_item(
+                "group_membership",
+                input.ref_.clone(),
+                input
+                    .ref_
+                    .clone()
+                    .unwrap_or_else(|| "membership".to_string()),
+                PlannedExecution::UpsertGroupMembership {
+                    input: input.clone(),
+                    overwrite,
+                },
+            ));
+        }
+    }
 
     macro_rules! push_or_stop {
         ($expr:expr) => {{
@@ -412,6 +736,73 @@ where
         aborted = aborted,
         elapsed = ?collection_permission_start.elapsed()
     );
+
+    for input in &request.graph.export_templates {
+        planned_items.push(plan_system_item(
+            "export_template",
+            input.ref_.clone(),
+            input.name.clone(),
+            PlannedExecution::UpsertExportTemplate {
+                input: input.clone(),
+                overwrite,
+            },
+        ));
+    }
+    for input in &request.graph.remote_targets {
+        planned_items.push(plan_system_item(
+            "remote_target",
+            input.ref_.clone(),
+            input.name.clone(),
+            PlannedExecution::UpsertRemoteTarget {
+                input: input.clone(),
+                overwrite,
+            },
+        ));
+    }
+    for input in &request.graph.event_sinks {
+        planned_items.push(plan_system_item(
+            "event_sink",
+            input.ref_.clone(),
+            input.name.clone(),
+            PlannedExecution::UpsertEventSink {
+                input: input.clone(),
+                overwrite,
+            },
+        ));
+    }
+    for input in &request.graph.event_subscriptions {
+        planned_items.push(plan_system_item(
+            "event_subscription",
+            input.ref_.clone(),
+            input.name.clone(),
+            PlannedExecution::UpsertEventSubscription {
+                input: input.clone(),
+                overwrite,
+            },
+        ));
+    }
+
+    if request.dry_run() {
+        match preflight_dry_run(pool, &mode, planned_items).await {
+            Ok(mut preflight) => {
+                preflight.aborted |= aborted;
+                preflight.failures.splice(0..0, failures);
+                return preflight;
+            }
+            Err(error) => {
+                failures.push(PlanningFailure {
+                    kind: FailureKind::Runtime,
+                    item: planned_result("system", "dry_run", None, None),
+                    message: sanitize_error_for_storage(&error),
+                });
+                return PlanningOutcome {
+                    planned_items: Vec::new(),
+                    failures,
+                    aborted: true,
+                };
+            }
+        }
+    }
 
     PlanningOutcome {
         planned_items,
@@ -1343,6 +1734,26 @@ where
             ),
             message: sanitize_error_for_storage(&err),
         })?
+        .or_else(|| {
+            state
+                .planned_group_keys
+                .contains(&(
+                    identity_scope.to_string(),
+                    input.group_key.groupname.clone(),
+                ))
+                .then(|| crate::models::Group {
+                    id: state.next_temp_id,
+                    groupname: input.group_key.groupname.clone(),
+                    description: String::new(),
+                    created_at: Utc::now().naive_utc(),
+                    updated_at: Utc::now().naive_utc(),
+                    identity_scope_id: state.next_temp_id,
+                    managed_by: "local".to_string(),
+                    external_key: None,
+                    last_sync_attempted_at: None,
+                    last_sync_success_at: None,
+                })
+        })
         .ok_or_else(|| PlanningFailure {
             kind: FailureKind::Resolution,
             item: planned_result(

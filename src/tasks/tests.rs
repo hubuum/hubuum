@@ -1,6 +1,8 @@
 use chrono::NaiveDate;
 use diesel::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
+use rstest::rstest;
+use std::sync::Arc;
 
 use super::execution::{execute_import_best_effort, execute_import_strict, execute_planned_item};
 use super::helpers::{
@@ -19,23 +21,28 @@ use super::types::{
 };
 use super::worker::{background_worker_action, mark_claimed_task_failed, process_one_task};
 use crate::db::traits::task::{TaskBackend, insert_import_results};
-use crate::db::traits::task_import::{create_class_db, create_object_db};
+use crate::db::traits::task_import::{
+    create_class_db, create_object_db, upsert_export_template_db, upsert_group_membership_db,
+    upsert_identity_scope_db,
+};
 use crate::db::with_connection;
 use crate::errors::ApiError;
 use crate::models::{
-    CURRENT_IMPORT_VERSION, ClassKey, CollectionID, CollectionKey, ImportAtomicity,
-    ImportClassInput, ImportCollectionInput, ImportCollisionPolicy, ImportGraph, ImportMode,
-    ImportObjectInput, ImportPermissionPolicy, ImportRequest, NewCollectionWithAssignee,
-    NewImportTaskResultRecord, NewTaskRecord, ObjectKey, TaskKind, TaskStatus,
+    CURRENT_IMPORT_VERSION, ClassKey, CollectionID, CollectionKey, ExportContentType,
+    ExportScopeKind, ExportTemplateKind, ImportAtomicity, ImportClassInput, ImportCollectionInput,
+    ImportCollisionPolicy, ImportExportTemplateInput, ImportGraph, ImportGroupMembershipInput,
+    ImportIdentityScopeInput, ImportMembershipSourceInput, ImportMode, ImportObjectInput,
+    ImportPermissionPolicy, ImportRemoteTargetInput, ImportRequest, NewCollectionWithAssignee,
+    NewImportTaskResultRecord, NewTaskRecord, ObjectKey, RemoteAuthConfig, RemoteHttpMethod,
+    RemoteTargetSubjectType, RestoreTimestamps, TaskKind, TaskStatus,
 };
 use crate::permissions::test_support::MockTreetopBackend;
 use crate::permissions::{AppContext, PermissionBackend};
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
 use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
-use crate::tests::TestContext;
+use crate::tests::{TestContext, create_test_group};
 use crate::traits::CanSave;
-use std::sync::Arc;
 
 #[tokio::test]
 async fn import_planning_uses_the_task_execution_permission_backend() {
@@ -69,6 +76,430 @@ async fn import_planning_uses_the_task_execution_permission_backend() {
     assert!(planning.aborted);
     assert_eq!(planning.failures.len(), 1);
     assert!(matches!(planning.failures[0].kind, FailureKind::Permission));
+}
+
+fn extended_import_request(name: String) -> ImportRequest {
+    ImportRequest {
+        version: crate::models::CURRENT_IMPORT_VERSION,
+        dry_run: Some(false),
+        mode: None,
+        graph: ImportGraph {
+            identity_scopes: vec![ImportIdentityScopeInput {
+                ref_: Some("identity:backend-test".to_string()),
+                name,
+                provider_kind: "local".to_string(),
+                timestamps: None,
+            }],
+            ..ImportGraph::default()
+        },
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ClassBoundImport {
+    ExportTemplate,
+    RemoteTarget,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TemplateDependency {
+    Existing,
+    SameImport,
+    Missing,
+}
+
+#[tokio::test]
+async fn test_extended_import_uses_backend_denial_for_sql_administrator() {
+    let test = TestContext::new().await;
+    let context = AppContext::new(
+        test.pool.get_ref().clone(),
+        Arc::new(MockTreetopBackend::new()),
+    );
+    let request = extended_import_request(test.scoped_name("backend_denied_import"));
+
+    let planning = plan_import(&context, &test.admin_user, None, &request).await;
+
+    assert!(planning.aborted);
+    assert!(matches!(
+        planning.failures.as_slice(),
+        [failure] if matches!(failure.kind, FailureKind::Permission)
+    ));
+}
+
+#[tokio::test]
+async fn test_extended_import_uses_backend_grant_for_non_sql_administrator() {
+    let test = TestContext::new().await;
+    let policy_group = create_test_group(&test.pool).await;
+    policy_group
+        .add_member_without_events(&test.pool, &test.normal_user)
+        .await
+        .unwrap();
+    let backend = MockTreetopBackend::new();
+    backend.add_admin_rule(policy_group.id);
+    let context = AppContext::new(test.pool.get_ref().clone(), Arc::new(backend));
+    let request = extended_import_request(test.scoped_name("backend_allowed_import"));
+
+    let planning = plan_import(&context, &test.normal_user, None, &request).await;
+
+    assert!(!planning.aborted);
+    assert!(planning.failures.is_empty());
+    assert_eq!(planning.planned_items.len(), 1);
+}
+
+#[tokio::test]
+async fn test_identity_scope_overwrite_preserves_imported_timestamps() {
+    let context = (TestContext::new()).await;
+    let name = context.scoped_name("identity_scope_timestamp_overwrite");
+    let initial = RestoreTimestamps {
+        created_at: NaiveDate::from_ymd_opt(2020, 1, 2)
+            .unwrap()
+            .and_hms_opt(3, 4, 5)
+            .unwrap(),
+        updated_at: NaiveDate::from_ymd_opt(2020, 2, 3)
+            .unwrap()
+            .and_hms_opt(4, 5, 6)
+            .unwrap(),
+    };
+    let restored = RestoreTimestamps {
+        created_at: NaiveDate::from_ymd_opt(2019, 4, 5)
+            .unwrap()
+            .and_hms_opt(6, 7, 8)
+            .unwrap(),
+        updated_at: NaiveDate::from_ymd_opt(2021, 6, 7)
+            .unwrap()
+            .and_hms_opt(8, 9, 10)
+            .unwrap(),
+    };
+
+    let id = with_connection(&context.pool, async |conn| {
+        upsert_identity_scope_db(
+            conn,
+            &ImportIdentityScopeInput {
+                ref_: None,
+                name: name.clone(),
+                provider_kind: "local".to_string(),
+                timestamps: Some(initial),
+            },
+            false,
+        )
+        .await?;
+        upsert_identity_scope_db(
+            conn,
+            &ImportIdentityScopeInput {
+                ref_: None,
+                name: name.clone(),
+                provider_kind: "oidc".to_string(),
+                timestamps: Some(restored.clone()),
+            },
+            true,
+        )
+        .await
+    })
+    .await
+    .unwrap();
+
+    let row = with_connection(&context.pool, async |conn| {
+        use crate::schema::identity_scopes::dsl::{id as scope_id, identity_scopes};
+        identity_scopes
+            .filter(scope_id.eq(id))
+            .first::<crate::models::IdentityScope>(conn)
+            .await
+    })
+    .await
+    .unwrap();
+    assert_eq!(row.created_at, restored.created_at);
+    assert_eq!(row.updated_at, restored.updated_at);
+
+    with_connection(&context.pool, async |conn| {
+        use crate::schema::identity_scopes::dsl::{id as scope_id, identity_scopes};
+        diesel::delete(identity_scopes.filter(scope_id.eq(id)))
+            .execute(conn)
+            .await
+    })
+    .await
+    .unwrap();
+}
+
+#[rstest]
+#[case::export_template(ClassBoundImport::ExportTemplate)]
+#[case::remote_target(ClassBoundImport::RemoteTarget)]
+#[tokio::test]
+async fn imported_class_binding_must_match_target_collection(#[case] kind: ClassBoundImport) {
+    let context = TestContext::new().await;
+    let target = context
+        .collection_fixture("import_class_scope_target")
+        .await;
+    let class_owner = context.collection_fixture("import_class_scope_owner").await;
+    let class = with_connection(&context.pool, async |conn| {
+        create_class_db(
+            conn,
+            &ImportClassInput {
+                ref_: None,
+                name: context.scoped_name("import_class_scope_class"),
+                description: "Class in another collection".to_string(),
+                json_schema: None,
+                validate_schema: Some(false),
+                collection_ref: None,
+                collection_key: Some(CollectionKey {
+                    name: class_owner.collection.name.clone(),
+                    path: None,
+                }),
+            },
+            class_owner.collection.id,
+        )
+        .await
+    })
+    .await
+    .unwrap();
+    let collection_key = Some(CollectionKey {
+        name: target.collection.name.clone(),
+        path: None,
+    });
+    let class_key = Some(ClassKey {
+        name: class.name,
+        collection_ref: None,
+        collection_key: Some(CollectionKey {
+            name: class_owner.collection.name.clone(),
+            path: None,
+        }),
+    });
+    let execution = match kind {
+        ClassBoundImport::ExportTemplate => PlannedExecution::UpsertExportTemplate {
+            input: ImportExportTemplateInput {
+                ref_: None,
+                collection_ref: None,
+                collection_key,
+                class_ref: None,
+                class_key,
+                name: context.scoped_name("cross_collection_export_template"),
+                description: "Invalid class binding".to_string(),
+                content_type: ExportContentType::TextPlain,
+                template: "{{ items|length }}".to_string(),
+                kind: ExportTemplateKind::Export,
+                scope_kind: Some(ExportScopeKind::ObjectsInClass),
+                default_query: None,
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: None,
+                default_limits: None,
+                timestamps: None,
+            },
+            overwrite: false,
+        },
+        ClassBoundImport::RemoteTarget => PlannedExecution::UpsertRemoteTarget {
+            input: ImportRemoteTargetInput {
+                ref_: None,
+                collection_ref: None,
+                collection_key,
+                class_ref: None,
+                class_key,
+                name: context.scoped_name("cross_collection_remote_target"),
+                description: "Invalid class binding".to_string(),
+                method: RemoteHttpMethod::Get,
+                url_template: "https://example.test/{{ subject.id }}".to_string(),
+                headers_template: serde_json::json!({}),
+                body_template: None,
+                auth_config: RemoteAuthConfig::None,
+                allowed_subject_types: vec![RemoteTargetSubjectType::Object],
+                timeout_ms: 1_000,
+                enabled: true,
+                timestamps: None,
+            },
+            overwrite: false,
+        },
+    };
+
+    let result = with_connection(&context.pool, async |conn| {
+        execute_planned_item(conn, &mut RuntimeState::default(), &execution).await
+    })
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(ApiError::BadRequest(message)) if message.contains("not target collection")
+    ));
+}
+
+#[rstest]
+#[case::existing(TemplateDependency::Existing, true)]
+#[case::same_import(TemplateDependency::SameImport, true)]
+#[case::missing(TemplateDependency::Missing, false)]
+#[tokio::test]
+async fn imported_templates_use_effective_collection_loader(
+    #[case] dependency: TemplateDependency,
+    #[case] expected_valid: bool,
+) {
+    let context = TestContext::new().await;
+    let fixture = context
+        .collection_fixture("import_template_composition")
+        .await;
+    let fragment_name = context.scoped_name("fragment.txt");
+    let fragment = ImportExportTemplateInput {
+        ref_: Some("template:fragment".to_string()),
+        collection_ref: None,
+        collection_key: Some(CollectionKey {
+            name: fixture.collection.name.clone(),
+            path: None,
+        }),
+        class_ref: None,
+        class_key: None,
+        name: fragment_name.clone(),
+        description: "Reusable fragment".to_string(),
+        content_type: ExportContentType::TextPlain,
+        template: "fragment".to_string(),
+        kind: ExportTemplateKind::Fragment,
+        scope_kind: None,
+        default_query: None,
+        include: None,
+        relation_context: None,
+        default_missing_data_policy: None,
+        default_limits: None,
+        timestamps: None,
+    };
+    let export = ImportExportTemplateInput {
+        ref_: Some("template:export".to_string()),
+        name: context.scoped_name("composed_export.txt"),
+        description: "Composed export".to_string(),
+        template: format!("{{% include \"{fragment_name}\" %}}"),
+        kind: ExportTemplateKind::Export,
+        scope_kind: Some(ExportScopeKind::Collections),
+        ..fragment.clone()
+    };
+
+    let result = with_connection(&context.pool, async |conn| {
+        if matches!(dependency, TemplateDependency::Existing) {
+            upsert_export_template_db(conn, &fragment, fixture.collection.id, None, false).await?;
+        }
+        let import_export_templates = match dependency {
+            TemplateDependency::SameImport => vec![export.clone(), fragment],
+            TemplateDependency::Existing | TemplateDependency::Missing => vec![export.clone()],
+        };
+        let mut runtime = RuntimeState {
+            import_export_templates,
+            ..RuntimeState::default()
+        };
+        execute_planned_item(
+            conn,
+            &mut runtime,
+            &PlannedExecution::UpsertExportTemplate {
+                input: export,
+                overwrite: false,
+            },
+        )
+        .await
+    })
+    .await;
+
+    assert_eq!(result.is_ok(), expected_valid);
+}
+
+#[rstest]
+#[case::abort(false, "conflict")]
+#[case::overwrite(true, "updated")]
+#[tokio::test]
+async fn membership_import_honors_collision_policy(
+    #[case] overwrite: bool,
+    #[case] expected_outcome: &str,
+) {
+    let context = TestContext::new().await;
+    let group = create_test_group(&context.pool).await;
+    let initial = RestoreTimestamps {
+        created_at: NaiveDate::from_ymd_opt(2020, 1, 2)
+            .unwrap()
+            .and_hms_opt(3, 4, 5)
+            .unwrap(),
+        updated_at: NaiveDate::from_ymd_opt(2020, 2, 3)
+            .unwrap()
+            .and_hms_opt(4, 5, 6)
+            .unwrap(),
+    };
+    let restored = RestoreTimestamps {
+        created_at: NaiveDate::from_ymd_opt(2019, 4, 5)
+            .unwrap()
+            .and_hms_opt(6, 7, 8)
+            .unwrap(),
+        updated_at: NaiveDate::from_ymd_opt(2021, 6, 7)
+            .unwrap()
+            .and_hms_opt(8, 9, 10)
+            .unwrap(),
+    };
+    let membership = |timestamps: RestoreTimestamps| ImportGroupMembershipInput {
+        ref_: None,
+        principal_ref: None,
+        principal_key: None,
+        group_ref: None,
+        group_key: None,
+        sources: vec![ImportMembershipSourceInput {
+            source: "oidc".to_string(),
+            source_scope_ref: None,
+            source_scope_key: None,
+            source_key: "operators".to_string(),
+            timestamps: Some(timestamps.clone()),
+        }],
+        timestamps: Some(timestamps),
+    };
+
+    let result = with_connection(&context.pool, async |conn| {
+        upsert_group_membership_db(
+            conn,
+            &membership(initial.clone()),
+            context.admin_user.id,
+            group.id,
+            &[group.identity_scope_id],
+            false,
+        )
+        .await?;
+        let collision = upsert_group_membership_db(
+            conn,
+            &membership(restored.clone()),
+            context.admin_user.id,
+            group.id,
+            &[group.identity_scope_id],
+            overwrite,
+        )
+        .await;
+        use crate::schema::group_membership_sources::dsl as s;
+        use crate::schema::group_memberships::dsl as m;
+        let stored_membership = m::group_memberships
+            .filter(m::principal_id.eq(context.admin_user.id))
+            .filter(m::group_id.eq(group.id))
+            .select((m::created_at, m::updated_at))
+            .first::<(chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+            .await?;
+        let stored_source = s::group_membership_sources
+            .filter(s::principal_id.eq(context.admin_user.id))
+            .filter(s::group_id.eq(group.id))
+            .filter(s::source.eq("oidc"))
+            .filter(s::source_scope_id.eq(group.identity_scope_id))
+            .filter(s::source_key.eq("operators"))
+            .select((s::created_at, s::updated_at))
+            .first::<(chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+            .await?;
+        Ok::<_, ApiError>((collision, stored_membership, stored_source))
+    })
+    .await
+    .unwrap();
+    let actual_outcome = match result.0 {
+        Ok(()) => "updated",
+        Err(ApiError::Conflict(_)) => "conflict",
+        Err(error) => panic!("unexpected membership collision result: {error}"),
+    };
+    let expected_timestamps = if overwrite { restored } else { initial };
+
+    assert_eq!(
+        (actual_outcome, result.1, result.2),
+        (
+            expected_outcome,
+            (
+                expected_timestamps.created_at,
+                expected_timestamps.updated_at
+            ),
+            (
+                expected_timestamps.created_at,
+                expected_timestamps.updated_at
+            )
+        )
+    );
 }
 
 #[tokio::test]

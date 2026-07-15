@@ -143,6 +143,7 @@ pub enum EntityType {
     EventSink,
     EventSubscription,
     ExternalIdentitySync,
+    Restore,
 }
 
 impl EntityType {
@@ -165,6 +166,7 @@ impl EntityType {
             EntityType::EventSink => "event_sink",
             EntityType::EventSubscription => "event_subscription",
             EntityType::ExternalIdentitySync => "external_identity_sync",
+            EntityType::Restore => "restore",
         }
     }
 
@@ -187,6 +189,7 @@ impl EntityType {
             "event_sink" => Ok(EntityType::EventSink),
             "event_subscription" => Ok(EntityType::EventSubscription),
             "external_identity_sync" => Ok(EntityType::ExternalIdentitySync),
+            "restore" => Ok(EntityType::Restore),
             other => Err(EventCatalogError::UnknownEntityType(other.to_string())),
         }
     }
@@ -283,6 +286,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::ServiceAccount => &[A::Created, A::Updated, A::Disabled, A::Deleted],
         E::EventSink | E::EventSubscription => &[A::Created, A::Updated, A::Deleted],
         E::ExternalIdentitySync => &[A::Succeeded, A::Failed],
+        E::Restore => &[A::Succeeded],
         E::RemoteTarget => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ClassRelation | E::ObjectRelation => &[A::Created, A::Deleted],
         E::UserGroup => &[A::Added, A::Removed],
@@ -663,6 +667,8 @@ mod tests {
             EntityType::ServiceAccount,
             EntityType::EventSink,
             EntityType::EventSubscription,
+            EntityType::ExternalIdentitySync,
+            EntityType::Restore,
         ];
         for t in all {
             assert_eq!(EntityType::from_db(t.as_str()).unwrap(), t);
@@ -742,6 +748,18 @@ mod tests {
         assert!(is_valid_pair(EntityType::Task, Action::Cleanup));
         assert!(!is_valid_pair(EntityType::Task, Action::Created));
         assert!(!is_valid_pair(EntityType::Task, Action::Updated));
+    }
+
+    #[test]
+    fn restore_records_success_only() {
+        assert_eq!(
+            (
+                is_valid_pair(EntityType::Restore, Action::Succeeded),
+                is_valid_pair(EntityType::Restore, Action::Failed),
+                is_valid_pair(EntityType::Restore, Action::Created),
+            ),
+            (true, false, false)
+        );
     }
 
     #[test]

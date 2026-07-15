@@ -2,8 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use crate::models::{
     Collection, HubuumClass, HubuumObject, ImportClassInput, ImportClassRelationInput,
-    ImportCollectionInput, ImportCollectionPermissionInput, ImportObjectInput,
-    ImportObjectRelationInput, NewImportTaskResultRecord, Permissions, TaskStatus,
+    ImportCollectionInput, ImportCollectionPermissionInput, ImportEventSinkInput,
+    ImportEventSubscriptionInput, ImportExportTemplateInput, ImportGroupInput,
+    ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
+    ImportObjectRelationInput, ImportPrincipalInput, ImportRemoteTargetInput,
+    NewImportTaskResultRecord, Permissions, TaskStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -40,10 +43,12 @@ pub(super) struct PlanningState {
     pub(super) is_admin: Option<bool>,
     /// Submitting token's scope boundary (`None` = unscoped). Threaded into the
     /// per-collection permission checks so a scoped import cannot exceed it.
-    pub(super) scopes: Option<Vec<crate::models::Permissions>>,
+    pub(super) scopes: Option<Vec<Permissions>>,
     pub(super) planned_collection_keys: HashSet<(Option<i32>, String)>,
     pub(super) planned_class_keys: HashSet<(i32, String)>,
     pub(super) planned_object_keys: HashSet<(i32, String)>,
+    pub(super) planned_group_keys: HashSet<(String, String)>,
+    pub(super) planned_identity_scope_names_by_ref: HashMap<String, String>,
     pub(super) missing_collection_names: HashSet<String>,
     pub(super) missing_class_keys: HashSet<(i32, String)>,
     pub(super) missing_object_keys: HashSet<(i32, String)>,
@@ -79,9 +84,14 @@ impl PlanningState {
 
 #[derive(Default)]
 pub(super) struct RuntimeState {
+    pub(super) identity_scopes_by_ref: HashMap<String, i32>,
+    pub(super) groups_by_ref: HashMap<String, i32>,
+    pub(super) principals_by_ref: HashMap<String, i32>,
     pub(super) collections_by_ref: HashMap<String, Collection>,
     pub(super) classes_by_ref: HashMap<String, HubuumClass>,
     pub(super) objects_by_ref: HashMap<String, HubuumObject>,
+    pub(super) event_sinks_by_ref: HashMap<String, i32>,
+    pub(super) import_export_templates: Vec<ImportExportTemplateInput>,
 }
 
 pub(super) struct TerminalTaskUpdate {
@@ -101,6 +111,22 @@ pub(super) enum WorkerLoopAction {
 
 #[derive(Clone, Debug)]
 pub(super) enum PlannedExecution {
+    UpsertIdentityScope {
+        input: ImportIdentityScopeInput,
+        overwrite: bool,
+    },
+    UpsertGroup {
+        input: ImportGroupInput,
+        overwrite: bool,
+    },
+    UpsertPrincipal {
+        input: ImportPrincipalInput,
+        overwrite: bool,
+    },
+    UpsertGroupMembership {
+        input: ImportGroupMembershipInput,
+        overwrite: bool,
+    },
     CreateCollection(ImportCollectionInput),
     UpdateCollection {
         collection_id: i32,
@@ -119,6 +145,22 @@ pub(super) enum PlannedExecution {
     CreateClassRelation(ImportClassRelationInput),
     CreateObjectRelation(ImportObjectRelationInput),
     ApplyCollectionPermissions(ImportCollectionPermissionInput),
+    UpsertExportTemplate {
+        input: ImportExportTemplateInput,
+        overwrite: bool,
+    },
+    UpsertRemoteTarget {
+        input: ImportRemoteTargetInput,
+        overwrite: bool,
+    },
+    UpsertEventSink {
+        input: ImportEventSinkInput,
+        overwrite: bool,
+    },
+    UpsertEventSubscription {
+        input: ImportEventSubscriptionInput,
+        overwrite: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +176,23 @@ pub(super) struct PlannedTaskResult {
 pub(super) struct PlannedItem {
     pub(super) result: PlannedTaskResult,
     pub(super) execution: Option<PlannedExecution>,
+}
+
+impl RuntimeState {
+    pub(super) fn for_planned_items(planned_items: &[PlannedItem]) -> Self {
+        let import_export_templates = planned_items
+            .iter()
+            .filter_map(|item| match &item.execution {
+                Some(PlannedExecution::UpsertExportTemplate { input, .. }) => Some(input.clone()),
+                _ => None,
+            })
+            .collect();
+
+        Self {
+            import_export_templates,
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Default)]

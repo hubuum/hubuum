@@ -395,6 +395,46 @@ pub struct AppConfig {
     )]
     pub export_output_cleanup_interval_seconds: u64,
 
+    /// How long a completed logical backup remains downloadable.
+    #[clap(
+        long,
+        env = "HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS",
+        default_value_t = DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS
+    )]
+    pub backup_output_retention_hours: i64,
+
+    /// Maximum active backup tasks one principal may own.
+    #[clap(
+        long,
+        env = "HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER",
+        default_value_t = DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER
+    )]
+    pub backup_max_active_tasks_per_user: usize,
+
+    /// Maximum logical backup artifact size accepted by the API.
+    #[clap(
+        long,
+        env = "HUBUUM_BACKUP_MAX_OUTPUT_BYTES",
+        default_value_t = DEFAULT_BACKUP_MAX_OUTPUT_BYTES
+    )]
+    pub backup_max_output_bytes: usize,
+
+    /// Minutes a validated restore stage and its capability remain usable.
+    #[clap(
+        long,
+        env = "HUBUUM_RESTORE_STAGE_RETENTION_MINUTES",
+        default_value_t = DEFAULT_RESTORE_STAGE_RETENTION_MINUTES
+    )]
+    pub restore_stage_retention_minutes: i64,
+
+    /// Maximum full-backup document size accepted by the restore API.
+    #[clap(
+        long,
+        env = "HUBUUM_RESTORE_MAX_UPLOAD_BYTES",
+        default_value_t = DEFAULT_RESTORE_MAX_UPLOAD_BYTES
+    )]
+    pub restore_max_upload_bytes: usize,
+
     /// Maximum queued/validating/running import tasks one user may have at once.
     #[clap(
         long,
@@ -952,6 +992,36 @@ impl AppConfig {
         if self.export_output_cleanup_interval_seconds == 0 {
             return Err(ApiError::BadRequest(
                 "export_output_cleanup_interval_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.backup_output_retention_hours <= 0 {
+            return Err(ApiError::BadRequest(
+                "backup_output_retention_hours must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.backup_max_active_tasks_per_user == 0 {
+            return Err(ApiError::BadRequest(
+                "backup_max_active_tasks_per_user must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.backup_max_output_bytes == 0 {
+            return Err(ApiError::BadRequest(
+                "backup_max_output_bytes must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.restore_stage_retention_minutes <= 0 {
+            return Err(ApiError::BadRequest(
+                "restore_stage_retention_minutes must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.restore_max_upload_bytes == 0 {
+            return Err(ApiError::BadRequest(
+                "restore_max_upload_bytes must be greater than 0".to_string(),
             ));
         }
 
@@ -1513,6 +1583,26 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS),
+        backup_output_retention_hours: env::var("HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS),
+        backup_max_active_tasks_per_user: env::var("HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER),
+        backup_max_output_bytes: env::var("HUBUUM_BACKUP_MAX_OUTPUT_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_BACKUP_MAX_OUTPUT_BYTES),
+        restore_stage_retention_minutes: env::var("HUBUUM_RESTORE_STAGE_RETENTION_MINUTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_RESTORE_STAGE_RETENTION_MINUTES),
+        restore_max_upload_bytes: env::var("HUBUUM_RESTORE_MAX_UPLOAD_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_RESTORE_MAX_UPLOAD_BYTES),
         import_max_active_tasks_per_user: env::var("HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER")
             .ok()
             .and_then(|value| value.parse().ok())

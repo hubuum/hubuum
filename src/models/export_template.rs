@@ -28,7 +28,9 @@ use crate::traits::accessors::{
     CollectionAccessors, CollectionAdapter, IdAccessor, InstanceAdapter, SelfAccessors,
 };
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
-use crate::utilities::exporting::validate_template;
+use crate::utilities::exporting::{
+    validate_template, validate_template_sources, validate_template_syntax,
+};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -818,19 +820,80 @@ struct ExportProfileRef<'a> {
     default_limits: Option<&'a serde_json::Value>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct ExportTemplateImportRef<'a> {
+    pub name: &'a str,
+    pub template: &'a str,
+    pub content_type: ExportContentType,
+    pub kind: ExportTemplateKind,
+    pub scope_kind: Option<ExportScopeKind>,
+    pub has_class: bool,
+    pub default_query: Option<&'a str>,
+    pub include: Option<&'a ExportInclude>,
+    pub relation_context: Option<&'a ExportRelationContext>,
+    pub default_missing_data_policy: Option<ExportMissingDataPolicy>,
+    pub default_limits: Option<&'a ExportLimits>,
+}
+
+pub(crate) fn validate_import_export_template(
+    input: ExportTemplateImportRef<'_>,
+) -> Result<(), ApiError> {
+    input.content_type.ensure_template_output()?;
+    let include = input.include.map(serde_json::to_value).transpose()?;
+    let relation_context = input
+        .relation_context
+        .map(serde_json::to_value)
+        .transpose()?;
+    let default_limits = input.default_limits.map(serde_json::to_value).transpose()?;
+    validate_export_profile_shape(&ExportProfileRef {
+        kind: input.kind,
+        scope_kind: input.scope_kind.map(ExportScopeKind::as_str),
+        class_id: input.has_class.then_some(1),
+        default_query: input.default_query,
+        include: include.as_ref(),
+        relation_context: relation_context.as_ref(),
+        default_missing_data_policy: input
+            .default_missing_data_policy
+            .map(ExportMissingDataPolicy::as_str),
+        default_limits: default_limits.as_ref(),
+    })?;
+    validate_template_syntax(input.name, input.template)
+}
+
+pub(crate) fn validate_import_export_template_composition(
+    input: ExportTemplateImportRef<'_>,
+    collection_templates: &[(String, String)],
+) -> Result<(), ApiError> {
+    validate_import_export_template(input)?;
+    validate_template_sources(
+        input.name,
+        input.template,
+        collection_templates,
+        input.content_type,
+    )
+}
+
 async fn validate_export_profile(
     pool: &DbPool,
     target_collection_id: i32,
     profile: ExportProfileRef<'_>,
 ) -> Result<(), ApiError> {
-    match profile.kind {
-        ExportTemplateKind::Fragment => validate_fragment_metadata(&profile)?,
-        ExportTemplateKind::Export => {
-            validate_export_scope_metadata(pool, target_collection_id, &profile).await?
-        }
+    if let Some(class_id) = validate_export_profile_shape(&profile)? {
+        ensure_template_class_in_collection(pool, target_collection_id, class_id).await?;
     }
+    Ok(())
+}
 
-    validate_common_profile_fields(&profile)
+fn validate_export_profile_shape(profile: &ExportProfileRef<'_>) -> Result<Option<i32>, ApiError> {
+    let class_id = match profile.kind {
+        ExportTemplateKind::Fragment => {
+            validate_fragment_metadata(profile)?;
+            None
+        }
+        ExportTemplateKind::Export => validate_export_scope_metadata(profile)?,
+    };
+    validate_common_profile_fields(profile)?;
+    Ok(class_id)
 }
 
 /// Fragments are reusable partials with no execution metadata.
@@ -845,11 +908,7 @@ fn validate_fragment_metadata(profile: &ExportProfileRef<'_>) -> Result<(), ApiE
 }
 
 /// Validate the scope/class binding of an executable export template.
-async fn validate_export_scope_metadata(
-    pool: &DbPool,
-    target_collection_id: i32,
-    profile: &ExportProfileRef<'_>,
-) -> Result<(), ApiError> {
+fn validate_export_scope_metadata(profile: &ExportProfileRef<'_>) -> Result<Option<i32>, ApiError> {
     let scope_kind = profile
         .scope_kind
         .ok_or_else(|| ApiError::BadRequest("Export templates require scope_kind".into()))
@@ -858,7 +917,7 @@ async fn validate_export_scope_metadata(
     // `objects_in_class` and `related_objects` are scoped to a single class and require
     // `class_id`; the collection scopes (`collections`, `classes`, `class_relations`,
     // `object_relations`) are class-agnostic and must not set it.
-    if scope_kind.requires_class_id() {
+    let class_id = if scope_kind.requires_class_id() {
         let class_id = profile.class_id.ok_or_else(|| {
             ApiError::BadRequest(format!(
                 "Export templates with scope '{}' require class_id",
@@ -870,13 +929,15 @@ async fn validate_export_scope_metadata(
                 "Export template class_id must be greater than 0".to_string(),
             ));
         }
-        ensure_template_class_in_collection(pool, target_collection_id, class_id).await?;
+        Some(class_id)
     } else if profile.class_id.is_some() {
         return Err(ApiError::BadRequest(format!(
             "Export templates with scope '{}' must not set class_id",
             scope_kind.as_str()
         )));
-    }
+    } else {
+        None
+    };
 
     if let Some(query) = profile.default_query {
         parse_query_parameter(query)?;
@@ -900,7 +961,7 @@ async fn validate_export_scope_metadata(
         ));
     }
 
-    Ok(())
+    Ok(class_id)
 }
 
 /// Validate the profile fields whose rules are the same for every kind/scope: the

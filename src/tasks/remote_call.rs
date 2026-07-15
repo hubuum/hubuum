@@ -16,18 +16,18 @@ use crate::db::traits::remote_target::insert_remote_call_result;
 use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::models::{
-    NewRemoteCallResult, NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod,
+    NewRemoteCallResult, NewTaskEventRecord, Permissions, RemoteAuthConfig, RemoteHttpMethod,
     RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTemplateContext,
     StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, authorize_remote_invocation,
 };
 use crate::observability::metrics;
-use crate::traits::BackendContext;
+use crate::traits::{AuthzSubject, BackendContext};
 
 pub(super) async fn execute_remote_call_task<C>(
     backend: &C,
     task: &TaskRecord,
-    user: &impl crate::db::traits::authz::AuthzSubject,
-    scopes: Option<&[crate::models::Permissions]>,
+    user: &impl AuthzSubject,
+    scopes: Option<&[Permissions]>,
 ) -> Result<(), ApiError>
 where
     C: BackendContext + ?Sized,
@@ -110,8 +110,8 @@ struct RemoteFailureContext<'a> {
 async fn execute_remote_call<C>(
     backend: &C,
     task_id: i32,
-    user: &impl crate::db::traits::authz::AuthzSubject,
-    scopes: Option<&[crate::models::Permissions]>,
+    user: &impl AuthzSubject,
+    scopes: Option<&[Permissions]>,
     request: &StoredRemoteCallTaskPayload,
 ) -> Result<RemoteExecutionOutcome, ApiError>
 where

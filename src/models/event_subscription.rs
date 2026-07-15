@@ -440,7 +440,7 @@ impl UpdateEventSubscription {
     }
 }
 
-fn validate_sink_parts(
+pub(crate) fn validate_sink_parts(
     kind: EventSinkKind,
     config: &serde_json::Value,
     secret_ref: Option<&str>,

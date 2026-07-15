@@ -23,6 +23,7 @@ use crate::db::traits::event_retention::{
 use crate::errors::ApiError;
 use crate::events::Event;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
+use crate::restores::{MaintenanceActivityGuard, maintenance_state};
 
 static EVENT_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
 
@@ -72,6 +73,10 @@ pub async fn process_event_retention_batch(
     settings: EventRetentionSettings,
     archive_path: Option<&Path>,
 ) -> Result<EventRetentionPurgeSummary, ApiError> {
+    let _activity = MaintenanceActivityGuard::begin();
+    if maintenance_state(pool).await? != "normal" {
+        return Ok(EventRetentionPurgeSummary::default());
+    }
     let events = select_events_for_retention_purge(pool, settings).await?;
     if let Some(path) = archive_path
         && !events.is_empty()

@@ -113,15 +113,15 @@ pub fn init() -> Result<(), ApiError> {
             .build(),
         export_output_cleanup_runs: meter
             .u64_counter("hubuum_export_output_cleanup_runs")
-            .with_description("Export output cleanup runs")
+            .with_description("Stored export and backup output cleanup runs")
             .build(),
         export_output_cleanup_failures: meter
             .u64_counter("hubuum_export_output_cleanup_failures")
-            .with_description("Export output cleanup failures")
+            .with_description("Stored export and backup output cleanup failures")
             .build(),
         export_output_cleanup_deleted: meter
             .u64_counter("hubuum_export_output_cleanup_deleted")
-            .with_description("Export outputs deleted by cleanup")
+            .with_description("Stored export and backup outputs deleted by cleanup")
             .build(),
         export_duration: meter
             .f64_histogram("hubuum_export_phase_duration")

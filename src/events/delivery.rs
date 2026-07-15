@@ -22,6 +22,7 @@ use crate::errors::ApiError;
 use crate::events::sink::{DefaultSinkResolver, EventEnvelope, SinkResolver};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
+use crate::restores::{MaintenanceActivityGuard, maintenance_state};
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();
 static EVENT_DELIVERY_LISTENER: Once = Once::new();
@@ -86,6 +87,10 @@ pub async fn process_event_delivery_batch(
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,
 ) -> Result<usize, ApiError> {
+    let _activity = MaintenanceActivityGuard::begin();
+    if maintenance_state(pool).await? != "normal" {
+        return Ok(0);
+    }
     let deliveries = claim_event_deliveries(pool, settings).await?;
     let processed = deliveries.len();
     let results = futures_util::stream::iter(deliveries)

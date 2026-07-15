@@ -33,6 +33,15 @@ impl TaskID {
             .await
     }
 
+    pub async fn load_authorized_backup(
+        &self,
+        pool: &DbPool,
+        requestor: &impl crate::db::traits::authz::AuthzSubject,
+    ) -> Result<TaskRecord, ApiError> {
+        self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Backup), "Backup task")
+            .await
+    }
+
     /// Load this task, additionally requiring it to be an import task.
     pub async fn load_authorized_import(
         &self,

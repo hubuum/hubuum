@@ -7,26 +7,31 @@ use chrono::Utc;
 use tokio::sync::{Notify, oneshot};
 use tracing::{error, info, warn};
 
-use crate::config::get_config;
+use crate::backups::{BackupSettings, execute_backup_task};
 use crate::config::{
-    DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS, DEFAULT_TASK_HEARTBEAT_SECONDS,
-    DEFAULT_TASK_LEASE_SECONDS, DEFAULT_TASK_POLL_INTERVAL_MS,
-    DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS,
+    DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_BACKUP_MAX_OUTPUT_BYTES,
+    DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS, DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS,
+    DEFAULT_TASK_HEARTBEAT_SECONDS, DEFAULT_TASK_LEASE_SECONDS, DEFAULT_TASK_POLL_INTERVAL_MS,
+    DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS, get_config,
 };
+use crate::db::traits::service_account::principal_is_disabled;
 use crate::db::traits::task::{
-    TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_export_outputs,
-    recover_expired_task_leases, renew_task_lease,
+    TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_backup_outputs,
+    purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
 use crate::db::{DatabasePoolSettings, DbPool, init_pool_with_settings};
 use crate::errors::ApiError;
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
-use crate::models::{NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus};
+use crate::models::principal::load_principal_by_id;
+use crate::models::{
+    NewTaskEventRecord, Permissions, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
+};
 use crate::observability::metrics;
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
-use crate::traits::BackendContext;
+use crate::restores::{MaintenanceActivityGuard, maintenance_state};
 
 use super::execution::execute_import_task;
 use super::helpers::sanitize_error_for_storage;
@@ -35,7 +40,7 @@ use super::types::WorkerLoopAction;
 
 static TASK_WORKER: Once = Once::new();
 static TASK_WORKER_NOTIFY: OnceLock<Notify> = OnceLock::new();
-static EXPORT_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+static TASK_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<CleanupSchedule>> = OnceLock::new();
 static TASK_RECOVERY_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static TASK_WORKER_SETTINGS: OnceLock<TaskWorkerSettings> = OnceLock::new();
 #[cfg(not(test))]
@@ -109,8 +114,8 @@ fn get_task_worker_notify() -> &'static Notify {
     TASK_WORKER_NOTIFY.get_or_init(Notify::new)
 }
 
-fn cleanup_state() -> &'static Mutex<Option<Instant>> {
-    EXPORT_OUTPUT_CLEANUP_STATE.get_or_init(|| Mutex::new(None))
+fn cleanup_state() -> &'static Mutex<CleanupSchedule> {
+    TASK_OUTPUT_CLEANUP_STATE.get_or_init(|| Mutex::new(CleanupSchedule::default()))
 }
 
 fn recovery_state() -> &'static Mutex<Option<Instant>> {
@@ -184,12 +189,18 @@ async fn wait_for_task_worker_wakeup(poll_interval: Duration, shutdown: &Shutdow
     }
 }
 
-async fn task_worker_loop(context: AppContext, poll_interval: Duration, shutdown: ShutdownSignal) {
+async fn task_worker_loop(
+    context: AppContext,
+    poll_interval: Duration,
+    backup_settings: BackupSettings,
+    shutdown: ShutdownSignal,
+) {
     loop {
         if shutdown.is_requested() {
             break;
         }
-        let result = process_one_task(&context, Some(&shutdown)).await;
+        let result =
+            process_one_task_with_settings(&context, Some(&shutdown), &backup_settings).await;
         if shutdown.is_requested() {
             break;
         }
@@ -204,7 +215,12 @@ async fn task_worker_loop(context: AppContext, poll_interval: Duration, shutdown
     }
 }
 
-fn spawn_task_worker_loop(context: AppContext, poll_interval: Duration, worker_index: usize) {
+fn spawn_task_worker_loop(
+    context: AppContext,
+    poll_interval: Duration,
+    worker_index: usize,
+    backup_settings: BackupSettings,
+) {
     spawn_background_worker(format!("task-worker-{worker_index}"), move |shutdown| {
         info!(
             message = "Starting task worker loop",
@@ -214,7 +230,7 @@ fn spawn_task_worker_loop(context: AppContext, poll_interval: Duration, worker_i
         let system = actix_rt::System::new();
         system.block_on(async move {
             let context = task_worker_context(context);
-            task_worker_loop(context, poll_interval, shutdown).await;
+            task_worker_loop(context, poll_interval, backup_settings, shutdown).await;
         });
     });
 }
@@ -240,7 +256,29 @@ fn task_worker_context(context: AppContext) -> AppContext {
     AppContext::new(pool, permissions)
 }
 
-pub fn ensure_task_worker_running(context: AppContext) {
+fn configured_backup_settings() -> BackupSettings {
+    let config = get_config().ok();
+    BackupSettings::new(
+        config
+            .as_ref()
+            .map(|value| value.backup_output_retention_hours)
+            .unwrap_or(DEFAULT_BACKUP_OUTPUT_RETENTION_HOURS),
+        config
+            .as_ref()
+            .map(|value| value.backup_max_active_tasks_per_user)
+            .unwrap_or(DEFAULT_BACKUP_MAX_ACTIVE_TASKS_PER_USER),
+        config
+            .as_ref()
+            .map(|value| value.backup_max_output_bytes)
+            .unwrap_or(DEFAULT_BACKUP_MAX_OUTPUT_BYTES),
+    )
+    .expect("default backup settings are valid")
+}
+
+pub fn ensure_task_worker_running_with_settings(
+    context: AppContext,
+    backup_settings: BackupSettings,
+) {
     let worker_count = configured_task_worker_count();
     if worker_count == 0 {
         return;
@@ -254,9 +292,18 @@ pub fn ensure_task_worker_running(context: AppContext) {
         );
         metrics::task_worker_config(worker_count, poll_interval);
         for worker_index in 0..worker_count {
-            spawn_task_worker_loop(context.clone(), poll_interval, worker_index);
+            spawn_task_worker_loop(
+                context.clone(),
+                poll_interval,
+                worker_index,
+                backup_settings.clone(),
+            );
         }
     });
+}
+
+pub fn ensure_task_worker_running(context: AppContext) {
+    ensure_task_worker_running_with_settings(context, configured_backup_settings());
 }
 
 pub fn kick_task_worker(context: AppContext) {
@@ -264,24 +311,41 @@ pub fn kick_task_worker(context: AppContext) {
     get_task_worker_notify().notify_one();
 }
 
-pub(super) async fn process_one_task<C>(
-    context: &C,
+#[cfg(test)]
+pub(super) async fn process_one_task(
+    pool: &DbPool,
     shutdown: Option<&ShutdownSignal>,
-) -> Result<bool, ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    let pool = context.db_pool();
-    maybe_recover_expired_task_leases(pool).await?;
+) -> Result<bool, ApiError> {
+    let admin_groupname = get_config()
+        .map(|config| config.admin_groupname.clone())
+        .unwrap_or_else(|_| "admin".to_string());
+    let context = AppContext::new(
+        pool.clone(),
+        std::sync::Arc::new(LocalPermissionBackend::new(pool.clone(), admin_groupname)),
+    );
+    process_one_task_with_settings(&context, shutdown, &configured_backup_settings()).await
+}
 
-    if let Err(error) = maybe_cleanup_expired_export_outputs(pool).await {
+async fn process_one_task_with_settings(
+    context: &AppContext,
+    shutdown: Option<&ShutdownSignal>,
+    backup_settings: &BackupSettings,
+) -> Result<bool, ApiError> {
+    let _activity = MaintenanceActivityGuard::begin();
+    if maintenance_state(context).await? != "normal" {
+        metrics::task_worker_iteration("idle");
+        return Ok(false);
+    }
+    maybe_recover_expired_task_leases(context).await?;
+
+    if let Err(error) = maybe_cleanup_expired_task_outputs(context).await {
         metrics::task_worker_iteration("error");
         return Err(error);
     }
 
     let settings = task_worker_settings();
     let claim_started_at = TokioInstant::now();
-    let task = match claim_next_queued_task(pool, settings.lease_duration).await {
+    let task = match claim_next_queued_task(context, settings.lease_duration).await {
         Ok(task) => task,
         Err(error) => {
             metrics::task_worker_iteration("error");
@@ -317,10 +381,10 @@ where
                     _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
                         "Task interrupted by graceful server shutdown".to_string(),
                     )),
-                    result = process_claimed_task(context, &task) => result,
+                    result = process_claimed_task(context, &task, backup_settings) => result,
                 }
             }
-            None => process_claimed_task(context, &task).await,
+            None => process_claimed_task(context, &task, backup_settings).await,
         }
     };
     let mut ownership_lost = false;
@@ -338,7 +402,7 @@ where
     {
         let finalized = finalize_failure_while_lease_owned(
             &mut heartbeat,
-            mark_claimed_task_failed(pool, &task, err),
+            mark_claimed_task_failed(context, &task, err),
         )
         .await?;
         if !finalized {
@@ -354,6 +418,62 @@ where
     }
 
     Ok(true)
+}
+
+#[derive(Debug, Default)]
+struct CleanupSchedule {
+    last_completed_at: Option<Instant>,
+    in_progress: bool,
+}
+
+struct CleanupReservation<'a> {
+    state: &'a Mutex<CleanupSchedule>,
+    finished: bool,
+}
+
+impl<'a> CleanupReservation<'a> {
+    fn reserve(
+        state: &'a Mutex<CleanupSchedule>,
+        interval: Duration,
+    ) -> Result<Option<Self>, ApiError> {
+        let mut schedule = state.lock().map_err(|_| {
+            ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
+        })?;
+        if schedule.in_progress
+            || schedule
+                .last_completed_at
+                .is_some_and(|last_run| last_run.elapsed() < interval)
+        {
+            return Ok(None);
+        }
+        schedule.in_progress = true;
+        Ok(Some(Self {
+            state,
+            finished: false,
+        }))
+    }
+
+    fn commit(mut self) -> Result<(), ApiError> {
+        let mut schedule = self.state.lock().map_err(|_| {
+            ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
+        })?;
+        schedule.last_completed_at = Some(Instant::now());
+        schedule.in_progress = false;
+        self.finished = true;
+        Ok(())
+    }
+}
+
+impl Drop for CleanupReservation<'_> {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        match self.state.lock() {
+            Ok(mut schedule) => schedule.in_progress = false,
+            Err(_) => error!(message = "Failed to release poisoned cleanup schedule"),
+        }
+    }
 }
 
 struct TaskLeaseHeartbeat {
@@ -562,21 +682,10 @@ async fn maybe_recover_expired_task_leases(pool: &DbPool) -> Result<(), ApiError
     }
 }
 
-async fn maybe_cleanup_expired_export_outputs(pool: &DbPool) -> Result<(), ApiError> {
+async fn maybe_cleanup_expired_task_outputs(pool: &DbPool) -> Result<(), ApiError> {
     let cleanup_interval = task_worker_settings().export_output_cleanup_interval;
-    let previous_last_run = {
-        let mut state = cleanup_state().lock().map_err(|_| {
-            ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
-        })?;
-        match *state {
-            Some(last_run) if last_run.elapsed() < cleanup_interval => {
-                return Ok(());
-            }
-            previous_last_run => {
-                *state = Some(Instant::now());
-                previous_last_run
-            }
-        }
+    let Some(reservation) = CleanupReservation::reserve(cleanup_state(), cleanup_interval)? else {
+        return Ok(());
     };
 
     metrics::export_output_cleanup_run();
@@ -584,13 +693,17 @@ async fn maybe_cleanup_expired_export_outputs(pool: &DbPool) -> Result<(), ApiEr
         Ok(deleted) => metrics::export_output_cleanup_deleted(deleted.len()),
         Err(error) => {
             metrics::export_output_cleanup_failed();
-            let mut state = cleanup_state().lock().map_err(|_| {
-                ApiError::InternalServerError("Cleanup state lock poisoned".to_string())
-            })?;
-            *state = previous_last_run;
             return Err(error);
         }
     }
+    match purge_expired_backup_outputs(pool).await {
+        Ok(deleted) => metrics::export_output_cleanup_deleted(deleted.len()),
+        Err(error) => {
+            metrics::export_output_cleanup_failed();
+            return Err(error);
+        }
+    }
+    reservation.commit()?;
 
     Ok(())
 }
@@ -603,35 +716,40 @@ fn duration_since(timestamp: chrono::NaiveDateTime) -> Option<Duration> {
     (elapsed >= 0).then(|| Duration::from_millis(elapsed as u64))
 }
 
-async fn process_claimed_task<C>(context: &C, task: &TaskRecord) -> Result<(), ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    let pool = context.db_pool();
+async fn process_claimed_task(
+    context: &AppContext,
+    task: &TaskRecord,
+    backup_settings: &BackupSettings,
+) -> Result<(), ApiError> {
+    let pool = &context.db_pool;
     let submitted_by = task.submitted_by.ok_or_else(|| {
         ApiError::BadRequest(
             "Submitting principal is no longer available for this task".to_string(),
         )
     })?;
-    let principal = crate::models::principal::load_principal_by_id(pool, submitted_by).await?;
+    let principal = load_principal_by_id(context, submitted_by).await?;
 
     // Disabled-SA gate: queued service-account tasks must not run once the SA is
     // disabled (mirrors the immediate token-validation rejection).
-    if crate::db::traits::service_account::principal_is_disabled(pool, &principal).await? {
+    if principal_is_disabled(context, &principal).await? {
         return Err(ApiError::BadRequest(
             "Submitting service account is disabled; task will not run".to_string(),
         ));
     }
 
     let task_kind = TaskKind::from_db(&task.kind)?;
-    if matches!(task_kind, TaskKind::Import | TaskKind::Export) {
+    if matches!(
+        task_kind,
+        TaskKind::Import | TaskKind::Export | TaskKind::Backup
+    ) {
         require_unscoped_runtime_admin(context, &principal, task.submitted_token_scoped).await?;
     }
 
     // Reconstruct the submitting token's scope boundary from the snapshot,
-    // failing closed on any unknown permission string. Import and export are
-    // runtime-admin operations, so only remote calls consume scoped snapshots.
-    let snapshot_scopes: Option<Vec<crate::models::Permissions>> =
+    // failing closed on any unknown permission string. Import, export, and
+    // backup are runtime-admin operations, so only remote calls consume scoped
+    // snapshots.
+    let snapshot_scopes: Option<Vec<Permissions>> =
         if task_kind == TaskKind::RemoteCall && task.submitted_token_scoped {
             let entries = task.submitted_token_scopes.as_array().ok_or_else(|| {
                 ApiError::InternalServerError("Task scope snapshot is not an array".to_string())
@@ -643,7 +761,7 @@ where
                         "Task scope snapshot entry is not a string".to_string(),
                     )
                 })?;
-                parsed.push(crate::models::Permissions::from_string(raw)?);
+                parsed.push(Permissions::from_string(raw)?);
             }
             Some(parsed)
         } else {
@@ -663,6 +781,9 @@ where
     match task_kind {
         TaskKind::Import => execute_import_task(context, task, &principal).await,
         TaskKind::Export => execute_export_task(pool, task, &principal).await,
+        TaskKind::Backup => {
+            execute_backup_task(context, task, &principal, scopes, backup_settings).await
+        }
         TaskKind::RemoteCall => execute_remote_call_task(context, task, &principal, scopes).await,
         other => Err(ApiError::BadRequest(format!(
             "Task kind '{}' is not implemented",
@@ -681,6 +802,7 @@ pub(super) async fn mark_claimed_task_failed(
         TaskKind::Import => task.count_import_results(pool).await?,
         TaskKind::Export => TaskResultCounts::new(1, 0, 1)?,
         TaskKind::RemoteCall => TaskResultCounts::new(1, 0, 1)?,
+        TaskKind::Backup => TaskResultCounts::new(1, 0, 1)?,
         _ => TaskResultCounts::default(),
     };
 
@@ -715,6 +837,59 @@ pub(super) async fn mark_claimed_task_failed(
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    use rstest::rstest;
+
+    use super::{CleanupReservation, CleanupSchedule};
+
+    #[rstest]
+    #[case::failure(false, false)]
+    #[case::success(true, true)]
+    fn cleanup_reservation_updates_schedule_only_after_commit(
+        #[case] commit: bool,
+        #[case] expected_scheduled: bool,
+    ) {
+        let state = Mutex::new(CleanupSchedule::default());
+        let reservation = CleanupReservation::reserve(&state, Duration::from_secs(300))
+            .expect("cleanup reservation")
+            .expect("cleanup is due");
+        if commit {
+            reservation.commit().expect("commit cleanup reservation");
+        } else {
+            drop(reservation);
+        }
+
+        let schedule = state.lock().expect("cleanup schedule");
+        assert_eq!(
+            (schedule.last_completed_at.is_some(), schedule.in_progress),
+            (expected_scheduled, false)
+        );
+    }
+
+    #[rstest]
+    #[case::recent(false, Some(Instant::now()))]
+    #[case::in_progress(true, None)]
+    fn unavailable_cleanup_schedule_is_not_reserved_again(
+        #[case] in_progress: bool,
+        #[case] last_completed_at: Option<Instant>,
+    ) {
+        let state = Mutex::new(CleanupSchedule {
+            last_completed_at,
+            in_progress,
+        });
+
+        assert!(
+            CleanupReservation::reserve(&state, Duration::from_secs(300))
+                .expect("cleanup reservation")
+                .is_none()
+        );
+    }
 }
 
 #[cfg(test)]
