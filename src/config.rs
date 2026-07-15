@@ -227,6 +227,14 @@ pub struct AppConfig {
     )]
     pub task_recovery_interval_seconds: u64,
 
+    /// Number of objects recomputed in one computed-field rebuild transaction.
+    #[clap(
+        long,
+        env = "HUBUUM_COMPUTED_REINDEX_BATCH_SIZE",
+        default_value_t = DEFAULT_COMPUTED_REINDEX_BATCH_SIZE
+    )]
+    pub computed_reindex_batch_size: usize,
+
     /// Number of background event fan-out workers
     #[clap(
         long,
@@ -1170,6 +1178,14 @@ impl AppConfig {
             ));
         }
 
+        if self.computed_reindex_batch_size == 0
+            || self.computed_reindex_batch_size > MAX_COMPUTED_REINDEX_BATCH_SIZE
+        {
+            return Err(ApiError::BadRequest(format!(
+                "computed_reindex_batch_size must be between 1 and {MAX_COMPUTED_REINDEX_BATCH_SIZE}"
+            )));
+        }
+
         if self.login_rate_limit_valkey_io_timeout_ms == 0 {
             return Err(ApiError::BadRequest(
                 "login_rate_limit_valkey_io_timeout_ms must be greater than 0".to_string(),
@@ -1501,6 +1517,10 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS),
+        computed_reindex_batch_size: env::var("HUBUUM_COMPUTED_REINDEX_BATCH_SIZE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_COMPUTED_REINDEX_BATCH_SIZE),
         event_fanout_workers: env::var("HUBUUM_EVENT_FANOUT_WORKERS")
             .ok()
             .and_then(|value| value.parse().ok())

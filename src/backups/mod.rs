@@ -75,6 +75,8 @@ fn build_manifest(state: &BackupState, history: Option<&BackupHistory>) -> Backu
             "authentication tokens and token scopes (credentials must be reissued after restore)"
                 .to_string(),
             "class reachability cache (rebuilt by database triggers during restore)".to_string(),
+            "computed-field class state and materialized object cache (rebuilt after restore)"
+                .to_string(),
             "active tasks and non-terminal event deliveries".to_string(),
             "restore control-plane tables and server instance heartbeats".to_string(),
         ],

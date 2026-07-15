@@ -69,6 +69,7 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_TASK_LEASE_SECONDS", Tasks),
     option!("HUBUUM_TASK_HEARTBEAT_SECONDS", Tasks),
     option!("HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS", Tasks),
+    option!("HUBUUM_COMPUTED_REINDEX_BATCH_SIZE", Tasks),
     option!("HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER", Tasks),
     option!("HUBUUM_EVENT_FANOUT_WORKERS", Events),
     option!("HUBUUM_EVENT_FANOUT_BATCH_SIZE", Events),

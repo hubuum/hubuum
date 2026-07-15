@@ -722,6 +722,10 @@ async fn process_claimed_task(
     backup_settings: &BackupSettings,
 ) -> Result<(), ApiError> {
     let pool = &context.db_pool;
+    let task_kind = TaskKind::from_db(&task.kind)?;
+    if task_kind == TaskKind::Reindex {
+        return crate::db::traits::computed_field::execute_computed_reindex_task(pool, task).await;
+    }
     let submitted_by = task.submitted_by.ok_or_else(|| {
         ApiError::BadRequest(
             "Submitting principal is no longer available for this task".to_string(),
@@ -737,7 +741,6 @@ async fn process_claimed_task(
         ));
     }
 
-    let task_kind = TaskKind::from_db(&task.kind)?;
     if matches!(
         task_kind,
         TaskKind::Import | TaskKind::Export | TaskKind::Backup
@@ -785,10 +788,7 @@ async fn process_claimed_task(
             execute_backup_task(context, task, &principal, scopes, backup_settings).await
         }
         TaskKind::RemoteCall => execute_remote_call_task(context, task, &principal, scopes).await,
-        other => Err(ApiError::BadRequest(format!(
-            "Task kind '{}' is not implemented",
-            other.as_str()
-        ))),
+        TaskKind::Reindex => unreachable!("reindex tasks are dispatched before principal loading"),
     }
 }
 
@@ -798,12 +798,16 @@ pub(super) async fn mark_claimed_task_failed(
     err: &ApiError,
 ) -> Result<(), ApiError> {
     let summary = sanitize_error_for_storage(err);
+    if TaskKind::from_db(&task.kind)? == TaskKind::Reindex {
+        crate::db::traits::computed_field::mark_computed_reindex_failed(pool, task, &summary)
+            .await?;
+    }
     let counts = match TaskKind::from_db(&task.kind)? {
         TaskKind::Import => task.count_import_results(pool).await?,
         TaskKind::Export => TaskResultCounts::new(1, 0, 1)?,
         TaskKind::RemoteCall => TaskResultCounts::new(1, 0, 1)?,
         TaskKind::Backup => TaskResultCounts::new(1, 0, 1)?,
-        _ => TaskResultCounts::default(),
+        TaskKind::Reindex => TaskResultCounts::new(task.processed_items, task.success_items, 1)?,
     };
 
     warn!(

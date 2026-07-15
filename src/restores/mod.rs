@@ -24,9 +24,9 @@ use crate::models::backup::{
 };
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::models::{
-    BackupDocument, NewRestoreJobRecord, RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest,
-    RestoreJobRecord, RestoreJobStatus, RestoreStageRequest, RestoreStageResponse,
-    RestoreValidationSummary, ServerInstanceRecord,
+    BackupDocument, ComputedFieldDefinitionRequest, ComputedResultType, NewRestoreJobRecord,
+    RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobRecord, RestoreJobStatus,
+    RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary, ServerInstanceRecord,
 };
 
 static RESTORE_COORDINATOR: Once = Once::new();
@@ -151,6 +151,7 @@ fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSumm
     }
     validate_required_seed_rows(document)?;
     validate_backup_class_schemas(document)?;
+    validate_computed_field_definitions(document)?;
     let total_items = document
         .state
         .sections
@@ -205,6 +206,61 @@ fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiErr
                 class_id
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| "with unknown id".to_string())
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), ApiError> {
+    for row in required_state_section(document, "computed_field_definitions")? {
+        let object = row.as_object().ok_or_else(|| {
+            ApiError::BadRequest(
+                "Full backup contains a non-object computed-field definition".to_string(),
+            )
+        })?;
+        let string = |field: &str| {
+            object
+                .get(field)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    ApiError::BadRequest(format!(
+                        "Full backup computed-field definition has an invalid {field}"
+                    ))
+                })
+        };
+        let result_type =
+            serde_json::from_value::<ComputedResultType>(Value::String(string("result_type")?))
+                .map_err(|_| {
+                    ApiError::BadRequest(
+                        "Full backup computed-field definition has an invalid result_type"
+                            .to_string(),
+                    )
+                })?;
+        let request = ComputedFieldDefinitionRequest {
+            key: string("key")?,
+            label: string("label")?,
+            description: string("description")?,
+            operation: object.get("operation").cloned().ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Full backup computed-field definition is missing operation".to_string(),
+                )
+            })?,
+            result_type,
+            enabled: object
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| {
+                    ApiError::BadRequest(
+                        "Full backup computed-field definition has an invalid enabled flag"
+                            .to_string(),
+                    )
+                })?,
+        };
+        request.validate().map_err(|error| {
+            ApiError::BadRequest(format!(
+                "Full backup contains an invalid computed-field definition: {error}"
             ))
         })?;
     }

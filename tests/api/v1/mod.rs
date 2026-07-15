@@ -2,6 +2,7 @@ pub mod auth;
 pub mod backups;
 pub mod classes;
 pub mod collections;
+pub mod computed_fields;
 pub mod event_deliveries;
 pub mod event_subscriptions;
 pub mod events;

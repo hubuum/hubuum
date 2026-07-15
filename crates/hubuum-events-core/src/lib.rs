@@ -142,6 +142,7 @@ pub enum EntityType {
     ServiceAccount,
     EventSink,
     EventSubscription,
+    ComputedFieldDefinition,
     ExternalIdentitySync,
     Restore,
 }
@@ -165,6 +166,7 @@ impl EntityType {
             EntityType::ServiceAccount => "service_account",
             EntityType::EventSink => "event_sink",
             EntityType::EventSubscription => "event_subscription",
+            EntityType::ComputedFieldDefinition => "computed_field_definition",
             EntityType::ExternalIdentitySync => "external_identity_sync",
             EntityType::Restore => "restore",
         }
@@ -188,6 +190,7 @@ impl EntityType {
             "service_account" => Ok(EntityType::ServiceAccount),
             "event_sink" => Ok(EntityType::EventSink),
             "event_subscription" => Ok(EntityType::EventSubscription),
+            "computed_field_definition" => Ok(EntityType::ComputedFieldDefinition),
             "external_identity_sync" => Ok(EntityType::ExternalIdentitySync),
             "restore" => Ok(EntityType::Restore),
             other => Err(EventCatalogError::UnknownEntityType(other.to_string())),
@@ -284,7 +287,9 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
             &[A::Created, A::Updated, A::Deleted]
         }
         E::ServiceAccount => &[A::Created, A::Updated, A::Disabled, A::Deleted],
-        E::EventSink | E::EventSubscription => &[A::Created, A::Updated, A::Deleted],
+        E::EventSink | E::EventSubscription | E::ComputedFieldDefinition => {
+            &[A::Created, A::Updated, A::Deleted]
+        }
         E::ExternalIdentitySync => &[A::Succeeded, A::Failed],
         E::Restore => &[A::Succeeded],
         E::RemoteTarget => &[A::Created, A::Updated, A::Deleted, A::Invoked],

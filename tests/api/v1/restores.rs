@@ -32,29 +32,11 @@ mod tests {
     }
 
     fn empty_full_backup_document() -> BackupDocument {
-        let sections = [
-            "identity_scopes",
-            "groups",
-            "principals",
-            "users",
-            "service_accounts",
-            "group_memberships",
-            "group_membership_sources",
-            "collections",
-            "collection_closure",
-            "hubuumclass",
-            "hubuumclass_relation",
-            "hubuumobject",
-            "hubuumobject_relation",
-            "permissions",
-            "export_templates",
-            "remote_targets",
-            "event_sinks",
-            "event_subscriptions",
-        ]
-        .into_iter()
-        .map(|name| (name.to_string(), Vec::new()))
-        .collect::<BTreeMap<_, _>>();
+        let sections = crate::models::backup::BACKUP_STATE_SECTIONS
+            .iter()
+            .copied()
+            .map(|name| (name.to_string(), Vec::new()))
+            .collect::<BTreeMap<_, _>>();
 
         BackupDocument {
             backup_version: crate::models::CURRENT_BACKUP_VERSION,

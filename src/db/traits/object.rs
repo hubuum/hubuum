@@ -3,6 +3,7 @@ use diesel::sql_query;
 use serde_json;
 
 use crate::db::traits::GetObject;
+use crate::db::traits::computed_field::materialize_object_in_transaction;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
@@ -186,11 +187,13 @@ impl CreateObjectRecord for NewHubuumObject {
     ) -> Result<HubuumObject, ApiError> {
         use crate::schema::hubuumobject::dsl::hubuumobject;
 
-        with_connection(pool, async |conn| {
-            diesel::insert_into(hubuumobject)
+        with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
+            let object = diesel::insert_into(hubuumobject)
                 .values(self)
                 .get_result::<HubuumObject>(conn)
-                .await
+                .await?;
+            materialize_object_in_transaction(conn, &object).await?;
+            Ok(object)
         })
         .await
     }
@@ -211,6 +214,7 @@ impl CreateObjectRecord for NewHubuumObject {
                 .values(self)
                 .get_result::<HubuumObject>(conn)
                 .await?;
+            materialize_object_in_transaction(conn, &object).await?;
             let event = object_event(
                 &object,
                 Action::Created,
@@ -412,8 +416,8 @@ impl UpdateObjectRecord for UpdateHubuumObject {
     ) -> Result<HubuumObject, ApiError> {
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
-        with_connection(pool, async |conn| {
-            crate::db::updated_or_current(
+        with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
+            let object = crate::db::updated_or_current(
                 diesel::update(hubuumobject)
                     .filter(id.eq(object_id))
                     .set(self)
@@ -422,7 +426,9 @@ impl UpdateObjectRecord for UpdateHubuumObject {
                     .optional(),
                 async || hubuumobject.filter(id.eq(object_id)).first(conn).await,
             )
-            .await
+            .await?;
+            materialize_object_in_transaction(conn, &object).await?;
+            Ok(object)
         })
         .await
     }
@@ -448,12 +454,14 @@ impl UpdateObjectRecord for UpdateHubuumObject {
                 .first::<HubuumObject>(conn)
                 .await?;
             if !self.has_changes(&before) {
+                materialize_object_in_transaction(conn, &before).await?;
                 return Ok(before);
             }
             let updated = diesel::update(hubuumobject.filter(id.eq(object_id)))
                 .set(self)
                 .get_result::<HubuumObject>(conn)
                 .await?;
+            materialize_object_in_transaction(conn, &updated).await?;
             let event = object_event(
                 &updated,
                 Action::Updated,

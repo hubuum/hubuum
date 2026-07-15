@@ -15,11 +15,9 @@ Current task kinds:
 
 - `import`
 - `export`
-- `remote_call`
-
-Reserved task kinds already modeled in the schema:
-
+- `backup`
 - `reindex`
+- `remote_call`
 
 The goal is to keep task lifecycle, queueing, polling, and audit history generic, while letting each task kind supply its own execution logic and its own typed result storage.
 
@@ -249,12 +247,19 @@ Current dispatch:
 
 - `import` -> import executor
 - `export` -> export executor
+- `backup` -> full-system backup executor
+- `reindex` -> internal computed-field class rebuild executor
 - `remote_call` -> remote HTTP invocation executor
-- reserved task kinds -> unimplemented error
 
 This logic is in:
 
 - [process_one_task](../src/tasks/worker.rs)
+
+Computed-field reindex tasks carry a server-owned payload with the class,
+target evaluation revision, and a fixed object-ID upper bound. Definition
+mutations enqueue them in the same transaction as the revision change. They do
+not depend on the initiating principal still existing when a worker claims
+them.
 
 Task workers carry the same permission-backend context as API handlers. Execution
 therefore rechecks the submitting principal through the configured local or

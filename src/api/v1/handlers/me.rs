@@ -21,6 +21,11 @@ use crate::traits::GroupAccessors;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(get_me)
+        .service(crate::api::v1::handlers::computed_fields::get_personal_computed_fields)
+        .service(crate::api::v1::handlers::computed_fields::create_personal_computed_field)
+        .service(crate::api::v1::handlers::computed_fields::patch_personal_computed_field)
+        .service(crate::api::v1::handlers::computed_fields::delete_personal_computed_field)
+        .service(crate::api::v1::handlers::computed_fields::preview_personal_computed_field)
         .service(list_my_tokens)
         .service(list_my_groups)
         .service(list_my_permissions)

@@ -5,6 +5,11 @@ notification workers as one process lifecycle. Workers start only after database
 initialization and HTTP binding succeed. Every worker thread is named, retained,
 and given the same cancellation signal.
 
+The generic task workers also execute bounded computed-field `reindex` tasks.
+These tasks are internal: definition mutations and manual class rebuild requests
+create them transactionally, and clients inspect them through the normal task
+API rather than submitting arbitrary reindex payloads.
+
 ## Graceful Shutdown
 
 Actix handles the operating-system shutdown signal and first stops accepting

@@ -4,6 +4,7 @@ pub mod backup;
 pub mod bootstrap;
 pub mod class;
 pub mod collection;
+pub mod computed_field;
 pub mod event_delivery;
 pub mod event_fanout;
 pub mod event_observability;

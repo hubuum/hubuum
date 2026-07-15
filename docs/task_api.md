@@ -2,9 +2,10 @@
 
 The task API is the generic interface for long-running operations.
 
-Imports, exports, and remote target invocations are public task-producing APIs today, and the task
-model is designed so reserved reindex jobs and future task kinds can use the same status and event
-model too.
+Imports, exports, backups, remote target invocations, and computed-field
+rebuilds use the generic task lifecycle. Reindex tasks have server-owned
+payloads and are created only through computed-field definition changes or the
+class rebuild endpoint.
 
 The current architecture is:
 
@@ -28,10 +29,11 @@ Access rules:
 
 ## Task kinds
 
-Current and reserved task kinds:
+Current task kinds:
 
 - `import`
 - `export`
+- `backup`
 - `reindex`
 - `remote_call`
 
@@ -39,7 +41,9 @@ Public task-producing endpoints today:
 
 - `POST /api/v1/imports`
 - `POST /api/v1/exports`
+- `POST /api/v1/backups`
 - `POST /api/v1/remote-targets/{target_id}/invoke`
+- `POST /api/v1/classes/{class_id}/computed-fields/rebuild`
 
 ## Task statuses
 
@@ -215,7 +219,7 @@ Sorting:
 
 Filters:
 
-- `kind` (optional): `import`, `export`, `reindex`, `remote_call`
+- `kind` (optional): `import`, `export`, `backup`, `reindex`, `remote_call`
 - `status` (optional): `queued`, `validating`, `running`, `succeeded`, `failed`, `partially_succeeded`, `cancelled`
 - `submitted_by` (optional): admin-only filter by user ID; non-admin callers are always restricted to their own tasks regardless of this parameter
 

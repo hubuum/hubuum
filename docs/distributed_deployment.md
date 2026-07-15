@@ -153,6 +153,7 @@ Configure the lease with:
 | `HUBUUM_TASK_LEASE_SECONDS` | `60` | Lease duration for an active task |
 | `HUBUUM_TASK_HEARTBEAT_SECONDS` | `20` | Renewal interval; must be shorter than the lease |
 | `HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS` | `30` | Minimum interval between recovery scans in one process |
+| `HUBUUM_COMPUTED_REINDEX_BATCH_SIZE` | `100` | Objects processed per computed-field rebuild transaction; valid range is 1 through 1000 |
 
 An expired task is failed, its request payload is redacted, and a system event
 records the prior state and recovery reason. Hubuum does not automatically

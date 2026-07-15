@@ -1,4 +1,5 @@
 mod cache;
+mod computed_field;
 mod db;
 mod event;
 mod export;
@@ -22,6 +23,10 @@ use crate::errors::ApiError;
 
 use self::cache::ScrapeCache;
 
+pub use self::computed_field::{
+    computed_evaluation, computed_live_fallback, computed_read_repair, computed_rebuild_batch,
+    computed_rebuild_finished,
+};
 pub use self::db::{
     ResultKind, db_connection_acquire_failed, db_connection_acquired, db_operation_finished,
 };
@@ -86,6 +91,13 @@ struct Metrics {
     task_config: Gauge<u64>,
     task_counts: Gauge<i64>,
     task_oldest_age: Gauge<f64>,
+    computed_evaluations: Counter<u64>,
+    computed_evaluator_errors: Counter<u64>,
+    computed_live_fallbacks: Counter<u64>,
+    computed_read_repairs: Counter<u64>,
+    computed_rebuild_batches: Counter<u64>,
+    computed_rebuild_completions: Counter<u64>,
+    computed_rebuild_duration: Histogram<f64>,
     export_output_cleanup_runs: Counter<u64>,
     export_output_cleanup_failures: Counter<u64>,
     export_output_cleanup_deleted: Counter<u64>,

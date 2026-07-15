@@ -14,6 +14,18 @@ diesel::table! {
 }
 
 diesel::table! {
+    class_computation_state (class_id) {
+        class_id -> Int4,
+        evaluation_revision -> Int8,
+        rebuild_status -> Varchar,
+        active_task_id -> Nullable<Int4>,
+        last_error -> Nullable<Varchar>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     collection_closure (ancestor_collection_id, descendant_collection_id) {
         ancestor_collection_id -> Int4,
         descendant_collection_id -> Int4,
@@ -45,6 +57,27 @@ diesel::table! {
         valid_to -> Nullable<Timestamptz>,
         actor_id -> Nullable<Int4>,
         history_id -> Int8,
+    }
+}
+
+diesel::table! {
+    computed_field_definitions (id) {
+        id -> Int4,
+        class_id -> Int4,
+        visibility -> Varchar,
+        owner_user_id -> Nullable<Int4>,
+        key -> Varchar,
+        label -> Varchar,
+        description -> Varchar,
+        operation -> Jsonb,
+        result_type -> Varchar,
+        enabled -> Bool,
+        revision -> Int8,
+        semantics_version -> Int2,
+        created_by -> Nullable<Int4>,
+        updated_by -> Nullable<Int4>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -384,6 +417,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    object_computed_data (object_id) {
+        object_id -> Int4,
+        class_id -> Int4,
+        evaluation_revision -> Int8,
+        #[max_length = 64]
+        source_data_sha256 -> Varchar,
+        values -> Jsonb,
+        errors -> Jsonb,
+        computed_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     permissions (id) {
         id -> Int4,
         collection_id -> Int4,
@@ -627,6 +673,10 @@ diesel::table! {
 }
 
 diesel::joinable!(backup_task_outputs -> tasks (task_id));
+diesel::joinable!(class_computation_state -> hubuumclass (class_id));
+diesel::joinable!(class_computation_state -> tasks (active_task_id));
+diesel::joinable!(computed_field_definitions -> hubuumclass (class_id));
+diesel::joinable!(computed_field_definitions -> users (owner_user_id));
 diesel::joinable!(event_deliveries -> event_subscriptions (subscription_id));
 diesel::joinable!(event_deliveries -> events (event_id));
 diesel::joinable!(event_related_collections -> events (event_id));
@@ -646,6 +696,8 @@ diesel::joinable!(hubuumobject -> collections (collection_id));
 diesel::joinable!(hubuumobject -> hubuumclass (hubuum_class_id));
 diesel::joinable!(hubuumobject_relation -> hubuumclass_relation (class_relation_id));
 diesel::joinable!(import_task_results -> tasks (task_id));
+diesel::joinable!(object_computed_data -> hubuumclass (class_id));
+diesel::joinable!(object_computed_data -> hubuumobject (object_id));
 diesel::joinable!(permissions -> collections (collection_id));
 diesel::joinable!(permissions -> groups (group_id));
 diesel::joinable!(principals -> identity_scopes (identity_scope_id));
@@ -661,9 +713,11 @@ diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     backup_task_outputs,
+    class_computation_state,
     collection_closure,
     collections,
     collections_history,
+    computed_field_definitions,
     event_deliveries,
     event_related_collections,
     event_sinks,
@@ -686,6 +740,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     hubuumobject_relation_history,
     identity_scopes,
     import_task_results,
+    object_computed_data,
     permissions,
     principals,
     remote_call_results,

@@ -566,6 +566,14 @@ async fn anonymize_user_record(pool: &DbPool, target_id: i32) -> Result<(), ApiE
 
     with_transaction(pool, async |conn| -> Result<(), ApiError> {
         ensure_user_allows_local_write_conn(conn, target_id).await?;
+        use crate::schema::computed_field_definitions::dsl as computed;
+        diesel::delete(
+            computed::computed_field_definitions
+                .filter(computed::owner_user_id.eq(Some(target_id)))
+                .filter(computed::visibility.eq("personal")),
+        )
+        .execute(conn)
+        .await?;
         let updated = diesel::update(u::users.filter(u::id.eq(target_id)))
             .set((
                 u::proper_name.eq::<Option<String>>(None),

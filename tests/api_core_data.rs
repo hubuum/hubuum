@@ -9,6 +9,8 @@ pub mod tests;
 mod api_classes;
 #[path = "api/v1/collections.rs"]
 mod api_collections;
+#[path = "api/v1/computed_fields.rs"]
+mod api_computed_fields;
 #[path = "api/v1/objects.rs"]
 mod api_objects;
 #[path = "api/v1/querying.rs"]

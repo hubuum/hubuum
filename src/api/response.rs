@@ -58,6 +58,17 @@ impl<T> ApiResponse<T> {
         }
     }
 
+    pub fn new_private_no_store(data: T, status: StatusCode) -> Self {
+        Self::Json {
+            data,
+            status,
+            headers: Some(HashMap::from([(
+                header::CACHE_CONTROL.to_string(),
+                "private, no-store".to_string(),
+            )])),
+        }
+    }
+
     pub fn ok(data: T) -> Self {
         Self::new(data, StatusCode::OK)
     }
@@ -75,6 +86,26 @@ impl<T> ApiResponse<T> {
             data,
             status: StatusCode::ACCEPTED,
             headers: Some(location_header(location)),
+        }
+    }
+
+    pub fn paginated_items(
+        data: T,
+        next_cursor: &Option<String>,
+        total_count: i64,
+        no_store: bool,
+    ) -> Self {
+        let mut headers = pagination_headers(next_cursor, total_count);
+        if no_store {
+            headers.insert(
+                header::CACHE_CONTROL.to_string(),
+                "private, no-store".to_string(),
+            );
+        }
+        Self::Json {
+            data,
+            status: StatusCode::OK,
+            headers: Some(headers),
         }
     }
 }
