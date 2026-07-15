@@ -1,6 +1,7 @@
 # Export API
 
-The export API executes an authorized Hubuum query server-side through the generic task system.
+The export API executes a runtime-administrator Hubuum query server-side through
+the generic task system.
 
 Endpoints:
 
@@ -11,7 +12,11 @@ Endpoints:
 
 Authentication:
 
-- Bearer token required
+- An unscoped bearer token for a runtime administrator is required.
+- Runtime administrators may be humans or service accounts in the configured
+  admin group. Service accounts do not gain access to human/IAM administration.
+- The worker rechecks admin authority before execution. Dedicated backup
+  service accounts are recommended for automated exports.
 
 ## Submission model
 

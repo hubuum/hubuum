@@ -72,12 +72,11 @@ async fn ensure_collection_permission_cached<C>(
 where
     C: BackendContext + ?Sized,
 {
+    if state.scopes.is_none() && is_import_admin(backend, user, state).await? {
+        return Ok(());
+    }
+
     if !collection_exists_in_db {
-        // Admin-bypass for newly-created collections applies only to unscoped
-        // tokens; a scoped import can never operate on new collections.
-        if state.scopes.is_none() && is_import_admin(backend, user, state).await? {
-            return Ok(());
-        }
         return Err("Only admins may operate on newly created collections within an import".into());
     }
 
@@ -144,6 +143,7 @@ async fn object_relation_exists_cached(
     Ok(exists)
 }
 
+#[cfg(test)]
 pub(super) async fn plan_import<C>(
     backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
@@ -153,10 +153,35 @@ pub(super) async fn plan_import<C>(
 where
     C: BackendContext + ?Sized,
 {
+    plan_import_with_admin_status(backend, user, scopes, request, None).await
+}
+
+pub(super) async fn plan_runtime_admin_import<C>(
+    backend: &C,
+    user: &impl crate::db::traits::authz::AuthzSubject,
+    request: &ImportRequest,
+) -> PlanningOutcome
+where
+    C: BackendContext + ?Sized,
+{
+    plan_import_with_admin_status(backend, user, None, request, Some(true)).await
+}
+
+async fn plan_import_with_admin_status<C>(
+    backend: &C,
+    user: &impl crate::db::traits::authz::AuthzSubject,
+    scopes: Option<&[Permissions]>,
+    request: &ImportRequest,
+    is_admin: Option<bool>,
+) -> PlanningOutcome
+where
+    C: BackendContext + ?Sized,
+{
     let pool = backend.db_pool();
     let mode = request.mode();
     let mut state = PlanningState::new();
     state.scopes = scopes.map(|s| s.to_vec());
+    state.is_admin = is_admin;
     let mut planned_items = Vec::with_capacity(request.total_items() as usize);
     let mut failures = Vec::new();
     let mut aborted = false;
@@ -542,7 +567,7 @@ where
             }),
         })
     } else {
-        if !is_import_admin(pool, user, state)
+        if !is_import_admin(backend, user, state)
             .await
             .map_err(|err| PlanningFailure {
                 kind: FailureKind::Permission,

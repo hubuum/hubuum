@@ -129,15 +129,15 @@ Export templates are used to format export output and are scoped to collections.
 
 | Permission | Description |
 | --- | --- |
-| `ReadTemplate` | Allows reading export templates and using them in export generation. Required to view template definitions or to reference a template when running an export. |
+| `ReadTemplate` | Allows reading export template definitions. |
 | `CreateTemplate` | Allows creating new export templates within the collection. Also required when moving a template to a different collection (as the target collection permission). |
 | `UpdateTemplate` | Allows modifying existing export templates (name, description, template content, collection). Required when moving a template to a different collection (as the source collection permission). |
 | `DeleteTemplate` | Allows deleting export_templates from the collection. |
 
 **Important notes about template permissions:**
 
-- Templates are collection-scoped, meaning all template operations require the appropriate permission on the template's collection.
-- Using a template in an export requires `read_template` permission on the collection containing the template.
+- Template management is collection-scoped, meaning CRUD operations require the appropriate permission on the template's collection.
+- Running any export, including one backed by a stored template, requires an unscoped runtime administrator. `read_template` alone does not grant export authority.
 - Moving a template between collections requires both `update_template` on the source collection and `create_template` on the target collection.
 - Templates with the same name cannot exist within the same collection (enforced by a unique constraint).
 - Valid template content types are: `text/plain`, `text/html`, and `text/csv`. The `application/json` content type is reserved for the default JSON export output and cannot be used for stored export templates.

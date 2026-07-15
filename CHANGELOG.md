@@ -34,6 +34,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking:** Import and export submission now requires an unscoped runtime
+  administrator. Non-admin and scoped tokens now receive `403 Forbidden`.
+  Automation should use dedicated service accounts in the configured admin
+  group with unscoped tokens; service accounts remain excluded from human/IAM
+  administration. Workers recheck runtime-admin authority before execution, so
+  queued tasks fail closed if that authority is revoked.
 - **Breaking:** Operational logs from the server and admin CLI are now
   newline-delimited JSON only. Update log collectors and parsers that expect the
   previous text format. Records now include request and correlation IDs,

@@ -1,29 +1,22 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Instant;
 
 use hubuum_templates::SizeLimitedWriter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::can;
 use crate::config::{
     DEFAULT_EXPORT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER,
     DEFAULT_EXPORT_MAX_OUTPUT_BYTES, DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS,
     DEFAULT_EXPORT_STAGE_TIMEOUT_MS, DEFAULT_EXPORT_TEMPLATE_MAX_OBJECTS, get_config,
-};
-use crate::db::traits::UserPermissions;
-use crate::db::traits::authz::scope_allows;
-use crate::db::traits::relations::{
-    class_relation_authorization_resources, object_authorization_resources,
-    object_relation_authorization_resources,
 };
 use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate};
 use crate::db::traits::user::UserSearchBackend;
 use crate::db::{DbPool, with_statement_timeout_scope};
 use crate::errors::ApiError;
 use crate::models::search::{
-    FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
-    StatementTimeoutMs, parse_query_parameter,
+    FilterField, ParsedQueryParam, QueryOptions, SearchOperator, StatementTimeoutMs,
+    parse_query_parameter,
 };
 use crate::models::{
     ClassIdSet, Collection, CollectionExportTemplates, CollectionID, ExportContentType,
@@ -31,19 +24,14 @@ use crate::models::{
     ExportJsonResponse, ExportMeta, ExportMissingDataPolicy, ExportRequest, ExportScope,
     ExportScopeKind, ExportTemplate, ExportTemplateID, ExportWarning, HubuumClassExpanded,
     HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation,
-    HubuumObjectWithPath, NewExportTaskOutputRecord, NewTaskEventRecord, Permissions,
+    HubuumObjectWithPath, NewExportTaskOutputRecord, NewTaskEventRecord,
     RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH, RelatedObjectForRootRow,
     RelatedObjectGraphRow, RelatedObjectIncludeRow, TaskKind, TaskRecord,
 };
 use crate::observability::metrics;
-use crate::pagination::{page_limits_or_defaults, paginate_in_memory};
-use crate::permissions::visibility::authorize_cursor_page;
-use crate::permissions::{
-    AppContext, PermissionBackend, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
-};
-use crate::permissions::{PermissionDecision, PermissionRequest};
+use crate::pagination::page_limits_or_defaults;
 use crate::tasks::request_hash;
-use crate::traits::{AuthzSubject, BackendContext, CursorPaginated, SelfAccessors};
+use crate::traits::{AuthzSubject, SelfAccessors};
 use crate::utilities::exporting::render_template;
 
 use crate::models::traits::check_if_object_in_class;
@@ -193,19 +181,138 @@ struct ReachableTemplateTarget {
     remaining_depth: i32,
 }
 
+/// Query capability used only after the worker has authorized the complete
+/// export as a runtime-admin operation. Keeping the explicit SQL admin bypass
+/// here prevents individual export stages from accidentally reintroducing
+/// resource-by-resource authorization.
+struct RuntimeAdminExport<'a, S: ?Sized> {
+    subject: &'a S,
+}
+
+impl<'a, S> RuntimeAdminExport<'a, S>
+where
+    S: crate::traits::Search + ?Sized,
+{
+    fn new(subject: &'a S) -> Self {
+        Self { subject }
+    }
+
+    async fn collections(
+        &self,
+        pool: &DbPool,
+        query: QueryOptions,
+    ) -> Result<Vec<Collection>, ApiError> {
+        self.subject
+            .search_collections_from_backend_with_admin_status(pool, query, true, None)
+            .await
+    }
+
+    async fn classes(
+        &self,
+        pool: &DbPool,
+        query: QueryOptions,
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
+        self.subject
+            .search_classes_from_backend_with_admin_status(pool, query, true, None)
+            .await
+    }
+
+    async fn objects(
+        &self,
+        pool: &DbPool,
+        query: QueryOptions,
+    ) -> Result<Vec<HubuumObject>, ApiError> {
+        self.subject
+            .search_objects_from_backend_with_admin_status(pool, query, true, None)
+            .await
+    }
+
+    async fn class_relations(
+        &self,
+        pool: &DbPool,
+        query: QueryOptions,
+    ) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        self.subject
+            .search_class_relations_from_backend_with_admin_status(pool, query, true, None)
+            .await
+    }
+
+    async fn object_relations(
+        &self,
+        pool: &DbPool,
+        query: QueryOptions,
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+        self.subject
+            .search_object_relations_from_backend_with_admin_status(pool, query, true, None)
+            .await
+    }
+
+    async fn related_objects(
+        &self,
+        pool: &DbPool,
+        object: HubuumObjectID,
+        query: QueryOptions,
+    ) -> Result<Vec<RelatedObjectGraphRow>, ApiError> {
+        self.subject
+            .search_objects_related_to_from_backend_with_admin_status(
+                pool, object, query, true, None,
+            )
+            .await
+    }
+
+    async fn related_objects_for_roots(
+        &self,
+        pool: &DbPool,
+        root_ids: &[i32],
+        include: ExportIncludeRelatedQuery,
+    ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
+        self.subject
+            .related_objects_for_roots_from_backend_with_admin_status(
+                pool, root_ids, include, true, None,
+            )
+            .await
+    }
+
+    async fn bidirectionally_related_objects_for_roots(
+        &self,
+        pool: &DbPool,
+        root_ids: &[i32],
+        max_depth: i32,
+        per_root_cap: i32,
+    ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
+        self.subject
+            .bidirectionally_related_objects_for_roots_from_backend_with_admin_status(
+                pool,
+                root_ids,
+                max_depth,
+                per_root_cap,
+                true,
+                None,
+            )
+            .await
+    }
+
+    async fn object_relations_between_ids(
+        &self,
+        pool: &DbPool,
+        object_ids: &[i32],
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+        self.subject
+            .search_object_relations_between_ids_from_backend_with_admin_status(
+                pool, object_ids, true, None,
+            )
+            .await
+    }
+}
+
 pub(crate) async fn submit_export_task<S: AuthzSubject>(
-    context: &AppContext,
+    pool: &DbPool,
     subject: &S,
-    // Scope boundary of the submitting token, persisted as the task scope
-    // snapshot so async execution cannot exceed it.
-    scopes: Option<&[Permissions]>,
     submitted_token_id: Option<i32>,
     idempotency_key: Option<String>,
     export: ExportRequest,
     template: Option<ExportTemplate>,
 ) -> Result<TaskRecord, ApiError> {
-    let pool = &context.db_pool;
-
     let task_payload = StoredExportTaskPayload {
         export,
         template_id: template.as_ref().map(|template| template.id),
@@ -217,7 +324,7 @@ pub(crate) async fn submit_export_task<S: AuthzSubject>(
     validate_export_submission(&runtime)?;
     let task_payload = runtime_to_task_payload(&runtime)?;
 
-    let snapshot = TaskScopeSnapshot::from_request(submitted_token_id, scopes);
+    let snapshot = TaskScopeSnapshot::from_request(submitted_token_id, None);
 
     find_or_create_export_task(
         pool,
@@ -262,30 +369,18 @@ async fn prepare_export_runtime(
     })
 }
 
-async fn resolve_template<C>(
-    backend: &C,
-    subject: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
+async fn resolve_template(
+    pool: &DbPool,
     template_id: Option<i32>,
-) -> Result<Option<ExportTemplate>, ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    let pool = backend.db_pool();
+) -> Result<Option<ExportTemplate>, ApiError> {
     let Some(template_id) = template_id else {
         return Ok(None);
     };
 
-    let template = ExportTemplateID::new(template_id)?.instance(pool).await?;
-    can!(
-        backend,
-        subject,
-        scopes,
-        [Permissions::ReadTemplate],
-        CollectionID::new(template.collection_id)?
-    );
-
-    Ok(Some(template))
+    ExportTemplateID::new(template_id)?
+        .instance(pool)
+        .await
+        .map(Some)
 }
 
 fn validate_export_submission(runtime: &ExportRuntime) -> Result<(), ApiError> {
@@ -338,22 +433,17 @@ async fn find_or_create_export_task(
     .await
 }
 
-pub(crate) async fn execute_export_task<C>(
-    backend: &C,
+pub(crate) async fn execute_export_task(
+    pool: &DbPool,
     task: &TaskRecord,
     subject: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
-) -> Result<(), ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    let pool = backend.db_pool();
+) -> Result<(), ApiError> {
     let payload = task
         .request_payload
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Export task payload is missing".to_string()))?;
     let payload: StoredExportTaskPayload = serde_json::from_value(payload)?;
-    let template = resolve_template(backend, subject, scopes, payload.template_id).await?;
+    let template = resolve_template(pool, payload.template_id).await?;
     let runtime = prepare_export_runtime(pool, payload.export, template).await?;
     validate_export_submission(&runtime)?;
     let total_start = Instant::now();
@@ -403,19 +493,13 @@ where
     let query_start = Instant::now();
     let (items, mut warnings, truncated) = with_statement_timeout_scope(
         statement_timeout,
-        execute_scope(
-            backend,
-            subject,
-            scopes,
-            &runtime.export.scope,
-            query_options,
-        ),
+        execute_scope(pool, subject, &runtime.export.scope, query_options),
     )
     .await?;
     let mut items = items;
     with_statement_timeout_scope(
         statement_timeout,
-        apply_export_includes(backend, subject, scopes, &runtime.export, &mut items),
+        apply_export_includes(pool, subject, &runtime.export, &mut items),
     )
     .await?;
     let query_elapsed = query_start.elapsed();
@@ -445,14 +529,7 @@ where
     let hydration_start = Instant::now();
     let (template_items, source) = with_statement_timeout_scope(
         statement_timeout,
-        build_template_items(
-            backend,
-            subject,
-            scopes,
-            &runtime,
-            &items,
-            relation_hydration,
-        ),
+        build_template_items(pool, subject, &runtime, &items, relation_hydration),
     )
     .await?;
     let hydration_elapsed = hydration_start.elapsed();
@@ -905,18 +982,13 @@ fn validate_relation_depth(depth: i32) -> Result<i32, ApiError> {
     Ok(depth)
 }
 
-async fn build_template_items<C>(
-    backend: &C,
+async fn build_template_items(
+    pool: &DbPool,
     user: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
     runtime: &ExportRuntime,
     items: &[serde_json::Value],
     relation_hydration: Option<RelationHydrationPlan>,
-) -> Result<(Vec<serde_json::Value>, Option<serde_json::Value>), ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    let pool = backend.db_pool();
+) -> Result<(Vec<serde_json::Value>, Option<serde_json::Value>), ApiError> {
     if runtime.template.is_none() {
         return Ok((items.to_vec(), None));
     }
@@ -933,6 +1005,7 @@ where
 
     match runtime.export.scope.kind {
         ExportScopeKind::ObjectsInClass => {
+            let admin = RuntimeAdminExport::new(user);
             let roots = items
                 .iter()
                 .cloned()
@@ -944,43 +1017,14 @@ where
 
             let root_ids = roots.iter().map(|root| root.id).collect::<Vec<_>>();
             let per_root_cap = i32::try_from(max_hydrated_template_objects()).unwrap_or(i32::MAX);
-            let related_rows =
-                if let Some(permission_backend) = external_visibility_backend(backend) {
-                    let candidates = user
-                        .bidirectionally_related_objects_for_roots_from_backend_with_admin_status(
-                            pool,
-                            &root_ids,
-                            relation_hydration.depth_limit,
-                            i32::MAX,
-                            true,
-                            None,
-                        )
-                        .await?;
-                    let authorized =
-                        authorize_related_paths(permission_backend, pool, user, scopes, candidates)
-                            .await?;
-                    let mut per_root_counts = HashMap::<i32, i32>::new();
-                    authorized
-                        .into_iter()
-                        .filter(|row| {
-                            let count = per_root_counts.entry(row.root_object_id).or_default();
-                            if *count >= per_root_cap {
-                                return false;
-                            }
-                            *count += 1;
-                            true
-                        })
-                        .collect()
-                } else {
-                    user.bidirectionally_related_objects_for_roots(
-                        backend,
-                        &root_ids,
-                        relation_hydration.depth_limit,
-                        per_root_cap,
-                        scopes,
-                    )
-                    .await?
-                };
+            let related_rows = admin
+                .bidirectionally_related_objects_for_roots(
+                    pool,
+                    &root_ids,
+                    relation_hydration.depth_limit,
+                    per_root_cap,
+                )
+                .await?;
 
             // Descendants grouped per root, preserving the query's per-root ordering.
             let mut related_by_root: BTreeMap<i32, Vec<HubuumObjectWithPath>> =
@@ -998,8 +1042,9 @@ where
             }
             all_object_ids.sort_unstable();
             all_object_ids.dedup();
-            let all_relations =
-                search_object_relations_for_export(backend, user, scopes, &all_object_ids).await?;
+            let all_relations = admin
+                .object_relations_between_ids(pool, &all_object_ids)
+                .await?;
 
             // One class-metadata fetch over every object in the export.
             let mut all_objects = BTreeMap::<i32, HubuumObjectWithPath>::new();
@@ -1062,9 +1107,8 @@ where
                 .map(serde_json::from_value::<HubuumObjectWithPath>)
                 .collect::<Result<Vec<_>, _>>()?;
             let hydrated = hydrate_related_root(
-                backend,
+                pool,
                 user,
-                scopes,
                 source,
                 related_objects,
                 relation_hydration.depth_limit,
@@ -1078,19 +1122,14 @@ where
     }
 }
 
-async fn hydrate_related_root<C>(
-    backend: &C,
+async fn hydrate_related_root(
+    pool: &DbPool,
     user: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
     source: HubuumObjectWithPath,
     related_objects: Vec<HubuumObjectWithPath>,
     depth_limit: i32,
     hydration_budget: &mut HydrationBudget,
-) -> Result<HydratedTemplateObject, ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    let pool = backend.db_pool();
+) -> Result<HydratedTemplateObject, ApiError> {
     let max_related_objects = hydration_budget.remaining_related_capacity()?;
     if related_objects.len() > max_related_objects {
         return Err(ApiError::BadRequest(format!(
@@ -1103,7 +1142,9 @@ where
     let object_ids = std::iter::once(source.id)
         .chain(related_objects.iter().map(|object| object.id))
         .collect::<Vec<_>>();
-    let relations = search_object_relations_for_export(backend, user, scopes, &object_ids).await?;
+    let relations = RuntimeAdminExport::new(user)
+        .object_relations_between_ids(pool, &object_ids)
+        .await?;
 
     let mut all_objects = BTreeMap::<i32, HubuumObjectWithPath>::new();
     all_objects.insert(source.id, source.clone());
@@ -1870,538 +1911,41 @@ fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
     }
 }
 
-fn external_visibility_backend<C>(backend: &C) -> Option<&dyn PermissionBackend>
-where
-    C: BackendContext + ?Sized,
-{
-    backend
-        .permission_backend()
-        .filter(|permission_backend| !permission_backend.supports_sql_visibility_pushdown())
-}
-
-fn export_candidate_options(query_options: &QueryOptions) -> QueryOptions {
-    let mut candidates = query_options.clone();
-    candidates.cursor = None;
-    candidates.limit = None;
-    candidates.include_total = false;
-    candidates
-}
-
-struct ExportAuthorizer<'a, S: ?Sized> {
-    permission_backend: &'a dyn PermissionBackend,
-    pool: &'a DbPool,
-    subject: &'a S,
-    scopes: Option<&'a [Permissions]>,
-}
-
-impl<'a, S> ExportAuthorizer<'a, S>
-where
-    S: AuthzSubject + ?Sized,
-{
-    fn new(
-        permission_backend: &'a dyn PermissionBackend,
-        pool: &'a DbPool,
-        subject: &'a S,
-        scopes: Option<&'a [Permissions]>,
-    ) -> Self {
-        Self {
-            permission_backend,
-            pool,
-            subject,
-            scopes,
-        }
-    }
-
-    async fn page<T, F>(
-        &self,
-        candidates: Vec<T>,
-        permissions: Vec<Permissions>,
-        query_options: &QueryOptions,
-        to_resource: F,
-    ) -> Result<Vec<T>, ApiError>
-    where
-        T: CursorPaginated,
-        F: Fn(&T) -> ResourceRef,
-    {
-        if !scope_allows(self.scopes, &permissions) || candidates.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let principal = PrincipalRef::load(self.pool, self.subject).await?;
-        Ok(authorize_cursor_page(
-            self.permission_backend,
-            &principal,
-            candidates,
-            permissions,
-            query_options,
-            to_resource,
-        )
-        .await?
-        .rows)
-    }
-
-    async fn candidates<T>(
-        &self,
-        candidates: Vec<T>,
-        permissions: Vec<Permissions>,
-        resources: Vec<ResourceRef>,
-    ) -> Result<Vec<T>, ApiError> {
-        if !scope_allows(self.scopes, &permissions) || candidates.is_empty() {
-            return Ok(Vec::new());
-        }
-        if candidates.len() != resources.len() {
-            return Err(ApiError::InternalServerError(format!(
-                "built {} authorization resources for {} export candidates",
-                resources.len(),
-                candidates.len()
-            )));
-        }
-
-        let principal = PrincipalRef::load(self.pool, self.subject).await?;
-        let requests = resources
-            .into_iter()
-            .map(|resource| PermissionRequest {
-                resource,
-                permissions: permissions.clone(),
-            })
-            .collect();
-        let decisions = self
-            .permission_backend
-            .authorize_many(&principal, requests)
-            .await?;
-        if decisions.len() != candidates.len() {
-            return Err(ApiError::PermissionBackendUnavailable(format!(
-                "permission backend returned {} decisions for {} export candidates",
-                decisions.len(),
-                candidates.len()
-            )));
-        }
-
-        Ok(candidates
-            .into_iter()
-            .zip(decisions)
-            .filter_map(|(candidate, decision)| {
-                (decision == PermissionDecision::Allow).then_some(candidate)
-            })
-            .collect())
-    }
-}
-
-async fn search_object_relations_for_export<C, S>(
-    backend: &C,
-    subject: &S,
-    scopes: Option<&[Permissions]>,
-    object_ids: &[i32],
-) -> Result<Vec<HubuumObjectRelation>, ApiError>
-where
-    C: BackendContext + ?Sized,
-    S: crate::traits::Search + ?Sized,
-{
-    let pool = backend.db_pool();
-    let Some(permission_backend) = external_visibility_backend(backend) else {
-        return subject
-            .search_object_relations_between_ids(backend, object_ids, scopes)
-            .await;
-    };
-    let candidates = subject
-        .search_object_relations_between_ids_from_backend_with_admin_status(
-            pool, object_ids, true, None,
-        )
-        .await?;
-    let resources = object_relation_authorization_resources(pool, &candidates).await?;
-    ExportAuthorizer::new(permission_backend, pool, subject, scopes)
-        .candidates(candidates, vec![Permissions::ReadObjectRelation], resources)
-        .await
-}
-
-fn class_resource(class: &HubuumClassExpanded) -> ResourceRef {
-    ResourceRef {
-        kind: ResourceKind::Class,
-        id: class.id,
-        attrs: ResourceAttrs {
-            collection_id: Some(class.collection.id),
-            name: Some(class.name.clone()),
-            ..Default::default()
-        },
-    }
-}
-
-fn object_resource(object: &HubuumObject) -> ResourceRef {
-    ResourceRef {
-        kind: ResourceKind::Object,
-        id: object.id,
-        attrs: ResourceAttrs {
-            collection_id: Some(object.collection_id),
-            class_id: Some(object.hubuum_class_id),
-            name: Some(object.name.clone()),
-            ..Default::default()
-        },
-    }
-}
-
-fn required_relation_permissions(
-    query_options: &QueryOptions,
-    read_permission: Permissions,
-) -> Result<Vec<Permissions>, ApiError> {
-    let mut permissions = query_options.filters.permissions()?;
-    permissions.ensure_contains(&[read_permission]);
-    Ok(permissions.iter().copied().collect())
-}
-
-fn normalized_object_pair(left: i32, right: i32) -> (i32, i32) {
-    if left <= right {
-        (left, right)
-    } else {
-        (right, left)
-    }
-}
-
-fn related_path_is_authorized(
-    path: &[i32],
-    permitted_object_ids: &HashSet<i32>,
-    permitted_pairs: &HashSet<(i32, i32)>,
-) -> bool {
-    path.iter()
-        .all(|object_id| permitted_object_ids.contains(object_id))
-        && path
-            .windows(2)
-            .all(|pair| permitted_pairs.contains(&normalized_object_pair(pair[0], pair[1])))
-}
-
-trait RelatedPathCandidate {
-    fn path(&self) -> &[i32];
-}
-
-macro_rules! impl_related_path_candidate {
-    ($type:ty) => {
-        impl RelatedPathCandidate for $type {
-            fn path(&self) -> &[i32] {
-                &self.path
-            }
-        }
-    };
-}
-
-impl_related_path_candidate!(RelatedObjectGraphRow);
-impl_related_path_candidate!(RelatedObjectIncludeRow);
-impl_related_path_candidate!(RelatedObjectForRootRow);
-
-async fn authorize_related_paths<S, T>(
-    permission_backend: &dyn PermissionBackend,
+async fn execute_scope(
     pool: &DbPool,
-    subject: &S,
-    scopes: Option<&[Permissions]>,
-    candidates: Vec<T>,
-) -> Result<Vec<T>, ApiError>
-where
-    S: crate::traits::Search + ?Sized,
-    T: RelatedPathCandidate,
-{
-    let required = [Permissions::ReadObject, Permissions::ReadObjectRelation];
-    if !scope_allows(scopes, &required) || candidates.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let principal = PrincipalRef::load(pool, subject).await?;
-    let object_ids = candidates
-        .iter()
-        .flat_map(|row| row.path().iter().copied())
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let object_resources = object_authorization_resources(pool, &object_ids).await?;
-    let object_requests = object_resources
-        .into_iter()
-        .map(|resource| PermissionRequest {
-            resource,
-            permissions: vec![Permissions::ReadObject],
-        })
-        .collect();
-    let object_decisions = permission_backend
-        .authorize_many(&principal, object_requests)
-        .await?;
-    if object_decisions.len() != object_ids.len() {
-        return Err(ApiError::PermissionBackendUnavailable(format!(
-            "permission backend returned {} object decisions for {} export path objects",
-            object_decisions.len(),
-            object_ids.len()
-        )));
-    }
-    let permitted_object_ids = object_ids
-        .iter()
-        .copied()
-        .zip(object_decisions)
-        .filter_map(|(object_id, decision)| {
-            (decision == PermissionDecision::Allow).then_some(object_id)
-        })
-        .collect::<HashSet<_>>();
-    let relations = subject
-        .search_object_relations_between_ids_from_backend_with_admin_status(
-            pool,
-            &object_ids,
-            true,
-            None,
-        )
-        .await?;
-    let relation_resources = object_relation_authorization_resources(pool, &relations).await?;
-    let relation_requests = relation_resources
-        .into_iter()
-        .map(|resource| PermissionRequest {
-            resource,
-            permissions: vec![Permissions::ReadObjectRelation],
-        })
-        .collect();
-    let relation_decisions = permission_backend
-        .authorize_many(&principal, relation_requests)
-        .await?;
-    if relation_decisions.len() != relations.len() {
-        return Err(ApiError::PermissionBackendUnavailable(format!(
-            "permission backend returned {} relation decisions for {} export candidates",
-            relation_decisions.len(),
-            relations.len()
-        )));
-    }
-    let permitted_pairs = relations
-        .iter()
-        .zip(relation_decisions)
-        .filter_map(|(relation, decision)| {
-            (decision == PermissionDecision::Allow).then_some(normalized_object_pair(
-                relation.from_hubuum_object_id,
-                relation.to_hubuum_object_id,
-            ))
-        })
-        .collect::<HashSet<_>>();
-
-    let authorized = candidates
-        .into_iter()
-        .filter(|candidate| {
-            related_path_is_authorized(candidate.path(), &permitted_object_ids, &permitted_pairs)
-        })
-        .collect();
-    Ok(authorized)
-}
-
-async fn authorize_related_export_page<S>(
-    permission_backend: &dyn PermissionBackend,
-    pool: &DbPool,
-    subject: &S,
-    scopes: Option<&[Permissions]>,
-    candidates: Vec<RelatedObjectGraphRow>,
-    query_options: &QueryOptions,
-) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
-where
-    S: crate::traits::Search + ?Sized,
-{
-    let authorized =
-        authorize_related_paths(permission_backend, pool, subject, scopes, candidates).await?;
-    paginate_in_memory(authorized, query_options)
-}
-
-async fn execute_scope<C>(
-    backend: &C,
     subject: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
     scope: &ExportScope,
     mut query_options: QueryOptions,
-) -> Result<(Vec<serde_json::Value>, Vec<ExportWarning>, bool), ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    let pool = backend.db_pool();
+) -> Result<(Vec<serde_json::Value>, Vec<ExportWarning>, bool), ApiError> {
     let item_limit = query_options.limit.unwrap_or(1).saturating_sub(1).max(1);
-    let external_backend = external_visibility_backend(backend);
+    let admin = RuntimeAdminExport::new(subject);
 
     let data = match scope.kind {
         ExportScopeKind::Collections => {
-            let collections = if let Some(permission_backend) = external_backend {
-                let candidates = subject
-                    .search_collections_from_backend_with_admin_status(
-                        pool,
-                        export_candidate_options(&query_options),
-                        true,
-                        None,
-                    )
-                    .await?;
-                ExportAuthorizer::new(permission_backend, pool, subject, scopes)
-                    .page(
-                        candidates,
-                        vec![Permissions::ReadCollection],
-                        &query_options,
-                        |collection: &Collection| ResourceRef::collection(collection.id),
-                    )
-                    .await?
-            } else {
-                subject
-                    .search_collections(backend, query_options, scopes)
-                    .await?
-            };
-            to_json_items(collections)?
+            to_json_items(admin.collections(pool, query_options).await?)?
         }
-        ExportScopeKind::Classes => {
-            let classes = if let Some(permission_backend) = external_backend {
-                let candidates = subject
-                    .search_classes_from_backend_with_admin_status(
-                        pool,
-                        export_candidate_options(&query_options),
-                        true,
-                        None,
-                    )
-                    .await?;
-                ExportAuthorizer::new(permission_backend, pool, subject, scopes)
-                    .page(
-                        candidates,
-                        vec![Permissions::ReadClass],
-                        &query_options,
-                        class_resource,
-                    )
-                    .await?
-            } else {
-                subject
-                    .search_classes(backend, query_options, scopes)
-                    .await?
-            };
-            to_json_items(classes)?
-        }
+        ExportScopeKind::Classes => to_json_items(admin.classes(pool, query_options).await?)?,
         ExportScopeKind::ObjectsInClass => {
             push_exact_filter(
                 &mut query_options,
                 FilterField::ClassId,
                 scope.class_id_required()?,
             )?;
-            let objects = if let Some(permission_backend) = external_backend {
-                let candidates = subject
-                    .search_objects_from_backend_with_admin_status(
-                        pool,
-                        export_candidate_options(&query_options),
-                        true,
-                        None,
-                    )
-                    .await?;
-                ExportAuthorizer::new(permission_backend, pool, subject, scopes)
-                    .page(
-                        candidates,
-                        vec![Permissions::ReadObject],
-                        &query_options,
-                        object_resource,
-                    )
-                    .await?
-            } else {
-                subject
-                    .search_objects(backend, query_options, scopes)
-                    .await?
-            };
-            to_json_items(objects)?
+            to_json_items(admin.objects(pool, query_options).await?)?
         }
         ExportScopeKind::ClassRelations => {
-            let relations = if let Some(permission_backend) = external_backend {
-                let candidates = subject
-                    .search_class_relations_from_backend_with_admin_status(
-                        pool,
-                        export_candidate_options(&query_options),
-                        true,
-                        None,
-                    )
-                    .await?;
-                let resources = class_relation_authorization_resources(pool, &candidates)
-                    .await?
-                    .into_iter()
-                    .map(|resource| (resource.id, resource))
-                    .collect::<HashMap<_, _>>();
-                let permissions =
-                    required_relation_permissions(&query_options, Permissions::ReadClassRelation)?;
-                ExportAuthorizer::new(permission_backend, pool, subject, scopes)
-                    .page(
-                        candidates,
-                        permissions,
-                        &query_options,
-                        |relation: &HubuumClassRelation| {
-                            resources
-                                .get(&relation.id)
-                                .expect("every relation candidate has an authorization resource")
-                                .clone()
-                        },
-                    )
-                    .await?
-            } else {
-                subject
-                    .search_class_relations(backend, query_options, scopes)
-                    .await?
-            };
-            to_json_items(relations)?
+            to_json_items(admin.class_relations(pool, query_options).await?)?
         }
         ExportScopeKind::ObjectRelations => {
-            let relations = if let Some(permission_backend) = external_backend {
-                let candidates = subject
-                    .search_object_relations_from_backend_with_admin_status(
-                        pool,
-                        export_candidate_options(&query_options),
-                        true,
-                        None,
-                    )
-                    .await?;
-                let resources = object_relation_authorization_resources(pool, &candidates)
-                    .await?
-                    .into_iter()
-                    .map(|resource| (resource.id, resource))
-                    .collect::<HashMap<_, _>>();
-                let permissions =
-                    required_relation_permissions(&query_options, Permissions::ReadObjectRelation)?;
-                ExportAuthorizer::new(permission_backend, pool, subject, scopes)
-                    .page(
-                        candidates,
-                        permissions,
-                        &query_options,
-                        |relation: &HubuumObjectRelation| {
-                            resources
-                                .get(&relation.id)
-                                .expect("every relation candidate has an authorization resource")
-                                .clone()
-                        },
-                    )
-                    .await?
-            } else {
-                subject
-                    .search_object_relations(backend, query_options, scopes)
-                    .await?
-            };
-            to_json_items(relations)?
+            to_json_items(admin.object_relations(pool, query_options).await?)?
         }
         ExportScopeKind::RelatedObjects => {
             let class_id = HubuumClassID::new(scope.class_id_required()?)?;
             let object_id = HubuumObjectID::new(scope.object_id_required()?)?;
             check_if_object_in_class(pool, &class_id, &object_id).await?;
-            let source_object = object_id.instance(pool).await?;
-            can!(
-                backend,
-                subject,
-                scopes,
-                [Permissions::ReadObject],
-                source_object
-            );
-            let related = if let Some(permission_backend) = external_backend {
-                let candidates = subject
-                    .search_objects_related_to_from_backend_with_admin_status(
-                        pool,
-                        object_id,
-                        export_candidate_options(&query_options),
-                        true,
-                        None,
-                    )
-                    .await?;
-                authorize_related_export_page(
-                    permission_backend,
-                    pool,
-                    subject,
-                    scopes,
-                    candidates,
-                    &query_options,
-                )
-                .await?
-            } else {
-                subject
-                    .search_objects_related_to(backend, object_id, query_options, scopes)
-                    .await?
-            };
+            let related = admin
+                .related_objects(pool, object_id, query_options)
+                .await?;
             to_json_items(
                 related
                     .into_iter()
@@ -2415,16 +1959,12 @@ where
     Ok((items, Vec::new(), truncated))
 }
 
-async fn apply_export_includes<C>(
-    backend: &C,
+async fn apply_export_includes(
+    pool: &DbPool,
     user: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
     export: &ExportRequest,
     items: &mut [serde_json::Value],
-) -> Result<(), ApiError>
-where
-    C: BackendContext + ?Sized,
-{
+) -> Result<(), ApiError> {
     let Some(related_objects) = export
         .include
         .as_ref()
@@ -2447,6 +1987,7 @@ where
         .enumerate()
         .map(|(index, object_id)| (*object_id, index))
         .collect::<HashMap<i32, usize>>();
+    let admin = RuntimeAdminExport::new(user);
 
     for (alias, include) in related_objects {
         let max_depth = include
@@ -2465,43 +2006,9 @@ where
             max_depth,
             limit,
         };
-        let related = if let Some(permission_backend) = external_visibility_backend(backend) {
-            let candidates = user
-                .related_objects_for_roots_from_backend_with_admin_status(
-                    backend.db_pool(),
-                    &root_object_ids,
-                    ExportIncludeRelatedQuery {
-                        limit: i32::MAX,
-                        ..include_query
-                    },
-                    true,
-                    None,
-                )
-                .await?;
-            let authorized = authorize_related_paths(
-                permission_backend,
-                backend.db_pool(),
-                user,
-                scopes,
-                candidates,
-            )
+        let related = admin
+            .related_objects_for_roots(pool, &root_object_ids, include_query)
             .await?;
-            let mut per_root_counts = HashMap::<i32, i32>::new();
-            authorized
-                .into_iter()
-                .filter(|row| {
-                    let count = per_root_counts.entry(row.root_object_id).or_default();
-                    if *count >= limit {
-                        return false;
-                    }
-                    *count += 1;
-                    true
-                })
-                .collect()
-        } else {
-            user.related_objects_for_roots(backend, &root_object_ids, include_query, scopes)
-                .await?
-        };
 
         for row in related {
             let Some(item_index) = item_indexes.get(&row.root_object_id) else {
@@ -2655,23 +2162,18 @@ fn enforce_json_output_limit(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
-    use std::sync::Arc;
+    use std::collections::HashMap;
 
-    use crate::models::search::parse_query_parameter;
     use crate::models::{
         ExportContentType, ExportInclude, ExportIncludeRelatedObject, ExportLimits,
         ExportMissingDataPolicy, ExportRelationContext, ExportRequest, ExportScope,
-        ExportScopeKind, ExportTemplate, ExportTemplateKind, Permissions,
+        ExportScopeKind, ExportTemplate, ExportTemplateKind,
     };
-    use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
-    use crate::permissions::{AppContext, ResourceAttrs, ResourceKind};
-    use crate::tests::TestContext;
 
     use super::{
-        ExportRuntime, HydrationBudget, execute_scope, inferred_relation_alias,
-        normalize_alias_segment, pluralize_alias, related_path_is_authorized,
-        take_related_within_budget, validate_export_limits, validate_export_submission,
+        ExportRuntime, HydrationBudget, inferred_relation_alias, normalize_alias_segment,
+        pluralize_alias, take_related_within_budget, validate_export_limits,
+        validate_export_submission,
     };
     use crate::errors::ApiError;
 
@@ -2693,54 +2195,6 @@ mod tests {
             updated_at: test_timestamp(),
             path: vec![id],
         }
-    }
-
-    #[tokio::test]
-    async fn export_scope_uses_external_permission_backend_visibility() {
-        let context = TestContext::new().await;
-        let fixture = context
-            .collection_fixture("external_export_visibility")
-            .await;
-        let permission_backend = Arc::new(MockTreetopBackend::new());
-        permission_backend.add_rule(MockAllowRule {
-            group_id: fixture.owner_group.id,
-            action: Permissions::ReadCollection,
-            resource_kind: ResourceKind::Collection,
-            resource_id: Some(fixture.collection.id),
-            attrs: ResourceAttrs::default(),
-        });
-        let backend = AppContext::new(context.pool.get_ref().clone(), permission_backend);
-        let scope = ExportScope {
-            kind: ExportScopeKind::Collections,
-            class_id: None,
-            object_id: None,
-        };
-        let mut query_options = parse_query_parameter("").unwrap();
-        query_options.limit = Some(101);
-
-        let (items, _, _) =
-            execute_scope(&backend, &context.admin_user, None, &scope, query_options)
-                .await
-                .unwrap();
-        let ids = items
-            .iter()
-            .filter_map(|item| item.get("id").and_then(serde_json::Value::as_i64))
-            .collect::<Vec<_>>();
-
-        assert_eq!(ids, vec![i64::from(fixture.collection.id)]);
-        fixture.cleanup().await.unwrap();
-    }
-
-    #[test]
-    fn related_path_rejects_hidden_intermediate_object() {
-        let permitted_object_ids = HashSet::from([1, 3]);
-        let permitted_pairs = HashSet::from([(1, 2), (2, 3)]);
-
-        assert!(!related_path_is_authorized(
-            &[1, 2, 3],
-            &permitted_object_ids,
-            &permitted_pairs,
-        ));
     }
 
     #[test]

@@ -23,9 +23,9 @@ use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus};
 use crate::observability::metrics;
-use crate::permissions::AppContext;
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
+use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::traits::BackendContext;
 
 use super::execution::execute_import_task;
@@ -623,25 +623,32 @@ where
         ));
     }
 
+    let task_kind = TaskKind::from_db(&task.kind)?;
+    if matches!(task_kind, TaskKind::Import | TaskKind::Export) {
+        require_unscoped_runtime_admin(context, &principal, task.submitted_token_scoped).await?;
+    }
+
     // Reconstruct the submitting token's scope boundary from the snapshot,
-    // failing closed on any unknown permission string.
-    let snapshot_scopes: Option<Vec<crate::models::Permissions>> = if task.submitted_token_scoped {
-        let entries = task.submitted_token_scopes.as_array().ok_or_else(|| {
-            ApiError::InternalServerError("Task scope snapshot is not an array".to_string())
-        })?;
-        let mut parsed = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let raw = entry.as_str().ok_or_else(|| {
-                ApiError::InternalServerError(
-                    "Task scope snapshot entry is not a string".to_string(),
-                )
+    // failing closed on any unknown permission string. Import and export are
+    // runtime-admin operations, so only remote calls consume scoped snapshots.
+    let snapshot_scopes: Option<Vec<crate::models::Permissions>> =
+        if task_kind == TaskKind::RemoteCall && task.submitted_token_scoped {
+            let entries = task.submitted_token_scopes.as_array().ok_or_else(|| {
+                ApiError::InternalServerError("Task scope snapshot is not an array".to_string())
             })?;
-            parsed.push(crate::models::Permissions::from_string(raw)?);
-        }
-        Some(parsed)
-    } else {
-        None
-    };
+            let mut parsed = Vec::with_capacity(entries.len());
+            for entry in entries {
+                let raw = entry.as_str().ok_or_else(|| {
+                    ApiError::InternalServerError(
+                        "Task scope snapshot entry is not a string".to_string(),
+                    )
+                })?;
+                parsed.push(crate::models::Permissions::from_string(raw)?);
+            }
+            Some(parsed)
+        } else {
+            None
+        };
     let scopes = snapshot_scopes.as_deref();
 
     info!(
@@ -653,9 +660,9 @@ where
         scoped = task.submitted_token_scoped
     );
 
-    match TaskKind::from_db(&task.kind)? {
-        TaskKind::Import => execute_import_task(context, task, &principal, scopes).await,
-        TaskKind::Export => execute_export_task(context, task, &principal, scopes).await,
+    match task_kind {
+        TaskKind::Import => execute_import_task(context, task, &principal).await,
+        TaskKind::Export => execute_export_task(pool, task, &principal).await,
         TaskKind::RemoteCall => execute_remote_call_task(context, task, &principal, scopes).await,
         other => Err(ApiError::BadRequest(format!(
             "Task kind '{}' is not implemented",

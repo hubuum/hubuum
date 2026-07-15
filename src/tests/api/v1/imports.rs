@@ -11,7 +11,7 @@ mod tests {
 
     use crate::db::with_connection;
     use crate::models::{
-        CollectionKey, GroupKey, ImportAtomicity, ImportClassInput, ImportCollectionInput,
+        CURRENT_IMPORT_VERSION, GroupKey, ImportAtomicity, ImportClassInput, ImportCollectionInput,
         ImportCollectionPermissionInput, ImportCollisionPolicy, ImportGraph, ImportMode,
         ImportObjectInput, ImportPermissionPolicy, ImportRequest, ImportTaskResultResponse,
         NewTaskRecord, Permissions, TaskEventResponse, TaskKind, TaskResponse, TaskStatus,
@@ -20,13 +20,15 @@ mod tests {
     use crate::schema::collections::dsl::{
         collections, description as collection_description, id as collection_id_field,
     };
-    use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, name as class_name_col};
     use crate::schema::tasks::dsl::{
         id as task_id_field, request_payload, request_redacted_at, tasks,
     };
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
-    use crate::tests::{TestContext, create_test_group, test_context};
+    use crate::tests::{
+        TestContext, create_test_group, create_test_service_account, ensure_admin_group,
+        scoped_token, service_account_token, test_context,
+    };
 
     const IMPORTS_ENDPOINT: &str = "/api/v1/imports";
 
@@ -787,218 +789,77 @@ mod tests {
         assert_eq!(description, updated_description);
     }
 
+    #[derive(Clone, Copy)]
+    enum UnauthorizedImportCaller {
+        NonAdmin,
+        ScopedAdmin,
+    }
+
     #[rstest]
+    #[case::non_admin(UnauthorizedImportCaller::NonAdmin)]
+    #[case::scoped_admin(UnauthorizedImportCaller::ScopedAdmin)]
     #[actix_web::test]
-    async fn test_import_permission_continue_allows_partial_success(
+    async fn test_import_requires_unscoped_runtime_admin(
         #[future(awt)] test_context: TestContext,
+        #[case] caller: UnauthorizedImportCaller,
     ) {
         let context = test_context;
-        let allowed = context
-            .collection_fixture("permission_continue_allowed")
-            .await;
-        let forbidden = context
-            .collection_fixture("permission_continue_forbidden")
-            .await;
-        allowed
-            .owner_group
-            .add_member_without_events(&context.pool, &context.normal_user)
-            .await
-            .unwrap();
-
-        let allowed_class = context.scoped_name("permission_continue_allowed_class");
-        let forbidden_class = context.scoped_name("permission_continue_forbidden_class");
+        let token = match caller {
+            UnauthorizedImportCaller::NonAdmin => context.normal_token.clone(),
+            UnauthorizedImportCaller::ScopedAdmin => {
+                scoped_token(
+                    &context.pool,
+                    context.admin_user.id,
+                    &[Permissions::ReadCollection],
+                )
+                .await
+            }
+        };
         let body = ImportRequest {
-            version: 1,
-            dry_run: Some(false),
-            mode: Some(ImportMode {
-                atomicity: Some(ImportAtomicity::BestEffort),
-                collision_policy: Some(ImportCollisionPolicy::Abort),
-                permission_policy: Some(ImportPermissionPolicy::Continue),
-            }),
-            graph: ImportGraph {
-                classes: vec![
-                    ImportClassInput {
-                        ref_: Some("class:allowed".to_string()),
-                        name: allowed_class.clone(),
-                        description: "allowed".to_string(),
-                        json_schema: None,
-                        validate_schema: Some(false),
-                        collection_ref: None,
-                        collection_key: Some(CollectionKey {
-                            name: allowed.collection.name.clone(),
-                            path: None,
-                        }),
-                    },
-                    ImportClassInput {
-                        ref_: Some("class:forbidden".to_string()),
-                        name: forbidden_class.clone(),
-                        description: "forbidden".to_string(),
-                        json_schema: None,
-                        validate_schema: Some(false),
-                        collection_ref: None,
-                        collection_key: Some(CollectionKey {
-                            name: forbidden.collection.name.clone(),
-                            path: None,
-                        }),
-                    },
-                ],
-                ..ImportGraph::default()
-            },
+            version: CURRENT_IMPORT_VERSION,
+            dry_run: Some(true),
+            mode: None,
+            graph: ImportGraph::default(),
         };
 
-        let resp = post_request_with_headers(
-            &context.pool,
-            &context.normal_token,
-            IMPORTS_ENDPOINT,
-            &body,
-            vec![],
-        )
-        .await;
-        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
-        let task: TaskResponse = test::read_body_json(resp).await;
-        let completed = wait_for_task_with_token(
-            &context.pool,
-            &context.normal_token,
-            task.id,
-            &[TaskStatus::PartiallySucceeded],
-        )
-        .await;
-        assert_eq!(completed.status, TaskStatus::PartiallySucceeded);
+        let resp =
+            post_request_with_headers(&context.pool, &token, IMPORTS_ENDPOINT, &body, vec![]).await;
 
-        let created = with_connection(&context.pool, async |conn| {
-            hubuumclass
-                .filter(class_name_col.eq(&allowed_class))
-                .filter(collection_id.eq(allowed.collection.id))
-                .count()
-                .get_result::<i64>(conn)
-                .await
-        })
-        .await
-        .unwrap();
-        let blocked = with_connection(&context.pool, async |conn| {
-            hubuumclass
-                .filter(class_name_col.eq(&forbidden_class))
-                .filter(collection_id.eq(forbidden.collection.id))
-                .count()
-                .get_result::<i64>(conn)
-                .await
-        })
-        .await
-        .unwrap();
-        assert_eq!(created, 1);
-        assert_eq!(blocked, 0);
-
-        let resp = get_request(
-            &context.pool,
-            &context.normal_token,
-            &format!("/api/v1/imports/{}/results", task.id),
-        )
-        .await;
-        let resp = assert_response_status(resp, StatusCode::OK).await;
-        let results: Vec<ImportTaskResultResponse> = test::read_body_json(resp).await;
-        assert_eq!(results.len(), 2);
-        assert_eq!(
-            results
-                .iter()
-                .filter(|result| result.outcome == "succeeded")
-                .count(),
-            1
-        );
-        assert_eq!(
-            results
-                .iter()
-                .filter(|result| result.outcome == "failed")
-                .count(),
-            1
-        );
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
     }
 
     #[rstest]
     #[actix_web::test]
-    async fn test_import_permission_abort_prevents_any_mutation(
+    async fn test_import_accepts_unscoped_admin_service_account(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let allowed = context.collection_fixture("permission_abort_allowed").await;
-        let forbidden = context
-            .collection_fixture("permission_abort_forbidden")
-            .await;
-        allowed
-            .owner_group
-            .add_member_without_events(&context.pool, &context.normal_user)
+        let owner_group = create_test_group(&context.pool).await;
+        let admin_group = ensure_admin_group(&context.pool).await;
+        let service_account =
+            create_test_service_account(&context.pool, &owner_group, Some(context.admin_user.id))
+                .await;
+        admin_group
+            .add_member_without_events(&context.pool, &service_account)
             .await
             .unwrap();
-
-        let allowed_class = context.scoped_name("permission_abort_allowed_class");
-        let forbidden_class = context.scoped_name("permission_abort_forbidden_class");
+        let token = service_account_token(&context.pool, &service_account, None, None).await;
         let body = ImportRequest {
-            version: 1,
-            dry_run: Some(false),
-            mode: Some(ImportMode {
-                atomicity: Some(ImportAtomicity::BestEffort),
-                collision_policy: Some(ImportCollisionPolicy::Abort),
-                permission_policy: Some(ImportPermissionPolicy::Abort),
-            }),
-            graph: ImportGraph {
-                classes: vec![
-                    ImportClassInput {
-                        ref_: Some("class:allowed".to_string()),
-                        name: allowed_class.clone(),
-                        description: "allowed".to_string(),
-                        json_schema: None,
-                        validate_schema: Some(false),
-                        collection_ref: None,
-                        collection_key: Some(CollectionKey {
-                            name: allowed.collection.name.clone(),
-                            path: None,
-                        }),
-                    },
-                    ImportClassInput {
-                        ref_: Some("class:forbidden".to_string()),
-                        name: forbidden_class.clone(),
-                        description: "forbidden".to_string(),
-                        json_schema: None,
-                        validate_schema: Some(false),
-                        collection_ref: None,
-                        collection_key: Some(CollectionKey {
-                            name: forbidden.collection.name.clone(),
-                            path: None,
-                        }),
-                    },
-                ],
-                ..ImportGraph::default()
-            },
+            version: CURRENT_IMPORT_VERSION,
+            dry_run: Some(true),
+            mode: None,
+            graph: ImportGraph::default(),
         };
 
-        let resp = post_request_with_headers(
-            &context.pool,
-            &context.normal_token,
-            IMPORTS_ENDPOINT,
-            &body,
-            vec![],
-        )
-        .await;
+        let resp =
+            post_request_with_headers(&context.pool, &token, IMPORTS_ENDPOINT, &body, vec![]).await;
         let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
         let task: TaskResponse = test::read_body_json(resp).await;
-        let completed = wait_for_task_with_token(
-            &context.pool,
-            &context.normal_token,
-            task.id,
-            &[TaskStatus::Failed],
-        )
-        .await;
-        assert_eq!(completed.status, TaskStatus::Failed);
+        let completed =
+            wait_for_task_with_token(&context.pool, &token, task.id, &[TaskStatus::Succeeded])
+                .await;
 
-        let created = with_connection(&context.pool, async |conn| {
-            hubuumclass
-                .filter(class_name_col.eq_any([allowed_class.clone(), forbidden_class.clone()]))
-                .count()
-                .get_result::<i64>(conn)
-                .await
-        })
-        .await
-        .unwrap();
-        assert_eq!(created, 0);
+        assert_eq!(completed.status, TaskStatus::Succeeded);
     }
 
     #[rstest]
