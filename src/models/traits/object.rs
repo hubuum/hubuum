@@ -80,7 +80,6 @@ impl HubuumObject {
     }
 }
 
-// Validators
 impl Validate for HubuumObject {
     async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
     where

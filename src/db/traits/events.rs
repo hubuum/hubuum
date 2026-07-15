@@ -1,6 +1,5 @@
 use crate::db::prelude::*;
-use diesel::dsl::sql;
-use diesel::sql_types::Bool;
+use std::collections::HashSet;
 
 use crate::apply_query_options;
 use crate::db::{DbPool, with_connection};
@@ -42,10 +41,18 @@ pub async fn list_events_with_total_count(
     let mut query = build_event_query(accessible_collection_ids, include_collection_less, filters)?;
     apply_query_options!(query, query_options, EventResponse);
     let rows = with_connection(pool, async |conn| query.load::<Event>(conn).await).await?;
+    let accessible_collection_ids = accessible_collection_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
     let rows = rows
         .into_iter()
         .map(|event| {
-            event_response_for_visibility(event, accessible_collection_ids, include_collection_less)
+            event_response_for_visibility(
+                event,
+                &accessible_collection_ids,
+                include_collection_less,
+            )
         })
         .collect();
 
@@ -57,16 +64,23 @@ fn build_event_query<'a>(
     include_collection_less: bool,
     filters: &EventListFilters,
 ) -> Result<crate::schema::events::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
+    use crate::schema::event_related_collections::dsl as related;
     use crate::schema::events::dsl::{
         action, actor_kind, actor_user_id, collection_id, entity_id, entity_type, events,
-        occurred_at,
+        id as event_row_id, occurred_at,
     };
 
     let mut query = events.into_boxed();
 
     if !include_collection_less && accessible_collection_ids.is_empty() {
-        return Ok(query.filter(sql::<Bool>("FALSE")));
+        return Ok(query.filter(event_row_id.eq(-1_i64)));
     }
+
+    let related_is_visible = diesel::dsl::exists(
+        related::event_related_collections
+            .filter(related::event_id.eq(event_row_id))
+            .filter(related::collection_id.eq_any(accessible_collection_ids)),
+    );
 
     if include_collection_less {
         if !accessible_collection_ids.is_empty() {
@@ -74,18 +88,14 @@ fn build_event_query<'a>(
                 collection_id
                     .eq_any(accessible_collection_ids)
                     .or(collection_id.is_null())
-                    .or(sql::<Bool>(&related_collection_filter_sql(
-                        accessible_collection_ids,
-                    ))),
+                    .or(related_is_visible),
             );
         }
     } else {
         query = query.filter(
             collection_id
                 .eq_any(accessible_collection_ids)
-                .or(sql::<Bool>(&related_collection_filter_sql(
-                    accessible_collection_ids,
-                ))),
+                .or(related_is_visible),
         );
     }
 
@@ -117,28 +127,9 @@ fn build_event_query<'a>(
     Ok(query)
 }
 
-fn related_collection_filter_sql(accessible_collection_ids: &[i32]) -> String {
-    if accessible_collection_ids.is_empty() {
-        return "FALSE".to_string();
-    }
-
-    accessible_collection_ids
-        .iter()
-        .map(|id| {
-            let numeric_probe = serde_json::json!({ "related_collection_ids": [id] });
-            let string_probe = serde_json::json!({ "related_collection_ids": [id.to_string()] });
-            format!(
-                "events.metadata @> '{}'::jsonb OR events.metadata @> '{}'::jsonb",
-                numeric_probe, string_probe
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" OR ")
-}
-
 fn event_response_for_visibility(
     event: Event,
-    accessible_collection_ids: &[i32],
+    accessible_collection_ids: &HashSet<i32>,
     include_collection_less: bool,
 ) -> EventResponse {
     let is_directly_visible = event

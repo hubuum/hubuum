@@ -495,7 +495,6 @@ pub struct CountsResponse {
     pub objects_per_class: Vec<ObjectsByClass>,
 }
 
-#[allow(dead_code)]
 fn api_error_response_example() -> ApiErrorResponse {
     ApiErrorResponse {
         error: "Unauthorized".to_string(),
@@ -503,17 +502,14 @@ fn api_error_response_example() -> ApiErrorResponse {
     }
 }
 
-#[allow(dead_code)]
 fn message_response_example() -> MessageResponse {
     MessageResponse::new("Token is valid.")
 }
 
-#[allow(dead_code)]
 fn login_response_example() -> LoginResponse {
     LoginResponse::new("eyJhbGciOi...example-token")
 }
 
-#[allow(dead_code)]
 fn counts_response_example() -> CountsResponse {
     CountsResponse {
         total_objects: 42,

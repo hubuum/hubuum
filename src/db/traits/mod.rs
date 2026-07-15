@@ -16,6 +16,7 @@ pub mod group;
 pub mod history;
 pub mod identity;
 pub mod is_active;
+pub mod meta;
 pub mod metrics;
 pub mod object;
 pub mod permissions;
@@ -23,9 +24,11 @@ pub mod principal;
 pub mod relations;
 pub mod remote_target;
 pub mod restore;
+pub mod search;
 pub mod service_account;
 pub mod task;
 pub mod task_import;
+pub mod token;
 pub mod user;
 
 pub use user::UserPermissions;
@@ -62,7 +65,6 @@ pub trait Status<T> {
 /// active tokens, and this trait would allow us to get all of them.
 pub trait ActiveTokens {
     /// Get all active tokens for a given structure.
-    #[allow(dead_code)]
     async fn tokens(&self, pool: &DbPool) -> Result<Vec<PrincipalToken>, ApiError>;
     async fn tokens_paginated_with_total_count(
         &self,
@@ -94,7 +96,6 @@ pub trait GetClass<T = HubuumClass> {
 /// By default, this returns the singular object of the structure in question.
 /// For relations, where we have two objects (one for each structure), the
 /// trait is implemented to return a tuple of the two objects.
-#[allow(dead_code)]
 pub trait GetObject<T = HubuumObject> {
     async fn object_from_backend(&self, pool: &DbPool) -> Result<T, ApiError>;
 }
@@ -106,7 +107,6 @@ where
     C2: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
     /// Check if a relation exists between two classes.
-    #[allow(dead_code)]
     async fn relations_between(
         pool: &DbPool,
         from: &C1,
@@ -122,14 +122,12 @@ where
     Self: SelfAccessors<HubuumClass>,
 {
     /// Check if a relation exists between self and another class
-    #[allow(dead_code)]
     async fn relations_to(
         &self,
         pool: &DbPool,
         other: &C2,
     ) -> Result<Vec<HubuumClassRelationTransitive>, ApiError>;
 
-    #[allow(dead_code)]
     async fn relations_to_paginated(
         &self,
         pool: &DbPool,
@@ -150,7 +148,6 @@ where
     C1: SelfAccessors<HubuumClass> + Clone + Send + Sync,
     Self: SelfAccessors<HubuumClass> + Clone + Send + Sync,
 {
-    #[allow(dead_code)]
     async fn transitive_relations(
         &self,
         pool: &DbPool,
@@ -158,7 +155,6 @@ where
         self.transitive_relations_from_backend(pool).await
     }
 
-    #[allow(dead_code)]
     async fn transitive_relations_paginated(
         &self,
         pool: &DbPool,
@@ -212,12 +208,10 @@ where
     }
 
     // We typically end up searching, so this interface is rarely used.
-    #[allow(dead_code)]
     async fn relations(&self, pool: &DbPool) -> Result<Vec<HubuumClassRelation>, ApiError> {
         self.relations_from_backend(pool).await
     }
 
-    #[allow(dead_code)]
     async fn search_relations(
         &self,
         pool: &DbPool,
@@ -228,7 +222,6 @@ where
     }
 }
 
-#[allow(dead_code)]
 pub trait ObjectRelationsFromUser: SelfAccessors<User> + GroupAccessors
 where
     for<'a> &'a Self: GroupAccessors,
@@ -244,7 +237,6 @@ where
         C: SelfAccessors<HubuumClass> + Clone + Send + Sync;
 }
 
-#[allow(dead_code)]
 pub trait ObjectRelationMemberships
 where
     Self: SelfAccessors<HubuumObject> + Clone + Send + Sync,

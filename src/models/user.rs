@@ -397,17 +397,15 @@ impl UpdateUser {
                 .is_some_and(|value| Some(value) != current.email.as_ref())
     }
 
-    pub fn hash_password(self) -> Result<Self, ApiError> {
-        if let Some(ref pass) = self.password {
-            match crate::utilities::auth::hash_password(pass) {
-                Ok(hashed_password) => {
-                    return Ok(UpdateUser {
-                        password: Some(hashed_password),
-                        ..self
-                    });
-                }
-                Err(e) => return Err(ApiError::HashError(format!("Failed to hash password: {e}"))),
-            }
+    pub async fn hash_password(mut self) -> Result<Self, ApiError> {
+        if let Some(password) = self.password.take() {
+            self.password = Some(
+                crate::utilities::auth::hash_password_async(password)
+                    .await
+                    .map_err(|error| {
+                        ApiError::HashError(format!("Failed to hash password: {error}"))
+                    })?,
+            );
         }
         Ok(self)
     }
@@ -422,7 +420,7 @@ impl UpdateUser {
     where
         C: BackendContext + ?Sized,
     {
-        let hashed = self.hash_password()?;
+        let hashed = self.hash_password().await?;
         hashed
             .update_user_record_without_events(user_id, backend.db_pool())
             .await
@@ -437,7 +435,7 @@ impl UpdateUser {
     where
         C: BackendContext + ?Sized,
     {
-        let hashed = self.hash_password()?;
+        let hashed = self.hash_password().await?;
         hashed
             .update_user_record(user_id, backend.db_pool(), context)
             .await
@@ -467,7 +465,7 @@ impl NewUser {
     where
         C: BackendContext + ?Sized,
     {
-        let hashed = self.hash_password()?;
+        let hashed = self.hash_password().await?;
         hashed
             .create_user_record_without_events(backend.db_pool())
             .await
@@ -481,17 +479,14 @@ impl NewUser {
     where
         C: BackendContext + ?Sized,
     {
-        let hashed = self.hash_password()?;
+        let hashed = self.hash_password().await?;
         hashed.create_user_record(backend.db_pool(), context).await
     }
 
-    pub fn hash_password(mut self) -> Result<Self, ApiError> {
-        match crate::utilities::auth::hash_password(&self.password) {
-            Ok(hashed_password) => {
-                self.password = hashed_password;
-            }
-            Err(e) => return Err(ApiError::HashError(format!("Failed to hash password: {e}"))),
-        }
+    pub async fn hash_password(mut self) -> Result<Self, ApiError> {
+        self.password = crate::utilities::auth::hash_password_async(self.password)
+            .await
+            .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
         Ok(self)
     }
 }
@@ -555,21 +550,19 @@ impl LoginUser {
             .identity_scope
             .as_deref()
             .unwrap_or(LOCAL_IDENTITY_SCOPE);
-        let user =
-            match User::get_by_name_in_scope(backend.db_pool(), identity_scope, &self.name).await {
-                Ok(user) => user,
-                Err(_) => {
-                    // Keep unknown-user and wrong-password paths comparable: both execute
-                    // one Argon2 verification before returning the same public error.
-                    let password = self.password.clone();
-                    let _ = tokio::task::spawn_blocking(move || {
-                        crate::utilities::auth::verify_dummy_password(&password)
-                    })
+        let user = match User::get_by_name_in_scope(backend.db_pool(), identity_scope, &self.name)
+            .await
+        {
+            Ok(user) => user,
+            Err(_) => {
+                // Keep unknown-user and wrong-password paths comparable: both execute
+                // one Argon2 verification before returning the same public error.
+                let _ = crate::utilities::auth::verify_dummy_password_async(self.password.clone())
                     .await;
-                    warn!(message = "Login failed (user not found)", user = self.name);
-                    return Err(auth_failure());
-                }
-            };
+                warn!(message = "Login failed (user not found)", user = self.name);
+                return Err(auth_failure());
+            }
+        };
 
         let plaintext_password = &self.password;
         let Some(hashed_password) = &user.password else {
@@ -582,25 +575,16 @@ impl LoginUser {
 
         let plaintext_password = plaintext_password.clone();
         let hashed_password = hashed_password.clone();
-        let verification = tokio::task::spawn_blocking(move || {
-            crate::utilities::auth::verify_password(&plaintext_password, &hashed_password)
-        })
-        .await;
+        let verification =
+            crate::utilities::auth::verify_password_async(plaintext_password, hashed_password)
+                .await;
 
         match verification {
-            Ok(Ok(true)) => Ok(user),
-            Ok(Ok(false)) => {
+            Ok(true) => Ok(user),
+            Ok(false) => {
                 warn!(
                     message = "Login failed (password mismatch)",
                     user = self.name
-                );
-                Err(auth_failure())
-            }
-            Ok(Err(e)) => {
-                error!(
-                    message = "Login failed (hashing error)",
-                    user = self.name,
-                    error = e.to_string()
                 );
                 Err(auth_failure())
             }
@@ -620,7 +604,6 @@ pub fn auth_failure() -> ApiError {
     ApiError::Unauthorized("Authentication failure".to_string())
 }
 
-#[allow(dead_code)]
 fn update_user_example() -> UpdateUser {
     UpdateUser {
         password: Some("new-password".to_string()),
@@ -629,7 +612,6 @@ fn update_user_example() -> UpdateUser {
     }
 }
 
-#[allow(dead_code)]
 fn new_user_example() -> NewUser {
     NewUser {
         identity_scope: None,
@@ -640,7 +622,6 @@ fn new_user_example() -> NewUser {
     }
 }
 
-#[allow(dead_code)]
 fn login_user_example() -> LoginUser {
     LoginUser {
         identity_scope: None,

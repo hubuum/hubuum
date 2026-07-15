@@ -459,11 +459,6 @@ fn cursor_literal_sql(field: &CursorSqlField, value: &CursorValue) -> Result<Str
             "cursor contains null for field '{}'",
             field.column
         ))),
-        (CursorSqlType::Boolean, CursorValue::Boolean(value)) => Ok(if *value {
-            "TRUE".to_string()
-        } else {
-            "FALSE".to_string()
-        }),
         (CursorSqlType::Integer, CursorValue::Integer(value)) => Ok(value.to_string()),
         (CursorSqlType::String, CursorValue::String(value)) => {
             Ok(format!("'{}'", value.replace('\'', "''")))
@@ -497,7 +492,7 @@ fn cursor_literal_sql(field: &CursorSqlField, value: &CursorValue) -> Result<Str
 macro_rules! apply_cursor_ordering {
     ($query:ident, $sorts:expr, $ty:ty) => {{
         use diesel::dsl::sql;
-        use diesel::sql_types::{Array, Bool, Integer, Nullable, Text, Timestamp};
+        use diesel::sql_types::{Array, Integer, Nullable, Text, Timestamp};
 
         let mut is_first_order = true;
         for sort in $sorts.iter() {
@@ -505,18 +500,6 @@ macro_rules! apply_cursor_ordering {
             let order_sql = $crate::pagination::order_sql_clause::<$ty>(sort)?;
 
             $query = match (is_first_order, sql_field.sql_type, sql_field.nullable) {
-                (true, $crate::pagination::CursorSqlType::Boolean, false) => {
-                    $query.order_by(sql::<Bool>(&order_sql))
-                }
-                (false, $crate::pagination::CursorSqlType::Boolean, false) => {
-                    $query.then_order_by(sql::<Bool>(&order_sql))
-                }
-                (true, $crate::pagination::CursorSqlType::Boolean, true) => {
-                    $query.order_by(sql::<Nullable<Bool>>(&order_sql))
-                }
-                (false, $crate::pagination::CursorSqlType::Boolean, true) => {
-                    $query.then_order_by(sql::<Nullable<Bool>>(&order_sql))
-                }
                 (true, $crate::pagination::CursorSqlType::Integer, false) => {
                     $query.order_by(sql::<Integer>(&order_sql))
                 }

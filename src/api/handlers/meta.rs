@@ -1,7 +1,8 @@
 use crate::api::openapi::{ApiErrorResponse, CountsResponse};
 use crate::api::response::ApiResponse;
 use crate::config::{get_config, login_rate_limit_config};
-use crate::db::{DbPool, with_connection};
+use crate::db::DbPool;
+use crate::db::traits::meta::{load_database_state, load_task_queue_state};
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
 use crate::middlewares::rate_limit;
@@ -11,10 +12,6 @@ use crate::models::object::{objects_per_class_count, total_object_count};
 use actix_web::{Responder, delete, get, http::StatusCode, web};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use diesel::QueryableByName;
-use diesel::sql_query;
-use diesel::sql_types::{BigInt, Nullable, Timestamp};
-use diesel_async::RunQueryDsl;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 use utoipa::ToSchema;
@@ -84,51 +81,6 @@ pub struct TaskQueueStateResponse {
     oldest_active_at: Option<String>,
 }
 
-#[derive(QueryableByName, Debug)]
-#[diesel(table_name = pg_stat_user_tables)]
-struct DbState {
-    #[diesel(sql_type = BigInt)]
-    active_connections: i64,
-    #[diesel(sql_type = BigInt)]
-    db_size: i64,
-    #[diesel(sql_type = Nullable<Timestamp>)]
-    last_vacuum_time: Option<chrono::NaiveDateTime>,
-}
-
-#[derive(QueryableByName, Debug)]
-struct TaskQueueState {
-    #[diesel(sql_type = BigInt)]
-    total_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    queued_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    validating_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    running_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    succeeded_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    failed_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    partially_succeeded_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    cancelled_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    import_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    export_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    reindex_tasks: i64,
-    #[diesel(sql_type = BigInt)]
-    total_task_events: i64,
-    #[diesel(sql_type = BigInt)]
-    total_import_result_rows: i64,
-    #[diesel(sql_type = Nullable<Timestamp>)]
-    oldest_queued_at: Option<chrono::NaiveDateTime>,
-    #[diesel(sql_type = Nullable<Timestamp>)]
-    oldest_active_at: Option<chrono::NaiveDateTime>,
-}
-
 #[utoipa::path(
     get,
     path = "/api/v0/meta/db",
@@ -145,67 +97,40 @@ pub async fn get_db_state(
     pool: web::Data<DbPool>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let query = r#"
-        SELECT
-          (SELECT count(*) FROM pg_stat_activity WHERE state = 'active') AS active_connections,
-          pg_database_size(current_database()) AS db_size,
-          MAX(last_vacuum) AS last_vacuum_time
-        FROM 
-          pg_stat_user_tables;
-    "#;
+    let row = load_database_state(&pool).await?;
+    let state = pool.state();
+    let max_connections = pool.config().max_size;
+    let in_use_connections = state.connections.saturating_sub(state.idle_connections);
+    let available_connections = max_connections.saturating_sub(in_use_connections);
+    let acquisition_wait_time_ms =
+        u64::try_from(state.statistics.get_wait_time.as_millis()).unwrap_or(u64::MAX);
+    debug!(
+        message = "DB state requested",
+        requestor = requestor.user.id
+    );
 
-    let results = match with_connection(&pool, async |conn| {
-        sql_query(query).load::<DbState>(conn).await
-    })
-    .await
-    {
-        Ok(results) => results,
-        Err(e) => {
-            return Err(ApiError::InternalServerError(format!(
-                "Error getting state for the database: {e}"
-            )));
-        }
+    let response = DbStateResponse {
+        max_connections,
+        total_connections: state.connections,
+        available_connections,
+        idle_connections: state.idle_connections,
+        in_use_connections,
+        pending_acquisitions: state.statistics.pending_gets(),
+        acquisitions_started: state.statistics.get_started,
+        acquisitions_direct: state.statistics.get_direct,
+        acquisitions_waited: state.statistics.get_waited,
+        acquisitions_timed_out: state.statistics.get_timed_out,
+        acquisition_wait_time_ms,
+        connections_created: state.statistics.connections_created,
+        connections_closed_broken: state.statistics.connections_closed_broken,
+        connections_closed_invalid: state.statistics.connections_closed_invalid,
+        connections_closed_max_lifetime: state.statistics.connections_closed_max_lifetime,
+        connections_closed_idle_timeout: state.statistics.connections_closed_idle_timeout,
+        active_connections: row.active_connections,
+        db_size: row.db_size,
+        last_vacuum_time: row.last_vacuum_time.map(|dt| dt.to_string()),
     };
-
-    if let Some(row) = results.as_slice().first() {
-        let state = pool.state();
-        let max_connections = pool.config().max_size;
-        let in_use_connections = state.connections.saturating_sub(state.idle_connections);
-        let available_connections = max_connections.saturating_sub(in_use_connections);
-        let acquisition_wait_time_ms =
-            u64::try_from(state.statistics.get_wait_time.as_millis()).unwrap_or(u64::MAX);
-        debug!(
-            message = "DB state requested",
-            requestor = requestor.user.id
-        );
-
-        let response = DbStateResponse {
-            max_connections,
-            total_connections: state.connections,
-            available_connections,
-            idle_connections: state.idle_connections,
-            in_use_connections,
-            pending_acquisitions: state.statistics.pending_gets(),
-            acquisitions_started: state.statistics.get_started,
-            acquisitions_direct: state.statistics.get_direct,
-            acquisitions_waited: state.statistics.get_waited,
-            acquisitions_timed_out: state.statistics.get_timed_out,
-            acquisition_wait_time_ms,
-            connections_created: state.statistics.connections_created,
-            connections_closed_broken: state.statistics.connections_closed_broken,
-            connections_closed_invalid: state.statistics.connections_closed_invalid,
-            connections_closed_max_lifetime: state.statistics.connections_closed_max_lifetime,
-            connections_closed_idle_timeout: state.statistics.connections_closed_idle_timeout,
-            active_connections: row.active_connections,
-            db_size: row.db_size,
-            last_vacuum_time: row.last_vacuum_time.map(|dt| dt.to_string()),
-        };
-        Ok(ApiResponse::new(response, StatusCode::OK))
-    } else {
-        Err(ApiError::InternalServerError(
-            "Error getting state for the database".to_string(),
-        ))
-    }
+    Ok(ApiResponse::new(response, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -256,33 +181,7 @@ pub async fn get_task_queue_state(
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
     let config = get_config()?.clone();
-    let query = r#"
-        SELECT
-          COUNT(*)::bigint AS total_tasks,
-          COUNT(*) FILTER (WHERE status = 'queued')::bigint AS queued_tasks,
-          COUNT(*) FILTER (WHERE status = 'validating')::bigint AS validating_tasks,
-          COUNT(*) FILTER (WHERE status = 'running')::bigint AS running_tasks,
-          COUNT(*) FILTER (WHERE status = 'succeeded')::bigint AS succeeded_tasks,
-          COUNT(*) FILTER (WHERE status = 'failed')::bigint AS failed_tasks,
-          COUNT(*) FILTER (WHERE status = 'partially_succeeded')::bigint AS partially_succeeded_tasks,
-          COUNT(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled_tasks,
-          COUNT(*) FILTER (WHERE kind = 'import')::bigint AS import_tasks,
-          COUNT(*) FILTER (WHERE kind = 'export')::bigint AS export_tasks,
-          COUNT(*) FILTER (WHERE kind = 'reindex')::bigint AS reindex_tasks,
-          (SELECT COUNT(*) FROM events WHERE entity_type = 'task')::bigint AS total_task_events,
-          (SELECT COUNT(*) FROM import_task_results)::bigint AS total_import_result_rows,
-          MIN(created_at) FILTER (WHERE status = 'queued') AS oldest_queued_at,
-          MIN(started_at) FILTER (WHERE status IN ('validating', 'running')) AS oldest_active_at
-        FROM tasks;
-    "#;
-
-    let results = with_connection(&pool, async |conn| {
-        sql_query(query).load::<TaskQueueState>(conn).await
-    })
-    .await?;
-    let state = results.as_slice().first().ok_or_else(|| {
-        ApiError::InternalServerError("Error getting state for the task queue".to_string())
-    })?;
+    let state = load_task_queue_state(&pool).await?;
 
     debug!(
         message = "Task queue state requested",

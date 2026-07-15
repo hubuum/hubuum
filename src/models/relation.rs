@@ -287,7 +287,6 @@ pub struct RelatedClassGraph {
     pub relations: Vec<HubuumClassRelation>,
 }
 
-#[allow(dead_code)]
 fn new_hubuum_class_relation_example() -> NewHubuumClassRelation {
     NewHubuumClassRelation {
         from_hubuum_class_id: 1,
@@ -297,7 +296,6 @@ fn new_hubuum_class_relation_example() -> NewHubuumClassRelation {
     }
 }
 
-#[allow(dead_code)]
 fn new_hubuum_class_relation_from_class_example() -> NewHubuumClassRelationFromClass {
     NewHubuumClassRelationFromClass {
         to_hubuum_class_id: 2,
@@ -306,7 +304,6 @@ fn new_hubuum_class_relation_from_class_example() -> NewHubuumClassRelationFromC
     }
 }
 
-#[allow(dead_code)]
 fn new_hubuum_object_relation_example() -> NewHubuumObjectRelation {
     NewHubuumObjectRelation {
         from_hubuum_object_id: 10,

@@ -67,7 +67,6 @@ pub(crate) fn active_token_predicate(
 /// A token is active when it is not revoked and not expired: an explicit
 /// `expires_at` in the future, or (when null) within the global lifetime window
 /// from `issued`.
-#[allow(dead_code)]
 async fn active_tokens_by_principal_id(
     principal: i32,
     pool: &DbPool,

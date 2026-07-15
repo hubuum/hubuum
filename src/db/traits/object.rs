@@ -1,6 +1,5 @@
 use crate::db::prelude::*;
 use diesel::sql_query;
-use jsonschema;
 use serde_json;
 
 use crate::db::traits::GetObject;
@@ -232,17 +231,13 @@ pub trait ValidateObjectSchema {
 
 impl ValidateObjectSchema for HubuumObject {
     fn validate_object_schema(&self, schema: &serde_json::Value) -> Result<(), ApiError> {
-        jsonschema::validate(schema, &self.data)
-            .map_err(|err| ApiError::ValidationError(err.to_string()))?;
-        Ok(())
+        crate::utilities::json_schema::validate_json_value(schema, &self.data)
     }
 }
 
 impl ValidateObjectSchema for NewHubuumObject {
     fn validate_object_schema(&self, schema: &serde_json::Value) -> Result<(), ApiError> {
-        jsonschema::validate(schema, &self.data)
-            .map_err(|err| ApiError::ValidationError(err.to_string()))?;
-        Ok(())
+        crate::utilities::json_schema::validate_json_value(schema, &self.data)
     }
 }
 

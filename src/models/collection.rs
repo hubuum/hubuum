@@ -95,7 +95,6 @@ pub struct UpdateCollectionParent {
     pub parent_collection_id: CollectionID,
 }
 
-#[allow(dead_code)]
 fn update_collection_example() -> UpdateCollection {
     UpdateCollection {
         name: Some("global-assets".to_string()),
@@ -103,7 +102,6 @@ fn update_collection_example() -> UpdateCollection {
     }
 }
 
-#[allow(dead_code)]
 fn new_collection_with_assignee_example() -> NewCollectionWithAssignee {
     NewCollectionWithAssignee {
         name: "global-assets".to_string(),
@@ -130,7 +128,6 @@ where
 /// ## Returns
 /// * Ok(Vec(Group, CollectionPermissions)) - List of groups and their permissions
 /// * Err(ApiError) - On query errors only.
-#[allow(dead_code)]
 pub async fn principal_on<C, S, T>(
     backend: &C,
     principal: S,
@@ -282,7 +279,6 @@ where
 /// ## Returns
 /// * Ok(Vec<Group>) - List of groups that have the requested permission
 /// * Err(ApiError) - On query errors only.
-#[allow(dead_code)]
 pub async fn groups_can_on<C>(
     backend: &C,
     target_collection_id: i32,
@@ -326,7 +322,6 @@ where
 /// ## Returns
 /// * Ok(Vec<(Group, CollectionPermissions)>) - List of groups and their permissions
 /// * Err(ApiError) - On query errors only.
-#[allow(dead_code)]
 pub async fn groups_on<C, T>(
     backend: &C,
     collection_ref: T,

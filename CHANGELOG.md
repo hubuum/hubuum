@@ -47,6 +47,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Active task admission now uses a partial per-submitter and per-kind index so
   capacity checks remain bounded by queued, validating, and running work rather
   than scanning a submitter's completed task history.
+- **Breaking:** Class JSON Schemas are now validated as schema documents before
+  storage. Schemas used for object validation reject external HTTP, file,
+  dynamic, or recursive references; inline those definitions and reference them
+  with local `#...` fragments before enabling validation. Compiled local schemas
+  are cached for object validation.
+- Related-collection audit visibility now uses an indexed relational projection
+  instead of generating JSON predicates for every collection visible to the
+  caller.
 - **Breaking:** Import and export submission now requires an unscoped runtime
   administrator. Non-admin and scoped tokens now receive `403 Forbidden`.
   Automation should use dedicated service accounts in the configured admin
@@ -98,6 +106,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Password hashing and verification now run through a bounded blocking-work
+  pool instead of blocking asynchronous API and task-worker runtimes.
+- Object audit routes now reject class/object path mismatches, and all audit
+  route identifiers validate through their domain ID types.
+- Event fan-out now uses the transaction-aware PostgreSQL insert trigger as its
+  single wakeup source, eliminating the duplicate notification on a mismatched
+  channel.
 - Background task workers now use the configured permission backend for
   execution-time authorization, including worker-only replicas, rather than
   falling back to local SQL permissions when Treetop is authoritative.

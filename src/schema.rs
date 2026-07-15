@@ -65,6 +65,13 @@ diesel::table! {
 }
 
 diesel::table! {
+    event_related_collections (event_id, collection_id) {
+        event_id -> Int8,
+        collection_id -> Int4,
+    }
+}
+
+diesel::table! {
     event_sinks (id) {
         id -> Int4,
         name -> Varchar,
@@ -622,6 +629,7 @@ diesel::table! {
 diesel::joinable!(backup_task_outputs -> tasks (task_id));
 diesel::joinable!(event_deliveries -> event_subscriptions (subscription_id));
 diesel::joinable!(event_deliveries -> events (event_id));
+diesel::joinable!(event_related_collections -> events (event_id));
 diesel::joinable!(event_subscriptions -> collections (collection_id));
 diesel::joinable!(event_subscriptions -> event_sinks (sink_id));
 diesel::joinable!(export_task_outputs -> tasks (task_id));
@@ -657,6 +665,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     collections,
     collections_history,
     event_deliveries,
+    event_related_collections,
     event_sinks,
     event_subscriptions,
     events,

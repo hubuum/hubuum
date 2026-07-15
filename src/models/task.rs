@@ -418,7 +418,6 @@ impl<T> ExportOutputLookup<T> {
 
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = export_task_outputs)]
-#[allow(dead_code)]
 pub struct ExportTaskOutputSummaryRecord {
     pub id: i32,
     pub task_id: i32,

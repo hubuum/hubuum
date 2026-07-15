@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::traits::authz::scope_allows;
+use crate::db::traits::search::JsonPredicateExt;
 use crate::models::RelatedObjectForRootRow;
 use crate::models::permissions::PermissionFilter;
 use crate::models::search::{ParsedQueryParamExt, SQLValue};

@@ -390,7 +390,6 @@ pub trait GroupAccessors: AuthzSubject {
 /// Access collections that are visible to a user through direct or group-derived permissions.
 pub trait UserCollectionAccessors: GroupAccessors + AuthzSubject {
     /// Return all collections that the user has CollectionPermissions::ReadCollection on.
-    #[allow(dead_code)] // Lazy-used in tests.
     async fn collections_read<C>(&self, backend: &C) -> Result<Vec<Collection>, ApiError>
     where
         C: BackendContext + ?Sized,

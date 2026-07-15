@@ -40,7 +40,7 @@ dependencies = [
  "flate2",
  "foldhash 0.1.5",
  "futures-core",
- "h2 0.3.27",
+ "h2",
  "http 0.2.12",
  "httparse",
  "httpdate",
@@ -1812,25 +1812,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "h2"
-version = "0.4.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
-dependencies = [
- "atomic-waker",
- "bytes",
- "fnv",
- "futures-core",
- "futures-sink",
- "http 1.4.2",
- "indexmap",
- "slab",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2253,7 +2234,6 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
- "h2 0.4.15",
  "http 1.4.2",
  "http-body",
  "httparse",
@@ -2634,8 +2614,6 @@ dependencies = [
  "referencing",
  "regex",
  "regex-syntax",
- "reqwest 0.13.4",
- "rustls",
  "serde",
  "serde_json",
  "unicode-general-category",
@@ -3891,10 +3869,7 @@ checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
 dependencies = [
  "base64",
  "bytes",
- "futures-channel",
  "futures-core",
- "futures-util",
- "h2 0.4.15",
  "http 1.4.2",
  "http-body",
  "http-body-util",

@@ -122,7 +122,6 @@ where
     objects_per_class_count_from_backend(backend.db_pool()).await
 }
 
-#[allow(dead_code)]
 fn new_hubuum_object_example() -> NewHubuumObject {
     NewHubuumObject {
         name: "srv-01".to_string(),
@@ -133,7 +132,6 @@ fn new_hubuum_object_example() -> NewHubuumObject {
     }
 }
 
-#[allow(dead_code)]
 fn update_hubuum_object_example() -> UpdateHubuumObject {
     UpdateHubuumObject {
         name: Some("srv-01".to_string()),
@@ -191,45 +189,9 @@ impl AuthzTarget for HubuumObjectID {
 pub mod tests {
     use super::*;
     use crate::db::DbPool;
-    use crate::models::class::HubuumClass;
     use crate::models::class::tests::{create_class, verify_no_such_class};
-    use crate::models::collection::Collection;
     use crate::tests::TestScope;
     use crate::traits::{CanDelete, CanSave, SelfAccessors};
-
-    #[allow(dead_code)]
-    async fn setup_test_objects(
-        pool: &DbPool,
-        collection: &Collection,
-        class: &HubuumClass,
-    ) -> Vec<HubuumObject> {
-        let simple_data = serde_json::json!({"key": "value"});
-        let nested_data = serde_json::json!({"key": "value", "nested": {"key": "nested_value"}});
-        let list_data = serde_json::json!({"key": "value", "list": [1, 2, 3]});
-
-        let target_collection_id = collection.id;
-        let hid = class.id;
-
-        let test_objects = vec![
-            ("Object 1", hid, target_collection_id, simple_data.clone()),
-            ("Object 2", hid, target_collection_id, simple_data.clone()),
-            ("Object 3", hid, target_collection_id, simple_data.clone()),
-            ("Object 4", hid, target_collection_id, nested_data.clone()),
-            ("Object 5", hid, target_collection_id, nested_data.clone()),
-            ("Object 6", hid, target_collection_id, list_data.clone()),
-        ];
-
-        let mut ret_vec = Vec::new();
-
-        for (name, hid, target_collection_id, object_data) in test_objects {
-            ret_vec.push(
-                create_object(pool, hid, target_collection_id, name, object_data)
-                    .await
-                    .unwrap(),
-            );
-        }
-        ret_vec
-    }
 
     pub async fn verify_no_such_object(pool: &DbPool, object_id: i32) {
         use crate::schema::hubuumobject::dsl::*;

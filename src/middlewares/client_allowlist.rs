@@ -50,7 +50,6 @@ pub struct ClientAllowlistMiddleware {
 }
 
 impl ClientAllowlistMiddleware {
-    #[allow(dead_code)]
     pub fn new(allowlist: ClientAllowlist) -> Self {
         Self {
             allowlist,

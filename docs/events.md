@@ -73,6 +73,10 @@ GET /api/v1/export-templates/11/events
 GET /api/v1/remote-targets/22/events
 ```
 
+The object convenience route verifies that the object belongs to the class in
+the path. A mismatched class and object pair returns `404 Not Found` rather than
+querying the object through an unrelated class URL.
+
 Use the generic endpoint for relation, permission, token, sink, and
 subscription events where the useful identity is often in event metadata rather
 than a single resource path.

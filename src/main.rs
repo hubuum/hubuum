@@ -1,33 +1,8 @@
-#![allow(async_fn_in_trait)]
-
-mod api;
-mod auth;
-mod backups;
-mod config;
-pub mod db;
-mod errors;
-pub mod events;
-mod exports;
-mod extractors;
-mod lifecycle;
-mod logger;
-mod macros;
-mod middlewares;
-pub mod models;
-mod observability;
-mod pagination;
-pub mod permissions;
-mod restores;
-mod schema;
-mod tasks;
 #[cfg(test)]
-mod tests;
-mod tls;
-mod traits;
-mod utilities;
+#[path = "tests/container_build.rs"]
+mod container_build;
 
 use actix_web::{App, HttpServer, middleware::from_fn, web, web::Data, web::JsonConfig};
-use db::{DatabasePoolSettings, init_pool_with_settings};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
@@ -36,35 +11,37 @@ use utoipa_swagger_ui::SwaggerUi;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
-use crate::api::openapi::openapi_json as openapi_json_handler;
-use crate::backups::BackupSettings;
+use hubuum::api::openapi::openapi_json as openapi_json_handler;
+use hubuum::backups::BackupSettings;
 #[cfg(test)]
-use crate::config::get_config;
+use hubuum::config::get_config;
 #[cfg(not(test))]
-use crate::config::initialize_config;
-use crate::config::running::RunningConfig;
-use crate::config::token_hash_key_is_ephemeral;
-use crate::config::{AppConfig, LoginRateLimitBackendKind};
-use crate::errors::{
+use hubuum::config::initialize_config;
+use hubuum::config::running::RunningConfig;
+use hubuum::config::token_hash_key_is_ephemeral;
+use hubuum::config::{AppConfig, LoginRateLimitBackendKind};
+use hubuum::db::{DatabasePoolSettings, init_pool_with_settings};
+use hubuum::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, EXIT_CODE_INIT_ERROR,
     EXIT_CODE_PERMISSION_BACKEND_ERROR, EXIT_CODE_TLS_ERROR, fatal_error, json_error_handler,
 };
-use crate::events::{
+use hubuum::events::{
     ensure_event_delivery_worker_running, ensure_event_fanout_worker_running,
     ensure_event_retention_worker_running,
 };
-use crate::lifecycle::{
+use hubuum::lifecycle::{
     background_worker_count, shutdown_background_workers, wait_for_background_worker_exit,
 };
-use crate::middlewares::rate_limit::{
+use hubuum::middlewares::rate_limit::{
     LoginRateLimitStoreSettings, initialize_login_rate_limit_store,
 };
-use crate::permissions::{AppContext, build_permission_backend};
-use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
-use crate::tasks::{
+use hubuum::permissions::{AppContext, build_permission_backend};
+use hubuum::restores::{RestoreSettings, ensure_restore_coordinator_running};
+use hubuum::tasks::{
     TaskWorkerSettings, ensure_task_worker_running_with_settings, initialize_task_worker_settings,
 };
-use crate::utilities::is_valid_log_level;
+use hubuum::utilities::is_valid_log_level;
+use hubuum::{api, db, logger, middlewares, observability, tls, utilities};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

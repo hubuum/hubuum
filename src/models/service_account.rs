@@ -224,7 +224,6 @@ impl IdAccessor for ServiceAccountID {
     }
 }
 
-#[allow(dead_code)]
 fn new_service_account_example() -> NewServiceAccount {
     NewServiceAccount {
         identity_scope: None,

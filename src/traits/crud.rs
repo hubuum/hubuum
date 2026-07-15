@@ -14,7 +14,6 @@ pub trait CanDelete {
     /// Intended only for internal infrastructure paths such as bootstrap/setup,
     /// fixture cleanup, and event-system tests. Normal application code should
     /// use [`CanDelete::delete`] so event subscribers observe the change.
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn delete_without_events<C>(&self, backend: &C) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized;
@@ -35,7 +34,6 @@ pub trait CanSave {
     /// Intended only for internal infrastructure paths such as bootstrap/setup,
     /// fixture construction, cleanup, and event-system tests. Normal application
     /// code should use [`CanSave::save`] so event subscribers observe the change.
-    #[cfg_attr(not(test), allow(dead_code))]
     async fn save_without_events<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
     where
         C: BackendContext + ?Sized;
@@ -190,32 +188,17 @@ where
     }
 }
 
-#[allow(dead_code)]
 /// Validate a value in its full domain context.
 ///
-/// Unlike purely local validation, implementations may consult the backend when validation depends
-/// on related persisted state, such as a class schema or permissions.
+/// Implementations may consult the backend when validation depends on related
+/// persisted state, such as a class schema.
 pub trait Validate {
-    /// Complete validation of the object.
-    ///
-    /// This returns errors if:
-    /// - If the object's class requires validation (validate_schema), and the object's data
-    ///   fails validation against the class's JSON schema (json_schema).
     async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized;
 }
 
-#[allow(dead_code)]
-/// Validate a value against a supplied schema without loading additional backend state.
+/// Validate a value against a supplied schema without loading backend state.
 pub trait ValidateAgainstSchema {
-    /// Validate the object's data against the class's JSON schema.
-    ///
-    /// This does not check if the class requires validation (validate_schema), it
-    /// only checks if the data is valid against the schema.
-    ///
-    /// Returns OK() if any of the following are true:
-    /// - The class does not have a schema (json_schema).
-    /// - The object data is valid against the schema.
     async fn validate_against_schema(&self, schema: &serde_json::Value) -> Result<(), ApiError>;
 }

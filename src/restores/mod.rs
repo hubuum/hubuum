@@ -150,6 +150,7 @@ fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSumm
         }
     }
     validate_required_seed_rows(document)?;
+    validate_backup_class_schemas(document)?;
     let total_items = document
         .state
         .sections
@@ -173,6 +174,41 @@ fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSumm
         includes_history: document.history.is_some(),
         total_items,
     })
+}
+
+fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiError> {
+    let current_classes = required_state_section(document, "hubuumclass")?;
+    let historical_classes = document
+        .history
+        .as_ref()
+        .and_then(|history| history.sections.get("hubuumclass_history"))
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+
+    for row in current_classes.iter().chain(historical_classes) {
+        let Some(schema) = row.get("json_schema").filter(|value| !value.is_null()) else {
+            continue;
+        };
+        let validation = if row
+            .get("validate_schema")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            crate::utilities::json_schema::compile_json_schema(schema).map(|_| ())
+        } else {
+            crate::utilities::json_schema::validate_json_schema(schema)
+        };
+        validation.map_err(|error| {
+            let class_id = row.get("id").and_then(Value::as_i64);
+            ApiError::BadRequest(format!(
+                "Full backup class {} contains an invalid JSON schema: {error}",
+                class_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "with unknown id".to_string())
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 fn required_state_section<'a>(

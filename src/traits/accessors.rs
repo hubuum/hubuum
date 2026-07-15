@@ -187,7 +187,6 @@ where
 /// This follows the same pattern as the other accessor traits, including relation cases where the
 /// returned object or identifier type may be a tuple rather than a single value.
 pub trait ObjectAccessors<O = HubuumObject, I = HubuumObjectID> {
-    #[allow(dead_code)]
     /// Return the object instance for this value.
     async fn object<B>(&self, backend: &B) -> Result<O, ApiError>
     where
@@ -201,7 +200,6 @@ pub trait ObjectAccessors<O = HubuumObject, I = HubuumObjectID> {
 
 #[doc(hidden)]
 pub(crate) trait ObjectAdapter<O = HubuumObject, I = HubuumObjectID> {
-    #[allow(dead_code)]
     async fn object_adapter(&self, pool: &DbPool) -> Result<O, ApiError>;
     async fn object_id_adapter(&self, pool: &DbPool) -> Result<I, ApiError>;
 }

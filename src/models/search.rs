@@ -1,9 +1,4 @@
 use chrono::NaiveDateTime;
-use diesel::expression::{AppearsOnTable, Expression, SelectableExpression, ValidGrouping};
-use diesel::pg::Pg;
-use diesel::query_builder::{AstPass, QueryFragment, QueryId};
-use diesel::result::QueryResult;
-use diesel::sql_types::{Bool, Integer, Text, Timestamp};
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -74,80 +69,6 @@ impl From<hubuum_query::QueryError> for ApiError {
 pub struct SQLComponent {
     pub sql: String,
     pub bind_variables: Vec<SQLValue>,
-}
-
-impl SQLComponent {
-    fn placeholder_count(&self) -> usize {
-        self.sql.chars().filter(|c| *c == '?').count()
-    }
-
-    pub fn into_predicate(self) -> Result<JsonSqlPredicate, ApiError> {
-        let placeholder_count = self.placeholder_count();
-        if placeholder_count != self.bind_variables.len() {
-            return Err(ApiError::InternalServerError(format!(
-                "JSON SQL predicate has {placeholder_count} placeholders but {} bind values",
-                self.bind_variables.len()
-            )));
-        }
-
-        Ok(JsonSqlPredicate {
-            sql: self.sql,
-            bind_variables: self.bind_variables,
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct JsonSqlPredicate {
-    sql: String,
-    bind_variables: Vec<SQLValue>,
-}
-
-impl Expression for JsonSqlPredicate {
-    type SqlType = Bool;
-}
-
-impl QueryId for JsonSqlPredicate {
-    type QueryId = ();
-
-    const HAS_STATIC_QUERY_ID: bool = false;
-}
-
-impl QueryFragment<Pg> for JsonSqlPredicate {
-    fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, Pg>) -> QueryResult<()> {
-        out.unsafe_to_cache_prepared();
-
-        // `?` is reserved for bind placeholders in these generated fragments.
-        // `SQLComponent::into_predicate` checks that placeholder and bind counts match.
-        let mut sql_parts = self.sql.split('?');
-        if let Some(first_part) = sql_parts.next() {
-            out.push_sql(first_part);
-        }
-
-        for (bind_variable, sql_part) in self.bind_variables.iter().zip(sql_parts) {
-            bind_sql_value(&mut out, bind_variable)?;
-            out.push_sql(sql_part);
-        }
-
-        Ok(())
-    }
-}
-
-impl<QS> SelectableExpression<QS> for JsonSqlPredicate {}
-
-impl<QS> AppearsOnTable<QS> for JsonSqlPredicate {}
-
-impl<GB> ValidGrouping<GB> for JsonSqlPredicate {
-    type IsAggregate = diesel::expression::is_aggregate::Never;
-}
-
-fn bind_sql_value<'b>(out: &mut AstPass<'_, 'b, Pg>, value: &'b SQLValue) -> QueryResult<()> {
-    match value {
-        SQLValue::String(value) => out.push_bind_param::<Text, _>(value),
-        SQLValue::Integer(value) => out.push_bind_param::<Integer, _>(value),
-        SQLValue::Date(value) => out.push_bind_param::<Timestamp, _>(value),
-        SQLValue::Boolean(value) => out.push_bind_param::<Bool, _>(value),
-    }
 }
 
 /// ## An sql value for bind variables
@@ -285,8 +206,6 @@ pub trait ParsedQueryParamExt {
     ///   * ApiError::BadRequest if the value is not a key=value pair
     fn as_json_sql(&self) -> Result<SQLComponent, ApiError>;
 
-    fn as_json_predicate(&self) -> Result<JsonSqlPredicate, ApiError>;
-
     fn as_json_sql_for_field_expr(&self, jsonb_field_expr: &str) -> Result<SQLComponent, ApiError>;
 }
 
@@ -391,10 +310,6 @@ impl ParsedQueryParamExt for ParsedQueryParam {
     fn as_json_sql(&self) -> Result<SQLComponent, ApiError> {
         let field = self.field.clone();
         self.as_json_sql_for_field_expr(field.table_field())
-    }
-
-    fn as_json_predicate(&self) -> Result<JsonSqlPredicate, ApiError> {
-        self.as_json_sql()?.into_predicate()
     }
 
     fn as_json_sql_for_field_expr(&self, jsonb_field_expr: &str) -> Result<SQLComponent, ApiError> {
@@ -1031,17 +946,13 @@ fn ip_to_host_net(value: &str) -> Result<IpNet, ()> {
     }
 }
 
-// TODO: Rewrite to use rstest cases...
 #[cfg(test)]
 mod test {
     use std::vec;
 
-    use super::*;
+    use rstest::rstest;
 
-    struct TestCase {
-        query_string: &'static str,
-        expected: Vec<ParsedQueryParam>,
-    }
+    use super::*;
 
     fn pq(field: &str, operator: SearchOperator, value: &str) -> ParsedQueryParam {
         ParsedQueryParam {
@@ -1063,190 +974,88 @@ mod test {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_parse_integer_list_single() {
-        let test_cases = vec![
-            ("1", vec![1]),
-            ("2,4", vec![2, 4]),
-            ("3,3,3,6", vec![3, 6]),
-            ("4,1,4,1,5", vec![1, 4, 5]),
-        ];
-
-        for (input, expected) in test_cases {
-            let result = input.as_integer();
-            assert_eq!(result, Ok(expected), "Failed test case for input: {input}");
-        }
+    #[rstest]
+    #[case("1", vec![1])]
+    #[case("2,4", vec![2, 4])]
+    #[case("3,3,3,6", vec![3, 6])]
+    #[case("4,1,4,1,5", vec![1, 4, 5])]
+    #[case("1-4", vec![1, 2, 3, 4])]
+    #[case("2-4", vec![2, 3, 4])]
+    #[case("3-4", vec![3, 4])]
+    #[case("4-4", vec![4])]
+    #[case("1,2,3,4", vec![1, 2, 3, 4])]
+    #[case("1-4,6-8", vec![1, 2, 3, 4, 6, 7, 8])]
+    #[case("1,2,3-5,7", vec![1, 2, 3, 4, 5, 7])]
+    #[case("1-4,3,3,8", vec![1, 2, 3, 4, 8])]
+    #[case("-4--2", vec![-4, -3, -2])]
+    #[case("-90", vec![-90])]
+    fn test_parse_integer_list(#[case] input: &str, #[case] expected: Vec<i32>) {
+        assert_eq!(input.as_integer(), Ok(expected));
     }
 
-    #[test]
-    fn test_parse_integer_list_range() {
-        let test_cases = vec![
-            ("1-4", vec![1, 2, 3, 4]),
-            ("2-4", vec![2, 3, 4]),
-            ("3-4", vec![3, 4]),
-            ("4-4", vec![4]),
-        ];
-
-        for (input, expected) in test_cases {
-            let result = input.as_integer();
-            assert_eq!(result, Ok(expected), "Failed test case for input: {input}");
-        }
+    #[rstest]
+    #[case("1-")]
+    #[case("-4--6")]
+    #[case("1-2-3")]
+    fn test_parse_integer_list_failures(#[case] input: &str) {
+        assert!(input.as_integer().is_err());
     }
 
-    #[test]
-    fn test_parse_integer_list_mixed() {
-        let test_cases = vec![
-            ("1,2,3,4", vec![1, 2, 3, 4]),
-            ("1-4,6-8", vec![1, 2, 3, 4, 6, 7, 8]),
-            ("1,2,3-5,7", vec![1, 2, 3, 4, 5, 7]),
-            ("1-4,3,3,8", vec![1, 2, 3, 4, 8]),
-            ("-4--2", vec![-4, -3, -2]),
-            ("-90", vec![-90]),
-        ];
-
-        for (input, expected) in test_cases {
-            let result = input.as_integer();
-            assert_eq!(result, Ok(expected), "Failed test case for input: {input}",);
-        }
+    #[rstest]
+    #[case(
+        "name__icontains=foo&description=bar&invalid",
+        "Invalid query parameter: 'invalid'"
+    )]
+    #[case(
+        "name__icontains=foo&description=bar&invalid=",
+        "Invalid query parameter: 'invalid', no value"
+    )]
+    #[case(
+        "name__icontains=foo&description=bar&invalid=foo&name__invalid=bar",
+        "Invalid search field: 'invalid'"
+    )]
+    fn test_query_string_bad_request(#[case] query: &str, #[case] expected: &str) {
+        assert_eq!(
+            parse_query_parameter(query),
+            Err(ApiError::BadRequest(expected.to_string()))
+        );
     }
 
-    #[test]
-    fn test_parse_integer_list_failures() {
-        let test_cases = vec!["1-", "-4--6", "1-2-3"];
-
-        for input in test_cases {
-            let result = input.as_integer();
-            assert!(
-                result.is_err(),
-                "Failed test case for input: {input} (no error) {result:?}",
-            );
-        }
-    }
-
-    #[test]
-    fn test_query_string_bad_request() {
-        let test_cases = vec![
-            "name__icontains=foo&description=bar&invalid",
-            "name__icontains=foo&description=bar&invalid=",
-            "name__icontains=foo&description=bar&invalid=foo&name__invalid=bar",
-        ];
-
-        let test_case_errors = [
-            "Invalid query parameter: 'invalid'",
-            "Invalid query parameter: 'invalid', no value",
-            "Invalid search field: 'invalid'",
-        ];
-
-        for (i, case) in test_cases.into_iter().enumerate() {
-            let result = parse_query_parameter(case);
-            assert!(
-                result.is_err(),
-                "Failed test case for query: {case} (no error) {result:?}",
-            );
-            let result_err = result.unwrap_err();
-            assert_eq!(
-                result_err,
-                ApiError::BadRequest(test_case_errors[i].to_string()),
-                "Failed test case for query: {case} ({} vs {})",
-                result_err,
-                test_case_errors[i]
-            );
-        }
-    }
-
-    #[test]
-    fn test_query_string_parsing() {
-        let test_cases = vec![
-            TestCase {
-                query_string: "name__icontains=foo&description=bar",
-                expected: vec![
-                    pq(
-                        "name",
-                        SearchOperator::IContains { is_negated: false },
-                        "foo",
-                    ),
-                    pq(
-                        "description",
-                        SearchOperator::Equals { is_negated: false },
-                        "bar",
-                    ),
-                ],
-            },
-            TestCase {
-                query_string: "name__contains=foo&description__icontains=bar&created_at__gte=2021-01-01&updated_at__lte=2021-12-31",
-                expected: vec![
-                    pq(
-                        "name",
-                        SearchOperator::Contains { is_negated: false },
-                        "foo",
-                    ),
-                    pq(
-                        "description",
-                        SearchOperator::IContains { is_negated: false },
-                        "bar",
-                    ),
-                    pq(
-                        "created_at",
-                        SearchOperator::Gte { is_negated: false },
-                        "2021-01-01",
-                    ),
-                    pq(
-                        "updated_at",
-                        SearchOperator::Lte { is_negated: false },
-                        "2021-12-31",
-                    ),
-                ],
-            },
-            TestCase {
-                query_string: "name__not_icontains=foo&description=bar&permissions=CanRead&validate_schema=true",
-                expected: vec![
-                    pq(
-                        "name",
-                        SearchOperator::IContains { is_negated: true },
-                        "foo",
-                    ),
-                    pq(
-                        "description",
-                        SearchOperator::Equals { is_negated: false },
-                        "bar",
-                    ),
-                    pq(
-                        "permissions",
-                        SearchOperator::Equals { is_negated: false },
-                        "CanRead",
-                    ),
-                    pq(
-                        "validate_schema",
-                        SearchOperator::Equals { is_negated: false },
-                        "true",
-                    ),
-                ],
-            },
-            TestCase {
-                query_string: "json_data__within_network=network,address=10.0.0.0/24&json_data__contains_ip=network,address=10.0.0.10",
-                expected: vec![
-                    pq(
-                        "json_data",
-                        SearchOperator::WithinNetwork { is_negated: false },
-                        "network,address=10.0.0.0/24",
-                    ),
-                    pq(
-                        "json_data",
-                        SearchOperator::ContainsIp { is_negated: false },
-                        "network,address=10.0.0.10",
-                    ),
-                ],
-            },
-        ];
-
-        for case in test_cases {
-            let parsed_query_params = parse_query_parameter(case.query_string).unwrap();
-            assert_eq!(
-                parsed_query_params.filters, case.expected,
-                "Failed test case for query: {}",
-                case.query_string
-            );
-        }
+    #[rstest]
+    #[case(
+        "name__icontains=foo&description=bar",
+        vec![
+            pq("name", SearchOperator::IContains { is_negated: false }, "foo"),
+            pq("description", SearchOperator::Equals { is_negated: false }, "bar"),
+        ]
+    )]
+    #[case(
+        "name__contains=foo&description__icontains=bar&created_at__gte=2021-01-01&updated_at__lte=2021-12-31",
+        vec![
+            pq("name", SearchOperator::Contains { is_negated: false }, "foo"),
+            pq("description", SearchOperator::IContains { is_negated: false }, "bar"),
+            pq("created_at", SearchOperator::Gte { is_negated: false }, "2021-01-01"),
+            pq("updated_at", SearchOperator::Lte { is_negated: false }, "2021-12-31"),
+        ]
+    )]
+    #[case(
+        "name__not_icontains=foo&description=bar&permissions=CanRead&validate_schema=true",
+        vec![
+            pq("name", SearchOperator::IContains { is_negated: true }, "foo"),
+            pq("description", SearchOperator::Equals { is_negated: false }, "bar"),
+            pq("permissions", SearchOperator::Equals { is_negated: false }, "CanRead"),
+            pq("validate_schema", SearchOperator::Equals { is_negated: false }, "true"),
+        ]
+    )]
+    #[case(
+        "json_data__within_network=network,address=10.0.0.0/24&json_data__contains_ip=network,address=10.0.0.10",
+        vec![
+            pq("json_data", SearchOperator::WithinNetwork { is_negated: false }, "network,address=10.0.0.0/24"),
+            pq("json_data", SearchOperator::ContainsIp { is_negated: false }, "network,address=10.0.0.10"),
+        ]
+    )]
+    fn test_query_string_parsing(#[case] query: &str, #[case] expected: Vec<ParsedQueryParam>) {
+        assert_eq!(parse_query_parameter(query).unwrap().filters, expected);
     }
 
     #[test]

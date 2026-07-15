@@ -6,7 +6,7 @@ use crate::db::DbPool;
 use crate::db::traits::bootstrap::{bootstrap_default_admin, default_admin_bootstrap_required};
 use crate::db::traits::identity::ensure_identity_scope;
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
-use crate::utilities::auth::{generate_random_password, hash_password};
+use crate::utilities::auth::{generate_random_password, hash_password_async};
 
 use tracing::{error, warn};
 
@@ -40,9 +40,10 @@ pub async fn init(pool: DbPool, settings: &InitializationSettings) -> InitResult
         return Err(err_msg);
     }
 
-    let created = bootstrap_default_admin_if_required(&pool, settings, || {
+    let created = bootstrap_default_admin_if_required(&pool, settings, || async {
         let default_password = generate_random_password(32);
-        hash_password(&default_password)
+        hash_password_async(default_password)
+            .await
             .map_err(|error| format!("Failed to hash default administrator password: {error}"))
     })
     .await?;
@@ -57,13 +58,14 @@ pub async fn init(pool: DbPool, settings: &InitializationSettings) -> InitResult
     Ok(())
 }
 
-async fn bootstrap_default_admin_if_required<F>(
+async fn bootstrap_default_admin_if_required<F, Fut>(
     pool: &DbPool,
     settings: &InitializationSettings,
     hash_default_password: F,
 ) -> Result<bool, InitError>
 where
-    F: FnOnce() -> Result<String, InitError>,
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<String, InitError>>,
 {
     let required = default_admin_bootstrap_required(pool)
         .await
@@ -72,7 +74,7 @@ where
         return Ok(false);
     }
 
-    let hashed_password = hash_default_password()?;
+    let hashed_password = hash_default_password().await?;
     bootstrap_default_admin(pool, &settings.admin_groupname, &hashed_password)
         .await
         .map_err(|error| format!("Failed to bootstrap default administrator: {error}"))
@@ -91,7 +93,7 @@ mod tests {
         let settings = InitializationSettings::new("unused-admin-group").unwrap();
         let hash_attempted = AtomicBool::new(false);
 
-        let created = bootstrap_default_admin_if_required(&context.pool, &settings, || {
+        let created = bootstrap_default_admin_if_required(&context.pool, &settings, || async {
             hash_attempted.store(true, Ordering::SeqCst);
             Ok("unused-password-hash".to_string())
         })

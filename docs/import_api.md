@@ -275,6 +275,12 @@ name under different parents in one request.
 
 Exactly one of `collection_ref` or `collection_key` must be set.
 
+`json_schema`, when supplied, must itself be a valid JSON Schema. References
+in classes with `validate_schema: true` must be local fragments such as
+`#/$defs/address`; external HTTP, file, dynamic, and recursive references cannot
+be evaluated. This keeps object validation deterministic and prevents schema
+evaluation from accessing external resources.
+
 ### `objects`
 
 | Field | Type | Required | Notes |

@@ -1,14 +1,9 @@
-#![allow(dead_code)]
-// We allow dead code here because all of this is used in tests and it is
-// thus marked as dead. Doh.
-
 pub mod acl;
 pub mod api;
 pub mod api_operations;
 pub mod asserts;
 pub mod client_allowlist;
 pub mod constants;
-pub mod container_build;
 pub mod docs_examples;
 pub mod id_newtypes;
 pub mod permissions;

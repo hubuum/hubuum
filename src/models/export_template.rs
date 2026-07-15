@@ -458,7 +458,6 @@ impl ExportTemplate {
     }
 
     /// The other export templates sharing this template's collection (this template excluded).
-    #[allow(dead_code)]
     pub async fn collection_siblings(
         &self,
         pool: &DbPool,
@@ -467,7 +466,6 @@ impl ExportTemplate {
     }
 
     /// Every export template across all collections.
-    #[allow(dead_code)]
     pub async fn list_all(pool: &DbPool) -> Result<Vec<ExportTemplate>, ApiError> {
         let rows = backend::load_all_rows(pool).await?;
 
@@ -1222,7 +1220,6 @@ impl CursorSqlMapping for ExportTemplate {
     }
 }
 
-#[allow(dead_code)]
 fn export_template_example() -> ExportTemplate {
     let example_timestamp = chrono::NaiveDate::from_ymd_opt(2026, 3, 6)
         .and_then(|date| date.and_hms_opt(12, 0, 0))
@@ -1252,7 +1249,6 @@ fn export_template_example() -> ExportTemplate {
     }
 }
 
-#[allow(dead_code)]
 fn new_export_template_example() -> NewExportTemplate {
     NewExportTemplate {
         collection_id: 7,
@@ -1275,7 +1271,6 @@ fn new_export_template_example() -> NewExportTemplate {
     }
 }
 
-#[allow(dead_code)]
 fn update_export_template_example() -> UpdateExportTemplate {
     UpdateExportTemplate {
         collection_id: Some(9),

@@ -23,5 +23,6 @@ pub mod schema;
 pub mod tasks;
 #[cfg(test)]
 pub mod tests;
+pub mod tls;
 pub mod traits;
 pub mod utilities;

@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use crate::config::token_hash_key_bytes;
 use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::tokens;
 use crate::traits::{
@@ -61,38 +61,6 @@ impl From<PrincipalToken> for PrincipalTokenMetadata {
             scoped: value.scoped,
         }
     }
-}
-
-fn token_snapshot(token: &PrincipalToken) -> serde_json::Value {
-    serde_json::json!({
-        "id": token.id,
-        "principal_id": token.principal_id,
-        "name": token.name,
-        "description": token.description,
-        "issued": token.issued,
-        "expires_at": token.expires_at,
-        "last_used_at": token.last_used_at,
-        "revoked_at": token.revoked_at,
-        "scoped": token.scoped,
-    })
-}
-
-fn token_event(
-    token: &PrincipalToken,
-    action: Action,
-    context: &EventContext,
-    summary: impl Into<String>,
-) -> Result<NewEvent, ApiError> {
-    Ok(
-        NewEvent::new(EntityType::Token, action, context.actor_kind(), summary)?
-            .with_context(context)
-            .with_entity_id(token.id)
-            .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string()))
-            .with_metadata(serde_json::json!({
-                "principal_id": token.principal_id,
-                "scoped": token.scoped,
-            })),
-    )
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -152,19 +120,11 @@ pub async fn revoke_token_by_id_for_principal_without_events<C>(
 where
     C: BackendContext + ?Sized,
 {
-    use crate::db::with_connection;
-    use crate::schema::tokens::dsl::{id, principal_id, revoked_at, tokens};
-    with_connection(backend.db_pool(), async |conn| {
-        diesel::update(
-            tokens
-                .filter(id.eq(token_id))
-                .filter(principal_id.eq(principal))
-                .filter(revoked_at.is_null()),
-        )
-        .set(revoked_at.eq(diesel::dsl::now))
-        .execute(conn)
-        .await
-    })
+    crate::db::traits::token::revoke_token_by_id_for_principal_without_events_db(
+        backend.db_pool(),
+        token_id,
+        principal,
+    )
     .await
 }
 
@@ -177,51 +137,12 @@ pub async fn revoke_token_by_id_for_principal<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let Some(context) = context else {
-        return revoke_token_by_id_for_principal_without_events(backend, token_id, principal).await;
-    };
-
-    use crate::db::with_transaction;
-    use crate::schema::tokens::dsl::{id, principal_id, revoked_at, tokens};
-
-    with_transaction(backend.db_pool(), async |conn| -> Result<usize, ApiError> {
-        let before = tokens
-            .filter(id.eq(token_id))
-            .filter(principal_id.eq(principal))
-            .filter(revoked_at.is_null())
-            .first::<PrincipalToken>(conn)
-            .await
-            .optional()?;
-
-        let updated = diesel::update(
-            tokens
-                .filter(id.eq(token_id))
-                .filter(principal_id.eq(principal))
-                .filter(revoked_at.is_null()),
-        )
-        .set(revoked_at.eq(diesel::dsl::now))
-        .get_result::<PrincipalToken>(conn)
-        .await
-        .optional()?;
-
-        if let (Some(before), Some(after)) = (before, updated) {
-            let event = token_event(
-                &after,
-                Action::Revoked,
-                context,
-                format!(
-                    "Token {} revoked for principal {}",
-                    after.id, after.principal_id
-                ),
-            )?
-            .with_before(token_snapshot(&before))
-            .with_after(token_snapshot(&after));
-            emit_event(conn, &event).await?;
-            Ok(1)
-        } else {
-            Ok(0)
-        }
-    })
+    crate::db::traits::token::revoke_token_by_id_for_principal_db(
+        backend.db_pool(),
+        token_id,
+        principal,
+        context,
+    )
     .await
 }
 
@@ -241,8 +162,8 @@ pub async fn create_principal_token<C>(
 where
     C: BackendContext + ?Sized,
 {
-    create_principal_token_inner(
-        backend,
+    crate::db::traits::token::create_principal_token_db(
+        backend.db_pool(),
         principal,
         name,
         description,
@@ -251,96 +172,6 @@ where
         context,
     )
     .await
-}
-
-async fn create_principal_token_inner<C>(
-    backend: &C,
-    principal: i32,
-    name: Option<&str>,
-    description: Option<&str>,
-    expires_at: Option<chrono::NaiveDateTime>,
-    scopes: Option<&[crate::models::Permissions]>,
-    context: Option<&EventContext>,
-) -> Result<Token, ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    use crate::db::with_transaction;
-    use crate::models::principal::PrincipalKind;
-    use crate::schema::{principals, service_accounts, tokens};
-
-    let raw = crate::utilities::auth::generate_token();
-    let hash = raw.storage_hash();
-    let scoped = scopes.is_some();
-    let scope_strings: Vec<String> = scopes
-        .map(|s| s.iter().map(|p| p.to_string()).collect())
-        .unwrap_or_default();
-    let name = name.map(|s| s.to_string());
-    let description = description.map(|s| s.to_string());
-
-    with_transaction(backend.db_pool(), async |conn| -> Result<(), ApiError> {
-        let principal_kind = principals::table
-            .filter(principals::id.eq(principal))
-            .select(principals::kind)
-            .first::<String>(conn)
-            .await?;
-
-        // Lock the SA row in the same transaction as insert so disable-vs-mint
-        // races fail closed.
-        if principal_kind == PrincipalKind::ServiceAccount.as_str() {
-            let disabled_at = service_accounts::table
-                .filter(service_accounts::id.eq(principal))
-                .for_update()
-                .select(service_accounts::disabled_at)
-                .first::<Option<chrono::NaiveDateTime>>(conn)
-                .await?;
-
-            if disabled_at.is_some() {
-                return Err(ApiError::Conflict(
-                    "Service account is disabled".to_string(),
-                ));
-            }
-        }
-
-        let token = diesel::insert_into(tokens::table)
-            .values((
-                tokens::token.eq(&hash),
-                tokens::principal_id.eq(principal),
-                tokens::name.eq(&name),
-                tokens::description.eq(&description),
-                tokens::expires_at.eq(expires_at),
-                tokens::scoped.eq(scoped),
-            ))
-            .get_result::<PrincipalToken>(conn)
-            .await?;
-
-        for permission in &scope_strings {
-            diesel::insert_into(crate::schema::token_scopes::table)
-                .values((
-                    crate::schema::token_scopes::token_id.eq(token.id),
-                    crate::schema::token_scopes::permission.eq(permission),
-                ))
-                .execute(conn)
-                .await?;
-        }
-        if let Some(context) = context {
-            let event = token_event(
-                &token,
-                Action::Created,
-                context,
-                format!(
-                    "Token {} created for principal {}",
-                    token.id, token.principal_id
-                ),
-            )?
-            .with_after(token_snapshot(&token));
-            emit_event(conn, &event).await?;
-        }
-        Ok(())
-    })
-    .await?;
-
-    Ok(raw)
 }
 
 impl CursorPaginated for PrincipalToken {

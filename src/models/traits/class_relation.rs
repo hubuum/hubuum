@@ -332,7 +332,6 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID
 }
 
 impl ClassGraphRow {
-    #[allow(dead_code)]
     pub fn to_ascendant_class(&self) -> HubuumClass {
         HubuumClass {
             id: self.ancestor_class_id,
@@ -346,7 +345,6 @@ impl ClassGraphRow {
         }
     }
 
-    #[allow(dead_code)]
     pub fn to_descendant_class(&self) -> HubuumClass {
         HubuumClass {
             id: self.descendant_class_id,
@@ -360,7 +358,6 @@ impl ClassGraphRow {
         }
     }
 
-    #[allow(dead_code)]
     pub fn to_descendant_class_with_path(&self) -> HubuumClassWithPath {
         HubuumClassWithPath {
             id: self.descendant_class_id,
@@ -376,7 +373,6 @@ impl ClassGraphRow {
     }
 }
 
-#[allow(dead_code)]
 pub trait ToHubuumClasses {
     fn to_descendant_classes(self) -> Vec<HubuumClass>;
     fn to_descendant_classes_with_path(self) -> Vec<HubuumClassWithPath>;

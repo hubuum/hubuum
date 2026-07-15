@@ -700,6 +700,23 @@ pub async fn upsert_principal_db(
     overwrite: bool,
 ) -> Result<i32, ApiError> {
     input.validate_credentials()?;
+    let supplied_password = match &input.subtype {
+        ImportPrincipalSubtype::Human {
+            password: Some(password),
+            password_hash: None,
+            ..
+        } => Some(
+            crate::utilities::auth::hash_password_async(password.clone())
+                .await
+                .map_err(|error| ApiError::HashError(error.to_string()))?,
+        ),
+        ImportPrincipalSubtype::Human {
+            password: None,
+            password_hash,
+            ..
+        } => password_hash.clone(),
+        _ => None,
+    };
     use crate::schema::principals::dsl as p;
     let expected_kind = match &input.subtype {
         ImportPrincipalSubtype::Human { .. } => "human",
@@ -773,26 +790,12 @@ pub async fn upsert_principal_db(
 
     match &input.subtype {
         ImportPrincipalSubtype::Human {
-            password,
-            password_hash,
+            password: _,
+            password_hash: _,
             proper_name,
             email,
             anonymized_at,
         } => {
-            if password.is_some() && password_hash.is_some() {
-                return Err(ApiError::BadRequest(
-                    "A human principal import accepts password or password_hash, not both"
-                        .to_string(),
-                ));
-            }
-            let supplied_password = match (password, password_hash) {
-                (Some(password), None) => Some(
-                    crate::utilities::auth::hash_password(password)
-                        .map_err(|error| ApiError::HashError(error.to_string()))?,
-                ),
-                (None, hash) => hash.clone(),
-                _ => None,
-            };
             use crate::schema::users::dsl as u;
             let existing_user = u::users
                 .filter(u::id.eq(principal.id))

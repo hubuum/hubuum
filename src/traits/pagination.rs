@@ -7,7 +7,6 @@ use crate::models::search::{FilterField, SortParam};
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum CursorValue {
     Null,
-    Boolean(bool),
     Integer(i64),
     String(String),
     DateTime(chrono::NaiveDateTime),
@@ -21,10 +20,8 @@ pub trait CursorPaginated: Clone {
     fn tie_breaker_sort() -> Vec<SortParam>;
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorSqlType {
-    Boolean,
     Integer,
     String,
     DateTime,

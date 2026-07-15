@@ -10,11 +10,6 @@
 //! the operator uploads the file via Treetop's own tooling. See
 //! `docs/treetop/README.md` for the bootstrap workflow.
 
-// Consumed only by the `hubuum-admin` binary, not by `hubuum-server`. The
-// `hubuum-server` bin re-includes this file via `mod permissions;` and
-// therefore reports its functions as dead. Suppress that.
-#![allow(dead_code)]
-
 use std::io::Write;
 
 use crate::db::prelude::*;

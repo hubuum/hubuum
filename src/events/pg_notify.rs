@@ -7,12 +7,8 @@ use tracing::{debug, error, info};
 use crate::db::DbPool;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 
-pub const EVENT_FANOUT_CHANNEL: &str = "hubuum_event_fanout";
+pub const EVENT_FANOUT_CHANNEL: &str = "hubuum_events_fanout";
 pub const EVENT_DELIVERY_CHANNEL: &str = "hubuum_event_delivery";
-
-pub async fn notify_event_fanout(conn: &mut crate::db::DbConnection) -> QueryResult<usize> {
-    notify_channel(conn, EVENT_FANOUT_CHANNEL).await
-}
 
 pub async fn notify_event_delivery(conn: &mut crate::db::DbConnection) -> QueryResult<usize> {
     notify_channel(conn, EVENT_DELIVERY_CHANNEL).await
@@ -151,12 +147,18 @@ async fn poll_notifications(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
     use diesel::sql_types::Text;
+    use futures_util::StreamExt;
+    use rstest::rstest;
 
     use crate::config::get_config;
-    use crate::db::init_pool;
+    use crate::db::{init_pool, with_transaction};
+    use crate::errors::ApiError;
+    use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
+    use crate::tests::test_scope;
 
     use super::*;
 
@@ -171,6 +173,60 @@ mod tests {
 
     fn mark_listener_ready() {
         LISTENER_READY.fetch_add(1, Ordering::Release);
+    }
+
+    #[rstest]
+    #[case::commit(true)]
+    #[case::rollback(false)]
+    #[tokio::test]
+    async fn fanout_trigger_notifies_only_after_commit(#[case] commit: bool) {
+        let scope = test_scope();
+        let mut listener = scope.pool.get().await.expect("listener connection");
+        diesel::sql_query(format!("LISTEN {EVENT_FANOUT_CHANNEL}"))
+            .execute(&mut listener)
+            .await
+            .expect("listen on fanout channel");
+
+        let inserted_id = Arc::new(AtomicI64::new(0));
+        let captured_id = inserted_id.clone();
+        let event = NewEvent::new(
+            EntityType::Collection,
+            Action::Created,
+            ActorKind::System,
+            "notification transaction test",
+        )
+        .unwrap();
+        let result: Result<(), ApiError> = with_transaction(&scope.pool, async |conn| {
+            let event = emit_event(conn, &event).await?;
+            captured_id.store(event.id, Ordering::Release);
+            if commit {
+                Ok(())
+            } else {
+                Err(ApiError::InternalServerError(
+                    "notification rollback test".to_string(),
+                ))
+            }
+        })
+        .await;
+        assert_eq!(result.is_ok(), commit);
+
+        let target_payload = inserted_id.as_ref().load(Ordering::Acquire).to_string();
+        let notifications = listener.notifications_stream();
+        futures_util::pin_mut!(notifications);
+        let received = tokio::time::timeout(Duration::from_millis(500), async {
+            while let Some(notification) = notifications.next().await {
+                let notification = notification.expect("fanout notification");
+                if notification.channel == EVENT_FANOUT_CHANNEL
+                    && notification.payload == target_payload
+                {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        assert_eq!(received, commit);
     }
 
     #[actix_rt::test]
