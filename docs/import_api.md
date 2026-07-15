@@ -22,7 +22,11 @@ Import results are intentionally not exposed through a generic shared task-resul
 
 Authentication:
 
-- Bearer token required
+- An unscoped bearer token for a runtime administrator is required.
+- Runtime administrators may be humans or service accounts in the configured
+  admin group. Service accounts do not gain access to human/IAM administration.
+- The worker rechecks admin authority before execution. Use a dedicated backup
+  or restore service account for automation.
 
 ## Request model
 
@@ -401,11 +405,9 @@ Allowed permission values:
 
 ### `mode.permission_policy`
 
-- default: `abort`
-- `abort`
-  - permission failures stop strict imports and stop best-effort imports once encountered
-- `continue`
-  - best-effort imports record permission failures and continue
+This field remains accepted for payload compatibility. API imports require
+runtime-admin authority and do not perform per-item authorization, so `abort`
+and `continue` currently have no effect on API-submitted tasks.
 
 ## Submit example
 

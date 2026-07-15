@@ -725,22 +725,25 @@ impl RemoteTarget {
     }
 }
 
-pub async fn authorize_remote_invocation(
-    pool: &DbPool,
+pub async fn authorize_remote_invocation<C>(
+    backend: &C,
     actor: &impl crate::db::traits::authz::AuthzSubject,
     scopes: Option<&[Permissions]>,
     target: &RemoteTarget,
     subject: &RemoteInvocationSubject,
-) -> Result<ResolvedRemoteInvocationSubject, ApiError> {
+) -> Result<ResolvedRemoteInvocationSubject, ApiError>
+where
+    C: crate::traits::BackendContext + ?Sized,
+{
+    let pool = backend.db_pool();
     let target_collection_id = CollectionID::new(target.collection_id)?;
-    actor
-        .can(
-            pool,
-            [Permissions::ExecuteRemoteTarget],
-            [target_collection_id],
-            scopes,
-        )
-        .await?;
+    crate::can!(
+        backend,
+        actor,
+        scopes,
+        [Permissions::ExecuteRemoteTarget],
+        target_collection_id
+    );
 
     if !target.enabled {
         return Err(ApiError::BadRequest(
@@ -771,14 +774,15 @@ pub async fn authorize_remote_invocation(
             "Remote target not found for invocation subject".to_string(),
         ));
     }
-    actor
-        .can(
-            pool,
-            [resolved.required_read_permission],
-            resolved.collections.clone(),
+    for collection in &resolved.collections {
+        crate::can!(
+            backend,
+            actor,
             scopes,
-        )
-        .await?;
+            [resolved.required_read_permission],
+            collection
+        );
+    }
 
     Ok(resolved)
 }

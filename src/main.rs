@@ -43,8 +43,8 @@ use crate::config::running::RunningConfig;
 use crate::config::token_hash_key_is_ephemeral;
 use crate::config::{AppConfig, LoginRateLimitBackendKind};
 use crate::errors::{
-    EXIT_CODE_CONFIG_ERROR, EXIT_CODE_INIT_ERROR, EXIT_CODE_PERMISSION_BACKEND_ERROR,
-    EXIT_CODE_TLS_ERROR, fatal_error, json_error_handler,
+    EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, EXIT_CODE_INIT_ERROR,
+    EXIT_CODE_PERMISSION_BACKEND_ERROR, EXIT_CODE_TLS_ERROR, fatal_error, json_error_handler,
 };
 use crate::events::{
     ensure_event_delivery_worker_running, ensure_event_fanout_worker_running,
@@ -120,6 +120,14 @@ async fn main() -> std::io::Result<()> {
         .build()
         .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
     let pool = init_pool_with_settings(&database_settings);
+    db::ensure_database_schema_ready(&pool)
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Database schema is not ready: {error}"),
+                EXIT_CODE_DATABASE_ERROR,
+            )
+        });
 
     let task_worker_count = if config.runtime_role.runs_background_workers() {
         config.task_workers
@@ -148,6 +156,17 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
+    let permission_backend = build_permission_backend(&config, pool.clone())
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Failed to initialize permission backend: {error}"),
+                EXIT_CODE_PERMISSION_BACKEND_ERROR,
+            )
+        });
+    let app_context = AppContext::new(pool.clone(), permission_backend);
+    let authorization_backend = app_context.permission_backend().kind();
+
     let active_event_sinks =
         match db::traits::event_subscription::enabled_event_sink_count(&pool).await {
             Ok(count) => Some(count),
@@ -161,7 +180,7 @@ async fn main() -> std::io::Result<()> {
         };
 
     if !config.runtime_role.serves_http() {
-        start_background_workers(&pool);
+        start_background_workers(&app_context);
         info!(
             message = "worker startup",
             version = env!("CARGO_PKG_VERSION"),
@@ -171,6 +190,7 @@ async fn main() -> std::io::Result<()> {
             event_fanout_workers = config.event_fanout_workers,
             event_delivery_workers = config.event_delivery_workers,
             db_backend = "postgresql",
+            authorization_backend,
             active_event_sinks,
         );
         let worker_exit = tokio::select! {
@@ -187,6 +207,7 @@ async fn main() -> std::io::Result<()> {
             );
         }
         shutdown_background_workers(Duration::from_secs(30)).await;
+        drop(app_context);
         drop(pool);
         if let Some(exit) = worker_exit {
             return Err(std::io::Error::other(format!(
@@ -207,16 +228,6 @@ async fn main() -> std::io::Result<()> {
             )
         });
 
-    let permission_backend = build_permission_backend(&config, pool.clone())
-        .await
-        .unwrap_or_else(|error| {
-            fatal_error(
-                &format!("Failed to initialize permission backend: {error}"),
-                EXIT_CODE_PERMISSION_BACKEND_ERROR,
-            )
-        });
-    let app_context = AppContext::new(pool.clone(), permission_backend);
-
     let client_allowlist = config.client_allowlist.clone();
     let proxy_trust = middlewares::ProxyTrust::new(
         config.trust_ip_headers,
@@ -227,6 +238,7 @@ async fn main() -> std::io::Result<()> {
     let metrics_enabled = config.metrics_enabled;
     let metrics_path = config.metrics_path.clone();
     let app_pool = pool.clone();
+    let server_app_context = app_context.clone();
 
     let server = HttpServer::new(move || {
         let app = App::new()
@@ -243,7 +255,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(Data::new(proxy_trust.clone()))
             .app_data(Data::new(running_config.clone()))
             .app_data(Data::new(app_pool.clone()))
-            .app_data(Data::new(app_context.clone()))
+            .app_data(Data::new(server_app_context.clone()))
             .app_data(JsonConfig::default().error_handler(json_error_handler))
             .route("/api-doc/openapi.json", web::get().to(openapi_json_handler));
 
@@ -294,7 +306,7 @@ async fn main() -> std::io::Result<()> {
     };
 
     if config.runtime_role.runs_background_workers() {
-        start_background_workers(&pool);
+        start_background_workers(&app_context);
     }
 
     info!(
@@ -311,7 +323,7 @@ async fn main() -> std::io::Result<()> {
         event_fanout_workers = config.event_fanout_workers,
         event_delivery_workers = config.event_delivery_workers,
         db_backend = "postgresql",
-        authorization_backend = "database_permissions",
+        authorization_backend,
         login_rate_limit_backend = config.login_rate_limit_backend.as_str(),
         active_event_sinks,
     );
@@ -334,15 +346,16 @@ async fn main() -> std::io::Result<()> {
         server.await
     };
     shutdown_background_workers(Duration::from_secs(30)).await;
+    drop(app_context);
     drop(pool);
     result
 }
 
-fn start_background_workers(pool: &db::DbPool) {
-    ensure_task_worker_running(pool.clone());
-    ensure_event_fanout_worker_running(pool.clone());
-    ensure_event_delivery_worker_running(pool.clone());
-    ensure_event_retention_worker_running(pool.clone());
+fn start_background_workers(context: &AppContext) {
+    ensure_task_worker_running(context.clone());
+    ensure_event_fanout_worker_running(context.db_pool.clone());
+    ensure_event_delivery_worker_running(context.db_pool.clone());
+    ensure_event_retention_worker_running(context.db_pool.clone());
 }
 
 fn login_rate_limit_store_settings(

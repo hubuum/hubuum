@@ -14,6 +14,7 @@ use crate::models::{
     TaskResponse,
 };
 use crate::pagination::prepare_db_pagination;
+use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
@@ -53,17 +54,20 @@ async fn find_or_create_import_task(
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse),
         (status = 429, description = "Too many active import tasks", body = ApiErrorResponse),
-        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Runtime administrator required", body = ApiErrorResponse)
     )
 )]
 #[post("")]
 pub async fn create_import(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     import_request: web::Json<ImportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    require_unscoped_runtime_admin(&pool, &requestor.principal, requestor.token_meta.scoped)
+        .await?;
+    ensure_task_worker_running(pool.clone());
 
     let import_request = import_request.into_inner();
     if import_request.version != CURRENT_IMPORT_VERSION {
@@ -75,8 +79,7 @@ pub async fn create_import(
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
-    let snapshot =
-        TaskScopeSnapshot::from_request(Some(requestor.token_meta.id), requestor.scopes());
+    let snapshot = TaskScopeSnapshot::from_request(Some(requestor.token_meta.id), None);
 
     let task = find_or_create_import_task(
         &pool,
@@ -90,7 +93,7 @@ pub async fn create_import(
     .await?;
 
     let response = task.to_response()?;
-    kick_task_worker(pool.get_ref().clone());
+    kick_task_worker(pool.clone());
 
     Ok(ApiResponse::accepted_at(
         response,
@@ -121,11 +124,11 @@ fn max_active_import_tasks_per_user() -> usize {
 )]
 #[get("/{task_id}")]
 pub async fn get_import(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(pool.clone());
     let task = task_id
         .into_inner()
         .load_authorized_import(&pool, &requestor.principal)
@@ -150,12 +153,12 @@ pub async fn get_import(
 )]
 #[get("/{task_id}/results")]
 pub async fn get_import_results(
-    pool: web::Data<DbPool>,
+    pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.get_ref().clone());
+    ensure_task_worker_running(pool.clone());
     let task_id = task_id.into_inner();
     task_id
         .load_authorized_import(&pool, &requestor.principal)

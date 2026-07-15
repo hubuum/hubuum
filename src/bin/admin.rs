@@ -1,7 +1,4 @@
 use clap::Parser;
-use diesel::dsl::sql;
-use diesel::select;
-use diesel::sql_types::Integer;
 #[cfg(feature = "embedded-migrations")]
 use diesel::{Connection, PgConnection};
 #[cfg(feature = "embedded-migrations")]
@@ -13,7 +10,9 @@ use hubuum::config::{
     DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT,
 };
 use hubuum::db::prelude::*;
-use hubuum::db::{DbPool, init_pool_with_statement_timeout, with_connection};
+use hubuum::db::{
+    DbPool, ensure_database_schema_ready, init_pool_with_statement_timeout, with_connection,
+};
 #[cfg(feature = "embedded-migrations")]
 use hubuum::errors::EXIT_CODE_DATABASE_ERROR;
 use hubuum::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
@@ -155,13 +154,8 @@ fn run_migrations(database_url: &str) {
 }
 
 async fn database_ready(pool: DbPool) -> Result<(), ApiError> {
-    with_connection(&pool, async |connection| {
-        select(sql::<Integer>("1"))
-            .get_result::<i32>(connection)
-            .await
-    })
-    .await?;
-    println!("Database is ready.");
+    ensure_database_schema_ready(&pool).await?;
+    println!("Database is ready and all required migrations are applied.");
     Ok(())
 }
 

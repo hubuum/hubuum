@@ -81,6 +81,11 @@ replicas. For the task-lease migration, use this upgrade order:
 The drain prevents a new worker from treating a task owned by an old,
 lease-unaware worker as abandoned.
 
+The `api` and `worker` entrypoints wait until the database records the latest
+migration required by the binary. API `/readyz` performs the same schema check.
+This prevents a missed or incomplete migration job from making a replica appear
+ready, while keeping migration ownership in the one-shot job.
+
 ## Shared Configuration And Secrets
 
 All replicas must use the same values for settings that define cluster-wide

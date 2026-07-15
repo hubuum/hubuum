@@ -49,6 +49,48 @@ use crate::utilities::db::DatabaseUrlComponents;
 pub type DbConnection = AsyncPgConnection;
 pub type DbPool = Pool<DbConnection>;
 
+/// Latest migration required by this binary. The test below keeps this value
+/// synchronized with the migration directory so readiness cannot silently lag
+/// behind a newly added schema change.
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260713000001";
+
+#[derive(diesel::QueryableByName)]
+struct DatabaseSchemaReadiness {
+    #[diesel(sql_type = diesel::sql_types::Bool)]
+    ready: bool,
+}
+
+async fn database_schema_is_ready(
+    connection: &mut DbConnection,
+) -> Result<bool, diesel::result::Error> {
+    Ok(diesel::sql_query(
+        "SELECT EXISTS (\
+            SELECT 1 FROM __diesel_schema_migrations WHERE version = $1\
+        ) AS ready",
+    )
+    .bind::<diesel::sql_types::Text, _>(REQUIRED_DATABASE_MIGRATION_VERSION)
+    .get_result::<DatabaseSchemaReadiness>(connection)
+    .await?
+    .ready)
+}
+
+/// Verify both database connectivity and the schema version required by this
+/// binary. Distributed API and worker replicas use this without taking
+/// migration ownership from the one-shot migration job.
+pub async fn ensure_database_schema_ready(pool: &DbPool) -> Result<(), ApiError> {
+    let ready = with_connection(pool, async |connection| {
+        database_schema_is_ready(connection).await
+    })
+    .await?;
+    if ready {
+        Ok(())
+    } else {
+        Err(ApiError::ServiceUnavailable(format!(
+            "Database migration {REQUIRED_DATABASE_MIGRATION_VERSION} has not been applied"
+        )))
+    }
+}
+
 /// Consumer-owned settings needed to construct the process database pool.
 ///
 /// Keeping this type in the database adapter means startup can translate from
@@ -674,6 +716,32 @@ mod tests {
             .as_nanos();
         let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
         format!("{prefix}_{now}_{counter}")
+    }
+
+    #[test]
+    fn required_database_migration_matches_latest_migration_directory() {
+        let migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let latest = std::fs::read_dir(migrations)
+            .expect("migration directory")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().join("up.sql").is_file())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter_map(|name| name.split('_').next().map(str::to_string))
+            .map(|version| version.replace('-', ""))
+            .max()
+            .expect("at least one migration");
+
+        assert_eq!(REQUIRED_DATABASE_MIGRATION_VERSION, latest);
+    }
+
+    #[tokio::test]
+    async fn database_schema_readiness_accepts_the_migrated_test_database() {
+        let config = get_config().expect("Failed to load config for test");
+        let pool = init_pool(&config.database_url, 1);
+
+        ensure_database_schema_ready(&pool)
+            .await
+            .expect("test database should have the latest migration");
     }
 
     #[rstest]

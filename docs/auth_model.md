@@ -189,13 +189,16 @@ Unknown strings are rejected (fail-closed) wherever scopes are parsed.
 
 ### Scopes and async tasks
 
-Asynchronous work (import / export / remote-call tasks) must not later run with more
-authority than the request that enqueued it. At enqueue time the task records a
-**scope snapshot**: the submitting token id, its `scoped` flag, and a JSON array of
-its effective scope strings. The worker reconstructs the scopes from this snapshot
-(parsing every string fail-closed — an unknown value is a terminal task failure) and
-enforces them during execution. Revoking or changing the token after enqueue does
-not widen or narrow the accepted task; the snapshot is the execution boundary.
+Asynchronous work must not later run with more authority than the request that
+enqueued it. Remote-call tasks record a **scope snapshot** at enqueue time: the
+submitting token id, its `scoped` flag, and a JSON array of its effective scope
+strings. The worker reconstructs those scopes fail-closed and enforces them during
+execution.
+
+Import and export tasks accept only unscoped runtime administrators, so they store
+an unscoped marker instead of resource scopes. The worker rechecks the principal's
+current runtime-admin authority before execution. Revoking that authority or
+disabling the service account while the task is queued makes the task fail closed.
 
 ---
 
@@ -336,10 +339,11 @@ Each handler declares the authority it requires. There are two families.
 **Scope-aware (the only family that accepts scoped tokens and service accounts):**
 
 - `Authenticated` — resolves the principal and, if the token is scoped, its scope
-  set. Every downstream authority decision threads the scopes into the fail-closed
-  pre-filter. All resource and task-creating endpoints (collections, classes,
-  objects, relations, export_templates, search, exports, imports, remote-target invocation)
-  use this.
+  set. Every downstream authority decision threads the scopes into the
+  fail-closed pre-filter. Resource endpoints and task submission use this
+  extractor. Imports and exports add an unscoped runtime-admin gate after
+  authentication; the gate accepts service accounts but rejects scoped tokens.
+  Remote-target invocation retains ordinary scope-aware authorization.
 
 **Human/IAM (privilege-separated):**
 

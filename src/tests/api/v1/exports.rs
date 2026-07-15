@@ -14,14 +14,16 @@ mod tests {
         ExportScopeKind, ExportTemplateKind, HubuumClass, HubuumClassRelation,
         HubuumObjectRelation, NewExportTaskOutputRecord, NewExportTemplate, NewHubuumClass,
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewTaskEventRecord,
-        NewTaskRecord, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus,
+        NewTaskRecord, Permissions, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus,
         UpdateExportTemplate,
     };
     use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
-        TestContext, TestMutex, create_test_user, lock_test_mutex, test_context, test_mutex,
+        TestContext, TestMutex, create_test_group, create_test_service_account, create_test_user,
+        ensure_admin_group, lock_test_mutex, scoped_token, service_account_token, test_context,
+        test_mutex,
     };
     use crate::traits::{CanSave, CanUpdate};
     const EXPORTS_ENDPOINT: &str = "/api/v1/exports";
@@ -31,6 +33,82 @@ mod tests {
     /// row to survive until it has queried it. They cannot safely interleave; every other test in
     /// the suite remains free to run in parallel.
     static EXPIRED_OUTPUT_PURGE_LOCK: TestMutex = test_mutex();
+
+    #[derive(Clone, Copy)]
+    enum UnauthorizedExportCaller {
+        NonAdmin,
+        ScopedAdmin,
+    }
+
+    #[rstest]
+    #[case::non_admin(UnauthorizedExportCaller::NonAdmin)]
+    #[case::scoped_admin(UnauthorizedExportCaller::ScopedAdmin)]
+    #[actix_web::test]
+    async fn test_export_requires_unscoped_runtime_admin(
+        #[future(awt)] test_context: TestContext,
+        #[case] caller: UnauthorizedExportCaller,
+    ) {
+        let context = test_context;
+        let token = match caller {
+            UnauthorizedExportCaller::NonAdmin => context.normal_token.clone(),
+            UnauthorizedExportCaller::ScopedAdmin => {
+                scoped_token(
+                    &context.pool,
+                    context.admin_user.id,
+                    &[Permissions::ReadCollection],
+                )
+                .await
+            }
+        };
+        let body = collection_export_request();
+
+        let resp =
+            post_request_with_headers(&context.pool, &token, EXPORTS_ENDPOINT, &body, vec![]).await;
+
+        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_export_accepts_unscoped_admin_service_account(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let owner_group = create_test_group(&context.pool).await;
+        let admin_group = ensure_admin_group(&context.pool).await;
+        let service_account =
+            create_test_service_account(&context.pool, &owner_group, Some(context.admin_user.id))
+                .await;
+        admin_group
+            .add_member_without_events(&context.pool, &service_account)
+            .await
+            .unwrap();
+        let token = service_account_token(&context.pool, &service_account, None, None).await;
+        let body = collection_export_request();
+
+        let resp =
+            post_request_with_headers(&context.pool, &token, EXPORTS_ENDPOINT, &body, vec![]).await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let completed = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+        assert_eq!(completed.status, TaskStatus::Succeeded);
+    }
+
+    fn collection_export_request() -> ExportRequest {
+        ExportRequest {
+            scope: ExportScope {
+                kind: ExportScopeKind::Collections,
+                class_id: None,
+                object_id: None,
+            },
+            query: None,
+            missing_data_policy: None,
+            limits: None,
+            include: None,
+            relation_context: None,
+        }
+    }
 
     async fn wait_for_task(
         context: &TestContext,
@@ -1079,7 +1157,7 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_export_rejects_template_permission_failure_before_task_creation(
+    async fn test_template_export_requires_runtime_admin_before_task_creation(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;

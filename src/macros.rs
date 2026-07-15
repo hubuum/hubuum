@@ -83,8 +83,12 @@ macro_rules! can {
     // scope bypass. Resource/task handlers pass `requestor.scopes()`; truly
     // unscoped internal callers pass `None` explicitly.
     ($pool:expr, $subject:expr, $scopes:expr, [$($perm:expr),+], $($collection:expr),+) => {{
+        #[allow(unused_imports)]
         use $crate::permissions::AuthzTarget as _;
+        #[allow(unused_imports)]
         use $crate::traits::BackendContext as _;
+        #[allow(unused_imports)]
+        use $crate::traits::CollectionAccessors as _;
 
         match $crate::traits::BackendContext::permission_backend($pool) {
             Some(permission_backend) if !permission_backend.uses_sql_permission_store() => {
@@ -102,10 +106,10 @@ macro_rules! can {
             }
             _ => {
                 $subject.can(
-                    $pool,
+                    $pool.db_pool(),
                     vec![$($perm),+],
                     vec![
-                        $($collection.collection_id($pool).await?),+
+                        $($collection.collection_id($pool.db_pool()).await?),+
                     ],
                     $scopes,
                 ).await?

@@ -31,7 +31,7 @@ use crate::db::DbPool;
 use crate::db::traits::authz::scope_allows;
 use crate::errors::ApiError;
 use crate::models::Permissions;
-use crate::traits::PrincipalIdAccessor;
+use crate::traits::{AuthzSubject, BackendContext, PrincipalIdAccessor};
 
 pub async fn authorize_resources<S>(
     backend: &dyn PermissionBackend,
@@ -65,6 +65,45 @@ where
         Ok(())
     } else {
         Err(ApiError::Forbidden("Permission denied".to_string()))
+    }
+}
+
+/// Require runtime-wide administrator authority for a queued data-transfer task.
+///
+/// Unlike [`crate::extractors::AdminAccess`], this accepts both human principals
+/// and service accounts. Tokens must still be unscoped: this capability grants
+/// access to the complete import/export data set and cannot be represented by a
+/// collection permission subset.
+pub async fn require_unscoped_runtime_admin<C, S>(
+    context: &C,
+    subject: &S,
+    token_scoped: bool,
+) -> Result<(), ApiError>
+where
+    C: BackendContext + ?Sized,
+    S: AuthzSubject + ?Sized,
+{
+    if token_scoped {
+        return Err(ApiError::Forbidden(
+            "Import and export require an unscoped runtime administrator".to_string(),
+        ));
+    }
+
+    let pool = context.db_pool();
+    let is_admin = match context.permission_backend() {
+        Some(backend) => {
+            let principal = PrincipalRef::load(pool, subject).await?;
+            backend.is_admin(&principal).await?
+        }
+        None => subject.is_admin(pool).await?,
+    };
+
+    if is_admin {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden(
+            "Import and export require an unscoped runtime administrator".to_string(),
+        ))
     }
 }
 

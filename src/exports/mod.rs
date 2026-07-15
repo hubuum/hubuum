@@ -5,14 +5,13 @@ use hubuum_templates::SizeLimitedWriter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::can;
 use crate::config::{
     DEFAULT_EXPORT_DB_STATEMENT_TIMEOUT_MS, DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER,
     DEFAULT_EXPORT_MAX_OUTPUT_BYTES, DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS,
     DEFAULT_EXPORT_STAGE_TIMEOUT_MS, DEFAULT_EXPORT_TEMPLATE_MAX_OBJECTS, get_config,
 };
-use crate::db::traits::UserPermissions;
 use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate};
+use crate::db::traits::user::UserSearchBackend;
 use crate::db::{DbPool, with_statement_timeout_scope};
 use crate::errors::ApiError;
 use crate::models::search::{
@@ -20,18 +19,19 @@ use crate::models::search::{
     parse_query_parameter,
 };
 use crate::models::{
-    ClassIdSet, CollectionExportTemplates, CollectionID, ExportContentType,
+    ClassIdSet, Collection, CollectionExportTemplates, CollectionID, ExportContentType,
     ExportIncludeRelatedDirection, ExportIncludeRelatedQuery, ExportIncludeRelatedSort,
     ExportJsonResponse, ExportMeta, ExportMissingDataPolicy, ExportRequest, ExportScope,
-    ExportScopeKind, ExportTemplate, ExportTemplateID, ExportWarning, HubuumClassID,
-    HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath,
-    NewExportTaskOutputRecord, NewTaskEventRecord, Permissions, RELATED_INCLUDE_DEFAULT_LIMIT,
-    RELATED_INCLUDE_DEFAULT_MAX_DEPTH, TaskKind, TaskRecord,
+    ExportScopeKind, ExportTemplate, ExportTemplateID, ExportWarning, HubuumClassExpanded,
+    HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation,
+    HubuumObjectWithPath, NewExportTaskOutputRecord, NewTaskEventRecord,
+    RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH, RelatedObjectForRootRow,
+    RelatedObjectGraphRow, RelatedObjectIncludeRow, TaskKind, TaskRecord,
 };
 use crate::observability::metrics;
 use crate::pagination::page_limits_or_defaults;
-use crate::tasks::{ensure_task_worker_running, request_hash};
-use crate::traits::{AuthzSubject, CollectionAccessors, SelfAccessors};
+use crate::tasks::request_hash;
+use crate::traits::{AuthzSubject, SelfAccessors};
 use crate::utilities::exporting::render_template;
 
 use crate::models::traits::check_if_object_in_class;
@@ -181,19 +181,138 @@ struct ReachableTemplateTarget {
     remaining_depth: i32,
 }
 
+/// Query capability used only after the worker has authorized the complete
+/// export as a runtime-admin operation. Keeping the explicit SQL admin bypass
+/// here prevents individual export stages from accidentally reintroducing
+/// resource-by-resource authorization.
+struct RuntimeAdminExport<'a, S: ?Sized> {
+    subject: &'a S,
+}
+
+impl<'a, S> RuntimeAdminExport<'a, S>
+where
+    S: crate::traits::Search + ?Sized,
+{
+    fn new(subject: &'a S) -> Self {
+        Self { subject }
+    }
+
+    async fn collections(
+        &self,
+        pool: &DbPool,
+        query: QueryOptions,
+    ) -> Result<Vec<Collection>, ApiError> {
+        self.subject
+            .search_collections_from_backend_with_admin_status(pool, query, true, None)
+            .await
+    }
+
+    async fn classes(
+        &self,
+        pool: &DbPool,
+        query: QueryOptions,
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
+        self.subject
+            .search_classes_from_backend_with_admin_status(pool, query, true, None)
+            .await
+    }
+
+    async fn objects(
+        &self,
+        pool: &DbPool,
+        query: QueryOptions,
+    ) -> Result<Vec<HubuumObject>, ApiError> {
+        self.subject
+            .search_objects_from_backend_with_admin_status(pool, query, true, None)
+            .await
+    }
+
+    async fn class_relations(
+        &self,
+        pool: &DbPool,
+        query: QueryOptions,
+    ) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        self.subject
+            .search_class_relations_from_backend_with_admin_status(pool, query, true, None)
+            .await
+    }
+
+    async fn object_relations(
+        &self,
+        pool: &DbPool,
+        query: QueryOptions,
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+        self.subject
+            .search_object_relations_from_backend_with_admin_status(pool, query, true, None)
+            .await
+    }
+
+    async fn related_objects(
+        &self,
+        pool: &DbPool,
+        object: HubuumObjectID,
+        query: QueryOptions,
+    ) -> Result<Vec<RelatedObjectGraphRow>, ApiError> {
+        self.subject
+            .search_objects_related_to_from_backend_with_admin_status(
+                pool, object, query, true, None,
+            )
+            .await
+    }
+
+    async fn related_objects_for_roots(
+        &self,
+        pool: &DbPool,
+        root_ids: &[i32],
+        include: ExportIncludeRelatedQuery,
+    ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
+        self.subject
+            .related_objects_for_roots_from_backend_with_admin_status(
+                pool, root_ids, include, true, None,
+            )
+            .await
+    }
+
+    async fn bidirectionally_related_objects_for_roots(
+        &self,
+        pool: &DbPool,
+        root_ids: &[i32],
+        max_depth: i32,
+        per_root_cap: i32,
+    ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
+        self.subject
+            .bidirectionally_related_objects_for_roots_from_backend_with_admin_status(
+                pool,
+                root_ids,
+                max_depth,
+                per_root_cap,
+                true,
+                None,
+            )
+            .await
+    }
+
+    async fn object_relations_between_ids(
+        &self,
+        pool: &DbPool,
+        object_ids: &[i32],
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+        self.subject
+            .search_object_relations_between_ids_from_backend_with_admin_status(
+                pool, object_ids, true, None,
+            )
+            .await
+    }
+}
+
 pub(crate) async fn submit_export_task<S: AuthzSubject>(
     pool: &DbPool,
     subject: &S,
-    // Scope boundary of the submitting token, persisted as the task scope
-    // snapshot so async execution cannot exceed it.
-    scopes: Option<&[Permissions]>,
     submitted_token_id: Option<i32>,
     idempotency_key: Option<String>,
     export: ExportRequest,
     template: Option<ExportTemplate>,
 ) -> Result<TaskRecord, ApiError> {
-    ensure_task_worker_running(pool.clone());
-
     let task_payload = StoredExportTaskPayload {
         export,
         template_id: template.as_ref().map(|template| template.id),
@@ -205,7 +324,7 @@ pub(crate) async fn submit_export_task<S: AuthzSubject>(
     validate_export_submission(&runtime)?;
     let task_payload = runtime_to_task_payload(&runtime)?;
 
-    let snapshot = TaskScopeSnapshot::from_request(submitted_token_id, scopes);
+    let snapshot = TaskScopeSnapshot::from_request(submitted_token_id, None);
 
     find_or_create_export_task(
         pool,
@@ -252,24 +371,16 @@ async fn prepare_export_runtime(
 
 async fn resolve_template(
     pool: &DbPool,
-    subject: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
     template_id: Option<i32>,
 ) -> Result<Option<ExportTemplate>, ApiError> {
     let Some(template_id) = template_id else {
         return Ok(None);
     };
 
-    let template = ExportTemplateID::new(template_id)?.instance(pool).await?;
-    can!(
-        pool,
-        subject,
-        scopes,
-        [Permissions::ReadTemplate],
-        CollectionID::new(template.collection_id)?
-    );
-
-    Ok(Some(template))
+    ExportTemplateID::new(template_id)?
+        .instance(pool)
+        .await
+        .map(Some)
 }
 
 fn validate_export_submission(runtime: &ExportRuntime) -> Result<(), ApiError> {
@@ -326,14 +437,13 @@ pub(crate) async fn execute_export_task(
     pool: &DbPool,
     task: &TaskRecord,
     subject: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
 ) -> Result<(), ApiError> {
     let payload = task
         .request_payload
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Export task payload is missing".to_string()))?;
     let payload: StoredExportTaskPayload = serde_json::from_value(payload)?;
-    let template = resolve_template(pool, subject, scopes, payload.template_id).await?;
+    let template = resolve_template(pool, payload.template_id).await?;
     let runtime = prepare_export_runtime(pool, payload.export, template).await?;
     validate_export_submission(&runtime)?;
     let total_start = Instant::now();
@@ -383,13 +493,13 @@ pub(crate) async fn execute_export_task(
     let query_start = Instant::now();
     let (items, mut warnings, truncated) = with_statement_timeout_scope(
         statement_timeout,
-        execute_scope(pool, subject, scopes, &runtime.export.scope, query_options),
+        execute_scope(pool, subject, &runtime.export.scope, query_options),
     )
     .await?;
     let mut items = items;
     with_statement_timeout_scope(
         statement_timeout,
-        apply_export_includes(pool, subject, scopes, &runtime.export, &mut items),
+        apply_export_includes(pool, subject, &runtime.export, &mut items),
     )
     .await?;
     let query_elapsed = query_start.elapsed();
@@ -419,7 +529,7 @@ pub(crate) async fn execute_export_task(
     let hydration_start = Instant::now();
     let (template_items, source) = with_statement_timeout_scope(
         statement_timeout,
-        build_template_items(pool, subject, scopes, &runtime, &items, relation_hydration),
+        build_template_items(pool, subject, &runtime, &items, relation_hydration),
     )
     .await?;
     let hydration_elapsed = hydration_start.elapsed();
@@ -875,7 +985,6 @@ fn validate_relation_depth(depth: i32) -> Result<i32, ApiError> {
 async fn build_template_items(
     pool: &DbPool,
     user: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
     runtime: &ExportRuntime,
     items: &[serde_json::Value],
     relation_hydration: Option<RelationHydrationPlan>,
@@ -896,6 +1005,7 @@ async fn build_template_items(
 
     match runtime.export.scope.kind {
         ExportScopeKind::ObjectsInClass => {
+            let admin = RuntimeAdminExport::new(user);
             let roots = items
                 .iter()
                 .cloned()
@@ -907,13 +1017,12 @@ async fn build_template_items(
 
             let root_ids = roots.iter().map(|root| root.id).collect::<Vec<_>>();
             let per_root_cap = i32::try_from(max_hydrated_template_objects()).unwrap_or(i32::MAX);
-            let related_rows = user
+            let related_rows = admin
                 .bidirectionally_related_objects_for_roots(
                     pool,
                     &root_ids,
                     relation_hydration.depth_limit,
                     per_root_cap,
-                    scopes,
                 )
                 .await?;
 
@@ -933,8 +1042,8 @@ async fn build_template_items(
             }
             all_object_ids.sort_unstable();
             all_object_ids.dedup();
-            let all_relations = user
-                .search_object_relations_between_ids(pool, &all_object_ids, scopes)
+            let all_relations = admin
+                .object_relations_between_ids(pool, &all_object_ids)
                 .await?;
 
             // One class-metadata fetch over every object in the export.
@@ -1000,7 +1109,6 @@ async fn build_template_items(
             let hydrated = hydrate_related_root(
                 pool,
                 user,
-                scopes,
                 source,
                 related_objects,
                 relation_hydration.depth_limit,
@@ -1017,7 +1125,6 @@ async fn build_template_items(
 async fn hydrate_related_root(
     pool: &DbPool,
     user: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
     source: HubuumObjectWithPath,
     related_objects: Vec<HubuumObjectWithPath>,
     depth_limit: i32,
@@ -1035,8 +1142,8 @@ async fn hydrate_related_root(
     let object_ids = std::iter::once(source.id)
         .chain(related_objects.iter().map(|object| object.id))
         .collect::<Vec<_>>();
-    let relations = user
-        .search_object_relations_between_ids(pool, &object_ids, scopes)
+    let relations = RuntimeAdminExport::new(user)
+        .object_relations_between_ids(pool, &object_ids)
         .await?;
 
     let mut all_objects = BTreeMap::<i32, HubuumObjectWithPath>::new();
@@ -1807,53 +1914,37 @@ fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
 async fn execute_scope(
     pool: &DbPool,
     subject: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
     scope: &ExportScope,
     mut query_options: QueryOptions,
 ) -> Result<(Vec<serde_json::Value>, Vec<ExportWarning>, bool), ApiError> {
     let item_limit = query_options.limit.unwrap_or(1).saturating_sub(1).max(1);
+    let admin = RuntimeAdminExport::new(subject);
 
     let data = match scope.kind {
-        ExportScopeKind::Collections => to_json_items(
-            subject
-                .search_collections(pool, query_options, scopes)
-                .await?,
-        )?,
-        ExportScopeKind::Classes => {
-            to_json_items(subject.search_classes(pool, query_options, scopes).await?)?
+        ExportScopeKind::Collections => {
+            to_json_items(admin.collections(pool, query_options).await?)?
         }
+        ExportScopeKind::Classes => to_json_items(admin.classes(pool, query_options).await?)?,
         ExportScopeKind::ObjectsInClass => {
             push_exact_filter(
                 &mut query_options,
                 FilterField::ClassId,
                 scope.class_id_required()?,
             )?;
-            to_json_items(subject.search_objects(pool, query_options, scopes).await?)?
+            to_json_items(admin.objects(pool, query_options).await?)?
         }
-        ExportScopeKind::ClassRelations => to_json_items(
-            subject
-                .search_class_relations(pool, query_options, scopes)
-                .await?,
-        )?,
-        ExportScopeKind::ObjectRelations => to_json_items(
-            subject
-                .search_object_relations(pool, query_options, scopes)
-                .await?,
-        )?,
+        ExportScopeKind::ClassRelations => {
+            to_json_items(admin.class_relations(pool, query_options).await?)?
+        }
+        ExportScopeKind::ObjectRelations => {
+            to_json_items(admin.object_relations(pool, query_options).await?)?
+        }
         ExportScopeKind::RelatedObjects => {
             let class_id = HubuumClassID::new(scope.class_id_required()?)?;
             let object_id = HubuumObjectID::new(scope.object_id_required()?)?;
             check_if_object_in_class(pool, &class_id, &object_id).await?;
-            let source_object = object_id.instance(pool).await?;
-            can!(
-                pool,
-                subject,
-                scopes,
-                [Permissions::ReadObject],
-                source_object
-            );
-            let related = subject
-                .search_objects_related_to(pool, object_id, query_options, scopes)
+            let related = admin
+                .related_objects(pool, object_id, query_options)
                 .await?;
             to_json_items(
                 related
@@ -1871,7 +1962,6 @@ async fn execute_scope(
 async fn apply_export_includes(
     pool: &DbPool,
     user: &impl crate::traits::Search,
-    scopes: Option<&[Permissions]>,
     export: &ExportRequest,
     items: &mut [serde_json::Value],
 ) -> Result<(), ApiError> {
@@ -1897,6 +1987,7 @@ async fn apply_export_includes(
         .enumerate()
         .map(|(index, object_id)| (*object_id, index))
         .collect::<HashMap<i32, usize>>();
+    let admin = RuntimeAdminExport::new(user);
 
     for (alias, include) in related_objects {
         let max_depth = include
@@ -1915,8 +2006,8 @@ async fn apply_export_includes(
             max_depth,
             limit,
         };
-        let related = user
-            .related_objects_for_roots(pool, &root_object_ids, include_query, scopes)
+        let related = admin
+            .related_objects_for_roots(pool, &root_object_ids, include_query)
             .await?;
 
         for row in related {

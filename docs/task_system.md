@@ -11,7 +11,7 @@ It is intentionally implementation-focused. For public API behavior, see:
 
 The task system provides a generic framework for long-running server-side work.
 
-Current task kind:
+Current task kinds:
 
 - `import`
 - `export`
@@ -19,7 +19,6 @@ Current task kind:
 
 Reserved task kinds already modeled in the schema:
 
-- `export`
 - `reindex`
 
 The goal is to keep task lifecycle, queueing, polling, and audit history generic, while letting each task kind supply its own execution logic and its own typed result storage.
@@ -248,13 +247,19 @@ After a task is claimed, `process_one_task` dispatches by `task.kind`.
 Current dispatch:
 
 - `import` -> import executor
-- anything else -> unimplemented error
+- `export` -> export executor
+- `remote_call` -> remote HTTP invocation executor
+- reserved task kinds -> unimplemented error
 
 This logic is in:
 
 - [process_one_task](../src/tasks/worker.rs)
 
-The task framework is generic even though only imports execute today.
+Task workers carry the same permission-backend context as API handlers. Execution
+therefore rechecks the submitting principal through the configured local or
+Treetop backend. Import and export workers require unscoped runtime-admin
+authority; remote-call workers preserve and enforce the submitted token's scope
+snapshot.
 
 ## Import execution pipeline
 
@@ -402,8 +407,9 @@ Planning and execution behavior is shaped by:
 Current behavior:
 
 - `strict` always aborts on the first planning failure
-- `best_effort + permission_policy=continue` records permission failures and continues with remaining plannable work
-- `best_effort + permission_policy=abort` stops once a permission failure requires abort
+- `mode.permission_policy` remains accepted for payload compatibility, but
+  API-submitted imports run with runtime-admin authority and therefore do not
+  produce per-item authorization failures
 - `collision_policy=abort` records or aborts on collisions depending on atomicity
 - `collision_policy=overwrite` turns matching collection/class/object collisions into update operations
 
@@ -428,9 +434,17 @@ Import-specific endpoints:
 - `GET /api/v1/imports/{id}`
 - `GET /api/v1/imports/{id}/results`
 
-Import execution itself runs under the submitting user’s effective permissions, not as a privileged system bypass.
+Import and export submission requires an unscoped runtime administrator. The
+principal may be either a human or a service account; unlike human/IAM admin
+extractors, this gate intentionally accepts service accounts in the configured
+admin group. A dedicated service account is recommended for backup and restore
+automation.
 
-That means planning checks and execution permission checks are based on the task submitter.
+The worker repeats the configured-backend admin check after claiming the task.
+Revoking admin membership or disabling the submitting service account while a
+task is queued therefore prevents execution. Once execution starts, the single
+admin decision authorizes the complete operation instead of applying
+resource-by-resource permission filtering.
 
 ## Queue introspection
 

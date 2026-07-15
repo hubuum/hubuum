@@ -30,7 +30,6 @@ struct ScopeState {
     locked_until: Option<Instant>,
     lockout_level: u32,
     in_flight: usize,
-    last_activity_at: Option<Instant>,
 }
 
 impl ScopeState {
@@ -87,7 +86,6 @@ impl ScopeState {
         self.prune(now, window);
         self.reset_escalation_if_cooled_off(now, window);
         self.attempts.push_back(now);
-        self.last_activity_at = Some(now);
         if self.attempts.len() >= threshold {
             self.trigger_lockout(now, cfg);
             true
@@ -108,20 +106,6 @@ impl ScopeState {
             Some(until) => now.duration_since(until) < window,
             None => false,
         }
-    }
-
-    /// Most recent point of activity, counting an active lockout's expiry. Used to pick
-    /// the stalest entry for eviction; locked entries sort as "freshest" (their expiry is
-    /// in the future) and are therefore protected from premature eviction.
-    fn last_activity(&self) -> Option<Instant> {
-        [
-            self.attempts.back().copied(),
-            self.locked_until,
-            self.last_activity_at,
-        ]
-        .into_iter()
-        .flatten()
-        .max()
     }
 }
 
@@ -498,26 +482,6 @@ fn prune_login_attempts_map(
     });
 }
 
-fn evict_stalest_login_attempt_key(attempts_by_key: &mut HashMap<String, ScopeState>) -> bool {
-    let stalest_key = attempts_by_key
-        .iter()
-        .filter(|(_, state)| state.in_flight == 0)
-        .filter_map(|(key, state)| state.last_activity().map(|last| (key.clone(), last)))
-        .min_by_key(|(_, last)| *last)
-        .map(|(key, _)| key);
-
-    if let Some(stalest_key) = stalest_key {
-        attempts_by_key.remove(&stalest_key);
-        warn!(
-            message = "Evicted stalest login limiter entry to enforce key cap",
-            max_tracked_keys = MAX_LOGIN_ATTEMPT_KEYS
-        );
-        true
-    } else {
-        false
-    }
-}
-
 /// Reservation for a login attempt. Applicable scope budgets are reserved before
 /// password verification starts so concurrent requests cannot all pass the limiter
 /// check before any of them records a failure.
@@ -582,11 +546,12 @@ pub(crate) async fn finish_login_attempt(
     Ok(())
 }
 
-impl LoginRateLimitStore for MemoryLoginRateLimitStore {
-    async fn begin(
+impl MemoryLoginRateLimitStore {
+    async fn begin_with_max_keys(
         &self,
         permit: &LoginAttemptPermit,
         config: &LoginRateLimitConfig,
+        max_keys: usize,
     ) -> Result<bool, ApiError> {
         let now = Instant::now();
         let window = Duration::from_secs(config.window_seconds);
@@ -608,18 +573,29 @@ impl LoginRateLimitStore for MemoryLoginRateLimitStore {
             .iter()
             .filter(|(key, _)| !guard.contains_key(key))
             .count();
-        while guard.len().saturating_add(missing_scopes) > MAX_LOGIN_ATTEMPT_KEYS {
-            if !evict_stalest_login_attempt_key(&mut guard) {
-                return Ok(false);
-            }
+        if guard.len().saturating_add(missing_scopes) > max_keys {
+            // Every inactive entry was removed by `prune_login_attempts_map`.
+            // Reject new high-cardinality scopes instead of discarding live
+            // failures, lockouts, cool-off state, or reservations.
+            return Ok(false);
         }
 
         for (key, _) in &permit.scopes {
             let state = guard.entry(key.clone()).or_default();
             state.in_flight = state.in_flight.saturating_add(1);
-            state.last_activity_at = Some(now);
         }
         Ok(true)
+    }
+}
+
+impl LoginRateLimitStore for MemoryLoginRateLimitStore {
+    async fn begin(
+        &self,
+        permit: &LoginAttemptPermit,
+        config: &LoginRateLimitConfig,
+    ) -> Result<bool, ApiError> {
+        self.begin_with_max_keys(permit, config, MAX_LOGIN_ATTEMPT_KEYS)
+            .await
     }
 
     async fn finish(
@@ -636,7 +612,6 @@ impl LoginRateLimitStore for MemoryLoginRateLimitStore {
         for (key, threshold) in &permit.scopes {
             if let Some(state) = guard.get_mut(key) {
                 state.in_flight = state.in_flight.saturating_sub(1);
-                state.last_activity_at = Some(now);
                 if matches!(outcome, LoginAttemptOutcome::Failed)
                     && state.register_failure(now, *threshold, config)
                 {
@@ -736,7 +711,7 @@ pub(crate) async fn record_login_failure(
         if !guard.contains_key(&key) && guard.len() >= MAX_LOGIN_ATTEMPT_KEYS {
             prune_login_attempts_map(&mut guard, now, window);
             if guard.len() >= MAX_LOGIN_ATTEMPT_KEYS {
-                let _ = evict_stalest_login_attempt_key(&mut guard);
+                continue;
             }
         }
 
@@ -1155,24 +1130,40 @@ mod tests {
         assert!(keys.contains(&"s:198.51.100.0/24"));
     }
 
-    #[test]
-    fn evict_stalest_protects_locked_entries() {
-        let now = Instant::now();
-        let config = cfg();
-        let mut map: HashMap<String, ScopeState> = HashMap::new();
+    #[tokio::test]
+    async fn memory_capacity_rejects_new_scope_without_evicting_active_lockout() {
+        let _guard = LOGIN_RATE_LIMIT_TEST_LOCK.lock().await;
+        reset_login_rate_limit_for_tests().await;
+        let mut config = cfg();
+        config.max_attempts = 1;
+        config.max_attempts_per_ip = 0;
+        config.max_attempts_per_subnet = 0;
+        let store = MemoryLoginRateLimitStore;
+        let protected = permit_for("protected-memory-lock", &config);
+        let newcomer = permit_for("newcomer-memory-lock", &config);
 
-        let mut stale = ScopeState::default();
-        stale.attempts.push_back(now - Duration::from_secs(120));
-        map.insert("stale".to_string(), stale);
+        assert!(
+            store
+                .begin_with_max_keys(&protected, &config, 1)
+                .await
+                .unwrap()
+        );
+        store
+            .finish(&protected, LoginAttemptOutcome::Failed, &config)
+            .await
+            .unwrap();
+        assert!(
+            !store
+                .begin_with_max_keys(&newcomer, &config, 1)
+                .await
+                .unwrap()
+        );
 
-        let mut locked = ScopeState::default();
-        locked.trigger_lockout(now, &config);
-        map.insert("locked".to_string(), locked);
-
-        assert!(evict_stalest_login_attempt_key(&mut map));
-
-        assert!(!map.contains_key("stale"));
-        assert!(map.contains_key("locked"));
+        let snapshots = store.snapshot(&config).await.unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].key, protected.user_ip_key);
+        assert!(snapshots[0].locked);
+        reset_login_rate_limit_for_tests().await;
     }
 
     #[test]
