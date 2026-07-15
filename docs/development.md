@@ -122,12 +122,54 @@ cargo bench --bench password_hashing_criterion -- --noplot
 
 `iai-callgrind` requires `valgrind` to be installed locally.
 
+The PostgreSQL storage benchmark is opt-in and requires an empty, migrated,
+disposable benchmark database. Fixture creation, cleanup, and warmup happen
+outside the timed regions. The create scenario intentionally leaves its
+append-only audit events behind:
+
+```bash
+export HUBUUM_BENCH_DATABASE_URL=postgres://postgres:postgres@localhost/hubuum_bench
+cargo run --features embedded-migrations --bin hubuum-admin -- \
+  --migrate --database-url "$HUBUUM_BENCH_DATABASE_URL"
+cargo bench --features postgres-bench \
+  --bench storage_postgres_criterion -- --noplot
+```
+
+The deterministic PostgreSQL query budgets use the normal isolated test
+database runner. The central storage suite covers point reads, hierarchy and
+permission traversal, paginated object and history reads, and event-producing
+writes:
+
+```bash
+source .env && ./run_tests.sh storage_performance
+```
+
+Import planning, export hydration, and event fan-out budgets live beside those
+private execution paths and run as part of the full test suite. Fixed-size
+operations pin exact domain, transaction-control, query-fingerprint, and
+connection-checkout counts. Cardinality tests compare small and large inputs to
+pin either constant query shapes or an explicit bounded-linear slope.
+
+The capture excludes the pool's internal `SELECT $1` checkout-validation probe
+from application query totals. Each checkout is counted separately, which
+keeps pool-use regressions visible without attributing a connection-health
+query nondeterministically to the next operation.
+
 ### CI behavior
 
-- The benchmark workflow runs both backends in one combined `backend: all` job, so PRs get a single consolidated benchmark export.
+- The self-contained benchmark job runs both backends in one combined
+  `backend: all` job, so PRs get a single consolidated benchmark export.
 - `iai-callgrind` remains the practical gating signal with a low regression threshold.
 - Criterion still runs in the same combined job, but uses a very high regression threshold so it exports timing changes without acting as a meaningful gate.
-- The current benchmark set is fully self-contained and does not require a database in CI.
+- A separate PostgreSQL 17 job runs storage Criterion benchmarks against
+  isolated base and pull-request databases. It warns above a 10% median change
+  and fails above 20% only when the 95% confidence interval also indicates a
+  regression.
+- The PostgreSQL query-budget tests are the stricter gate: fixed operation
+  totals, control/domain splits, query fingerprints, connection checkouts, and
+  declared scaling slopes must remain stable.
+- On the harness's first pull request there is no base target to execute, so CI
+  records the initial baseline. Later pull requests compare base and head.
 
 ### Adding or modifying benchmarks
 
@@ -137,4 +179,10 @@ cargo bench --bench password_hashing_criterion -- --noplot
 - Include `callgrind` in the benchmark filename when it should be auto-discovered by the CI workflow.
 - Include `criterion` in the benchmark filename when it should be Criterion-only in CI autodiscovery.
 - Prefer deterministic library-level code paths such as parsers, query builders, and serialization helpers over handlers that require network or database setup.
+- Put database-backed targets behind the `postgres-bench` feature so the
+  self-contained benchmark fan-out does not try to execute them without a
+  database.
+- Seed, migrate, warm, and clean PostgreSQL fixtures outside measured regions.
+  Mutation benchmarks run last against fresh isolated base/head databases;
+  emitted audit events remain append-only, as they do in production.
 - Avoid code paths that read the global `CONFIG` (the clap-backed application configuration). Initialising it inside a benchmark binary panics on the harness's own CLI arguments (for example `--iai-run`). Where a function needs configuration values such as page limits, prefer a config-free entry point that takes them as parameters (see `parse_unified_search_query_with_limits` and `validate_page_limit_with_max`).

@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   benchmarks:
-    name: Benchmarks
+    name: Self-contained benchmarks
     uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@v2
     secrets: inherit
     with:
@@ -25,3 +25,88 @@ jobs:
         [
           {"name":"default","features":""}
         ]
+
+  postgres-storage:
+    name: PostgreSQL storage benchmarks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BASE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_bench_base
+      HEAD_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_bench_head
+      CARGO_TARGET_DIR: target
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Cache Cargo and target directories
+        uses: Swatinem/rust-cache@v2
+      - name: Install PostgreSQL build tools
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libpq-dev
+      - name: Create isolated benchmark databases
+        env:
+          PGPASSWORD: postgres
+        run: |
+          createdb --host localhost --username postgres hubuum_bench_base
+          createdb --host localhost --username postgres hubuum_bench_head
+      - name: Clear cached PostgreSQL benchmark results
+        run: rm -rf target/criterion/storage_postgres
+      - name: Detect an existing base benchmark
+        id: base_benchmark
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git cat-file -e "$BASE_SHA:benches/postgres/storage_postgres_criterion.rs" 2>/dev/null; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Record base benchmark
+        if: steps.base_benchmark.outputs.available == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HUBUUM_BENCH_DATABASE_URL: ${{ env.BASE_DATABASE_URL }}
+        run: |
+          git checkout --detach "$BASE_SHA"
+          cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
+            --migrate --database-url "$BASE_DATABASE_URL"
+          cargo bench --locked --features postgres-bench \
+            --bench storage_postgres_criterion -- \
+            --save-baseline pr-base --noplot --sample-size 40 --measurement-time 4
+      - name: Record and compare pull-request benchmark
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HUBUUM_BENCH_DATABASE_URL: ${{ env.HEAD_DATABASE_URL }}
+          BASE_AVAILABLE: ${{ steps.base_benchmark.outputs.available }}
+        run: |
+          git checkout --detach "$HEAD_SHA"
+          cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
+            --migrate --database-url "$HEAD_DATABASE_URL"
+          if [[ "$BASE_AVAILABLE" == "true" ]]; then
+            cargo bench --locked --features postgres-bench \
+              --bench storage_postgres_criterion -- \
+              --baseline pr-base --noplot --sample-size 40 --measurement-time 4
+          else
+            cargo bench --locked --features postgres-bench \
+              --bench storage_postgres_criterion -- \
+              --save-baseline initial --noplot --sample-size 40 --measurement-time 4
+            echo "Initial PostgreSQL storage baseline recorded; base comparison starts after merge." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Enforce credible PostgreSQL regressions
+        if: steps.base_benchmark.outputs.available == 'true'
+        run: scripts/check-criterion-regressions.sh target/criterion/storage_postgres 10 20

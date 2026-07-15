@@ -8,6 +8,7 @@ pub mod docs_examples;
 pub mod id_newtypes;
 pub mod permissions;
 pub mod search;
+pub mod storage_performance;
 pub mod temporal;
 pub mod validation;
 pub mod workspace_boundaries;

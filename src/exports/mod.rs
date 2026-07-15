@@ -2167,15 +2167,19 @@ mod tests {
     use crate::models::{
         ExportContentType, ExportInclude, ExportIncludeRelatedObject, ExportLimits,
         ExportMissingDataPolicy, ExportRelationContext, ExportRequest, ExportScope,
-        ExportScopeKind, ExportTemplate, ExportTemplateKind,
+        ExportScopeKind, ExportTemplate, ExportTemplateKind, NewHubuumClass,
+        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, UserID,
     };
 
     use super::{
-        ExportRuntime, HydrationBudget, inferred_relation_alias, normalize_alias_segment,
-        pluralize_alias, take_related_within_budget, validate_export_limits,
-        validate_export_submission,
+        ExportRuntime, HydrationBudget, RelationHydrationPlan, build_template_items,
+        inferred_relation_alias, normalize_alias_segment, pluralize_alias,
+        take_related_within_budget, validate_export_limits, validate_export_submission,
     };
+    use crate::db::capture_queries;
     use crate::errors::ApiError;
+    use crate::tests::TestScope;
+    use crate::traits::CanSave;
 
     fn test_timestamp() -> chrono::NaiveDateTime {
         chrono::DateTime::from_timestamp(1_700_000_000, 0)
@@ -2307,6 +2311,157 @@ mod tests {
             }),
             collection_templates: Vec::new(),
         }
+    }
+
+    #[actix_web::test]
+    async fn object_hydration_query_count_is_constant_with_root_count() {
+        let scope = TestScope::new();
+        let fixture = scope
+            .collection_fixture("query_budget_export_hydration")
+            .await;
+        let host_class = NewHubuumClass {
+            collection_id: fixture.collection.id,
+            name: scope.scoped_name("query_budget_export_host"),
+            description: "query budget export host".to_string(),
+            json_schema: None,
+            validate_schema: None,
+        }
+        .save_without_events(&scope.pool)
+        .await
+        .expect("host class should save");
+        let room_class = NewHubuumClass {
+            collection_id: fixture.collection.id,
+            name: scope.scoped_name("query_budget_export_room"),
+            description: "query budget export room".to_string(),
+            json_schema: None,
+            validate_schema: None,
+        }
+        .save_without_events(&scope.pool)
+        .await
+        .expect("room class should save");
+        let class_relation = NewHubuumClassRelation {
+            from_hubuum_class_id: host_class.id,
+            to_hubuum_class_id: room_class.id,
+            forward_template_alias: Some("rooms".to_string()),
+            reverse_template_alias: Some("hosts".to_string()),
+        }
+        .save_without_events(&scope.pool)
+        .await
+        .expect("class relation should save");
+
+        let mut hosts = Vec::new();
+        for index in 0..10 {
+            let host = NewHubuumObject {
+                collection_id: fixture.collection.id,
+                hubuum_class_id: host_class.id,
+                name: scope.scoped_name(&format!("query_budget_export_host_{index:02}")),
+                description: "query budget export host".to_string(),
+                data: serde_json::json!({"index": index}),
+            }
+            .save_without_events(&scope.pool)
+            .await
+            .expect("host should save");
+            let room = NewHubuumObject {
+                collection_id: fixture.collection.id,
+                hubuum_class_id: room_class.id,
+                name: scope.scoped_name(&format!("query_budget_export_room_{index:02}")),
+                description: "query budget export room".to_string(),
+                data: serde_json::json!({"index": index}),
+            }
+            .save_without_events(&scope.pool)
+            .await
+            .expect("room should save");
+            NewHubuumObjectRelation {
+                from_hubuum_object_id: host.id,
+                to_hubuum_object_id: room.id,
+                class_relation_id: class_relation.id,
+            }
+            .save_without_events(&scope.pool)
+            .await
+            .expect("object relation should save");
+            hosts.push(serde_json::to_value(host).expect("host should serialize"));
+        }
+
+        let runtime = export_runtime(ExportRequest {
+            scope: ExportScope {
+                kind: ExportScopeKind::ObjectsInClass,
+                class_id: Some(host_class.id),
+                object_id: None,
+            },
+            query: None,
+            missing_data_policy: None,
+            limits: None,
+            include: None,
+            relation_context: Some(ExportRelationContext { depth: Some(1) }),
+        });
+        let subject = UserID::new(1).expect("valid synthetic runtime-admin subject id");
+
+        let (small_hydration, small_queries) = capture_queries(build_template_items(
+            &scope.pool,
+            &subject,
+            &runtime,
+            &hosts[..1],
+            Some(RelationHydrationPlan {
+                depth_limit: 1,
+                enabled_for_scope: true,
+            }),
+        ))
+        .await;
+        assert_eq!(
+            small_hydration
+                .expect("small hydration should succeed")
+                .0
+                .len(),
+            1
+        );
+
+        let (large_hydration, large_queries) = capture_queries(build_template_items(
+            &scope.pool,
+            &subject,
+            &runtime,
+            &hosts,
+            Some(RelationHydrationPlan {
+                depth_limit: 1,
+                enabled_for_scope: true,
+            }),
+        ))
+        .await;
+        assert_eq!(
+            large_hydration
+                .expect("large hydration should succeed")
+                .0
+                .len(),
+            10
+        );
+
+        assert_eq!(large_queries.total_queries(), small_queries.total_queries());
+        assert_eq!(
+            large_queries.domain_queries(),
+            small_queries.domain_queries()
+        );
+        assert_eq!(
+            large_queries.control_queries(),
+            small_queries.control_queries()
+        );
+        assert_eq!(
+            large_queries.connection_checkouts(),
+            small_queries.connection_checkouts()
+        );
+        assert_eq!(
+            large_queries.total_queries(),
+            6,
+            "{:#?}",
+            large_queries.query_counts()
+        );
+        assert_eq!(large_queries.domain_queries(), 6);
+        assert_eq!(large_queries.control_queries(), 0);
+        assert_eq!(large_queries.connection_checkouts(), 6);
+        assert_eq!(
+            large_queries.queries_matching("FROM \"hubuumclass_relation\""),
+            1
+        );
+
+        fixture.cleanup().await.expect("export fixture cleanup");
     }
 
     #[test]

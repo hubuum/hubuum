@@ -9,7 +9,9 @@ use super::helpers::{
     class_to_resolution, planned_result, sanitize_error_for_storage,
     should_abort_best_effort_execution,
 };
-use super::planning::{plan_class, plan_collection, plan_import, plan_object};
+use super::planning::{
+    plan_class, plan_collection, plan_import, plan_object, plan_runtime_admin_import,
+};
 use super::request_hash;
 use super::resolution::{
     remember_class, remember_collection, resolve_class_planning, resolve_collection_by_id_planning,
@@ -25,7 +27,7 @@ use crate::db::traits::task_import::{
     create_class_db, create_object_db, upsert_export_template_db, upsert_group_membership_db,
     upsert_identity_scope_db,
 };
-use crate::db::with_connection;
+use crate::db::{capture_queries, with_connection};
 use crate::errors::ApiError;
 use crate::models::{
     CURRENT_IMPORT_VERSION, ClassKey, CollectionID, CollectionKey, ExportContentType,
@@ -33,8 +35,9 @@ use crate::models::{
     ImportCollisionPolicy, ImportExportTemplateInput, ImportGraph, ImportGroupMembershipInput,
     ImportIdentityScopeInput, ImportMembershipSourceInput, ImportMode, ImportObjectInput,
     ImportPermissionPolicy, ImportRemoteTargetInput, ImportRequest, NewCollectionWithAssignee,
-    NewImportTaskResultRecord, NewTaskRecord, ObjectKey, RemoteAuthConfig, RemoteHttpMethod,
-    RemoteTargetSubjectType, RestoreTimestamps, TaskKind, TaskStatus,
+    NewHubuumClass, NewHubuumObject, NewImportTaskResultRecord, NewTaskRecord, ObjectKey,
+    RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType, RestoreTimestamps, TaskKind,
+    TaskStatus,
 };
 use crate::permissions::test_support::MockTreetopBackend;
 use crate::permissions::{AppContext, PermissionBackend};
@@ -43,6 +46,138 @@ use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
 use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
 use crate::tests::{TestContext, create_test_group};
 use crate::traits::CanSave;
+
+#[tokio::test]
+async fn import_planning_query_growth_is_bounded_per_object_in_one_class() {
+    let context = TestContext::new().await;
+    let fixture = context
+        .collection_fixture("query_budget_import_preload")
+        .await;
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: context.scoped_name("query_budget_import_class"),
+        description: "query budget import class".to_string(),
+        json_schema: None,
+        validate_schema: None,
+    }
+    .save_without_events(&context.pool)
+    .await
+    .expect("import class should save");
+    let mut objects = Vec::new();
+    for index in 0..20 {
+        objects.push(
+            NewHubuumObject {
+                collection_id: fixture.collection.id,
+                hubuum_class_id: class.id,
+                name: context.scoped_name(&format!("query_budget_import_object_{index:02}")),
+                description: "existing import object".to_string(),
+                data: serde_json::json!({"index": index}),
+            }
+            .save_without_events(&context.pool)
+            .await
+            .expect("import object should save"),
+        );
+    }
+
+    let request_for = |count: usize| ImportRequest {
+        version: CURRENT_IMPORT_VERSION,
+        dry_run: Some(false),
+        mode: Some(ImportMode {
+            collision_policy: Some(ImportCollisionPolicy::Overwrite),
+            ..ImportMode::default()
+        }),
+        graph: ImportGraph {
+            objects: objects
+                .iter()
+                .take(count)
+                .enumerate()
+                .map(|(index, object)| ImportObjectInput {
+                    ref_: Some(format!("object:query-budget-{index}")),
+                    name: object.name.clone(),
+                    description: "planned import update".to_string(),
+                    data: serde_json::json!({"index": index, "planned": true}),
+                    class_ref: None,
+                    class_key: Some(ClassKey {
+                        name: class.name.clone(),
+                        collection_ref: None,
+                        collection_key: Some(CollectionKey {
+                            name: fixture.collection.name.clone(),
+                            path: None,
+                        }),
+                    }),
+                })
+                .collect(),
+            ..ImportGraph::default()
+        },
+    };
+
+    let small_request = request_for(1);
+    let (small_plan, small_queries) = capture_queries(plan_runtime_admin_import(
+        &context.pool,
+        &context.admin_user,
+        &small_request,
+    ))
+    .await;
+    assert!(!small_plan.aborted);
+    assert!(small_plan.failures.is_empty());
+    assert_eq!(small_plan.planned_items.len(), 1);
+
+    let large_request = request_for(20);
+    let (large_plan, large_queries) = capture_queries(plan_runtime_admin_import(
+        &context.pool,
+        &context.admin_user,
+        &large_request,
+    ))
+    .await;
+    assert!(!large_plan.aborted);
+    assert!(large_plan.failures.is_empty());
+    assert_eq!(large_plan.planned_items.len(), 20);
+
+    // Current before-refactor shape: three fixed batch queries (collection,
+    // class, object), plus three collection-name resolutions per object across
+    // class preload, object preload, and object planning. Keep that slope
+    // explicit so a storage-boundary rewrite cannot make it worse unnoticed.
+    let fixed_queries = 3;
+    let queries_per_object = 3;
+    assert_eq!(
+        small_queries.total_queries(),
+        fixed_queries + queries_per_object,
+        "{:#?}",
+        small_queries.query_counts()
+    );
+    assert_eq!(
+        large_queries.total_queries(),
+        fixed_queries + queries_per_object * 20,
+        "{:#?}",
+        large_queries.query_counts()
+    );
+    assert_eq!(
+        small_queries.domain_queries(),
+        small_queries.total_queries()
+    );
+    assert_eq!(
+        large_queries.domain_queries(),
+        large_queries.total_queries()
+    );
+    assert_eq!(small_queries.control_queries(), 0);
+    assert_eq!(large_queries.control_queries(), 0);
+    assert_eq!(
+        small_queries.connection_checkouts(),
+        small_queries.total_queries()
+    );
+    assert_eq!(
+        large_queries.connection_checkouts(),
+        large_queries.total_queries()
+    );
+    assert_eq!(large_queries.queries_matching("FROM \"hubuumclass\""), 1);
+    assert_eq!(large_queries.queries_matching("FROM \"hubuumobject\""), 1);
+    assert_eq!(
+        large_queries.queries_matching("FROM \"collections\""),
+        queries_per_object * 20 + 1
+    );
+
+    fixture.cleanup().await.expect("import fixture cleanup");
+}
 
 #[tokio::test]
 async fn import_planning_uses_the_task_execution_permission_backend() {

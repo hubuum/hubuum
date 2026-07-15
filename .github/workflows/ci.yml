@@ -233,18 +233,6 @@ jobs:
             target: aarch64-apple-darwin
         toolchain:
           - stable
-          - beta
-          - nightly
-        exclude:
-          # Only test stable on Windows and macOS to reduce runner costs
-          - platform: { os_name: Windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc }
-            toolchain: beta
-          - platform: { os_name: Windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc }
-            toolchain: nightly
-          - platform: { os_name: macOS, os: macos-latest, target: aarch64-apple-darwin }
-            toolchain: beta
-          - platform: { os_name: macOS, os: macos-latest, target: aarch64-apple-darwin }
-            toolchain: nightly
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

@@ -18,6 +18,7 @@ use crate::db::traits::event_delivery::{
 };
 use crate::db::traits::event_fanout::{
     EventFanoutSettings, claim_events_for_fanout, count_event_deliveries_for_event, fanout_event,
+    fanout_events,
 };
 use crate::db::traits::event_retention::{
     EventRetentionSettings, purge_event_retention_without_archive,
@@ -27,7 +28,7 @@ use crate::db::traits::remote_target::{
     DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
     emit_remote_target_invoked_event,
 };
-use crate::db::{with_connection, with_transaction};
+use crate::db::{capture_queries, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{
     Action, ActorKind, EntityType, Event, EventContext, NewEvent, RequestProvenance, emit_event,
@@ -436,6 +437,67 @@ async fn event_fanout_creates_delivery_for_each_matching_subscription_once() {
             .unwrap(),
         2
     );
+}
+
+#[actix_web::test]
+async fn event_fanout_query_growth_is_bounded_to_one_insert_per_event() {
+    let scope = test_scope();
+    let fixture = scope.with_collection().await;
+    create_collection_event_subscription(
+        &scope,
+        fixture.collection.id,
+        "fanout_query_budget",
+        true,
+    )
+    .await;
+    let small_event = emit_collection_created_event(&scope, fixture.collection.id).await;
+    let mut large_events = Vec::new();
+    for _ in 0..10 {
+        large_events.push(emit_collection_created_event(&scope, fixture.collection.id).await);
+    }
+
+    let (small_result, small_queries) =
+        capture_queries(fanout_events(&scope.pool, &[small_event.id])).await;
+    assert_eq!(small_result.expect("small fanout should succeed"), 1);
+
+    let large_event_ids = large_events
+        .iter()
+        .map(|event| event.id)
+        .collect::<Vec<_>>();
+    let (large_result, large_queries) =
+        capture_queries(fanout_events(&scope.pool, &large_event_ids)).await;
+    assert_eq!(large_result.expect("large fanout should succeed"), 10);
+
+    assert_eq!(
+        small_queries.total_queries(),
+        7,
+        "{:#?}",
+        small_queries.query_counts()
+    );
+    assert_eq!(small_queries.domain_queries(), 5);
+    assert_eq!(small_queries.control_queries(), 2);
+    assert_eq!(small_queries.connection_checkouts(), 1);
+    assert_eq!(
+        large_queries.total_queries(),
+        16,
+        "{:#?}",
+        large_queries.query_counts()
+    );
+    assert_eq!(large_queries.domain_queries(), 14);
+    assert_eq!(large_queries.control_queries(), 2);
+    assert_eq!(large_queries.connection_checkouts(), 1);
+    assert_eq!(
+        large_queries
+            .total_queries()
+            .saturating_sub(small_queries.total_queries()),
+        large_events.len().saturating_sub(1)
+    );
+    assert_eq!(
+        large_queries.queries_matching("INSERT INTO \"event_deliveries\""),
+        large_events.len()
+    );
+
+    fixture.cleanup().await.expect("fanout fixture cleanup");
 }
 
 #[actix_web::test]
