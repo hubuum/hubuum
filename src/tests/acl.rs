@@ -1,8 +1,5 @@
 use serde::Serialize;
 
-#[derive(Serialize)]
-struct NoData {}
-
 #[derive(PartialEq, Serialize)]
 enum AccessLevel {
     Open,
@@ -12,7 +9,6 @@ enum AccessLevel {
 
 #[derive(Serialize)]
 enum TestDataForEndpoint {
-    NoData,
     LoginUser(crate::models::user::LoginUser),
 }
 

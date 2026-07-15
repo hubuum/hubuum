@@ -380,7 +380,6 @@ impl FromStr for ExportMissingDataPolicy {
 
 // Used by utoipa's `#[schema(example = ...)]` hooks to populate the generated OpenAPI examples.
 // The compiler does not see those macro references as normal function calls.
-#[allow(dead_code)]
 mod openapi_examples {
     use super::*;
 

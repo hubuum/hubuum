@@ -8,68 +8,7 @@ use crate::models::{Permission, Permissions, PermissionsList};
 
 use super::{BackendContext, CollectionAccessors};
 
-#[allow(dead_code)]
 pub trait PermissionController: Serialize + CollectionAccessors {
-    /// Check if the user has the given permission on the object.
-    ///
-    /// - If the trait is called on a collection, check against self.
-    /// - If the trait is called on a HubuumClass or a HubuumObject,
-    ///   check against the collection of the class or object.
-    /// - If the trait is called on a HubuumClassID or a HubuumObjectID,
-    ///   create a HubuumClass or HubuumObject and check against the collection
-    ///   of the class or object.
-    ///
-    /// If this is called on a *ID, a full class is created to extract
-    /// the collection_id. To avoid creating the class multiple times during use
-    /// do this:
-    /// ```text
-    /// class = class_id.class(backend).await?;
-    /// if (class.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
-    ///     return Ok(class);
-    /// }
-    /// ```
-    /// And not this:
-    /// ```text
-    /// if (class_id.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
-    ///    return Ok(class_id.class(backend).await?);
-    /// }
-    /// ```
-    ///
-    /// ## Arguments
-    ///
-    /// * `backend` - The backend context to use for the query.
-    /// * `subject` - The principal (impl `AuthzSubject`) to check permissions for.
-    /// * `permission` - The permission to check.
-    /// * `scopes` - The token scope set as `Option<&[Permissions]>`; `None` = unscoped
-    ///   (full authority), `Some(..)` intersects the check fail-closed (even for admins).
-    ///
-    /// ## Returns
-    ///
-    /// * `Ok(true)` if the subject has the given permission on this class.
-    /// * `Ok(false)` if the subject does not have the given permission on this class.
-    /// * `Err(_)` if the lookup fails or the permission is invalid.
-    ///
-    /// ## Example
-    ///
-    /// ```text
-    /// if (hubuum_class_or_classid.user_can(backend, subject, Permissions::ReadClass, scopes).await?) {
-    ///     // Do something
-    /// }
-    async fn user_can<C, S>(
-        &self,
-        backend: &C,
-        subject: S,
-        permission: Permissions,
-        scopes: Option<&[Permissions]>,
-    ) -> Result<bool, ApiError>
-    where
-        C: BackendContext + ?Sized,
-        S: AuthzSubject,
-    {
-        self.user_can_all(backend, subject, vec![permission], scopes)
-            .await
-    }
-
     /// Check if the user has all the given permissions on the object.
     ///
     /// - If the trait is called on a collection, check against self.
@@ -154,6 +93,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// infrastructure paths such as bootstrap/setup, fixture construction,
     /// cleanup, and event-system tests. Normal application code should use
     /// [`PermissionController::grant`] so event subscribers observe the change.
+    #[cfg(test)]
     async fn grant_without_events<C>(
         &self,
         backend: &C,
@@ -191,6 +131,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// cleanup, and event-system tests. Normal application code should use
     /// [`PermissionController::apply_permissions`] so event subscribers observe
     /// the change.
+    #[cfg(test)]
     async fn apply_permissions_without_events<C>(
         &self,
         backend: &C,
@@ -255,6 +196,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// infrastructure paths such as bootstrap/setup, fixture construction,
     /// cleanup, and event-system tests. Normal application code should use
     /// [`PermissionController::revoke`] so event subscribers observe the change.
+    #[cfg(test)]
     async fn revoke_without_events<C>(
         &self,
         backend: &C,
@@ -311,6 +253,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// ## Returns
     ///
     /// The permission object that holds the permissions for the group.
+    #[cfg(test)]
     async fn grant_one<C>(
         &self,
         backend: &C,
@@ -347,6 +290,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     ///
     /// The permission object that holds the permissions for the group. If the group
     /// did not have the permission, an ApiError::NotFound is returned.
+    #[cfg(test)]
     async fn revoke_one<C>(
         &self,
         backend: &C,
@@ -388,6 +332,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// cleanup, and event-system tests. Normal application code should use
     /// [`PermissionController::set_permissions`] so event subscribers observe
     /// the change.
+    #[cfg(test)]
     async fn set_permissions_without_events<C>(
         &self,
         backend: &C,
@@ -435,6 +380,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// event-system tests. Normal application code should use
     /// [`PermissionController::revoke_all`] so event subscribers observe the
     /// change.
+    #[cfg(test)]
     async fn revoke_all_without_events<C>(
         &self,
         backend: &C,

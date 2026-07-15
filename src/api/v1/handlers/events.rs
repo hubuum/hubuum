@@ -7,9 +7,13 @@ use crate::db::traits::events::{list_events_with_total_count, parse_event_filter
 use crate::errors::ApiError;
 use crate::events::{EntityType, EventResponse};
 use crate::extractors::Authenticated;
-use crate::models::Permissions;
 use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter_with_passthrough;
+use crate::models::traits::check_if_object_in_class;
+use crate::models::{
+    CollectionID, ExportTemplateID, GroupID, HubuumClassID, HubuumObjectID, Permissions,
+    RemoteTargetID, UserID,
+};
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, PrincipalRef};
 use crate::traits::AuthzSubject;
@@ -148,13 +152,13 @@ pub async fn get_collection_events(
     pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
-    collection_id: web::Path<i32>,
+    collection_id: web::Path<CollectionID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
         pool,
         requestor,
         req,
-        Some((EntityType::Collection, collection_id.into_inner())),
+        Some((EntityType::Collection, collection_id.into_inner().id())),
     )
     .await
 }
@@ -187,13 +191,13 @@ pub async fn get_class_events(
     pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
-    class_id: web::Path<i32>,
+    class_id: web::Path<HubuumClassID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
         pool,
         requestor,
         req,
-        Some((EntityType::Class, class_id.into_inner())),
+        Some((EntityType::Class, class_id.into_inner().id())),
     )
     .await
 }
@@ -219,7 +223,8 @@ pub async fn get_class_events(
     responses(
         (status = 200, description = "Visible object audit events", body = [EventResponse]),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
-        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Object not found in the requested class", body = ApiErrorResponse)
     )
 )]
 #[get("/{class_id}/{object_id}/events")]
@@ -227,10 +232,17 @@ pub async fn get_object_events(
     pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
-    path: web::Path<(i32, i32)>,
+    path: web::Path<(HubuumClassID, HubuumObjectID)>,
 ) -> Result<impl Responder, ApiError> {
-    let (_, object_id) = path.into_inner();
-    list_visible_events(pool, requestor, req, Some((EntityType::Object, object_id))).await
+    let (class_id, object_id) = path.into_inner();
+    check_if_object_in_class(&pool, &class_id, &object_id).await?;
+    list_visible_events(
+        pool,
+        requestor,
+        req,
+        Some((EntityType::Object, object_id.id())),
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -261,13 +273,13 @@ pub async fn get_user_events(
     pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
-    user_id: web::Path<i32>,
+    user_id: web::Path<UserID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
         pool,
         requestor,
         req,
-        Some((EntityType::User, user_id.into_inner())),
+        Some((EntityType::User, user_id.into_inner().id())),
     )
     .await
 }
@@ -300,13 +312,13 @@ pub async fn get_group_events(
     pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
-    group_id: web::Path<i32>,
+    group_id: web::Path<GroupID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
         pool,
         requestor,
         req,
-        Some((EntityType::Group, group_id.into_inner())),
+        Some((EntityType::Group, group_id.into_inner().id())),
     )
     .await
 }
@@ -339,13 +351,13 @@ pub async fn get_export_template_events(
     pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
-    template_id: web::Path<i32>,
+    template_id: web::Path<ExportTemplateID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
         pool,
         requestor,
         req,
-        Some((EntityType::ExportTemplate, template_id.into_inner())),
+        Some((EntityType::ExportTemplate, template_id.into_inner().id())),
     )
     .await
 }
@@ -378,13 +390,13 @@ pub async fn get_remote_target_events(
     pool: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
-    target_id: web::Path<i32>,
+    target_id: web::Path<RemoteTargetID>,
 ) -> Result<impl Responder, ApiError> {
     list_visible_events(
         pool,
         requestor,
         req,
-        Some((EntityType::RemoteTarget, target_id.into_inner())),
+        Some((EntityType::RemoteTarget, target_id.into_inner().id())),
     )
     .await
 }

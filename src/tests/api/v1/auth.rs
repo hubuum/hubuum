@@ -17,7 +17,6 @@ mod tests {
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
     const AUTH_PROVIDERS_ENDPOINT: &str = "/api/v0/auth/providers";
     const LOGOUT_ENDPOINT: &str = "/api/v0/auth/logout";
-    const LOGOUT_ALL_ENDPOINT: &str = "/api/v0/auth/logout_all";
     const LOGOUT_ALL_FOR_OTHER_USER_ENDPOINT: &str = "/api/v0/auth/logout/uid/";
     const LOGOUT_SPECIFIC_TOKEN: &str = "/api/v0/auth/logout/token";
     const VALIDATE_TOKEN_ENDPOINT: &str = "/api/v0/auth/validate";

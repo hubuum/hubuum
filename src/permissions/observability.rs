@@ -104,7 +104,6 @@ pub fn record_reverse_query(
 /// actually survived `offset`/`limit`. Both are interesting: the first
 /// tells you how much your candidate query filtered down to, the second
 /// tells you what the API actually shipped.
-#[allow(dead_code)]
 pub fn record_paginate_authorized(
     backend: &'static str,
     candidate_count: usize,

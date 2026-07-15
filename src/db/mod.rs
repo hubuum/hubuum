@@ -52,7 +52,7 @@ pub type DbPool = Pool<DbConnection>;
 /// Latest migration required by this binary. The test below keeps this value
 /// synchronized with the migration directory so readiness cannot silently lag
 /// behind a newly added schema change.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260715000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260715000002";
 
 #[derive(diesel::QueryableByName)]
 struct DatabaseSchemaReadiness {
@@ -596,6 +596,13 @@ pub fn init_pool(database_url: &str, max_size: u32) -> DbPool {
 }
 
 pub fn init_pool_with_settings(settings: &DatabasePoolSettings) -> DbPool {
+    if settings.acquire_timeout_ms == crate::config::DEFAULT_DB_POOL_ACQUIRE_TIMEOUT_MS {
+        return init_pool_with_statement_timeout(
+            &settings.database_url,
+            settings.max_size,
+            settings.statement_timeout_ms,
+        );
+    }
     init_pool_with_timeouts(
         &settings.database_url,
         settings.max_size,
@@ -608,9 +615,6 @@ pub fn init_pool_with_settings(settings: &DatabasePoolSettings) -> DbPool {
 /// applied to every connection on acquisition. A value of 0 disables the
 /// timeout. Exposed so tests can exercise the customizer without mutating the
 /// global config.
-// The server binary compiles this module directly as well as through the library;
-// this explicit-timeout constructor is consumed by the admin binary and DB tests.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn init_pool_with_statement_timeout(
     database_url: &str,
     max_size: u32,

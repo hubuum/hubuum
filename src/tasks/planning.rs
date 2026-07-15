@@ -1004,6 +1004,16 @@ where
     }
 }
 
+fn validate_planned_class_schema(class: &ClassResolution) -> Result<(), ApiError> {
+    if !class.validate_schema {
+        return Ok(());
+    }
+    let Some(schema) = class.json_schema.as_ref() else {
+        return Ok(());
+    };
+    crate::utilities::json_schema::compile_json_schema(schema).map(|_| ())
+}
+
 pub(super) async fn plan_class<C>(
     backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
@@ -1015,6 +1025,20 @@ where
     C: BackendContext + ?Sized,
 {
     let pool = backend.db_pool();
+    if let Some(schema) = input.json_schema.as_ref() {
+        crate::utilities::json_schema::validate_json_schema(schema).map_err(|error| {
+            PlanningFailure {
+                kind: FailureKind::Validation,
+                item: planned_result(
+                    "class",
+                    "validate",
+                    input.ref_.clone(),
+                    Some(input.name.clone()),
+                ),
+                message: error.to_string(),
+            }
+        })?;
+    }
     if let Some(reference) = &input.ref_
         && state.classes_by_ref.contains_key(reference)
     {
@@ -1135,6 +1159,16 @@ where
             validate_schema: input.validate_schema.unwrap_or(class.validate_schema),
             exists_in_db: true,
         };
+        validate_planned_class_schema(&updated).map_err(|error| PlanningFailure {
+            kind: FailureKind::Validation,
+            item: planned_result(
+                "class",
+                "validate",
+                input.ref_.clone(),
+                Some(input.name.clone()),
+            ),
+            message: error.to_string(),
+        })?;
         remember_class(state, input.ref_.clone(), updated.clone());
 
         Ok(PlannedItem {
@@ -1178,6 +1212,16 @@ where
             validate_schema: input.validate_schema.unwrap_or(false),
             exists_in_db: false,
         };
+        validate_planned_class_schema(&created).map_err(|error| PlanningFailure {
+            kind: FailureKind::Validation,
+            item: planned_result(
+                "class",
+                "validate",
+                input.ref_.clone(),
+                Some(input.name.clone()),
+            ),
+            message: error.to_string(),
+        })?;
         remember_class(state, input.ref_.clone(), created.clone());
 
         Ok(PlannedItem {
@@ -1234,15 +1278,17 @@ where
     if class.validate_schema
         && let Some(schema) = &class.json_schema
     {
-        jsonschema::validate(schema, &input.data).map_err(|err| PlanningFailure {
-            kind: FailureKind::Validation,
-            item: planned_result(
-                "object",
-                "validate",
-                input.ref_.clone(),
-                Some(format!("{}::{}", class.name, input.name)),
-            ),
-            message: err.to_string(),
+        crate::utilities::json_schema::validate_json_value(schema, &input.data).map_err(|err| {
+            PlanningFailure {
+                kind: FailureKind::Validation,
+                item: planned_result(
+                    "object",
+                    "validate",
+                    input.ref_.clone(),
+                    Some(format!("{}::{}", class.name, input.name)),
+                ),
+                message: err.to_string(),
+            }
         })?;
     }
 

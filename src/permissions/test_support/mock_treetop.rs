@@ -195,7 +195,6 @@ pub struct MockTreetopBackend {
     group_candidates: Mutex<Option<Vec<Group>>>,
 }
 
-#[allow(dead_code)]
 impl MockTreetopBackend {
     pub fn new() -> Self {
         Self {

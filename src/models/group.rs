@@ -421,7 +421,6 @@ impl UpdateGroup {
     }
 }
 
-#[allow(dead_code)]
 fn new_group_example() -> NewGroup {
     NewGroup {
         identity_scope: None,
@@ -430,7 +429,6 @@ fn new_group_example() -> NewGroup {
     }
 }
 
-#[allow(dead_code)]
 fn update_group_example() -> UpdateGroup {
     UpdateGroup {
         groupname: Some("platform-ops".to_string()),

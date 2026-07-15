@@ -3,6 +3,9 @@ use std::iter::IntoIterator;
 
 use tracing::debug;
 
+use crate::db::{DbPool, with_connection, with_transaction};
+use crate::errors::ApiError;
+use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::search::{
     FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
 };
@@ -15,11 +18,6 @@ use crate::models::{
     RelatedObjectGraphRow, RelatedObjectIncludeRow, Token, UpdateUser, User, UserID,
 };
 use crate::traits::{ClassAccessors, CollectionAccessors, GroupAccessors, SelfAccessors};
-use crate::utilities::auth::hash_password;
-
-use crate::db::{DbPool, with_connection, with_transaction};
-use crate::errors::ApiError;
-use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 
 use crate::{date_search, numeric_search, string_search, trace_query};
 

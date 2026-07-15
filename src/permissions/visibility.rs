@@ -17,7 +17,6 @@ use super::types::{PermissionDecision, PermissionRequest, PrincipalRef, Resource
 /// join fast path instead. Marked `dead_code`-allow because a build without
 /// the optional Treetop backend has no caller for either type, and the lints
 /// would otherwise fire.
-#[allow(dead_code)]
 pub struct AuthorizedPage<T> {
     pub rows: Vec<T>,
     pub total_count: i64,
@@ -89,7 +88,6 @@ where
 /// semantics live a layer up; this helper concerns itself only with
 /// the authorize-then-page pipeline. The candidate set must already
 /// be sorted in the order the caller wants pagination to apply.
-#[allow(dead_code)]
 pub async fn paginate_authorized<T, F>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,

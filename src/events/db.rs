@@ -39,6 +39,5 @@ pub async fn emit_event(
             event.correlation_id.as_deref(),
         );
     }
-    super::notify_event_fanout(conn).await?;
     Ok(event)
 }

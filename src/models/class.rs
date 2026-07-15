@@ -143,7 +143,6 @@ where
     total_class_count_from_backend(backend.db_pool()).await
 }
 
-#[allow(dead_code)]
 fn new_hubuum_class_example() -> NewHubuumClass {
     NewHubuumClass {
         name: "server".to_string(),
@@ -154,7 +153,6 @@ fn new_hubuum_class_example() -> NewHubuumClass {
     }
 }
 
-#[allow(dead_code)]
 fn update_hubuum_class_example() -> UpdateHubuumClass {
     UpdateHubuumClass {
         name: Some("server".to_string()),

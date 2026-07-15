@@ -110,7 +110,8 @@ impl User {
     pub async fn set_password(&self, pool: &DbPool, new_password: &str) -> Result<(), ApiError> {
         use crate::schema::users::dsl::*;
         debug!(message = "Setting new password", id = self.id());
-        let new_password = hash_password(new_password)
+        let new_password = crate::utilities::auth::hash_password_async(new_password.to_string())
+            .await
             .map_err(|e| ApiError::HashError(format!("Failed to hash password: {e}")))?;
 
         with_connection(pool, async |conn| -> Result<usize, ApiError> {

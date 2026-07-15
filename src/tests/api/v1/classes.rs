@@ -406,6 +406,36 @@ pub mod tests {
     }
 
     #[rstest]
+    #[case(serde_json::json!({"type": 7}))]
+    #[case(serde_json::json!({"$ref": "https://example.com/schema.json"}))]
+    #[case(serde_json::json!({"$ref": "file:///etc/passwd"}))]
+    #[actix_web::test]
+    async fn test_api_classes_rejects_unsafe_json_schemas(
+        #[case] json_schema: serde_json::Value,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let collection = context.collection_fixture("reject_unsafe_schema").await;
+        let new_class = NewHubuumClass {
+            name: format!("unsafe_schema_{}", uuid::Uuid::new_v4().simple()),
+            description: "invalid schema must not be persisted".to_string(),
+            collection_id: collection.collection.id,
+            json_schema: Some(json_schema),
+            validate_schema: Some(true),
+        };
+
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            CLASSES_ENDPOINT,
+            &new_class,
+        )
+        .await;
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+        collection.cleanup().await.unwrap();
+    }
+
+    #[rstest]
     #[actix_web::test]
     async fn test_api_classes_patch(#[future(awt)] test_context: TestContext) {
         use crate::models::UpdateHubuumClass;

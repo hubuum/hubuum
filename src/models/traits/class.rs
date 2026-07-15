@@ -1,5 +1,7 @@
 use crate::traits::accessors::{ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter};
-use crate::traits::{CanUpdate, ClassAccessors, CollectionAccessors, PermissionController};
+use crate::traits::{
+    CanUpdate, ClassAccessors, CollectionAccessors, PermissionController, SelfAccessors,
+};
 
 use crate::db::DbPool;
 use crate::db::traits::class::{
@@ -12,6 +14,37 @@ use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::models::{
     Collection, CollectionID, HubuumClass, HubuumClassID, NewHubuumClass, UpdateHubuumClass,
 };
+
+fn validate_new_class_schema(class: &NewHubuumClass) -> Result<(), ApiError> {
+    let Some(schema) = class.json_schema.as_ref() else {
+        return Ok(());
+    };
+    crate::utilities::json_schema::validate_json_schema(schema)?;
+    if class.validate_schema.unwrap_or(false) {
+        crate::utilities::json_schema::compile_json_schema(schema)?;
+    }
+    Ok(())
+}
+
+async fn validate_class_schema_update(
+    update: &UpdateHubuumClass,
+    pool: &DbPool,
+    class_id: i32,
+) -> Result<(), ApiError> {
+    if update.json_schema.is_none() && update.validate_schema.is_none() {
+        return Ok(());
+    }
+
+    let class = HubuumClassID::new(class_id)?.instance(pool).await?;
+    let schema = update.json_schema.as_ref().or(class.json_schema.as_ref());
+    if let Some(schema) = schema {
+        crate::utilities::json_schema::validate_json_schema(schema)?;
+        if update.validate_schema.unwrap_or(class.validate_schema) {
+            crate::utilities::json_schema::compile_json_schema(schema)?;
+        }
+    }
+    Ok(())
+}
 
 impl SaveAdapter for HubuumClass {
     type Output = HubuumClass;
@@ -61,6 +94,7 @@ impl SaveAdapter for NewHubuumClass {
     type Output = HubuumClass;
 
     async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        validate_new_class_schema(self)?;
         self.create_class_record_without_events(pool).await
     }
 
@@ -69,6 +103,7 @@ impl SaveAdapter for NewHubuumClass {
         pool: &DbPool,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
+        validate_new_class_schema(self)?;
         self.create_class_record(pool, Some(context)).await
     }
 }
@@ -81,6 +116,7 @@ impl UpdateAdapter for UpdateHubuumClass {
         pool: &DbPool,
         class_id: i32,
     ) -> Result<HubuumClass, ApiError> {
+        validate_class_schema_update(self, pool, class_id).await?;
         self.update_class_record_without_events(pool, class_id)
             .await
     }
@@ -91,6 +127,7 @@ impl UpdateAdapter for UpdateHubuumClass {
         class_id: i32,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
+        validate_class_schema_update(self, pool, class_id).await?;
         self.update_class_record(pool, class_id, Some(context))
             .await
     }

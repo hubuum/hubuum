@@ -34,7 +34,7 @@ pub use sink::{
     DefaultSinkResolver, EventEnvelope, NoopSinkResolver, Sink, SinkError, SinkResolver,
 };
 
-pub(crate) use pg_notify::{notify_event_delivery, notify_event_fanout};
+pub(crate) use pg_notify::notify_event_delivery;
 
 pub use hubuum_events_core::{
     Action, ActorKind, EntityType, EventCatalogError, EventContext, is_valid_pair, valid_actions,

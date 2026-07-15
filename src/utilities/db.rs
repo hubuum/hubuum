@@ -1,11 +1,9 @@
 use urlparse::urlparse;
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct DatabaseUrlComponents {
     pub vendor: String,
     pub username: String,
-    pub password: String,
     pub host: String,
     pub port: u16,
     pub database: String,
@@ -25,14 +23,12 @@ impl DatabaseUrlComponents {
         }?;
 
         let username = url.username.unwrap_or_default().to_string();
-        let password = url.password.unwrap_or_default().to_string();
         let host = url.hostname.ok_or("Missing host".to_string())?.to_string();
         let path = url.path.trim_start_matches('/').to_string();
 
         Ok(DatabaseUrlComponents {
             vendor: scheme.to_lowercase(),
             username,
-            password,
             host,
             port,
             database: path,
@@ -52,7 +48,6 @@ mod tests {
                 Ok(components) => {
                     assert_eq!(components.vendor, expected_components.vendor);
                     assert_eq!(components.username, expected_components.username);
-                    assert_eq!(components.password, expected_components.password);
                     assert_eq!(components.host, expected_components.host);
                     assert_eq!(components.port, expected_components.port);
                     assert_eq!(components.database, expected_components.database);
@@ -77,7 +72,6 @@ mod tests {
             Ok(DatabaseUrlComponents {
                 vendor: "postgres".to_string(),
                 username: "test".to_string(),
-                password: "test".to_string(),
                 host: "localhost".to_string(),
                 port: 5432,
                 database: "testdb".to_string(),
@@ -90,7 +84,6 @@ mod tests {
             Ok(DatabaseUrlComponents {
                 vendor: "postgres".to_string(),
                 username: "".to_string(),
-                password: "".to_string(),
                 host: "localhost".to_string(),
                 port: 5432,
                 database: "testdb".to_string(),
@@ -103,7 +96,6 @@ mod tests {
             Ok(DatabaseUrlComponents {
                 vendor: "postgres".to_string(),
                 username: "test".to_string(),
-                password: "test".to_string(),
                 host: "localhost".to_string(),
                 port: 5432,
                 database: "testdb".to_string(),

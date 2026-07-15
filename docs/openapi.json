@@ -3519,6 +3519,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Object not found in the requested class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [

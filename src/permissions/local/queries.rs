@@ -737,7 +737,6 @@ pub(crate) async fn groups_on_query<T: CollectionAccessors>(
     Ok(rows.into_iter().map(GroupPermission::from_tuple).collect())
 }
 
-#[allow(dead_code)]
 pub(crate) async fn groups_on_paginated_query<T: CollectionAccessors>(
     pool: &DbPool,
     collection_ref: T,
@@ -826,7 +825,6 @@ pub(crate) async fn groups_on_paginated_with_total_count_query<T: CollectionAcce
     ))
 }
 
-#[allow(dead_code)]
 pub(crate) async fn count_groups_on_paginated_query<T: CollectionAccessors>(
     pool: &DbPool,
     collection_ref: T,

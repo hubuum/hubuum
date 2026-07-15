@@ -3,11 +3,12 @@
 use rstest::rstest;
 use serde_json::Value;
 
+use crate::db::traits::object::{ValidateObjectRecord, ValidateObjectSchema};
 use crate::errors::ApiError;
 use crate::models::{NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
 use crate::tests::constants::{SchemaType, get_schema};
 use crate::tests::{CollectionFixture, TestScope};
-use crate::traits::{CanSave, Validate, ValidateAgainstSchema};
+use crate::traits::CanSave;
 
 /// Sets up a Geo class (with its collection) for testing.
 /// The identifier string is used to create unique names.
@@ -82,13 +83,11 @@ async fn test_validate_object(#[case] json_data: &str, #[case] expected: bool) {
     };
 
     // First, test the direct schema validation.
-    let schema_validate = object
-        .validate_against_schema(class.json_schema.as_ref().unwrap())
-        .await;
+    let schema_validate = object.validate_object_schema(class.json_schema.as_ref().unwrap());
     assert_validation_result(schema_validate, expected, "Schema validation");
 
     // Then, test the full object validation that fetches the class from the DB.
-    let object_validate = object.validate(&pool).await;
+    let object_validate = object.validate_object_record(&pool).await;
     assert_validation_result(object_validate, expected, "Object validation");
 
     collection_fixture
@@ -141,7 +140,9 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
         data: Some(updated_data.clone()),
     };
 
-    let validate = (&update_object, object.id).validate(&pool).await;
+    let validate = (&update_object, object.id)
+        .validate_object_record(&pool)
+        .await;
     assert_validation_result(validate, expected, "Update object validation");
 
     collection_fixture

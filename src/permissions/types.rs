@@ -214,7 +214,6 @@ impl ResourceRef {
     /// `is_admin` dispatches against it; the SQL backend reads the admin
     /// group directly. Marked `dead_code`-allow so a build without the
     /// optional Treetop backend doesn't lint the helper away.
-    #[allow(dead_code)]
     pub fn system() -> Self {
         Self {
             kind: ResourceKind::System,
