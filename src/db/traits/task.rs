@@ -1530,6 +1530,14 @@ mod tests {
     };
     use crate::tests::{TestContext, create_test_user};
 
+    #[derive(QueryableByName)]
+    struct TaskCapacityIndex {
+        #[diesel(sql_type = diesel::sql_types::Bool)]
+        valid: bool,
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        definition: String,
+    }
+
     #[tokio::test]
     async fn database_time_is_naive_utc_under_non_utc_session_timezone() {
         let context = TestContext::new().await;
@@ -1623,6 +1631,51 @@ mod tests {
             fallback_key,
             task_capacity_lock_key(user_id, TaskKind::Reindex)
         );
+    }
+
+    #[tokio::test]
+    async fn active_task_capacity_index_matches_the_admission_query() {
+        let context = TestContext::new().await;
+        let index = with_connection(&context.pool, async |conn| {
+            diesel::sql_query(
+                "SELECT pg_index.indisvalid AS valid,
+                        pg_get_indexdef(pg_index.indexrelid) AS definition
+                 FROM pg_index
+                 JOIN pg_class AS index_class
+                   ON index_class.oid = pg_index.indexrelid
+                 JOIN pg_class AS table_class
+                   ON table_class.oid = pg_index.indrelid
+                 JOIN pg_namespace
+                   ON pg_namespace.oid = table_class.relnamespace
+                 WHERE pg_namespace.nspname = 'public'
+                   AND table_class.relname = 'tasks'
+                   AND index_class.relname = 'idx_tasks_active_capacity'",
+            )
+            .get_result::<TaskCapacityIndex>(conn)
+            .await
+        })
+        .await
+        .unwrap();
+
+        assert!(index.valid, "task capacity index must be valid");
+        assert!(
+            index.definition.contains("(submitted_by, kind)"),
+            "task capacity index has unexpected columns: {}",
+            index.definition
+        );
+        for predicate in [
+            "submitted_by IS NOT NULL",
+            "deleted_at IS NULL",
+            "queued",
+            "validating",
+            "running",
+        ] {
+            assert!(
+                index.definition.contains(predicate),
+                "task capacity index is missing predicate `{predicate}`: {}",
+                index.definition
+            );
+        }
     }
 
     #[tokio::test]
@@ -2189,5 +2242,45 @@ mod tests {
             }
             other => panic!("expected TooManyRequests, got {other:?}"),
         }
+    }
+
+    #[rstest]
+    #[case(TaskKind::Import)]
+    #[case(TaskKind::Export)]
+    #[case(TaskKind::Backup)]
+    #[case(TaskKind::RemoteCall)]
+    #[tokio::test]
+    async fn concurrent_active_task_admission_preserves_the_per_kind_limit(#[case] kind: TaskKind) {
+        let context = TestContext::new().await;
+        let request = |suffix: &str| TaskCreateRequest {
+            kind,
+            submitted_by: context.admin_user.id,
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            idempotency_key: Some(
+                context.scoped_name(&format!("{}-concurrent-cap-{suffix}", kind.as_str())),
+            ),
+            request_hash: Some(
+                context.scoped_name(&format!("{}-concurrent-cap-{suffix}-hash", kind.as_str())),
+            ),
+            request_payload: serde_json::json!({"kind": kind.as_str(), "case": suffix}),
+            total_items: 1,
+        };
+
+        let first = request("first").create_idempotently_with_active_limit(&context.pool, 1);
+        let second = request("second").create_idempotently_with_active_limit(&context.pool, 1);
+        let (first, second) = tokio::join!(first, second);
+        let results = [first, second];
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        let error = results
+            .into_iter()
+            .find_map(Result::err)
+            .expect("one concurrent task submission must exceed the active limit");
+        assert!(
+            matches!(error, ApiError::TooManyRequests(_)),
+            "expected TooManyRequests, got {error:?}"
+        );
     }
 }
