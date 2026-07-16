@@ -100,7 +100,7 @@ POST   /api/v1/classes/{class_id}/computed-fields/rebuild
 ```
 
 Reading definitions requires `ReadClass`. Creating, changing, deleting,
-previewing, or rebuilding shared definitions requires `UpdateClass` for the
+previewing, or rebuilding shared definitions requires `UpdateCollection` for the
 class's current collection. Clients do not choose the permission used by the
 server.
 

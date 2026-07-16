@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Once;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration as StdDuration, Instant};
 
 use chrono::{Duration, NaiveDateTime, Utc};
-use hubuum_computed_fields::{MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS};
+use hubuum_computed_fields::{MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, SEMANTICS_VERSION};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -218,6 +218,8 @@ fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiErr
 fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), ApiError> {
     let mut shared_counts = HashMap::<i32, usize>::new();
     let mut personal_counts = HashMap::<(i32, i32), usize>::new();
+    let mut shared_keys = HashSet::<(i32, String)>::new();
+    let mut personal_keys = HashSet::<(i32, i32, String)>::new();
     for row in required_state_section(document, "computed_field_definitions")? {
         let object = row.as_object().ok_or_else(|| {
             ApiError::BadRequest(
@@ -243,8 +245,9 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
                             .to_string(),
                     )
                 })?;
+        let key = string("key")?;
         let request = ComputedFieldDefinitionRequest {
-            key: string("key")?,
+            key: key.clone(),
             label: string("label")?,
             description: string("description")?,
             operation: object.get("operation").cloned().ok_or_else(|| {
@@ -282,6 +285,30 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
                 })
         };
         let class_id = positive_id("class_id")?;
+        object
+            .get("revision")
+            .and_then(Value::as_i64)
+            .filter(|value| *value > 0)
+            .ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Full backup computed-field definition has an invalid revision".to_string(),
+                )
+            })?;
+        let semantics_version = object
+            .get("semantics_version")
+            .and_then(Value::as_i64)
+            .and_then(|value| i16::try_from(value).ok())
+            .ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Full backup computed-field definition has an invalid semantics_version"
+                        .to_string(),
+                )
+            })?;
+        if semantics_version != SEMANTICS_VERSION {
+            return Err(ApiError::BadRequest(format!(
+                "Full backup computed-field definition uses unsupported semantics version {semantics_version}"
+            )));
+        }
         let visibility = string("visibility")?;
         match visibility.as_str() {
             COMPUTED_FIELD_VISIBILITY_SHARED => {
@@ -294,6 +321,11 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
                             .to_string(),
                     ));
                 }
+                if !shared_keys.insert((class_id, key)) {
+                    return Err(ApiError::BadRequest(format!(
+                        "Full backup class {class_id} contains a duplicate shared computed-field key"
+                    )));
+                }
                 let count = shared_counts.entry(class_id).or_default();
                 *count += 1;
                 if *count > MAX_SHARED_DEFINITIONS {
@@ -304,6 +336,11 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
             }
             COMPUTED_FIELD_VISIBILITY_PERSONAL => {
                 let owner_id = positive_id("owner_user_id")?;
+                if !personal_keys.insert((owner_id, class_id, key)) {
+                    return Err(ApiError::BadRequest(format!(
+                        "Full backup user {owner_id} contains a duplicate personal computed-field key for class {class_id}"
+                    )));
+                }
                 let count = personal_counts.entry((owner_id, class_id)).or_default();
                 *count += 1;
                 if *count > MAX_PERSONAL_DEFINITIONS {
@@ -800,7 +837,9 @@ mod tests {
             "description": "",
             "operation": {"type": "first_non_null", "paths": ["/value"]},
             "result_type": "string",
-            "enabled": true
+            "enabled": true,
+            "revision": 1,
+            "semantics_version": 1
         })
     }
 
@@ -864,5 +903,19 @@ mod tests {
             validate_computed_field_definitions(&document_with_computed_definitions(definitions))
                 .unwrap_err();
         assert!(error.to_string().contains(&maximum.to_string()));
+    }
+
+    #[test]
+    fn restore_rejects_duplicate_computed_definition_keys() {
+        let definitions = vec![
+            computed_definition(42, None, "duplicate".to_string()),
+            computed_definition(42, None, "duplicate".to_string()),
+        ];
+
+        let error =
+            validate_computed_field_definitions(&document_with_computed_definitions(definitions))
+                .unwrap_err();
+
+        assert!(error.to_string().contains("duplicate"));
     }
 }

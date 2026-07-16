@@ -4,14 +4,15 @@ mod tests {
     use actix_web::{http::StatusCode, test};
 
     use crate::db::traits::computed_field::{
-        class_computation_state_for, create_personal_definition, execute_computed_reindex_task,
-        request_class_rebuild,
+        class_computation_state_for, create_personal_definition, create_shared_definition,
+        execute_computed_reindex_task, request_class_rebuild,
     };
     use crate::db::traits::task::recover_expired_task_leases;
     use crate::db::with_connection;
+    use crate::events::EventContext;
     use crate::models::{
-        ComputedFieldDefinitionRequest, NewHubuumClass, NewHubuumObject, Permissions, TaskID,
-        TaskStatus,
+        ComputedFieldDefinitionRequest, HubuumClassID, NewHubuumClass, NewHubuumObject,
+        Permissions, TaskID, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::tests::api_operations::{get_request, patch_request, post_request};
@@ -76,11 +77,23 @@ mod tests {
                 .unwrap();
             let task_id = match state.active_task_id {
                 Some(task_id) => task_id,
-                None => request_class_rebuild(&context.pool, class_id, Some(context.admin_user.id))
+                None => {
+                    let class = HubuumClassID::new(class_id)
+                        .unwrap()
+                        .instance(&context.pool)
+                        .await
+                        .unwrap();
+                    request_class_rebuild(
+                        &context.pool,
+                        class_id,
+                        class.collection_id,
+                        Some(context.admin_user.id),
+                    )
                     .await
                     .unwrap()
                     .active_task_id
-                    .expect("manual rebuild task"),
+                    .expect("manual rebuild task")
+                }
             };
             if let Ok(task) = TaskID::new(task_id).unwrap().instance(&context.pool).await {
                 return task;
@@ -348,16 +361,11 @@ mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
-    async fn shared_definition_mutation_requires_update_class(
+    async fn update_class_permission_cannot_manage_shared_definitions(
         #[future(awt)] test_context: TestContext,
     ) {
         let fixture = fixture(&test_context, "shared mutation permission").await;
-        let group = grant_normal_user(
-            &test_context,
-            &fixture,
-            &[Permissions::ReadClass, Permissions::ReadObject],
-        )
-        .await;
+        let group = grant_normal_user(&test_context, &fixture, &[Permissions::UpdateClass]).await;
         let endpoint = format!("/api/v1/classes/{}/computed-fields", fixture.class.id);
 
         let response = post_request(
@@ -378,11 +386,12 @@ mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
-    async fn update_class_permission_can_manage_shared_definitions(
+    async fn update_collection_permission_can_manage_shared_definitions(
         #[future(awt)] test_context: TestContext,
     ) {
-        let fixture = fixture(&test_context, "shared update class permission").await;
-        let group = grant_normal_user(&test_context, &fixture, &[Permissions::UpdateClass]).await;
+        let fixture = fixture(&test_context, "shared update collection permission").await;
+        let group =
+            grant_normal_user(&test_context, &fixture, &[Permissions::UpdateCollection]).await;
         let response = post_request(
             &test_context.pool,
             &test_context.normal_token,
@@ -398,6 +407,28 @@ mod tests {
             .delete_without_events(&test_context.pool)
             .await
             .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn shared_mutation_rejects_a_stale_authorized_collection(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let fixture = fixture(&test_context, "shared stale collection authorization").await;
+
+        let error = create_shared_definition(
+            &test_context.pool,
+            fixture.class.id,
+            fixture.class.collection_id + 1,
+            test_context.admin_user.id,
+            definition_request("stale_authorization"),
+            &EventContext::system(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, crate::errors::ApiError::Conflict(_)));
+        fixture.cleanup().await.unwrap();
     }
 
     #[rstest::rstest]

@@ -21,6 +21,7 @@ pub const MAX_POINTER_TOKENS: usize = 32;
 pub const MAX_DECIMAL_SIGNIFICANT_DIGITS: usize = 34;
 pub const MIN_DECIMAL_EXPONENT: i64 = -308;
 pub const MAX_DECIMAL_EXPONENT: i64 = 308;
+const MAX_DECIMAL_SOURCE_BYTES: usize = 512;
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
 
 /// Release-owned safety limits applied to one evaluation scope.
@@ -796,7 +797,15 @@ fn numeric_aggregate(
 }
 
 fn parse_decimal(number: &Number, path: Option<&JsonPointer>) -> Result<BigDecimal, FieldError> {
-    let value = BigDecimal::from_str(&number.to_string()).map_err(|_| {
+    let source = number.to_string();
+    if source.len() > MAX_DECIMAL_SOURCE_BYTES {
+        return Err(FieldError::new(
+            FieldErrorCode::NumericOutOfRange,
+            path,
+            "Number is outside the supported decimal range",
+        ));
+    }
+    let value = BigDecimal::from_str(&source).map_err(|_| {
         FieldError::new(
             FieldErrorCode::NumericOutOfRange,
             path,
@@ -1271,5 +1280,29 @@ mod tests {
         );
         assert_eq!(result.values["result"], json!(u64::MAX));
         assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn oversized_numeric_source_is_rejected_before_decimal_parsing() {
+        let source = format!(
+            r#"{{"value":{}}}"#,
+            "1".repeat(MAX_DECIMAL_SOURCE_BYTES + 1)
+        );
+        let data = serde_json::from_str(&source).unwrap();
+
+        let result = evaluate_definition(
+            data,
+            definition(
+                Operation::FirstNonNull {
+                    paths: vec![pointer("/value")],
+                },
+                ResultType::Integer,
+            ),
+        );
+
+        assert_eq!(
+            result.errors["result"].code,
+            FieldErrorCode::NumericOutOfRange
+        );
     }
 }

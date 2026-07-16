@@ -16,7 +16,7 @@ use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::parse_query_parameter_with_passthrough;
 use crate::models::{
-    ComputedFieldDefinition, ComputedFieldDefinitionID, ComputedFieldDefinitionPatch,
+    CollectionID, ComputedFieldDefinition, ComputedFieldDefinitionID, ComputedFieldDefinitionPatch,
     ComputedFieldDefinitionRequest, ComputedFieldDeleteResponse, ComputedFieldListResponse,
     ComputedFieldMutationResponse, ComputedFieldPreviewRequest, ComputedFieldPreviewResponse,
     HubuumClassID, HubuumObjectID, Permissions, PersonalComputedFieldDefinitionRequest,
@@ -100,17 +100,21 @@ pub async fn create_shared_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let class_id = class_id.into_inner();
     let class = class_id.instance(&pool).await?;
+    let collection = CollectionID::new(class.collection_id)?
+        .instance(&pool)
+        .await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
-        [Permissions::UpdateClass],
-        class
+        [Permissions::UpdateCollection],
+        collection
     );
     let event_context = requestor.event_context(&http_request);
     let response = create_shared_definition(
         &pool,
         class.id,
+        class.collection_id,
         requestor.principal.id,
         request.into_inner(),
         &event_context,
@@ -145,17 +149,21 @@ pub async fn patch_shared_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let (class_id, field_id) = path.into_inner();
     let class = class_id.instance(&pool).await?;
+    let collection = CollectionID::new(class.collection_id)?
+        .instance(&pool)
+        .await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
-        [Permissions::UpdateClass],
-        class
+        [Permissions::UpdateCollection],
+        collection
     );
     let event_context = requestor.event_context(&http_request);
     let response = update_shared_definition(
         &pool,
         class.id,
+        class.collection_id,
         field_id.id(),
         requestor.principal.id,
         request.into_inner(),
@@ -190,17 +198,21 @@ pub async fn delete_shared_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let (class_id, field_id) = path.into_inner();
     let class = class_id.instance(&pool).await?;
+    let collection = CollectionID::new(class.collection_id)?
+        .instance(&pool)
+        .await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
-        [Permissions::UpdateClass],
-        class
+        [Permissions::UpdateCollection],
+        collection
     );
     let event_context = requestor.event_context(&http_request);
     let state = delete_shared_definition(
         &pool,
         class.id,
+        class.collection_id,
         field_id.id(),
         requestor.principal.id,
         query.expected_revision,
@@ -266,12 +278,15 @@ pub async fn preview_shared_computed_field(
 ) -> Result<impl Responder, ApiError> {
     let class_id = class_id.into_inner();
     let class = class_id.instance(&pool).await?;
+    let collection = CollectionID::new(class.collection_id)?
+        .instance(&pool)
+        .await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
-        [Permissions::UpdateClass],
-        class
+        [Permissions::UpdateCollection],
+        collection
     );
     let request = request.into_inner();
     let data = preview_source(&pool, &requestor, &request, class.id).await?;
@@ -300,15 +315,24 @@ pub async fn rebuild_shared_computed_fields(
 ) -> Result<impl Responder, ApiError> {
     let class_id = class_id.into_inner();
     let class = class_id.instance(&pool).await?;
+    let collection = CollectionID::new(class.collection_id)?
+        .instance(&pool)
+        .await?;
     can!(
         &pool,
         &requestor.principal,
         requestor.scopes(),
-        [Permissions::UpdateClass],
-        class
+        [Permissions::UpdateCollection],
+        collection
     );
     Ok(ApiResponse::accepted(
-        request_class_rebuild(&pool, class.id, Some(requestor.principal.id)).await?,
+        request_class_rebuild(
+            &pool,
+            class.id,
+            class.collection_id,
+            Some(requestor.principal.id),
+        )
+        .await?,
     ))
 }
 

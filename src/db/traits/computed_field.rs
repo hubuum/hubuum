@@ -274,6 +274,25 @@ async fn class_record(
         .await?)
 }
 
+async fn locked_class_record_in_collection(
+    conn: &mut DbConnection,
+    target_class_id: i32,
+    authorized_collection_id: i32,
+) -> Result<HubuumClass, ApiError> {
+    use crate::schema::hubuumclass::dsl::{hubuumclass, id};
+    let class = hubuumclass
+        .filter(id.eq(target_class_id))
+        .for_share()
+        .first::<HubuumClass>(conn)
+        .await?;
+    if class.collection_id != authorized_collection_id {
+        return Err(ApiError::Conflict(format!(
+            "Class {target_class_id} moved from collection {authorized_collection_id}; authorize the request again"
+        )));
+    }
+    Ok(class)
+}
+
 async fn cancel_queued_reindex_tasks(
     conn: &mut DbConnection,
     target_class_id: i32,
@@ -387,6 +406,7 @@ async fn advance_revision_and_enqueue(
 pub async fn create_shared_definition(
     pool: &DbPool,
     target_class_id: i32,
+    authorized_collection_id: i32,
     actor_id: i32,
     request: ComputedFieldDefinitionRequest,
     context: &EventContext,
@@ -394,7 +414,9 @@ pub async fn create_shared_definition(
     let input = request.into_new_shared(target_class_id, actor_id)?;
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         acquire_computed_class_exclusive_lock(conn, target_class_id).await?;
-        let class = class_record(conn, target_class_id).await?;
+        let class =
+            locked_class_record_in_collection(conn, target_class_id, authorized_collection_id)
+                .await?;
         use crate::schema::computed_field_definitions::dsl::{
             class_id, computed_field_definitions, visibility,
         };
@@ -475,6 +497,7 @@ async fn apply_definition_patch(
 pub async fn update_shared_definition(
     pool: &DbPool,
     target_class_id: i32,
+    authorized_collection_id: i32,
     definition_id: i32,
     actor_id: i32,
     patch: ComputedFieldDefinitionPatch,
@@ -482,7 +505,9 @@ pub async fn update_shared_definition(
 ) -> Result<ComputedFieldMutationResponse, ApiError> {
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         acquire_computed_class_exclusive_lock(conn, target_class_id).await?;
-        let class = class_record(conn, target_class_id).await?;
+        let class =
+            locked_class_record_in_collection(conn, target_class_id, authorized_collection_id)
+                .await?;
         let current = locked_definition(conn, definition_id).await?;
         if current.class_id != target_class_id || !current.is_shared() {
             return Err(ApiError::NotFound(format!(
@@ -532,6 +557,7 @@ pub async fn update_shared_definition(
 pub async fn delete_shared_definition(
     pool: &DbPool,
     target_class_id: i32,
+    authorized_collection_id: i32,
     definition_id: i32,
     actor_id: i32,
     expected_revision: i64,
@@ -539,7 +565,9 @@ pub async fn delete_shared_definition(
 ) -> Result<ClassComputationState, ApiError> {
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         acquire_computed_class_exclusive_lock(conn, target_class_id).await?;
-        let class = class_record(conn, target_class_id).await?;
+        let class =
+            locked_class_record_in_collection(conn, target_class_id, authorized_collection_id)
+                .await?;
         let current = locked_definition(conn, definition_id).await?;
         if current.class_id != target_class_id || !current.is_shared() {
             return Err(ApiError::NotFound(format!(
@@ -670,11 +698,13 @@ pub async fn delete_personal_definition(
 pub async fn request_class_rebuild(
     pool: &DbPool,
     target_class_id: i32,
+    authorized_collection_id: i32,
     actor_id: Option<i32>,
 ) -> Result<ClassComputationState, ApiError> {
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         acquire_computed_class_exclusive_lock(conn, target_class_id).await?;
-        let _ = class_record(conn, target_class_id).await?;
+        let _ = locked_class_record_in_collection(conn, target_class_id, authorized_collection_id)
+            .await?;
         let state = ensure_computation_state(conn, target_class_id).await?;
         if let Some(task_id_value) = state.active_task_id {
             use crate::schema::tasks::dsl::{id, request_payload, status, tasks};
@@ -871,7 +901,6 @@ pub(crate) async fn materialize_object_in_transaction(
     object: &HubuumObject,
 ) -> Result<(), ApiError> {
     acquire_computed_class_shared_lock(conn, object.hubuum_class_id).await?;
-    let state = ensure_computation_state(conn, object.hubuum_class_id).await?;
     let definitions = shared_definitions_conn(conn, object.hubuum_class_id).await?;
     if definitions.is_empty() {
         use crate::schema::object_computed_data::dsl::{object_computed_data, object_id};
@@ -880,6 +909,7 @@ pub(crate) async fn materialize_object_in_transaction(
             .await?;
         return Ok(());
     }
+    let state = ensure_computation_state(conn, object.hubuum_class_id).await?;
     let result =
         evaluate_definitions(&object.data, &definitions, MAX_SHARED_DEFINITIONS, "shared")?;
     upsert_materialized(conn, object, state.evaluation_revision, result).await
@@ -1085,14 +1115,7 @@ async fn repair_stale_materializations(
         .iter()
         .map(|object| object.id)
         .collect::<Vec<_>>();
-    let class_ids = stale_objects
-        .iter()
-        .map(|object| object.hubuum_class_id)
-        .collect::<BTreeSet<_>>();
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
-        for class_id in &class_ids {
-            acquire_computed_class_shared_lock(conn, *class_id).await?;
-        }
         use crate::schema::hubuumobject::dsl::{hubuumobject, id};
         let current_objects = hubuumobject
             .filter(id.eq_any(&object_ids))
@@ -1100,6 +1123,17 @@ async fn repair_stale_materializations(
             .for_update()
             .load::<HubuumObject>(conn)
             .await?;
+
+        // Object writes lock their row before taking the class advisory lock.
+        // Repairs and rebuild batches use the same order so an exclusive
+        // definition update cannot form a row/advisory-lock cycle.
+        let class_ids = current_objects
+            .iter()
+            .map(|object| object.hubuum_class_id)
+            .collect::<BTreeSet<_>>();
+        for class_id in &class_ids {
+            acquire_computed_class_shared_lock(conn, *class_id).await?;
+        }
 
         let class_id_values = class_ids.iter().copied().collect::<Vec<_>>();
         use crate::schema::computed_field_definitions::dsl as definition;
@@ -1161,13 +1195,6 @@ async fn process_reindex_batch(
     cursor: i32,
 ) -> Result<ReindexBatch, ApiError> {
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
-        acquire_computed_class_shared_lock(conn, payload.class_id).await?;
-        let state = ensure_computation_state(conn, payload.class_id).await?;
-        if state.evaluation_revision != payload.target_revision
-            || state.active_task_id != Some(task.id)
-        {
-            return Ok(ReindexBatch::Superseded);
-        }
         use crate::schema::hubuumobject::dsl::{hubuum_class_id, hubuumobject, id};
         let objects = hubuumobject
             .filter(hubuum_class_id.eq(payload.class_id))
@@ -1178,6 +1205,13 @@ async fn process_reindex_batch(
             .for_update()
             .load::<HubuumObject>(conn)
             .await?;
+        acquire_computed_class_shared_lock(conn, payload.class_id).await?;
+        let state = ensure_computation_state(conn, payload.class_id).await?;
+        if state.evaluation_revision != payload.target_revision
+            || state.active_task_id != Some(task.id)
+        {
+            return Ok(ReindexBatch::Superseded);
+        }
         if objects.is_empty() {
             return Ok(ReindexBatch::Complete);
         }
