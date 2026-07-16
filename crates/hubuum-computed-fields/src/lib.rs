@@ -165,7 +165,10 @@ impl JsonPointer {
                     None => return Resolution::Missing,
                 },
                 Value::Array(values) => {
-                    if token.len() > 1 && token.starts_with('0') {
+                    if token.is_empty()
+                        || !token.bytes().all(|byte| byte.is_ascii_digit())
+                        || (token.len() > 1 && token.starts_with('0'))
+                    {
                         return Resolution::Missing;
                     }
                     let Ok(index) = token.parse::<usize>() else {
@@ -501,7 +504,6 @@ pub fn evaluate(
     }
     let mut result = EvaluationResult::default();
     let mut work_units = 0usize;
-    let mut output_bytes = 0usize;
     for definition in definitions.iter().filter(|definition| definition.enabled()) {
         let key = definition.key().as_str().to_owned();
         let mut budget = FieldBudget {
@@ -517,32 +519,24 @@ pub fn evaluate(
         };
 
         let value_bytes = serde_json::to_vec(&value).map_or(usize::MAX, |bytes| bytes.len());
-        let error_bytes = error
-            .as_ref()
-            .and_then(|error| serde_json::to_vec(error).ok())
-            .map_or(0, |bytes| bytes.len());
         if value_bytes > limits.max_field_output_bytes {
             let size_error = FieldError::new(
                 FieldErrorCode::ResultTooLarge,
                 None,
                 "Computed field result exceeds the size limit",
             );
-            output_bytes = output_bytes.saturating_add(4).saturating_add(
-                serde_json::to_vec(&size_error).map_or(usize::MAX, |bytes| bytes.len()),
-            );
             result.values.insert(key.clone(), Value::Null);
             result.errors.insert(key, size_error);
         } else {
-            output_bytes = output_bytes
-                .saturating_add(value_bytes)
-                .saturating_add(error_bytes);
             result.values.insert(key.clone(), value);
             if let Some(error) = error {
                 result.errors.insert(key, error);
             }
         }
     }
-    if output_bytes > limits.max_scope_output_bytes {
+    if serde_json::to_vec(&result).map_or(usize::MAX, |bytes| bytes.len())
+        > limits.max_scope_output_bytes
+    {
         return Ok(limit_result(
             enabled_keys,
             FieldErrorCode::ResultTooLarge,
@@ -1067,6 +1061,20 @@ mod tests {
         assert_eq!(result.values["result"], Value::Null);
     }
 
+    #[test]
+    fn array_indexes_require_canonical_ascii_digits() {
+        let result = evaluate_definition(
+            json!(["zero", "one"]),
+            definition(
+                Operation::FirstNonNull {
+                    paths: vec![pointer("/+1")],
+                },
+                ResultType::String,
+            ),
+        );
+        assert_eq!(result.values["result"], Value::Null);
+    }
+
     #[rstest]
     #[case("root")]
     #[case("/~2")]
@@ -1200,6 +1208,53 @@ mod tests {
         .unwrap();
         assert_eq!(result.values["result"], Value::Null);
         assert_eq!(result.errors["result"].code, FieldErrorCode::InputTooLarge);
+    }
+
+    #[test]
+    fn scope_output_limit_includes_result_map_structure() {
+        let result = evaluate(
+            &json!({"value": 1}),
+            &[definition(
+                Operation::FirstNonNull {
+                    paths: vec![pointer("/value")],
+                },
+                ResultType::Integer,
+            )],
+            1,
+            EvaluationLimits::for_tests(1024, 10, 10, 1024, 1),
+        )
+        .unwrap();
+        assert_eq!(result.errors["result"].code, FieldErrorCode::ResultTooLarge);
+    }
+
+    #[rstest]
+    #[case(
+        r#"{"value":0.1234567890123456789012345678901234}"#,
+        ResultType::Number,
+        "0.1234567890123456789012345678901234"
+    )]
+    #[case(
+        r#"{"value":1234567890123456789012345678901234}"#,
+        ResultType::Integer,
+        "1234567890123456789012345678901234"
+    )]
+    fn json_numbers_retain_34_digit_precision(
+        #[case] source: &str,
+        #[case] result_type: ResultType,
+        #[case] expected: &str,
+    ) {
+        let data = serde_json::from_str(source).unwrap();
+        let result = evaluate_definition(
+            data,
+            definition(
+                Operation::FirstNonNull {
+                    paths: vec![pointer("/value")],
+                },
+                result_type,
+            ),
+        );
+        assert_eq!(result.values["result"].to_string(), expected);
+        assert!(result.errors.is_empty());
     }
 
     #[test]

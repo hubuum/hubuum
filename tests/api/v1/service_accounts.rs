@@ -1556,6 +1556,40 @@ mod tests {
         assert_eq!(status, TaskStatus::Running.as_str());
     }
 
+    #[actix_web::test]
+    async fn test_cancel_pending_does_not_cancel_internal_reindex_tasks() {
+        let context = TestContext::new().await;
+        let pool = &context.pool;
+        let group = create_test_group(pool).await;
+        let sa = create_test_service_account(pool, &group, None).await;
+        let task = synthetic_task_of_kind(
+            pool,
+            TaskKind::Reindex,
+            sa.id,
+            TaskStatus::Queued,
+            None,
+            None,
+        )
+        .await;
+
+        let cancelled = cancel_pending_tasks_for_principal(pool, sa.id)
+            .await
+            .unwrap();
+
+        let status: String = with_connection(pool, async |conn| {
+            use crate::schema::tasks::dsl::{id, status, tasks};
+            tasks
+                .filter(id.eq(task.id))
+                .select(status)
+                .first::<String>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(cancelled, 0);
+        assert_ne!(status, TaskStatus::Cancelled.as_str());
+    }
+
     /// The listing applies the manageability filter in SQL: a non-admin sees only
     /// service accounts owned by groups they belong to.
     #[actix_web::test]

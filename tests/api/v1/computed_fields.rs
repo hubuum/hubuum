@@ -4,11 +4,15 @@ mod tests {
     use actix_web::{http::StatusCode, test};
 
     use crate::db::traits::computed_field::{
-        class_computation_state_for, execute_computed_reindex_task, request_class_rebuild,
+        class_computation_state_for, create_personal_definition, execute_computed_reindex_task,
+        request_class_rebuild,
     };
     use crate::db::traits::task::recover_expired_task_leases;
     use crate::db::with_connection;
-    use crate::models::{NewHubuumClass, NewHubuumObject, Permissions, TaskID, TaskStatus};
+    use crate::models::{
+        ComputedFieldDefinitionRequest, NewHubuumClass, NewHubuumObject, Permissions, TaskID,
+        TaskStatus,
+    };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::tests::api_operations::{get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -30,6 +34,10 @@ mod tests {
             "result_type": "string",
             "enabled": true
         })
+    }
+
+    fn definition_request(key: &str) -> ComputedFieldDefinitionRequest {
+        serde_json::from_value(definition(key)).unwrap()
     }
 
     async fn fixture(context: &TestContext, label: &str) -> crate::tests::ObjectFixture {
@@ -825,6 +833,56 @@ mod tests {
             .delete_without_events(&test_context.pool)
             .await
             .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn concurrent_personal_creates_preserve_scope_capacity(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let fixture = fixture(&test_context, "computed personal capacity").await;
+        for index in 0..15 {
+            create_personal_definition(
+                &test_context.pool,
+                fixture.class.id,
+                test_context.normal_user.id,
+                definition_request(&format!("existing_{index}")),
+            )
+            .await
+            .unwrap();
+        }
+
+        let first = create_personal_definition(
+            &test_context.pool,
+            fixture.class.id,
+            test_context.normal_user.id,
+            definition_request("concurrent_first"),
+        );
+        let second = create_personal_definition(
+            &test_context.pool,
+            fixture.class.id,
+            test_context.normal_user.id,
+            definition_request("concurrent_second"),
+        );
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+
+        let count = with_connection(&test_context.pool, async |conn| {
+            use crate::schema::computed_field_definitions::dsl::{
+                class_id, computed_field_definitions, owner_user_id,
+            };
+            computed_field_definitions
+                .filter(class_id.eq(fixture.class.id))
+                .filter(owner_user_id.eq(Some(test_context.normal_user.id)))
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(count, 16);
+
+        fixture.cleanup().await.unwrap();
     }
 
     #[rstest::rstest]

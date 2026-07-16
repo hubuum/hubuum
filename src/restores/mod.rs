@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::sync::Once;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration as StdDuration, Instant};
 
 use chrono::{Duration, NaiveDateTime, Utc};
+use hubuum_computed_fields::{MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -24,7 +26,8 @@ use crate::models::backup::{
 };
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::models::{
-    BackupDocument, ComputedFieldDefinitionRequest, ComputedResultType, NewRestoreJobRecord,
+    BackupDocument, COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED,
+    ComputedFieldDefinitionRequest, ComputedResultType, NewRestoreJobRecord,
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobRecord, RestoreJobStatus,
     RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary, ServerInstanceRecord,
 };
@@ -213,6 +216,8 @@ fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiErr
 }
 
 fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), ApiError> {
+    let mut shared_counts = HashMap::<i32, usize>::new();
+    let mut personal_counts = HashMap::<(i32, i32), usize>::new();
     for row in required_state_section(document, "computed_field_definitions")? {
         let object = row.as_object().ok_or_else(|| {
             ApiError::BadRequest(
@@ -263,6 +268,56 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
                 "Full backup contains an invalid computed-field definition: {error}"
             ))
         })?;
+
+        let positive_id = |field: &str| {
+            object
+                .get(field)
+                .and_then(Value::as_i64)
+                .and_then(|value| i32::try_from(value).ok())
+                .filter(|value| *value > 0)
+                .ok_or_else(|| {
+                    ApiError::BadRequest(format!(
+                        "Full backup computed-field definition has an invalid {field}"
+                    ))
+                })
+        };
+        let class_id = positive_id("class_id")?;
+        let visibility = string("visibility")?;
+        match visibility.as_str() {
+            COMPUTED_FIELD_VISIBILITY_SHARED => {
+                if object
+                    .get("owner_user_id")
+                    .is_some_and(|value| !value.is_null())
+                {
+                    return Err(ApiError::BadRequest(
+                        "Full backup shared computed-field definition must not have an owner_user_id"
+                            .to_string(),
+                    ));
+                }
+                let count = shared_counts.entry(class_id).or_default();
+                *count += 1;
+                if *count > MAX_SHARED_DEFINITIONS {
+                    return Err(ApiError::BadRequest(format!(
+                        "Full backup class {class_id} has more than {MAX_SHARED_DEFINITIONS} shared computed fields"
+                    )));
+                }
+            }
+            COMPUTED_FIELD_VISIBILITY_PERSONAL => {
+                let owner_id = positive_id("owner_user_id")?;
+                let count = personal_counts.entry((owner_id, class_id)).or_default();
+                *count += 1;
+                if *count > MAX_PERSONAL_DEFINITIONS {
+                    return Err(ApiError::BadRequest(format!(
+                        "Full backup user {owner_id} has more than {MAX_PERSONAL_DEFINITIONS} personal computed fields for class {class_id}"
+                    )));
+                }
+            }
+            _ => {
+                return Err(ApiError::BadRequest(
+                    "Full backup computed-field definition has an invalid visibility".to_string(),
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -723,10 +778,47 @@ pub async fn identity_scope_name(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use chrono::{Duration, NaiveDate};
     use rstest::rstest;
+    use serde_json::json;
 
-    use super::{RESTORE_RECONCILIATION_GRACE_SECONDS, RestoreSettings, confirmation_is_stale};
+    use super::{
+        MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
+        RestoreSettings, confirmation_is_stale, validate_computed_field_definitions,
+    };
+    use crate::models::{BackupDocument, BackupManifest, BackupState, CURRENT_BACKUP_VERSION};
+
+    fn computed_definition(class_id: i32, owner_id: Option<i32>, key: String) -> serde_json::Value {
+        json!({
+            "class_id": class_id,
+            "visibility": if owner_id.is_some() { "personal" } else { "shared" },
+            "owner_user_id": owner_id,
+            "key": key,
+            "label": "Restored field",
+            "description": "",
+            "operation": {"type": "first_non_null", "paths": ["/value"]},
+            "result_type": "string",
+            "enabled": true
+        })
+    }
+
+    fn document_with_computed_definitions(definitions: Vec<serde_json::Value>) -> BackupDocument {
+        BackupDocument {
+            backup_version: CURRENT_BACKUP_VERSION,
+            created_at: NaiveDate::from_ymd_opt(2026, 7, 16)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            source_version: "test".to_string(),
+            state: BackupState {
+                sections: BTreeMap::from([("computed_field_definitions".to_string(), definitions)]),
+            },
+            history: None,
+            manifest: BackupManifest::default(),
+        }
+    }
 
     #[rstest]
     #[case::upload_limit(60, 0)]
@@ -756,5 +848,21 @@ mod tests {
             confirmation_is_stale(now - Duration::seconds(age_seconds), now),
             expected
         );
+    }
+
+    #[rstest]
+    #[case::shared(MAX_SHARED_DEFINITIONS, None)]
+    #[case::personal(MAX_PERSONAL_DEFINITIONS, Some(7))]
+    fn restore_rejects_computed_definition_scope_over_capacity(
+        #[case] maximum: usize,
+        #[case] owner_id: Option<i32>,
+    ) {
+        let definitions = (0..=maximum)
+            .map(|index| computed_definition(42, owner_id, format!("field_{index}")))
+            .collect();
+        let error =
+            validate_computed_field_definitions(&document_with_computed_definitions(definitions))
+                .unwrap_err();
+        assert!(error.to_string().contains(&maximum.to_string()));
     }
 }

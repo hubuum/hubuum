@@ -797,12 +797,18 @@ pub(super) async fn mark_claimed_task_failed(
     task: &TaskRecord,
     err: &ApiError,
 ) -> Result<(), ApiError> {
+    let task_kind = TaskKind::from_db(&task.kind)?;
+    let task = if task_kind == TaskKind::Reindex {
+        task.find_record(pool).await?
+    } else {
+        task.clone()
+    };
     let summary = sanitize_error_for_storage(err);
-    if TaskKind::from_db(&task.kind)? == TaskKind::Reindex {
-        crate::db::traits::computed_field::mark_computed_reindex_failed(pool, task, &summary)
+    if task_kind == TaskKind::Reindex {
+        crate::db::traits::computed_field::mark_computed_reindex_failed(pool, &task, &summary)
             .await?;
     }
-    let counts = match TaskKind::from_db(&task.kind)? {
+    let counts = match task_kind {
         TaskKind::Import => task.count_import_results(pool).await?,
         TaskKind::Export => TaskResultCounts::new(1, 0, 1)?,
         TaskKind::RemoteCall => TaskResultCounts::new(1, 0, 1)?,

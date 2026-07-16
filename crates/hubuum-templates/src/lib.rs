@@ -24,6 +24,48 @@ pub fn prepare_template(source: &str) -> PreparedTemplate<'_> {
     PreparedTemplate::new(source)
 }
 
+/// Converts JSON into a MiniJinja value without exposing serde_json's internal
+/// arbitrary-precision number representation as a template map.
+pub fn json_value_to_template_value(value: &serde_json::Value) -> Value {
+    match value {
+        serde_json::Value::Null => Value::from(()),
+        serde_json::Value::Bool(value) => Value::from(*value),
+        serde_json::Value::Number(value) => json_number_to_template_value(value),
+        serde_json::Value::String(value) => Value::from(value.clone()),
+        serde_json::Value::Array(values) => {
+            values.iter().map(json_value_to_template_value).collect()
+        }
+        serde_json::Value::Object(values) => values
+            .iter()
+            .map(|(key, value)| (key.clone(), json_value_to_template_value(value)))
+            .collect(),
+    }
+}
+
+fn json_number_to_template_value(value: &serde_json::Number) -> Value {
+    if let Some(value) = value.as_i64() {
+        return Value::from(value);
+    }
+    if let Some(value) = value.as_u64() {
+        return Value::from(value);
+    }
+
+    let raw = value.to_string();
+    if !raw.contains(['.', 'e', 'E']) {
+        if let Ok(value) = raw.parse::<i128>() {
+            return Value::from(value);
+        }
+        if let Ok(value) = raw.parse::<u128>() {
+            return Value::from(value);
+        }
+    }
+
+    value
+        .as_f64()
+        .map(Value::from)
+        .unwrap_or_else(|| Value::from(raw))
+}
+
 /// Size-bounded `Write` sink for render paths that must stop at a byte budget.
 ///
 /// The writer stores bytes until the configured cap is reached. A write that
@@ -232,7 +274,7 @@ impl PreparedTemplateRender<'_, '_> {
         let limits = self.template.limits_or_error()?;
         bounded_environment(limits)
             .template_from_str(self.template.source)
-            .and_then(|compiled| compiled.render(self.context))
+            .and_then(|compiled| compiled.render(json_value_to_template_value(self.context)))
             .map_err(TemplateError::render)
     }
 }
@@ -474,6 +516,22 @@ mod tests {
             .render()
             .unwrap();
         assert_eq!(rendered, "{\"host\":\"h1\"}");
+    }
+
+    #[test]
+    fn arbitrary_precision_numbers_are_template_scalars() {
+        let context: serde_json::Value = serde_json::from_str(
+            r#"{"integer":1234567890123456789012345678901234,"decimal":0.1234567890123456789012345678901234}"#,
+        )
+        .unwrap();
+        let rendered = prepare_template("{{ integer }}|{{ decimal }}")
+            .limit_recursion(64)
+            .limit_fuel(50_000)
+            .context(&context)
+            .render()
+            .unwrap();
+        assert!(rendered.starts_with("1234567890123456789012345678901234|0.123456789"));
+        assert!(!rendered.contains("$serde_json"));
     }
 
     #[test]

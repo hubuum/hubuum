@@ -108,6 +108,26 @@ async fn acquire_computed_class_exclusive_lock(
     Ok(())
 }
 
+async fn acquire_personal_definition_scope_lock(
+    conn: &mut DbConnection,
+    class_id: i32,
+    owner_id: i32,
+) -> Result<(), ApiError> {
+    if class_id <= 0 || owner_id <= 0 {
+        return Err(ApiError::BadRequest(
+            "Computed-field class and owner ids must be greater than zero".to_string(),
+        ));
+    }
+    // The negative owner key keeps this two-id lock domain separate from the
+    // positive namespace/class pair used by shared materialization locks.
+    diesel::sql_query("SELECT pg_advisory_xact_lock($1, $2)")
+        .bind::<Integer, _>(class_id)
+        .bind::<Integer, _>(-owner_id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 async fn ensure_computation_state(
     conn: &mut DbConnection,
     target_class_id: i32,
@@ -559,6 +579,7 @@ pub async fn create_personal_definition(
 ) -> Result<ComputedFieldDefinition, ApiError> {
     let input = request.into_new_personal(target_class_id, owner_id)?;
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
+        acquire_personal_definition_scope_lock(conn, target_class_id, owner_id).await?;
         let _ = class_record(conn, target_class_id).await?;
         use crate::schema::computed_field_definitions::dsl::{
             class_id, computed_field_definitions, owner_user_id, visibility,

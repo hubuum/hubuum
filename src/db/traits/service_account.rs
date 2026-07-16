@@ -10,8 +10,8 @@ use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::{NewPrincipal, Principal, PrincipalKind};
 use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{
-    NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountWithName, TaskStatus,
-    UpdateServiceAccount,
+    NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountWithName, TaskKind,
+    TaskStatus, UpdateServiceAccount,
 };
 use crate::schema::service_accounts;
 use crate::traits::accessors::InstanceAdapter;
@@ -444,7 +444,8 @@ pub async fn cancel_pending_tasks_for_principal(
         diesel::update(
             tasks
                 .filter(submitted_by.eq(principal_id_value))
-                .filter(status.eq(TaskStatus::Queued.as_str())),
+                .filter(status.eq(TaskStatus::Queued.as_str()))
+                .filter(kind.ne(TaskKind::Reindex.as_str())),
         )
         .set(status.eq(TaskStatus::Cancelled.as_str()))
         .returning(kind)

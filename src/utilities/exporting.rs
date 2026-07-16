@@ -6,8 +6,8 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use hubuum_templates::{
-    MissingValue, MissingValueRecorder, SizeLimitedWriter, TemplateLimits, prepare_template,
-    register_curated_helpers,
+    MissingValue, MissingValueRecorder, SizeLimitedWriter, TemplateLimits,
+    json_value_to_template_value, prepare_template, register_curated_helpers,
 };
 use lru::LruCache;
 use minijinja::value::Value;
@@ -114,7 +114,9 @@ pub fn validate_template_with_limits(
     env.env
         .get_template(&env.template_name)
         .map_err(|error| template_error("Template validation failed", error))?
-        .render(validation_context(content_type))
+        .render(json_value_to_template_value(&validation_context(
+            content_type,
+        )))
         .map_err(|error| template_error("Template validation failed", error))?;
 
     Ok(())
@@ -145,7 +147,9 @@ pub(crate) fn validate_template_sources(
     env.env
         .get_template(&env.template_name)
         .map_err(|error| template_error("Template validation failed", error))?
-        .render(validation_context(content_type))
+        .render(json_value_to_template_value(&validation_context(
+            content_type,
+        )))
         .map_err(|error| template_error("Template validation failed", error))?;
 
     Ok(())
@@ -214,7 +218,9 @@ pub fn render_template(
     let mut writer = SizeLimitedWriter::new(max_output_bytes);
     let lookup = env.env.get_template(&env.template_name);
     let render_result = match lookup {
-        Ok(template) => template.render_captured_to(context, &mut writer),
+        Ok(template) => {
+            template.render_captured_to(json_value_to_template_value(context), &mut writer)
+        }
         Err(error) => {
             let _ = finish_template_warning_capture();
             return Err(template_error("Template lookup failed", error));

@@ -2225,6 +2225,56 @@ async fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
 }
 
 #[tokio::test]
+async fn test_reindex_failure_finalization_reloads_persisted_progress() {
+    let context = TestContext::new().await;
+    let task = (NewTaskRecord {
+        kind: TaskKind::Reindex.as_str().to_string(),
+        status: TaskStatus::Running.as_str().to_string(),
+        submitted_by: Some(context.admin_user.id),
+        submitted_token_id: None,
+        submitted_token_scoped: false,
+        submitted_token_scopes: serde_json::json!([]),
+        idempotency_key: Some(context.scoped_name("reindex-progress-task")),
+        request_hash: None,
+        request_payload: None,
+        summary: None,
+        total_items: 5,
+        processed_items: 0,
+        success_items: 0,
+        failed_items: 0,
+        request_redacted_at: None,
+        started_at: None,
+        finished_at: None,
+    }
+    .create(&context.pool))
+    .await
+    .unwrap();
+
+    with_connection(&context.pool, async |conn| {
+        use crate::schema::tasks::dsl::{id, processed_items, success_items, tasks};
+        diesel::update(tasks.filter(id.eq(task.id)))
+            .set((processed_items.eq(3), success_items.eq(3)))
+            .execute(conn)
+            .await
+    })
+    .await
+    .unwrap();
+
+    mark_claimed_task_failed(
+        &context.pool,
+        &task,
+        &ApiError::InternalServerError("batch failed".to_string()),
+    )
+    .await
+    .unwrap();
+
+    let stored = task.find_record(&context.pool).await.unwrap();
+    assert_eq!(stored.processed_items, 3);
+    assert_eq!(stored.success_items, 3);
+    assert_eq!(stored.failed_items, 1);
+}
+
+#[tokio::test]
 async fn test_count_import_results_summary_counts_success_and_failure_rows() {
     let context = (TestContext::new()).await;
     let task = (NewTaskRecord {
