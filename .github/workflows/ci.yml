@@ -369,17 +369,26 @@ jobs:
           & $dieselBin migration run --database-url "$dbUrl"
           & "$env:PG_BIN\psql.exe" -U postgres -h 127.0.0.1 -p $pgPort -d hubuum_rust_test -c "select * from users;"
       
-      - name: Build (non-Windows)
+      - name: Build test configuration (non-Windows)
         if: "!contains(matrix.platform.os, 'windows')"
-        run: cargo build --no-default-features -F production-all --locked --release
+        run: >-
+          cargo build --no-default-features
+          -F production-all,integration-test-support
+          --locked --release
 
-      - name: Build (Windows)
+      - name: Build test configuration (Windows)
         if: contains(matrix.platform.os, 'windows')
-        run: cargo build -F tls-rustls,amqp,email,valkey --locked --release --target ${{ matrix.platform.target }}
+        run: >-
+          cargo build
+          -F tls-rustls,amqp,email,valkey,integration-test-support
+          --locked --release --target ${{ matrix.platform.target }}
       
-      - name: Run tests (non-Windows, all features)
+      - name: Run tests (non-Windows, production features)
         if: "!contains(matrix.platform.os, 'windows')"
-        run: cargo test --all-features --locked --release
+        run: >-
+          cargo test --no-default-features
+          -F production-all,integration-test-support
+          --locked --release
 
       - name: Run tests (Windows, full release feature set)
         if: contains(matrix.platform.os, 'windows')
