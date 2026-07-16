@@ -17,6 +17,9 @@ use crate::models::{
 };
 
 const TRUNCATE_TABLES: &[&str] = &[
+    "object_computed_data",
+    "class_computation_state",
+    "computed_field_definitions",
     "event_deliveries",
     "events",
     "backup_task_outputs",
@@ -61,6 +64,7 @@ const SERIAL_ID_TABLES: &[&str] = &[
     "collections",
     "permissions",
     "hubuumclass",
+    "computed_field_definitions",
     "hubuumclass_relation",
     "hubuumobject",
     "hubuumobject_relation",
@@ -364,6 +368,8 @@ pub(crate) async fn apply_restore_db(
         for table in HISTORY_SEQUENCE_TABLES {
             reset_sequence(conn, table, "history_id").await?;
         }
+
+        crate::db::traits::computed_field::enqueue_restored_computed_rebuilds(conn).await?;
 
         // Restored event rows must not fan out while they are inserted. This
         // new event is the one deliberate post-restore provenance record and

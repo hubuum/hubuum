@@ -634,6 +634,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bigdecimal"
+version = "0.4.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d6867f1565b3aad85681f1015055b087fcfd840d6aeee6eee7f2da317603695"
+dependencies = [
+ "autocfg",
+ "libm",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2034,6 +2047,7 @@ dependencies = [
  "hmac 0.13.0",
  "hubuum-auth-core",
  "hubuum-auth-ldap",
+ "hubuum-computed-fields",
  "hubuum-event-sink-amqp",
  "hubuum-event-sink-email",
  "hubuum-event-sink-valkey",
@@ -2098,6 +2112,17 @@ dependencies = [
  "serde",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "hubuum-computed-fields"
+version = "0.1.0"
+dependencies = [
+ "bigdecimal",
+ "rstest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2718,6 +2743,12 @@ name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+
+[[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libredox"

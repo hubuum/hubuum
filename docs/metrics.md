@@ -45,6 +45,13 @@ Use admin JSON/API endpoints for detailed high-cardinality views.
 | `hubuum_task_worker_config` | `setting` | Configured task worker count and poll interval |
 | `hubuum_tasks` | `kind`, `status` | Current tasks by bounded kind and status |
 | `hubuum_task_oldest_age_seconds` | `state` | Oldest queued and active task age |
+| `hubuum_computed_field_evaluations_total` | `scope`, `outcome` | Computed-field evaluations by shared, personal, or preview scope and outcome |
+| `hubuum_computed_field_errors_total` | `scope`, `code` | Computed-field runtime errors by stable bounded code |
+| `hubuum_computed_field_live_fallbacks_total` | none | Stale shared materializations evaluated live during reads |
+| `hubuum_computed_field_read_repairs_total` | `outcome` | Guarded stale-materialization repairs by success or failure |
+| `hubuum_computed_field_rebuild_batches_total` | `items` | Computed-field rebuild batches classified as empty or non-empty |
+| `hubuum_computed_field_rebuild_completions_total` | `status` | Computed-field rebuild terminal outcomes |
+| `hubuum_computed_field_rebuild_duration_seconds` | `status` | Computed-field rebuild duration histogram |
 | `hubuum_export_output_cleanup_runs_total` | none | Stored export and backup artifact cleanup runs (legacy metric name) |
 | `hubuum_export_output_cleanup_failures_total` | none | Stored export and backup artifact cleanup failures (legacy metric name) |
 | `hubuum_export_output_cleanup_deleted_total` | none | Stored export and backup artifacts deleted by cleanup (legacy metric name) |

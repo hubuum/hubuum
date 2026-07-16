@@ -1,8 +1,14 @@
 use actix_web::web;
 
-use crate::api::v1::handlers::{classes, events};
+use crate::api::v1::handlers::{classes, computed_fields, events};
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(classes::get_classes)
+    cfg.service(computed_fields::get_shared_computed_fields)
+        .service(computed_fields::create_shared_computed_field)
+        .service(computed_fields::patch_shared_computed_field)
+        .service(computed_fields::delete_shared_computed_field)
+        .service(computed_fields::preview_shared_computed_field)
+        .service(computed_fields::rebuild_shared_computed_fields)
+        .service(classes::get_classes)
         .service(classes::get_class)
         .service(events::get_class_events)
         .service(classes::get_class_history)

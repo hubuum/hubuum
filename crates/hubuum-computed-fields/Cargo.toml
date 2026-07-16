@@ -1,0 +1,15 @@
+[package]
+name = "hubuum-computed-fields"
+version = "0.1.0"
+edition = "2024"
+description = "Typed, deterministic computed-field evaluation for Hubuum"
+license = "MIT"
+
+[dependencies]
+bigdecimal = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+thiserror = "2"
+
+[dev-dependencies]
+rstest = "0.26"

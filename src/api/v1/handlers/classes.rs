@@ -10,6 +10,7 @@ use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
 use crate::db::traits::authz::scope_allows;
+use crate::db::traits::computed_field::enrich_objects_with_computed;
 use crate::db::traits::history::{
     class_as_of, class_history_paginated_with_total_count, object_as_of,
     object_history_paginated_with_total_count,
@@ -38,10 +39,11 @@ use crate::models::{
     HubuumClassHistory, HubuumClassID, HubuumClassRelation, HubuumClassRelationID,
     HubuumClassWithPath, HubuumObject, HubuumObjectHistory, HubuumObjectID, HubuumObjectRelation,
     HubuumObjectWithPath, NewHubuumClass, NewHubuumClassRelationFromClass, NewHubuumObject,
-    NewHubuumObjectRelation, Permissions, RelatedClassGraph, RelatedObjectGraph,
-    RelatedObjectGraphRow, UpdateHubuumClass, UpdateHubuumObject,
+    NewHubuumObjectRelation, NewHubuumObjectRequest, Permissions, RelatedClassGraph,
+    RelatedObjectGraph, RelatedObjectGraphRow, UpdateHubuumClass, UpdateHubuumObject,
+    UpdateHubuumObjectRequest,
 };
-use crate::traits::{CanDelete, CanSave, CanUpdate, Search, SelfAccessors};
+use crate::traits::{BackendContext, CanDelete, CanSave, CanUpdate, Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
 
 use crate::models::search::{
@@ -49,6 +51,60 @@ use crate::models::search::{
     parse_query_parameter, parse_query_parameter_with_passthrough,
 };
 use crate::models::traits::class_relation::ToHubuumClasses;
+use crate::pagination::{Page, finalize_page};
+
+fn parse_computed_include(query_string: &str) -> Result<(QueryOptions, bool), ApiError> {
+    let (params, mut passthrough) =
+        parse_query_parameter_with_passthrough(query_string, &["include"])?;
+    let include_computed = match passthrough.remove("include") {
+        None => false,
+        Some(values) if values.as_slice() == ["computed"] => true,
+        Some(_) => {
+            return Err(ApiError::BadRequest(
+                "include accepts exactly one value: computed".to_string(),
+            ));
+        }
+    };
+    Ok((params, include_computed))
+}
+
+async fn computed_personal_owner(
+    pool: &AppContext,
+    requestor: &Authenticated,
+    class: &HubuumClass,
+) -> Result<Option<i32>, ApiError> {
+    if !requestor.principal.is_human() {
+        return Ok(None);
+    }
+    let resource = class.to_resource_ref(pool.db_pool()).await?;
+    match authorize_resources(
+        pool.permission_backend(),
+        pool,
+        &requestor.principal,
+        requestor.scopes(),
+        vec![Permissions::ReadClass],
+        vec![resource],
+    )
+    .await
+    {
+        Ok(()) => Ok(Some(requestor.principal.id)),
+        Err(ApiError::Forbidden(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn serialized_object_page<T: serde::Serialize>(
+    page: Page<T>,
+    total_count: i64,
+    no_store: bool,
+) -> Result<ApiResponse<serde_json::Value>, ApiError> {
+    Ok(ApiResponse::paginated_items(
+        serde_json::to_value(page.items)?,
+        &page.next_cursor,
+        total_count,
+        no_store,
+    ))
+}
 
 fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
     HubuumObjectWithPath {
@@ -918,10 +974,11 @@ async fn get_related_class_graph(
     tag = "classes",
     security(("bearer_auth" = [])),
     params(
-        ("class_id" = i32, Path, description = "Class ID")
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("include" = Option<String>, Query, description = "Set to computed to enrich each object")
     ),
     responses(
-        (status = 200, description = "Objects in class", body = [HubuumObject]),
+        (status = 200, description = "Objects in class, optionally enriched with computed fields", body = [crate::models::HubuumObjectReadResponse]),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse)
@@ -938,10 +995,7 @@ async fn get_objects_in_class(
     let class = class_id.into_inner();
     let query_string = req.query_string();
 
-    let mut params = match parse_query_parameter(query_string) {
-        Ok(params) => params,
-        Err(e) => return Err(e),
-    };
+    let (mut params, include_computed) = parse_computed_include(query_string)?;
 
     // Manually add a filter for the class itself to restrict the search
     // in order to restrict the search to the class.
@@ -968,7 +1022,8 @@ async fn get_objects_in_class(
         (objects, total_count)
     } else {
         if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
-            return ApiResponse::paginated(Vec::new(), 0, &params);
+            let page = finalize_page(Vec::<HubuumObject>::new(), &params)?;
+            return serialized_object_page(page, 0, include_computed);
         }
         let candidates = user
             .search_objects_from_backend_with_admin_status(
@@ -1001,7 +1056,23 @@ async fn get_objects_in_class(
         (page.rows, page.total_count)
     };
 
-    ApiResponse::paginated(objects, total_count, &params)
+    let page = finalize_page(objects, &params)?;
+    if include_computed {
+        let class = class.instance(&pool).await?;
+        let personal_owner = computed_personal_owner(&pool, &requestor, &class).await?;
+        let next_cursor = page.next_cursor;
+        let enriched = enrich_objects_with_computed(&pool, page.items, personal_owner).await?;
+        serialized_object_page(
+            Page {
+                items: enriched,
+                next_cursor,
+            },
+            total_count,
+            true,
+        )
+    } else {
+        serialized_object_page(page, total_count, false)
+    }
 }
 
 #[utoipa::path(
@@ -1012,7 +1083,7 @@ async fn get_objects_in_class(
     params(
         ("class_id" = i32, Path, description = "Class ID")
     ),
-    request_body = NewHubuumObject,
+    request_body = NewHubuumObjectRequest,
     responses(
         (status = 201, description = "Object created in class", body = HubuumObject),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
@@ -1025,12 +1096,12 @@ async fn create_object_in_class(
     pool: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
-    object_data: web::Json<NewHubuumObject>,
+    object_data: web::Json<NewHubuumObjectRequest>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
-    let object_data = object_data.into_inner();
+    let object_data = object_data.into_inner().into_domain()?;
 
     debug!(
         message = "Creating object in class",
@@ -1063,10 +1134,11 @@ async fn create_object_in_class(
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Class ID"),
-        ("object_id" = i32, Path, description = "Object ID")
+        ("object_id" = i32, Path, description = "Object ID"),
+        ("include" = Option<String>, Query, description = "Set to computed to enrich the object")
     ),
     responses(
-        (status = 200, description = "Object in class", body = HubuumObject),
+        (status = 200, description = "Object in class, optionally enriched with computed fields", body = crate::models::HubuumObjectReadResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Object not found", body = ApiErrorResponse)
     )
@@ -1076,6 +1148,7 @@ async fn get_object_in_class(
     pool: AppContext,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
@@ -1097,7 +1170,28 @@ async fn get_object_in_class(
         object
     );
 
-    Ok(ApiResponse::new(object, StatusCode::OK))
+    let (_, include_computed) = parse_computed_include(req.query_string())?;
+    if include_computed {
+        let class = class_id.instance(&pool).await?;
+        let personal_owner = computed_personal_owner(&pool, &requestor, &class).await?;
+        let enriched = enrich_objects_with_computed(&pool, vec![object], personal_owner)
+            .await?
+            .pop()
+            .ok_or_else(|| {
+                ApiError::InternalServerError(
+                    "Computed object enrichment returned no object".to_string(),
+                )
+            })?;
+        Ok(ApiResponse::new_private_no_store(
+            serde_json::to_value(enriched)?,
+            StatusCode::OK,
+        ))
+    } else {
+        Ok(ApiResponse::new(
+            serde_json::to_value(object)?,
+            StatusCode::OK,
+        ))
+    }
 }
 
 #[utoipa::path(
@@ -1109,7 +1203,7 @@ async fn get_object_in_class(
         ("class_id" = i32, Path, description = "Class ID"),
         ("object_id" = i32, Path, description = "Object ID")
     ),
-    request_body = UpdateHubuumObject,
+    request_body = UpdateHubuumObjectRequest,
     responses(
         (status = 200, description = "Updated object", body = HubuumObject),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
@@ -1122,12 +1216,12 @@ async fn patch_object_in_class(
     pool: AppContext,
     requestor: Authenticated,
     paths: web::Path<(HubuumClassID, HubuumObjectID)>,
-    object_data: web::Json<UpdateHubuumObject>,
+    object_data: web::Json<UpdateHubuumObjectRequest>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
-    let object_data = object_data.into_inner();
+    let object_data = object_data.into_inner().into_domain()?;
 
     debug!(
         message = "Updating object in class",

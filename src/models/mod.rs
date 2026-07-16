@@ -2,6 +2,7 @@
 pub mod backup;
 pub mod class;
 pub mod collection;
+pub mod computed_field;
 pub mod event_delivery;
 pub mod event_subscription;
 pub mod export;
@@ -28,6 +29,7 @@ pub mod traits;
 pub use crate::models::backup::*;
 pub use crate::models::class::*;
 pub use crate::models::collection::*;
+pub use crate::models::computed_field::*;
 pub use crate::models::event_delivery::*;
 pub use crate::models::event_subscription::*;
 pub use crate::models::export::*;

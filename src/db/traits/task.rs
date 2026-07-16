@@ -984,6 +984,27 @@ async fn emit_task_lifecycle_event(
         .map_err(ApiError::from)
 }
 
+pub(crate) async fn emit_internal_task_event(
+    conn: &mut crate::db::DbConnection,
+    event: &NewTaskEventRecord,
+    actor_user_id: Option<i32>,
+    task_kind: TaskKind,
+) -> Result<crate::events::Event, ApiError> {
+    let actor_kind = if actor_user_id.is_some() {
+        ActorKind::User
+    } else {
+        ActorKind::System
+    };
+    emit_task_lifecycle_event(
+        conn,
+        event,
+        actor_kind,
+        actor_user_id,
+        Some(task_kind.as_str()),
+    )
+    .await
+}
+
 impl NewTaskEventRecord {
     /// Append this event to its task's history and return the persisted event.
     pub async fn append(self, pool: &DbPool) -> Result<TaskEventRecord, ApiError> {
@@ -1015,18 +1036,19 @@ pub async fn insert_import_results(
     .await
 }
 
-pub(crate) fn executable_task_kind_values() -> [&'static str; 4] {
+pub(crate) fn executable_task_kind_values() -> [&'static str; 5] {
     [
         TaskKind::Import.as_str(),
         TaskKind::Export.as_str(),
         TaskKind::Backup.as_str(),
+        TaskKind::Reindex.as_str(),
         TaskKind::RemoteCall.as_str(),
     ]
 }
 
 static NEXT_TASK_KIND: AtomicUsize = AtomicUsize::new(0);
 
-fn task_kind_claim_order(start: usize) -> [&'static str; 4] {
+fn task_kind_claim_order(start: usize) -> [&'static str; 5] {
     let kinds = executable_task_kind_values();
     std::array::from_fn(|offset| kinds[(start + offset) % kinds.len()])
 }
@@ -1250,6 +1272,14 @@ async fn recover_expired_task_leases_matching(
             let previous_status = stale_task.status.clone();
             let message = "Task worker lease expired; task failed without automatic replay";
             let counts = recovered_task_result_counts(conn, &stale_task).await?;
+            if TaskKind::from_db(&stale_task.kind)? == TaskKind::Reindex {
+                crate::db::traits::computed_field::mark_recovered_computed_reindex_failed(
+                    conn,
+                    stale_task.id,
+                    message,
+                )
+                .await?;
+            }
             emit_task_lifecycle_event(
                 conn,
                 &NewTaskEventRecord {
@@ -1431,6 +1461,64 @@ async fn insert_queued_task_with_event(
         ActorKind::User,
         Some(submitted_by),
         Some(task_kind.as_str()),
+    )
+    .await?;
+
+    Ok(task)
+}
+
+/// Insert an internal task as part of a caller-owned transaction.
+///
+/// Internal maintenance tasks may outlive the principal that triggered them,
+/// so execution cannot depend on reloading or reauthorizing that principal.
+pub(crate) async fn insert_internal_queued_task(
+    conn: &mut crate::db::DbConnection,
+    kind: TaskKind,
+    payload: serde_json::Value,
+    total_items_value: i32,
+    submitted_by_value: Option<i32>,
+) -> Result<TaskRecord, ApiError> {
+    use crate::schema::tasks::dsl::tasks;
+
+    let task = diesel::insert_into(tasks)
+        .values(NewTaskRecord {
+            kind: kind.as_str().to_string(),
+            status: TaskStatus::Queued.as_str().to_string(),
+            submitted_by: submitted_by_value,
+            idempotency_key: None,
+            request_hash: None,
+            request_payload: Some(payload),
+            summary: None,
+            total_items: total_items_value,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            request_redacted_at: None,
+            started_at: None,
+            finished_at: None,
+        })
+        .get_result::<TaskRecord>(conn)
+        .await?;
+
+    let actor_kind = if submitted_by_value.is_some() {
+        ActorKind::User
+    } else {
+        ActorKind::System
+    };
+    emit_task_lifecycle_event(
+        conn,
+        &NewTaskEventRecord {
+            task_id: task.id,
+            event_type: TaskStatus::Queued.as_str().to_string(),
+            message: "Internal task queued".to_string(),
+            data: None,
+        },
+        actor_kind,
+        submitted_by_value,
+        Some(kind.as_str()),
     )
     .await?;
 
@@ -1686,12 +1774,14 @@ mod tests {
                 TaskKind::Import.as_str(),
                 TaskKind::Export.as_str(),
                 TaskKind::Backup.as_str(),
+                TaskKind::Reindex.as_str(),
                 TaskKind::RemoteCall.as_str(),
             ]
         );
         assert_eq!(task_kind_claim_order(1)[0], TaskKind::Export.as_str());
         assert_eq!(task_kind_claim_order(2)[0], TaskKind::Backup.as_str());
-        assert_eq!(task_kind_claim_order(3)[0], TaskKind::RemoteCall.as_str());
+        assert_eq!(task_kind_claim_order(3)[0], TaskKind::Reindex.as_str());
+        assert_eq!(task_kind_claim_order(4)[0], TaskKind::RemoteCall.as_str());
     }
 
     #[tokio::test]

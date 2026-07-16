@@ -9,6 +9,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added class-bound shared and human-owned personal computed object fields with
+  a typed deterministic operation catalog, preview and management APIs,
+  opt-in object enrichment, transactional shared materialization, stale-read
+  fallback and repair, and bounded task-backed rebuilds.
 - Added a pluggable permission backend. Local SQL authorization remains the
   default and is available in every build, while opt-in Treetop support makes
   Cedar policies authoritative across point checks, list and search visibility,
@@ -61,13 +65,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   group with unscoped tokens; service accounts remain excluded from human/IAM
   administration. Workers recheck runtime-admin authority before execution, so
   queued tasks fail closed if that authority is revoked.
-- **Breaking:** Backup documents are now version 2 and always represent a
+- **Breaking:** Backup documents are now version 3 and always represent a
   full-system disaster-recovery snapshot. Collection-scoped backup and embedded
-  import representations were removed; use export/import for selective or
-  merge-oriented transfers, and create new version 2 backups before relying on
-  the logical restore workflow. Backup creation and artifact access, plus
-  restore staging and confirmation, now require an unscoped administrator
-  token; history is included unless explicitly omitted.
+  import representations were removed; computed-field definitions are included
+  while their rebuildable state and materialization cache are excluded. Use
+  export/import for selective or merge-oriented transfers, and create new
+  version 3 backups before relying on the logical restore workflow. Backup
+  creation and artifact access, plus restore staging and confirmation, now
+  require an unscoped administrator token; history is included unless
+  explicitly omitted.
 - Expired export and backup artifacts now share one cleanup schedule and metric
   family. The existing export-prefixed environment variable and metric names
   are retained for compatibility.

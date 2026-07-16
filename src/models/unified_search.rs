@@ -18,6 +18,7 @@ use crate::traits::{BackendContext, Search};
 use crate::utilities::extensions::CustomStringExtensions;
 
 const MAX_UNIFIED_SEARCH_QUERY_LENGTH: usize = 256;
+const UNIFIED_SEARCH_CURSOR_VERSION: u8 = 1;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema, Hash,
@@ -54,7 +55,7 @@ impl FromStr for UnifiedSearchKind {
     }
 }
 
-/// Opaque pagination cursor token for unified search. Serialized to a
+/// Opaque pagination cursor token for unified search. Encoded as a versioned
 /// base64url payload by [`encode_cursor`] and recovered by [`decode_cursor`].
 /// Fields are public so the codec can be exercised directly (for example, in
 /// benchmarks).
@@ -334,19 +335,42 @@ fn default_kinds() -> BTreeSet<UnifiedSearchKind> {
 
 /// Serialize a unified-search cursor token to its base64url wire form.
 pub fn encode_cursor(token: &UnifiedSearchCursorToken) -> Result<String, ApiError> {
-    let bytes = serde_json::to_vec(token).map_err(|error| {
-        ApiError::InternalServerError(format!("Failed to encode search cursor: {error}"))
-    })?;
+    let mut bytes = Vec::with_capacity(9 + token.name.len());
+    bytes.push(UNIFIED_SEARCH_CURSOR_VERSION);
+    bytes.extend_from_slice(&token.rank.to_be_bytes());
+    bytes.extend_from_slice(&token.id.to_be_bytes());
+    bytes.extend_from_slice(token.name.as_bytes());
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 
 /// Recover a unified-search cursor token from its base64url wire form.
 pub fn decode_cursor(cursor: &str) -> Result<UnifiedSearchCursorToken, ApiError> {
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+    let mut bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(cursor)
         .map_err(|error| ApiError::BadRequest(format!("Invalid search cursor: {error}")))?;
-    serde_json::from_slice::<UnifiedSearchCursorToken>(&bytes)
-        .map_err(|error| ApiError::BadRequest(format!("Invalid search cursor: {error}")))
+    if bytes.first() == Some(&b'{') {
+        return serde_json::from_slice::<UnifiedSearchCursorToken>(&bytes)
+            .map_err(|error| ApiError::BadRequest(format!("Invalid search cursor: {error}")));
+    }
+    if bytes.len() < 9 || bytes[0] != UNIFIED_SEARCH_CURSOR_VERSION {
+        return Err(ApiError::BadRequest(
+            "Invalid search cursor: unsupported cursor format".to_string(),
+        ));
+    }
+
+    let rank = i32::from_be_bytes(
+        bytes[1..5]
+            .try_into()
+            .expect("validated unified-search cursor header"),
+    );
+    let id = i32::from_be_bytes(
+        bytes[5..9]
+            .try_into()
+            .expect("validated unified-search cursor header"),
+    );
+    let name = String::from_utf8(bytes.split_off(9))
+        .map_err(|error| ApiError::BadRequest(format!("Invalid search cursor: {error}")))?;
+    Ok(UnifiedSearchCursorToken { rank, name, id })
 }
 
 struct SearchPage<T> {
@@ -923,5 +947,18 @@ mod tests {
         };
         let encoded = encode_cursor(&token).unwrap();
         assert_eq!(decode_cursor(&encoded).unwrap(), token);
+    }
+
+    #[test]
+    fn cursor_decoder_accepts_legacy_json_tokens() {
+        let token = UnifiedSearchCursorToken {
+            rank: 2,
+            name: "asset-001".to_string(),
+            id: 4242,
+        };
+        let legacy = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&token).unwrap());
+
+        assert_eq!(decode_cursor(&legacy).unwrap(), token);
     }
 }

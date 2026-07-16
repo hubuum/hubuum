@@ -17,6 +17,7 @@ categories = ["web-programming::http-server"]
 members = [
     "crates/hubuum-auth-core",
     "crates/hubuum-auth-ldap",
+    "crates/hubuum-computed-fields",
     "crates/hubuum-event-sink-amqp",
     "crates/hubuum-event-sink-email",
     "crates/hubuum-event-sink-valkey",
@@ -58,11 +59,12 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 redis = { version = "1.3.0", default-features = false, features = ["connection-manager", "tokio-rustls-comp"], optional = true }
 rustls-platform-verifier = "0.7"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.11"
 hmac = "0.13"
 hubuum-auth-core = { path = "crates/hubuum-auth-core" }
 hubuum-auth-ldap = { path = "crates/hubuum-auth-ldap" }
+hubuum-computed-fields = { path = "crates/hubuum-computed-fields" }
 hubuum-event-sink-amqp = { path = "crates/hubuum-event-sink-amqp", optional = true }
 hubuum-event-sink-email = { path = "crates/hubuum-event-sink-email", optional = true }
 hubuum-event-sink-valkey = { path = "crates/hubuum-event-sink-valkey", optional = true }

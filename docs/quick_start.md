@@ -88,6 +88,7 @@ budgeting, pool observability, and a repeatable k6 scenario.
 | `HUBUUM_TASK_LEASE_SECONDS` | `60` | Durable task lease duration |
 | `HUBUUM_TASK_HEARTBEAT_SECONDS` | `20` | Lease renewal interval; must be shorter than the lease |
 | `HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS` | `30` | Minimum interval between abandoned-task recovery scans |
+| `HUBUUM_COMPUTED_REINDEX_BATCH_SIZE` | `100` | Objects processed per computed-field rebuild transaction; valid range is 1 through 1000 |
 | `HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER` | `100` | Maximum queued, validating, or running import tasks one user may have at once |
 
 Background workers and PostgreSQL notification listeners participate in

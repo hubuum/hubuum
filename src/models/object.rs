@@ -58,6 +58,83 @@ pub struct UpdateHubuumObject {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+enum ComputedInputPresence {
+    #[default]
+    Absent,
+    Present,
+}
+
+impl<'de> Deserialize<'de> for ComputedInputPresence {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let _ = serde_json::Value::deserialize(deserializer)?;
+        Ok(Self::Present)
+    }
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct NewHubuumObjectRequest {
+    pub name: String,
+    pub collection_id: i32,
+    pub hubuum_class_id: i32,
+    pub data: serde_json::Value,
+    pub description: String,
+    #[serde(default)]
+    #[schema(ignore)]
+    computed: ComputedInputPresence,
+}
+
+impl NewHubuumObjectRequest {
+    pub fn into_domain(self) -> Result<NewHubuumObject, ApiError> {
+        if matches!(self.computed, ComputedInputPresence::Present) {
+            return Err(ApiError::BadRequest(
+                "computed is response-only and cannot be supplied when creating an object"
+                    .to_string(),
+            ));
+        }
+        Ok(NewHubuumObject {
+            name: self.name,
+            collection_id: self.collection_id,
+            hubuum_class_id: self.hubuum_class_id,
+            data: self.data,
+            description: self.description,
+        })
+    }
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct UpdateHubuumObjectRequest {
+    pub name: Option<String>,
+    pub collection_id: Option<i32>,
+    pub hubuum_class_id: Option<i32>,
+    pub data: Option<serde_json::Value>,
+    pub description: Option<String>,
+    #[serde(default)]
+    #[schema(ignore)]
+    computed: ComputedInputPresence,
+}
+
+impl UpdateHubuumObjectRequest {
+    pub fn into_domain(self) -> Result<UpdateHubuumObject, ApiError> {
+        if matches!(self.computed, ComputedInputPresence::Present) {
+            return Err(ApiError::BadRequest(
+                "computed is response-only and cannot be supplied when updating an object"
+                    .to_string(),
+            ));
+        }
+        Ok(UpdateHubuumObject {
+            name: self.name,
+            collection_id: self.collection_id,
+            hubuum_class_id: self.hubuum_class_id,
+            data: self.data,
+            description: self.description,
+        })
+    }
+}
+
 impl UpdateHubuumObject {
     pub(crate) fn has_changes(&self, current: &HubuumObject) -> bool {
         self.name

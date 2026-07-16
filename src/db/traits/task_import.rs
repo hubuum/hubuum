@@ -508,11 +508,13 @@ pub async fn create_object_db(
         description: input.description.clone(),
     };
 
-    diesel::insert_into(hubuumobject)
+    let object = diesel::insert_into(hubuumobject)
         .values(&new_object)
         .get_result::<HubuumObject>(conn)
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    crate::db::traits::computed_field::materialize_object_in_transaction(conn, &object).await?;
+    Ok(object)
 }
 
 pub async fn update_object_db(
@@ -530,7 +532,7 @@ pub async fn update_object_db(
         description: Some(input.description.clone()),
     };
 
-    crate::db::updated_or_current(
+    let object = crate::db::updated_or_current(
         diesel::update(hubuumobject.filter(id.eq(object_id_value)))
             .set(&update)
             .get_result::<HubuumObject>(conn)
@@ -544,7 +546,9 @@ pub async fn update_object_db(
         },
     )
     .await
-    .map_err(ApiError::from)
+    .map_err(ApiError::from)?;
+    crate::db::traits::computed_field::materialize_object_in_transaction(conn, &object).await?;
+    Ok(object)
 }
 
 fn imported_timestamps(

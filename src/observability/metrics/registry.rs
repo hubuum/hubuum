@@ -111,6 +111,35 @@ pub fn init() -> Result<(), ApiError> {
             .with_description("Oldest queued or active task age")
             .with_unit("s")
             .build(),
+        computed_evaluations: meter
+            .u64_counter("hubuum_computed_field_evaluations")
+            .with_description("Computed-field evaluations by scope and outcome")
+            .build(),
+        computed_evaluator_errors: meter
+            .u64_counter("hubuum_computed_field_errors")
+            .with_description("Computed-field runtime errors by stable code")
+            .build(),
+        computed_live_fallbacks: meter
+            .u64_counter("hubuum_computed_field_live_fallbacks")
+            .with_description("Stale materializations evaluated live during reads")
+            .build(),
+        computed_read_repairs: meter
+            .u64_counter("hubuum_computed_field_read_repairs")
+            .with_description("Guarded computed-field read repairs by outcome")
+            .build(),
+        computed_rebuild_batches: meter
+            .u64_counter("hubuum_computed_field_rebuild_batches")
+            .with_description("Computed-field rebuild batches")
+            .build(),
+        computed_rebuild_completions: meter
+            .u64_counter("hubuum_computed_field_rebuild_completions")
+            .with_description("Computed-field rebuild terminal outcomes")
+            .build(),
+        computed_rebuild_duration: meter
+            .f64_histogram("hubuum_computed_field_rebuild_duration")
+            .with_description("Computed-field rebuild duration")
+            .with_unit("s")
+            .build(),
         export_output_cleanup_runs: meter
             .u64_counter("hubuum_export_output_cleanup_runs")
             .with_description("Stored export and backup output cleanup runs")

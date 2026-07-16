@@ -1408,6 +1408,15 @@
             }
           },
           {
+            "name": "include",
+            "in": "query",
+            "description": "Set to computed to enrich each object",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
@@ -1446,7 +1455,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Objects in class The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Objects in class, optionally enriched with computed fields The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
@@ -1466,7 +1475,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/HubuumObject"
+                    "$ref": "#/components/schemas/HubuumObjectReadResponse"
                   }
                 }
               }
@@ -1532,7 +1541,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NewHubuumObject"
+                "$ref": "#/components/schemas/NewHubuumObjectRequest"
               }
             }
           },
@@ -1571,6 +1580,405 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/computed-fields": {
+      "get": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Computed Fields",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/computed-fields.",
+        "operationId": "getApiV1ClassesByClassIdComputedFields",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Shared computed-field definitions and rebuild state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Computed Fields",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/computed-fields.",
+        "operationId": "postApiV1ClassesByClassIdComputedFields",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputedFieldDefinitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Shared definition created and rebuild queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid definition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Key conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/computed-fields/preview": {
+      "post": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Computed Fields Preview",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/computed-fields/preview.",
+        "operationId": "postApiV1ClassesByClassIdComputedFieldsPreview",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputedFieldPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Computed-field preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/computed-fields/rebuild": {
+      "post": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Post Api V1 Classes By Class Id Computed Fields Rebuild",
+        "description": "Auto-generated documentation for POST /api/v1/classes/{class_id}/computed-fields/rebuild.",
+        "operationId": "postApiV1ClassesByClassIdComputedFieldsRebuild",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Computed-field rebuild queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassComputationState"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/computed-fields/{field_id}": {
+      "delete": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Delete Api V1 Classes By Class Id Computed Fields By Field Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/classes/{class_id}/computed-fields/{field_id}.",
+        "operationId": "deleteApiV1ClassesByClassIdComputedFieldsByFieldId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "field_id",
+            "in": "path",
+            "description": "Computed-field definition ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Shared definition deleted and rebuild queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldDeleteResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Patch Api V1 Classes By Class Id Computed Fields By Field Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/classes/{class_id}/computed-fields/{field_id}.",
+        "operationId": "patchApiV1ClassesByClassIdComputedFieldsByFieldId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "field_id",
+            "in": "path",
+            "description": "Computed-field definition ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputedFieldDefinitionPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Shared definition updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid definition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision or key conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -3184,15 +3592,24 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "Set to computed to enrich the object",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Object in class",
+            "description": "Object in class, optionally enriched with computed fields",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubuumObject"
+                  "$ref": "#/components/schemas/HubuumObjectReadResponse"
                 }
               }
             }
@@ -3317,7 +3734,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateHubuumObject"
+                "$ref": "#/components/schemas/UpdateHubuumObjectRequest"
               }
             }
           },
@@ -8876,6 +9293,258 @@
         ]
       }
     },
+    "/api/v1/iam/me/computed-fields": {
+      "get": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Get Api V1 Iam Me Computed Fields",
+        "description": "Auto-generated documentation for GET /api/v1/iam/me/computed-fields.",
+        "operationId": "getApiV1IamMeComputedFields",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "query",
+            "description": "Limit results to one class",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current user's personal computed fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ComputedFieldDefinition"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Service accounts are not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Post Api V1 Iam Me Computed Fields",
+        "description": "Auto-generated documentation for POST /api/v1/iam/me/computed-fields.",
+        "operationId": "postApiV1IamMeComputedFields",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonalComputedFieldDefinitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Personal computed field created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldDefinition"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/me/computed-fields/preview": {
+      "post": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Post Api V1 Iam Me Computed Fields Preview",
+        "description": "Auto-generated documentation for POST /api/v1/iam/me/computed-fields/preview.",
+        "operationId": "postApiV1IamMeComputedFieldsPreview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputedFieldPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Personal computed-field preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/me/computed-fields/{field_id}": {
+      "delete": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Delete Api V1 Iam Me Computed Fields By Field Id",
+        "description": "Auto-generated documentation for DELETE /api/v1/iam/me/computed-fields/{field_id}.",
+        "operationId": "deleteApiV1IamMeComputedFieldsByFieldId",
+        "parameters": [
+          {
+            "name": "field_id",
+            "in": "path",
+            "description": "Computed-field definition ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "expected_revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Personal computed field deleted"
+          },
+          "409": {
+            "description": "Revision conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Patch Api V1 Iam Me Computed Fields By Field Id",
+        "description": "Auto-generated documentation for PATCH /api/v1/iam/me/computed-fields/{field_id}.",
+        "operationId": "patchApiV1IamMeComputedFieldsByFieldId",
+        "parameters": [
+          {
+            "name": "field_id",
+            "in": "path",
+            "description": "Computed-field definition ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputedFieldDefinitionPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Personal computed field updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldDefinition"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Revision conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/iam/me/groups": {
       "get": {
         "tags": [
@@ -13619,7 +14288,7 @@
       },
       "BackupHistory": {
         "type": "object",
-        "description": "Privileged, restore-only table snapshots. In backup version 2, each section\nname and row shape corresponds to the PostgreSQL table restored from it.\nThese are versioned disaster-recovery internals, not portable import data.",
+        "description": "Privileged, restore-only table snapshots. In backup version 3, each section\nname and row shape corresponds to the PostgreSQL table restored from it.\nThese are versioned disaster-recovery internals, not portable import data.",
         "required": [
           "sections"
         ],
@@ -13705,6 +14374,50 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "ClassComputationState": {
+        "type": "object",
+        "required": [
+          "class_id",
+          "evaluation_revision",
+          "rebuild_status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "active_task_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "evaluation_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rebuild_status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -13885,6 +14598,354 @@
               "null"
             ],
             "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ComputedFieldDefinition": {
+        "type": "object",
+        "required": [
+          "id",
+          "class_id",
+          "visibility",
+          "key",
+          "label",
+          "description",
+          "operation",
+          "result_type",
+          "enabled",
+          "revision",
+          "semantics_version",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "object"
+          },
+          "owner_user_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "result_type": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "semantics_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "visibility": {
+            "type": "string"
+          }
+        }
+      },
+      "ComputedFieldDefinitionPatch": {
+        "type": "object",
+        "required": [
+          "expected_revision"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operation": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "result_type": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ComputedResultType"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ComputedFieldDefinitionRequest": {
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "operation",
+          "result_type"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "object"
+          },
+          "result_type": {
+            "$ref": "#/components/schemas/ComputedResultType"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ComputedFieldDeleteResponse": {
+        "type": "object",
+        "required": [
+          "deleted_definition_id",
+          "state"
+        ],
+        "properties": {
+          "deleted_definition_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ClassComputationState"
+          }
+        }
+      },
+      "ComputedFieldErrorResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ComputedFieldListResponse": {
+        "type": "object",
+        "required": [
+          "definitions",
+          "state"
+        ],
+        "properties": {
+          "definitions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComputedFieldDefinition"
+            }
+          },
+          "state": {
+            "$ref": "#/components/schemas/ClassComputationState"
+          }
+        }
+      },
+      "ComputedFieldMutationResponse": {
+        "type": "object",
+        "required": [
+          "definition",
+          "state"
+        ],
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/ComputedFieldDefinition"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ClassComputationState"
+          }
+        }
+      },
+      "ComputedFieldPreviewRequest": {
+        "type": "object",
+        "required": [
+          "definition"
+        ],
+        "properties": {
+          "class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Required by the personal preview route and ignored on class-scoped routes."
+          },
+          "data": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "definition": {
+            "$ref": "#/components/schemas/ComputedFieldDefinitionRequest"
+          },
+          "object_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ComputedFieldPreviewResponse": {
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ComputedFieldErrorResponse"
+              }
+            ]
+          },
+          "value": {}
+        }
+      },
+      "ComputedObjectScopesResponse": {
+        "type": "object",
+        "required": [
+          "shared"
+        ],
+        "properties": {
+          "personal": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ComputedScopeResponse"
+              }
+            ]
+          },
+          "shared": {
+            "$ref": "#/components/schemas/SharedComputedScopeResponse"
+          }
+        }
+      },
+      "ComputedResultType": {
+        "type": "string",
+        "enum": [
+          "string",
+          "number",
+          "integer",
+          "boolean",
+          "object",
+          "array"
+        ]
+      },
+      "ComputedScopeResponse": {
+        "type": "object",
+        "required": [
+          "values",
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ComputedFieldErrorResponse"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "values": {
+            "type": "object",
+            "additionalProperties": {},
+            "propertyNames": {
               "type": "string"
             }
           }
@@ -16654,6 +17715,24 @@
           }
         }
       },
+      "HubuumObjectComputedResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/HubuumObject"
+          },
+          {
+            "type": "object",
+            "required": [
+              "computed"
+            ],
+            "properties": {
+              "computed": {
+                "$ref": "#/components/schemas/ComputedObjectScopesResponse"
+              }
+            }
+          }
+        ]
+      },
       "HubuumObjectHistory": {
         "type": "object",
         "required": [
@@ -16728,6 +17807,16 @@
         "type": "integer",
         "format": "int32",
         "description": "Identifier wrapper for a [`HubuumObject`]."
+      },
+      "HubuumObjectReadResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/HubuumObject"
+          },
+          {
+            "$ref": "#/components/schemas/HubuumObjectComputedResponse"
+          }
+        ]
       },
       "HubuumObjectRelation": {
         "type": "object",
@@ -18806,6 +19895,33 @@
           "to_hubuum_object_id": 20
         }
       },
+      "NewHubuumObjectRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "collection_id",
+          "hubuum_class_id",
+          "data",
+          "description"
+        ],
+        "properties": {
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "data": {},
+          "description": {
+            "type": "string"
+          },
+          "hubuum_class_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "NewRemoteTarget": {
         "type": "object",
         "required": [
@@ -19268,6 +20384,25 @@
           "ExecuteRemoteTarget",
           "ReadAudit",
           "ManageEventSubscription"
+        ]
+      },
+      "PersonalComputedFieldDefinitionRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ComputedFieldDefinitionRequest"
+          },
+          {
+            "type": "object",
+            "required": [
+              "class_id"
+            ],
+            "properties": {
+              "class_id": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          }
         ]
       },
       "PrincipalCollectionPermissions": {
@@ -20378,6 +21513,40 @@
           }
         }
       },
+      "SharedComputedScopeResponse": {
+        "type": "object",
+        "required": [
+          "revision",
+          "materialization_stale",
+          "values",
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ComputedFieldErrorResponse"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "materialization_stale": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "values": {
+            "type": "object",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "TaskConfig": {
         "type": "object",
         "required": [
@@ -20386,11 +21555,16 @@
           "lease_seconds",
           "heartbeat_seconds",
           "recovery_interval_seconds",
+          "computed_reindex_batch_size",
           "import_max_active_per_user",
           "export_max_active_per_user",
           "remote_call_max_active_per_user"
         ],
         "properties": {
+          "computed_reindex_batch_size": {
+            "type": "integer",
+            "minimum": 0
+          },
           "export_max_active_per_user": {
             "type": "integer",
             "minimum": 0
@@ -21288,6 +22462,38 @@
           "description": "Primary application server (updated)",
           "hubuum_class_id": null,
           "name": "srv-01"
+        }
+      },
+      "UpdateHubuumObjectRequest": {
+        "type": "object",
+        "properties": {
+          "collection_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "data": {},
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hubuum_class_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
         }
       },
       "UpdateRemoteTarget": {
