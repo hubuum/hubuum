@@ -215,6 +215,10 @@ jobs:
     name: ${{ matrix.platform.os_name }}, rust ${{ matrix.toolchain }}
     if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ${{ matrix.platform.os }}
+    env:
+      # Production artifact jobs retain the exact fat-LTO release profile.
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+      CARGO_PROFILE_RELEASE_LTO: "off"
     strategy:
       fail-fast: false
       matrix:
@@ -245,7 +249,7 @@ jobs:
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ${{ matrix.platform.target }}-${{ matrix.toolchain }}-release
+          shared-key: ${{ matrix.platform.target }}-${{ matrix.toolchain }}-ci-test-release
       
       - name: Install Linux dependencies
         if: contains(matrix.platform.os, 'ubuntu')
