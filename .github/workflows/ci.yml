@@ -185,7 +185,7 @@ jobs:
       - name: Build (${{ matrix.feature.name }})
         run: cargo build ${{ matrix.feature.args }} --locked --release
       - name: Test (${{ matrix.feature.name }})
-        run: cargo test ${{ matrix.feature.args }} --locked --release
+        run: cargo test ${{ matrix.feature.args }} -F integration-test-support --locked --release
 
   valkey-rate-limit-contract:
     name: Valkey login limiter contract
@@ -371,7 +371,7 @@ jobs:
       
       - name: Build (non-Windows)
         if: "!contains(matrix.platform.os, 'windows')"
-        run: cargo build --all-features --locked --release
+        run: cargo build --no-default-features -F production-all --locked --release
 
       - name: Build (Windows)
         if: contains(matrix.platform.os, 'windows')
@@ -388,7 +388,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $testArgs = @(
             'test',
-            '-F', 'tls-rustls,amqp,email,valkey',
+            '-F', 'tls-rustls,amqp,email,valkey,integration-test-support',
             '--locked',
             '--release',
             '--target', '${{ matrix.platform.target }}'
@@ -421,7 +421,7 @@ jobs:
           exit $LASTEXITCODE
 
   all-features-release-build:
-    name: Release build with all features
+    name: Release build with all production features
     if: "!startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-24.04
     steps:
@@ -433,8 +433,8 @@ jobs:
         run: |
           sudo apt-get update --yes
           sudo apt-get install --yes libsqlite3-dev libmysqlclient-dev libpq-dev libssl-dev
-      - name: Build release binaries with all features
-        run: cargo build --all-features --locked --release
+      - name: Build release binaries with all production features
+        run: cargo build --no-default-features -F production-all --locked --release
 
   container-build:
     name: Container build (production features)
@@ -625,7 +625,7 @@ jobs:
           platforms: linux/${{ matrix.platform.arch }}
           outputs: type=local,dest=dist/bin
           build-args: |
-            CARGO_BUILD_FLAGS=--all-features --locked --release
+            CARGO_BUILD_FLAGS=--no-default-features --features production-all --locked --release
             HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
           cache-from: type=gha,scope=static-${{ matrix.platform.os_name }}-all-features
           cache-to: type=gha,mode=max,scope=static-${{ matrix.platform.os_name }}-all-features
@@ -683,11 +683,11 @@ jobs:
         with:
           shared-key: ${{ matrix.platform.target }}-stable-release
       
-      - name: Build release binaries (macOS, all features)
+      - name: Build release binaries (macOS, all production features)
         if: contains(matrix.platform.os_name, 'macos')
         env:
           HUBUUM_BUILD_GIT_SHA: ${{ github.sha }}
-        run: cargo build --all-features --locked --release --target ${{ matrix.platform.target }}
+        run: cargo build --no-default-features -F production-all --locked --release --target ${{ matrix.platform.target }}
 
       - name: Build release binaries (Windows, self-contained feature set)
         if: contains(matrix.platform.os_name, 'windows')
@@ -800,7 +800,7 @@ jobs:
             os_name: linux-aarch64
             runner: ubuntu-24.04-arm
         feature:
-          - extra_args: "--all-features"
+          - extra_args: "--no-default-features -F production-all"
             ext: all-features
           - extra_args: "--no-default-features"
             ext: no-tls
@@ -870,7 +870,7 @@ jobs:
             os_name: macos-aarch64
             runner: macos-latest
         feature:
-          - extra_args: "--all-features"
+          - extra_args: "--no-default-features -F production-all"
             ext: all-features
           - extra_args: "--no-default-features"
             ext: no-tls

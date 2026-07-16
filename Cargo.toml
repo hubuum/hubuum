@@ -129,6 +129,17 @@ query-capture = []
 # Enables the opt-in PostgreSQL Criterion target. It remains separate from the
 # self-contained benchmark fan-out because it needs a migrated database.
 postgres-bench = []
+production-all = [
+    "amqp",
+    "email",
+    "swagger-ui",
+    "tls-rustls",
+    "tls-openssl",
+    "valkey",
+    "permissions-treetop",
+    "embedded-migrations",
+    "vendored-openssl",
+]
 integration-test-support = []
 
 [profile.release]
@@ -154,6 +165,26 @@ test = false
 name = "hubuum-openapi"
 path = "src/bin/openapi.rs"
 test = false
+
+[[test]]
+name = "api_core_data"
+path = "tests/api_core_data.rs"
+required-features = ["integration-test-support"]
+
+[[test]]
+name = "api_identity"
+path = "tests/api_identity.rs"
+required-features = ["integration-test-support"]
+
+[[test]]
+name = "api_jobs"
+path = "tests/api_jobs.rs"
+required-features = ["integration-test-support"]
+
+[[test]]
+name = "api_platform"
+path = "tests/api_platform.rs"
+required-features = ["integration-test-support"]
 
 [[bench]]
 name = "json_sql_filters_callgrind"

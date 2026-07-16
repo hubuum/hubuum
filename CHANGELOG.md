@@ -44,9 +44,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- Request-level API tests are now split across four independently linked test
-  targets, reducing test-binary link pressure and eliminating the macOS compact
-  unwind table overflow warning from the library test harness.
 - Active task admission now uses a partial per-submitter and per-kind index so
   capacity checks remain bounded by queued, validating, and running work rather
   than scanning a submitter's completed task history.
