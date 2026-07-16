@@ -333,23 +333,23 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "integration-test-support"))]
 pub(crate) mod test_support {
     use std::io;
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]
-    pub(crate) struct JsonLogWriter {
+    pub struct JsonLogWriter {
         lines: Arc<Mutex<Vec<u8>>>,
     }
 
     impl JsonLogWriter {
-        pub(crate) fn raw_output(&self) -> String {
+        pub fn raw_output(&self) -> String {
             let bytes = self.lines.lock().expect("writer lock").clone();
             String::from_utf8(bytes).expect("utf8 logs")
         }
 
-        pub(crate) fn output(&self) -> Vec<serde_json::Value> {
+        pub fn output(&self) -> Vec<serde_json::Value> {
             self.raw_output()
                 .lines()
                 .map(|line| serde_json::from_str(line).expect("json log line"))
@@ -367,7 +367,7 @@ pub(crate) mod test_support {
         }
     }
 
-    pub(crate) struct JsonLogWriterGuard {
+    pub struct JsonLogWriterGuard {
         lines: Arc<Mutex<Vec<u8>>>,
     }
 

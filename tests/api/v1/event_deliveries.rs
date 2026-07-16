@@ -5,7 +5,6 @@ mod tests {
     use serde_json::json;
 
     use crate::db::traits::event_fanout::fanout_event;
-    use crate::db::traits::event_subscription::{SaveEventSinkRecord, SaveEventSubscriptionRecord};
     use crate::db::with_connection;
     use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
     use crate::models::{
@@ -14,6 +13,7 @@ mod tests {
         NewEventSubscription,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
+    use crate::test_support::{save_event_sink, save_event_subscription};
     use crate::tests::TestContext;
     use crate::tests::api_operations::{get_request, post_request};
     use crate::tests::asserts::assert_response_status;
@@ -32,34 +32,35 @@ mod tests {
     async fn create_delivery(context: &TestContext) -> DeliveryFixture {
         let fixture = context.collection_fixture("delivery_api").await;
         let sink_name = context.scoped_name("delivery_api_sink");
-        let sink = NewEventSink {
-            name: sink_name.clone(),
-            kind: EventSinkKind::Webhook,
-            config: json!({}),
-            secret_ref: None,
-            enabled: true,
-        }
-        .into_row()
-        .unwrap()
-        .save_event_sink_record_without_events(&context.pool)
+        let sink_id = save_event_sink(
+            &context.pool,
+            NewEventSink {
+                name: sink_name.clone(),
+                kind: EventSinkKind::Webhook,
+                config: json!({}),
+                secret_ref: None,
+                enabled: true,
+            },
+        )
         .await
         .unwrap();
 
         let subscription_name = context.scoped_name("delivery_api_subscription");
         let collection_id = CollectionID::new(fixture.collection.id).unwrap();
-        let subscription = NewEventSubscription {
-            sink_id: EventSinkID::new(sink.id).unwrap(),
-            name: subscription_name.clone(),
-            description: String::new(),
-            entity_types: vec![EntityType::Collection.as_str().to_string()],
-            actions: vec![Action::Created.as_str().to_string()],
-            filter: hubuum_events_core::EventSubscriptionFilter::default(),
-            routing: json!({}),
-            enabled: true,
-        }
-        .into_row(collection_id)
-        .unwrap()
-        .save_event_subscription_record_without_events(&context.pool)
+        let subscription_id = save_event_subscription(
+            &context.pool,
+            NewEventSubscription {
+                sink_id: EventSinkID::new(sink_id).unwrap(),
+                name: subscription_name.clone(),
+                description: String::new(),
+                entity_types: vec![EntityType::Collection.as_str().to_string()],
+                actions: vec![Action::Created.as_str().to_string()],
+                filter: hubuum_events_core::EventSubscriptionFilter::default(),
+                routing: json!({}),
+                enabled: true,
+            },
+            collection_id,
+        )
         .await
         .unwrap();
 
@@ -91,9 +92,9 @@ mod tests {
 
         DeliveryFixture {
             delivery,
-            sink_id: sink.id,
+            sink_id,
             sink_name,
-            subscription_id: subscription.id,
+            subscription_id,
             subscription_name,
             collection_id: fixture.collection.id,
         }

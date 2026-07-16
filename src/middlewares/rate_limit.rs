@@ -5,8 +5,6 @@ use crate::config::{LoginRateLimitConfig, login_rate_limit_config};
 use crate::errors::ApiError;
 use crate::middlewares::client_allowlist::{ProxyTrust, extract_client_ip_from_http_request};
 
-#[cfg(test)]
-use crate::tests::{TestMutex, test_mutex};
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 #[cfg(feature = "login-rate-limit-valkey")]
@@ -692,7 +690,7 @@ pub(crate) fn client_ip_for_request(req: &HttpRequest) -> Option<IpAddr> {
 
 /// Record a failed login attempt across all applicable scopes, applying lockouts with
 /// exponential backoff when a scope crosses its threshold.
-#[cfg(test)]
+#[cfg(feature = "integration-test-support")]
 pub(crate) async fn record_login_failure(
     identity_scope: &str,
     username: &str,
@@ -757,10 +755,10 @@ pub(crate) async fn clear_all() -> Result<usize, ApiError> {
 
 /// Serializes tests that touch the process-global limiter state (auth login tests and the
 /// admin `/meta/login-rate-limit` tests) so they do not observe each other's failures.
-#[cfg(test)]
-pub(crate) static LOGIN_RATE_LIMIT_TEST_LOCK: TestMutex = test_mutex();
+#[cfg(any(test, feature = "integration-test-support"))]
+pub static LOGIN_RATE_LIMIT_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-#[cfg(test)]
+#[cfg(any(test, feature = "integration-test-support"))]
 pub(crate) async fn reset_login_rate_limit_for_tests() {
     LOGIN_ATTEMPTS.lock().await.clear();
 }

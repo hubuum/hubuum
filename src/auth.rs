@@ -1,5 +1,5 @@
 use chrono::NaiveDateTime;
-#[cfg(test)]
+#[cfg(feature = "integration-test-support")]
 use hubuum_auth_core::AuthenticatedExternalUser;
 use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider};
 use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig};
@@ -541,7 +541,7 @@ async fn external_user_state(
     }))
 }
 
-#[cfg(test)]
+#[cfg(feature = "integration-test-support")]
 pub(crate) async fn sync_external_user(
     pool: &DbPool,
     configured: &ConfiguredLdapScope,

@@ -28,7 +28,7 @@ pub trait SaveServiceAccount {
     where
         C: BackendContext + ?Sized;
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn save_without_events<C>(
         &self,
         backend: &C,
@@ -51,7 +51,7 @@ impl SaveServiceAccount for NewServiceAccount {
         save_service_account(self, backend, created_by, Some(event_context)).await
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn save_without_events<C>(
         &self,
         backend: &C,
@@ -211,7 +211,7 @@ impl InstanceAdapter<ServiceAccount> for ServiceAccountID {
 }
 
 pub trait DisableServiceAccount {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn disable_without_events<C>(&self, backend: &C) -> Result<ServiceAccount, ApiError>
     where
         C: BackendContext + ?Sized;
@@ -226,7 +226,7 @@ pub trait DisableServiceAccount {
 }
 
 impl DisableServiceAccount for ServiceAccountID {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn disable_without_events<C>(&self, backend: &C) -> Result<ServiceAccount, ApiError>
     where
         C: BackendContext + ?Sized,

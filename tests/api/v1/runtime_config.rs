@@ -5,15 +5,17 @@ mod tests {
     use serde_json::Value;
 
     use crate::api;
-    use crate::config::{get_config, running::RunningConfig};
+    use crate::config::running::RunningConfig;
+    use crate::test_support::integration_test_config;
     use crate::tests::{TestContext, test_context};
 
     async fn request(context: &TestContext, token: &str) -> actix_web::dev::ServiceResponse {
-        let config = get_config().unwrap();
+        let config = integration_test_config().unwrap();
         let app = test::init_service(
             App::new()
                 .app_data(context.pool.clone())
-                .app_data(Data::new(RunningConfig::from(&config)))
+                .app_data(crate::tests::app_context(&context.pool))
+                .app_data(Data::new(RunningConfig::from(config)))
                 .configure(api::config),
         )
         .await;

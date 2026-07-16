@@ -124,7 +124,7 @@ fn get() -> Result<&'static Metrics, ApiError> {
     current().ok_or_else(|| ApiError::NotFound("Metrics are disabled".to_string()))
 }
 
-#[cfg(test)]
+#[cfg(feature = "integration-test-support")]
 pub(crate) fn clear_scrape_cache_for_tests() {
     if let Some(metrics) = current()
         && let Ok(mut cache) = metrics.scrape_cache.lock()

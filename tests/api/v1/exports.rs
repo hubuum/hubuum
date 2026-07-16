@@ -17,13 +17,12 @@ mod tests {
         NewTaskRecord, Permissions, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus,
         UpdateExportTemplate,
     };
-    use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
-        TestContext, TestMutex, create_test_group, create_test_service_account, create_test_user,
-        ensure_admin_group, lock_test_mutex, scoped_token, service_account_token, test_context,
-        test_mutex,
+        TestContext, TestMutex, cleanup_test_classes as cleanup, create_test_classes,
+        create_test_group, create_test_service_account, create_test_user, ensure_admin_group,
+        lock_test_mutex, scoped_token, service_account_token, test_context, test_mutex,
     };
     use crate::traits::{CanSave, CanUpdate};
     const EXPORTS_ENDPOINT: &str = "/api/v1/exports";

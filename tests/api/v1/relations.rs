@@ -19,12 +19,10 @@ mod tests {
         assert_paginated_collection_total_count, assert_response_status, header_value,
     };
     use crate::tests::{
-        ClassFixture, TestContext, create_class_fixture, create_test_group, ensure_normal_user,
-        test_context,
+        ClassFixture, TestContext, cleanup_test_classes as cleanup, create_class_fixture,
+        create_test_classes, create_test_group, ensure_normal_user, test_context,
     };
     // use crate::{assert_contains_all, assert_contains_same_ids};
-
-    use crate::tests::api::v1::classes::tests::{cleanup, create_test_classes};
 
     const CLASS_RELATIONS_ENDPOINT: &str = "/api/v1/relations/classes";
     const OBJECT_RELATIONS_ENDPOINT: &str = "/api/v1/relations/objects";

@@ -1388,10 +1388,20 @@ pub fn get_config() -> Result<&'static AppConfig, ApiError> {
     initialize_config()
 }
 
+#[cfg(all(not(test), feature = "integration-test-support"))]
+pub(crate) fn initialize_integration_test_config() -> Result<&'static AppConfig, ApiError> {
+    if let Some(config) = CONFIG.get() {
+        return Ok(config);
+    }
+
+    let config = get_config_from_env()?;
+    Ok(CONFIG.get_or_init(|| config))
+}
+
 #[cfg(test)]
 static TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-#[cfg(test)]
+#[cfg(any(test, feature = "integration-test-support"))]
 fn get_config_from_env() -> Result<AppConfig, ApiError> {
     use std::env;
 

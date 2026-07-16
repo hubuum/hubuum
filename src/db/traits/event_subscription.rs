@@ -37,7 +37,7 @@ pub(crate) trait SaveEventSinkRecord {
         event_context: &EventContext,
     ) -> Result<EventSinkRow, ApiError>;
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn save_event_sink_record_without_events(
         &self,
         pool: &DbPool,
@@ -53,7 +53,7 @@ impl SaveEventSinkRecord for NewEventSinkRow {
         insert_event_sink_record(self, pool, Some(event_context)).await
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn save_event_sink_record_without_events(
         &self,
         pool: &DbPool,
@@ -207,7 +207,7 @@ pub(crate) trait SaveEventSubscriptionRecord {
         event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError>;
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn save_event_subscription_record_without_events(
         &self,
         pool: &DbPool,
@@ -223,7 +223,7 @@ impl SaveEventSubscriptionRecord for NewEventSubscriptionRow {
         insert_event_subscription_record(self, pool, Some(event_context)).await
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "integration-test-support"))]
     async fn save_event_subscription_record_without_events(
         &self,
         pool: &DbPool,

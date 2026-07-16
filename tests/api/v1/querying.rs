@@ -61,7 +61,7 @@ mod tests {
         let mut in_section = false;
         let mut operators = Vec::new();
 
-        for line in include_str!("../../../../docs/querying.md").lines() {
+        for line in include_str!("../../../docs/querying.md").lines() {
             if let Some(heading) = line.strip_prefix("### ") {
                 if in_section {
                     break;

@@ -13,10 +13,10 @@ mod tests {
 
     use crate::config::ClientAllowlist;
     use crate::events::RequestProvenance;
-    use crate::logger::{HubuumLoggingFormat, test_support::JsonLogWriter};
+    use crate::logger::HubuumLoggingFormat;
     use crate::middlewares::actor_context;
-    use crate::middlewares::tracing::record_principal_on_current_span;
     use crate::middlewares::{ClientAllowlistMiddleware, TracingMiddleware};
+    use crate::test_support::{JsonLogWriter, record_principal_on_current_span};
     use crate::tests::api_operations::get_request_with_correlation;
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{TestContext, test_context};
@@ -206,6 +206,7 @@ mod tests {
                 .wrap(actix_web::middleware::from_fn(actor_context))
                 .wrap(TracingMiddleware::new())
                 .app_data(test_context.pool.clone())
+                .app_data(crate::tests::app_context(&test_context.pool))
                 .route("/principal", web::get().to(ok_handler)),
         )
         .await;

@@ -6,8 +6,9 @@ mod tests {
     use rstest::rstest;
     use serde_json::Value;
 
-    use crate::middlewares::rate_limit::{
-        LOGIN_RATE_LIMIT_TEST_LOCK, record_login_failure, reset_login_rate_limit_for_tests,
+    use crate::test_support::{
+        LOGIN_RATE_LIMIT_TEST_LOCK, record_login_failure,
+        reset_login_rate_limit as reset_login_rate_limit_for_tests,
     };
     use crate::tests::api_operations::{delete_request, get_request};
     use crate::tests::asserts::assert_response_status;

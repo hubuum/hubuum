@@ -60,7 +60,7 @@ export HUBUUM_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$
 diesel migration run --migration-dir "$MIGRATIONS_DIR" --database-url "$HUBUUM_DATABASE_URL" --locked-schema
 
 # Run the tests
-if cargo test "$@"; then
+if cargo test --features integration-test-support "$@"; then
     echo "Test database dropped: $TEST_DB_NAME"
 else
     exit 1

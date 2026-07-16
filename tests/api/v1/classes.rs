@@ -1,8 +1,6 @@
 #[cfg(test)]
 pub mod tests {
-    use crate::models::{
-        CollectionID, HubuumClassExpanded, NewHubuumClass, Permissions, PermissionsList,
-    };
+    use crate::models::{HubuumClassExpanded, NewHubuumClass, Permissions, PermissionsList};
     use crate::traits::{CanSave, PermissionController};
     use actix_web::{http::StatusCode, test};
 
@@ -13,66 +11,12 @@ pub mod tests {
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::constants::{SchemaType, get_schema};
     use crate::tests::{
-        ClassFixture, TestContext, create_class_fixture, create_test_group, test_context,
+        TestContext, cleanup_test_classes as cleanup, create_class_fixture, create_test_classes,
+        create_test_group, test_context,
     };
     use crate::{assert_contains_all, assert_contains_same_ids};
 
     const CLASSES_ENDPOINT: &str = "/api/v1/classes";
-
-    /// Create a set of 6 classes for testing
-    ///
-    /// The classes are created in a collection with the name `prefix`_api_create_test_classes.
-    /// Their names are: `prefix`_api_class_1, `prefix`_api_class_2, etc.
-    /// Their descriptions are: `prefix`_api_description_1, `prefix`_api_description_2, etc.
-    ///
-    /// The classes use the following schemas:
-    /// 1-3: Blog
-    /// 4-5: Address
-    /// 6: Geo
-    pub async fn create_test_classes(context: &TestContext, prefix: &str) -> ClassFixture {
-        let mut classes = vec![];
-
-        for i in 1..7 {
-            let schema = if i == 6 {
-                get_schema(SchemaType::Geo).clone()
-            } else if i > 3 {
-                get_schema(SchemaType::Address).clone()
-            } else {
-                get_schema(SchemaType::Blog).clone()
-            };
-
-            classes.push(NewHubuumClass {
-                name: format!("{prefix}_api_class_{i}"),
-                description: format!("{prefix}_api_description_{i}"),
-                collection_id: 0,
-                json_schema: Some(schema),
-                validate_schema: Some(false),
-            });
-        }
-
-        create_class_fixture(
-            &context.pool,
-            context
-                .collection_fixture(&format!("{prefix}_api_create_test_classes"))
-                .await,
-            classes,
-        )
-        .await
-        .unwrap()
-    }
-
-    pub async fn cleanup(classes: &ClassFixture) {
-        let collections = classes
-            .iter()
-            .map(|c| CollectionID::new(c.collection_id).unwrap())
-            .collect::<Vec<CollectionID>>();
-
-        for collection_fixture in collections {
-            assert_eq!(collection_fixture.id(), classes.collection.collection.id);
-        }
-
-        classes.cleanup().await.unwrap();
-    }
 
     async fn api_get_classes_with_query_string(
         context: &TestContext,
