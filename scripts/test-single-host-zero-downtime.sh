@@ -4,11 +4,13 @@ set -Eeuo pipefail
 REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 ENGINE_PATH="$(command -v docker)"
 HUBUUM_TEST_IMAGE="${HUBUUM_TEST_IMAGE:-hubuum-server:ci}"
+HUBUUM_OLD_TEST_IMAGE="${HUBUUM_OLD_TEST_IMAGE:-ghcr.io/hubuum/hubuum-server:v0.0.1@sha256:061fc4cb3af57e2db06c33012db93e60834d4618815e30af4ebb4aa05a21f445}"
 POSTGRES_TEST_IMAGE="${POSTGRES_TEST_IMAGE:-postgres:18.4@sha256:22c89fe0d0f507606260237fd55e51f6137f58b2d5bcf6152242b96d9fe8f9a4}"
 CADDY_TEST_IMAGE="${CADDY_TEST_IMAGE:-caddy:2-alpine}"
 TEST_ROOT="$(mktemp -d)"
 PROJECT_NAME="hubuum-zero-downtime-${RANDOM}-${RANDOM}"
 PROBE_STOP_FILE="$TEST_ROOT/stop-probes"
+READY_PROBES_FILE="$TEST_ROOT/enable-ready-probes"
 PROBE_PIDS=""
 HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS="${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-12}"
 INSTALL_MODE="backend"
@@ -18,6 +20,7 @@ docker image inspect "$HUBUUM_TEST_IMAGE" >/dev/null 2>&1 || {
   echo "Build it first or set HUBUUM_TEST_IMAGE to an existing Hubuum image." >&2
   exit 1
 }
+docker image inspect "$HUBUUM_OLD_TEST_IMAGE" >/dev/null 2>&1 || docker pull "$HUBUUM_OLD_TEST_IMAGE"
 
 COMPOSE_CMD=(
   "$ENGINE_PATH" compose
@@ -61,6 +64,7 @@ write_environment() {
 
   cat > "$TEST_ROOT/.env" <<EOF
 HUBUUM_TEST_IMAGE=$HUBUUM_TEST_IMAGE
+HUBUUM_OLD_TEST_IMAGE=$HUBUUM_OLD_TEST_IMAGE
 POSTGRES_TEST_IMAGE=$POSTGRES_TEST_IMAGE
 CADDY_TEST_IMAGE=$CADDY_TEST_IMAGE
 HUBUUM_DATABASE_URL=$database_url
@@ -70,7 +74,29 @@ EOF
 DATABASE_URL="postgres://hubuum:zero-downtime-test@postgres/hubuum?sslmode=disable"
 write_environment "$DATABASE_URL"
 
-cat > "$TEST_ROOT/Caddyfile" <<'EOF'
+write_old_caddyfile() {
+  cat > "$TEST_ROOT/Caddyfile" <<'EOF'
+{
+    auto_https off
+}
+
+:8080 {
+    reverse_proxy hubuum-api:8080 hubuum-api-standby:8080 {
+        health_uri /healthz
+        health_interval 5s
+        health_timeout 3s
+        fail_duration 30s
+        max_fails 1
+        lb_try_duration 5s
+        lb_try_interval 250ms
+        stream_close_delay 5m
+    }
+}
+EOF
+}
+
+write_candidate_caddyfile() {
+  cat > "$TEST_ROOT/Caddyfile" <<'EOF'
 {
     auto_https off
 }
@@ -88,6 +114,9 @@ cat > "$TEST_ROOT/Caddyfile" <<'EOF'
     }
 }
 EOF
+}
+
+write_old_caddyfile
 
 cat > "$TEST_ROOT/compose.yml" <<'EOF'
 services:
@@ -152,6 +181,19 @@ services:
       HUBUUM_DATABASE_URL: postgres://hubuum:zero-downtime-test@127.0.0.1:1/hubuum
 EOF
 
+cat > "$TEST_ROOT/old-version.yml" <<'EOF'
+services:
+  hubuum-api:
+    image: ${HUBUUM_OLD_TEST_IMAGE}
+    healthcheck:
+      # v0.0.1 exposes /healthz but does not contain wget or curl. The external
+      # Caddy probe below is the HTTP readiness gate for this historical image.
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+EOF
+
 service_id() {
   "${BASE_COMPOSE_CMD[@]}" ps -q "$1"
 }
@@ -176,15 +218,16 @@ assert_changed_id() {
   }
 }
 
-wait_for_public_readiness() {
+wait_for_public_endpoint() {
+  local path="$1"
   local attempt
   for (( attempt = 1; attempt <= 60; attempt++ )); do
-    if curl --fail --silent --show-error --max-time 2 "$PUBLIC_URL/readyz" >/dev/null; then
+    if curl --fail --silent --show-error --max-time 2 "$PUBLIC_URL/$path" >/dev/null; then
       return 0
     fi
     sleep 1
   done
-  echo "ERROR: Caddy did not expose a ready API within 60 seconds" >&2
+  echo "ERROR: Caddy did not expose $path within 60 seconds" >&2
   return 1
 }
 
@@ -193,7 +236,7 @@ probe_worker() {
   local path="healthz"
   local status
 
-  if (( worker % 2 == 0 )); then
+  if (( worker % 2 == 0 )) && [[ -e "$READY_PROBES_FILE" ]]; then
     path="readyz"
   fi
 
@@ -259,21 +302,84 @@ expect_rollout_failure() {
   fi
 }
 
+migration_count() {
+  "${BASE_COMPOSE_CMD[@]}" exec -T postgres \
+    psql --username hubuum --dbname hubuum --tuples-only --no-align \
+    --command 'SELECT count(*) FROM __diesel_schema_migrations'
+}
+
+migration_is_applied() {
+  local version="$1"
+  "${BASE_COMPOSE_CMD[@]}" exec -T postgres \
+    psql --username hubuum --dbname hubuum --tuples-only --no-align \
+    --command "SELECT EXISTS (SELECT 1 FROM __diesel_schema_migrations WHERE version = '$version')"
+}
+
+container_uses_candidate_image() {
+  local service="$1"
+  local container_id
+  local candidate_image_id
+
+  container_id="$(service_id "$service")"
+  candidate_image_id="$(docker image inspect "$HUBUUM_TEST_IMAGE" --format '{{.Id}}')"
+  [[ "$(docker inspect "$container_id" --format '{{.Image}}')" == "$candidate_image_id" ]]
+}
+
 # shellcheck source=scripts/single-host-rollout.sh
 source "$REPOSITORY_ROOT/scripts/single-host-rollout.sh"
 
-echo "Starting the live single-host fixture..."
-hubuum_rollout
+echo "Starting the live single-host fixture on Hubuum v0.0.1..."
+COMPOSE_CMD=("${BASE_COMPOSE_CMD[@]}" --file "$TEST_ROOT/old-version.yml")
+"${COMPOSE_CMD[@]}" up -d hubuum-api
+hubuum_wait_for_healthy hubuum-api "$HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS"
+"${COMPOSE_CMD[@]}" up -d --no-deps caddy
+COMPOSE_CMD=("${BASE_COMPOSE_CMD[@]}")
 PUBLIC_ADDRESS="$("${BASE_COMPOSE_CMD[@]}" port caddy 8080)"
 PUBLIC_URL="http://${PUBLIC_ADDRESS}"
-wait_for_public_readiness
+wait_for_public_endpoint healthz
+
+old_primary_id="$(service_id hubuum-api)"
+initial_caddy_id="$(service_id caddy)"
+initial_postgres_id="$(service_id postgres)"
+old_migration_count="$(migration_count)"
+expected_migration_version="$(find "$REPOSITORY_ROOT/migrations" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | tail -n 1 | cut -d_ -f1 | tr -d '-')"
+[[ "$(migration_is_applied "$expected_migration_version")" == "f" ]] || {
+  echo "ERROR: v0.0.1 unexpectedly applied candidate migration $expected_migration_version" >&2
+  exit 1
+}
+
+start_probes
+
+echo "Migrating the v0.0.1 database and rolling to the candidate image..."
+write_candidate_caddyfile
+hubuum_rollout
+touch "$READY_PROBES_FILE"
+wait_for_public_endpoint readyz
+
+candidate_migration_count="$(migration_count)"
+(( candidate_migration_count > old_migration_count )) || {
+  echo "ERROR: candidate did not apply migrations after v0.0.1" >&2
+  exit 1
+}
+echo "Candidate applied $((candidate_migration_count - old_migration_count)) migration(s) after v0.0.1."
+[[ "$(migration_is_applied "$expected_migration_version")" == "t" ]] || {
+  echo "ERROR: candidate migration $expected_migration_version was not applied" >&2
+  exit 1
+}
+assert_changed_id "v0.0.1 primary API" "$old_primary_id" "$(service_id hubuum-api)"
+container_uses_candidate_image hubuum-api || {
+  echo "ERROR: primary API does not use the candidate image" >&2
+  exit 1
+}
+container_uses_candidate_image hubuum-api-standby || {
+  echo "ERROR: standby API does not use the candidate image" >&2
+  exit 1
+}
+assert_same_id "Caddy during version upgrade" "$initial_caddy_id" "$(service_id caddy)"
+assert_same_id "PostgreSQL during version upgrade" "$initial_postgres_id" "$(service_id postgres)"
 
 initial_primary_id="$(service_id hubuum-api)"
 initial_standby_id="$(service_id hubuum-api-standby)"
-initial_caddy_id="$(service_id caddy)"
-initial_postgres_id="$(service_id postgres)"
-
-start_probes
 
 echo "Verifying that a failed migration leaves both API replicas untouched..."
 write_environment "postgres://hubuum:zero-downtime-test@127.0.0.1:1/hubuum"
@@ -299,7 +405,7 @@ hubuum_rollout
 sleep 2
 stop_probes
 assert_probes_succeeded
-wait_for_public_readiness
+wait_for_public_endpoint readyz
 
 assert_changed_id "primary API" "$before_rollout_primary_id" "$(service_id hubuum-api)"
 assert_changed_id "standby API" "$before_rollout_standby_id" "$(service_id hubuum-api-standby)"

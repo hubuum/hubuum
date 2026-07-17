@@ -556,6 +556,7 @@ jobs:
       - name: Test live single-host zero-downtime rollout
         env:
           HUBUUM_TEST_IMAGE: hubuum-server:ci
+          HUBUUM_OLD_TEST_IMAGE: ghcr.io/hubuum/hubuum-server:v0.0.1@sha256:061fc4cb3af57e2db06c33012db93e60834d4618815e30af4ebb4aa05a21f445
         run: bash scripts/test-single-host-zero-downtime.sh
 
   verify-tag-main-ci-success:

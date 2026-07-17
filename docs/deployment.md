@@ -321,6 +321,15 @@ replacing the existing primary. A subsequent `update-single-host.sh` refuses to
 fall back to a destructive restart when the installed Compose file lacks the
 rolling-update services.
 
+The live container contract test covers adoption from the published v0.0.1
+image: the old API remains online while the candidate applies all newer
+migrations, starts a ready standby, and replaces the old primary. Before this
+specific upgrade, allow queued and running tasks to drain. v0.0.1 co-locates
+lease-unaware task workers with its API, and the task-lease migration cannot
+safely transfer an in-flight task to a new worker. The tested idle-queue upgrade
+preserves HTTP availability; it does not promise uninterrupted background task
+execution.
+
 ### Re-running The Installer To Update
 
 The installer is idempotent and doubles as an in-place updater. Re-running it against an existing install directory reuses the configuration recorded in `.env` (mode, hostnames, email, images, refs, ports, network subnet, container engine, and systemd service name) and preserves generated secrets and the managed database, so you only need to pass the arguments you want to change:
