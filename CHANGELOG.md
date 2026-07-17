@@ -54,6 +54,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking:** Existing single-host installations must rerun
+  `install-single-host.sh` once to generate the redundant API/frontend topology
+  before using `update-single-host.sh`; the updater now fails safely when those
+  rolling-update services are absent. Ordinary application updates use the
+  standby-first rollout helper, while explicit `systemctl restart` continues to
+  stop and start the whole stack.
 - Active task admission now uses a partial per-submitter and per-kind index so
   capacity checks remain bounded by queued, validating, and running work rather
   than scanning a submitter's completed task history.

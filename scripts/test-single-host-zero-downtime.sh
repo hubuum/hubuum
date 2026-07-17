@@ -67,7 +67,7 @@ HUBUUM_TEST_IMAGE=$HUBUUM_TEST_IMAGE
 HUBUUM_OLD_TEST_IMAGE=$HUBUUM_OLD_TEST_IMAGE
 POSTGRES_TEST_IMAGE=$POSTGRES_TEST_IMAGE
 CADDY_TEST_IMAGE=$CADDY_TEST_IMAGE
-HUBUUM_DATABASE_URL=$database_url
+HUBUUM_ZERO_DOWNTIME_DATABASE_URL=$database_url
 EOF
 }
 
@@ -154,7 +154,7 @@ services:
     environment:
       HUBUUM_BIND_IP: 0.0.0.0
       HUBUUM_BIND_PORT: 8080
-      HUBUUM_DATABASE_URL: ${HUBUUM_DATABASE_URL}
+      HUBUUM_DATABASE_URL: ${HUBUUM_ZERO_DOWNTIME_DATABASE_URL}
       HUBUUM_CLIENT_ALLOWLIST: "*"
       HUBUUM_LOG_LEVEL: info
     depends_on:
@@ -187,6 +187,14 @@ services:
     stop_grace_period: 2s
     environment:
       HUBUUM_DATABASE_URL: postgres://hubuum:zero-downtime-test@127.0.0.1:1/hubuum
+EOF
+
+cat > "$TEST_ROOT/unhealthy-primary.yml" <<'EOF'
+services:
+  hubuum-api:
+    stop_grace_period: 2s
+    environment:
+      HUBUUM_BIND_PORT: 18081
 EOF
 
 cat > "$TEST_ROOT/old-version.yml" <<'EOF'
@@ -417,6 +425,16 @@ echo "Recovering the standby and performing a successful live rollout..."
 hubuum_roll_service hubuum-api-standby
 before_rollout_primary_id="$(service_id hubuum-api)"
 before_rollout_standby_id="$(service_id hubuum-api-standby)"
+hubuum_rollout
+
+echo "Verifying that retrying a failed primary replacement preserves the healthy standby..."
+COMPOSE_CMD=("${BASE_COMPOSE_CMD[@]}" --file "$TEST_ROOT/unhealthy-primary.yml")
+expect_rollout_failure primary-failure
+COMPOSE_CMD=("${BASE_COMPOSE_CMD[@]}")
+hubuum_service_is_healthy hubuum-api-standby || {
+  echo "ERROR: standby API was not healthy after the primary replacement failed" >&2
+  exit 1
+}
 hubuum_rollout
 
 sleep 2

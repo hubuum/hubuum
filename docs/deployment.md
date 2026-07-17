@@ -89,10 +89,12 @@ All-in-one installs expose both public hostnames:
 The frontend is still configured as a BFF-style service. Browser clients can call frontend-owned routes such as `/api/v0/auth/login`, `/api/v1/...`, and `/api/hubuum/...`; the frontend reaches the backend over the private compose network with:
 
 ```env
-BACKEND_BASE_URL=http://hubuum-api:8080
+BACKEND_BASE_URL=http://caddy:8081
 ```
 
-That keeps backend bearer tokens server-side for frontend browser flows, while still leaving the backend API publicly available on the API hostname.
+The private Caddy listener load-balances both ready API replicas. Backend bearer
+tokens remain server-side for frontend browser flows, while the backend API is
+still publicly available on the API hostname.
 
 ## Shared Host Routing
 
@@ -151,6 +153,7 @@ The script installs management helpers into the install directory:
 
 - `install-single-host.sh`
 - `update-single-host.sh`
+- `single-host-rollout.sh`
 - `stop-single-host.sh`
 - `uninstall-single-host.sh`
 
@@ -302,6 +305,11 @@ the local app images. It then performs a rolling application update:
 5. Replace the primary backend, then the primary frontend in all mode, and
    reload Caddy once more after both are healthy.
 
+If a previous attempt left a primary unhealthy while its standby is healthy,
+the next run recovers and reloads that primary before touching the only usable
+standby. The helper also starts a missing or stopped managed PostgreSQL or
+Valkey service without recreating an existing infrastructure container.
+
 Caddy, PostgreSQL, and Valkey remain running throughout this sequence. Newly
 pulled images for those infrastructure services are not activated by the
 rolling application update; schedule a maintenance window when those services
@@ -428,12 +436,15 @@ Backend:
 - `HUBUUM_TOKEN_LIFETIME_HOURS=24`
 - `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS=5`
 - `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS=300`
+- `HUBUUM_LOGIN_RATE_LIMIT_BACKEND`: `valkey` in all-in-one mode and `memory`
+  in backend-only mode.
+- `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL=redis://valkey:6379/1`
 - `HUBUUM_AUTH_CONFIG_HOST_PATH`: absolute source path on the container host.
 - `HUBUUM_AUTH_CONFIG_PATH=/etc/hubuum/auth.toml`: read-only path inside the API container.
 
 Frontend, all-in-one mode only:
 
-- `BACKEND_BASE_URL`: internal backend URL, derived from `--api-port`.
+- `BACKEND_BASE_URL=http://caddy:8081`: private readiness-aware API listener.
 - `VALKEY_URL=redis://valkey:6379/0`
 - `SESSION_TTL_SECONDS=28800`
 - `SESSION_PREFIX=hubuum:sess:`

@@ -516,13 +516,13 @@ fi
 chmod 0600 "$ENV_FILE"
 
 CADDYFILE_TEMP="$(mktemp "$INSTALL_DIR/.Caddyfile.XXXXXX")"
-cat > "$CADDYFILE_TEMP" <<'EOF'
+cat > "$CADDYFILE_TEMP" <<EOF
 {
-    email {$LETSENCRYPT_EMAIL}
+    email ${LETSENCRYPT_EMAIL}
 }
 
 (api_proxy) {
-    reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT} hubuum-api-standby:{$HUBUUM_BIND_PORT} {
+    reverse_proxy hubuum-api:${API_PORT} hubuum-api-standby:${API_PORT} {
         health_uri /readyz
         health_interval 5s
         health_timeout 3s
@@ -559,27 +559,27 @@ EOF
 fi
 
 if [[ "$MODE" == "all" && -z "$SHARED_HOST_ROUTING" ]]; then
-  cat >> "$CADDYFILE_TEMP" <<'EOF'
-{$WEB_FQDN} {
+  cat >> "$CADDYFILE_TEMP" <<EOF
+${WEB_FQDN} {
     encode zstd gzip
     import web_proxy
 }
 
-{$API_FQDN} {
+${API_FQDN} {
     encode zstd gzip
     import api_proxy
 }
 EOF
 elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "bff" ]]; then
-  cat >> "$CADDYFILE_TEMP" <<'EOF'
-{$WEB_FQDN} {
+  cat >> "$CADDYFILE_TEMP" <<EOF
+${WEB_FQDN} {
     encode zstd gzip
     import web_proxy
 }
 EOF
 elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "direct" ]]; then
-  cat >> "$CADDYFILE_TEMP" <<'EOF'
-{$WEB_FQDN} {
+  cat >> "$CADDYFILE_TEMP" <<EOF
+${WEB_FQDN} {
     encode zstd gzip
 
     handle /api/v0* {
@@ -604,8 +604,8 @@ elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "direct" ]]; then
 }
 EOF
 elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "prefixed" ]]; then
-  cat >> "$CADDYFILE_TEMP" <<'EOF'
-{$WEB_FQDN} {
+  cat >> "$CADDYFILE_TEMP" <<EOF
+${WEB_FQDN} {
     encode zstd gzip
 
     handle /hubuum-api {
@@ -622,8 +622,8 @@ elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "prefixed" ]]; then
 }
 EOF
 else
-  cat >> "$CADDYFILE_TEMP" <<'EOF'
-{$API_FQDN} {
+  cat >> "$CADDYFILE_TEMP" <<EOF
+${API_FQDN} {
     encode zstd gzip
     import api_proxy
 }
@@ -810,11 +810,6 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     image: ${CADDY_IMAGE}
     container_name: hubuum-caddy
     restart: unless-stopped
-    environment:
-      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
-      WEB_FQDN: ${WEB_FQDN}
-      API_FQDN: ${API_FQDN}
-      HUBUUM_BIND_PORT: ${HUBUUM_BIND_PORT}
     ports:
       - "80:80"
       - "443:443"

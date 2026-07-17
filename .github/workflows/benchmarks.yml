@@ -57,6 +57,14 @@ jobs:
         run: |
           sudo apt-get update --yes
           sudo apt-get install --yes libpq-dev
+      - name: Defer automatic checkpoints during benchmark comparison
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql --host localhost --username postgres --dbname postgres \
+            --command "ALTER SYSTEM SET checkpoint_timeout = '30min'"
+          psql --host localhost --username postgres --dbname postgres \
+            --command "SELECT pg_reload_conf()"
       - name: Create isolated benchmark databases
         env:
           PGPASSWORD: postgres

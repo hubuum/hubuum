@@ -261,6 +261,8 @@ fn single_host_installer_generates_redundant_http_upstreams() {
     assert!(installer.contains("hubuum-api-standby:"));
     assert!(installer.contains("hubuum-web-standby:"));
     assert!(installer.contains("command: [\"--runtime-role\", \"api\"]"));
+    assert!(installer.contains("reverse_proxy hubuum-api:${API_PORT}"));
+    assert!(!installer.contains("{$HUBUUM_BIND_PORT}"));
     assert!(installer.contains("health_uri /readyz"));
     assert!(installer.contains("BACKEND_BASE_URL=http://caddy:8081"));
     assert!(

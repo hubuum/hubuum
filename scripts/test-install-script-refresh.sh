@@ -8,7 +8,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 SCRIPT_DIR="$TEST_ROOT/installed"
 INSTALL_DIR="$SCRIPT_DIR"
 REMOTE_DIR="$TEST_ROOT/remote"
-SCRIPT_BASE_URL="https://example.invalid/scripts"
+export SCRIPT_BASE_URL="https://example.invalid/scripts"
 mkdir -p "$INSTALL_DIR" "$REMOTE_DIR"
 
 curl() {
