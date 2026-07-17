@@ -105,6 +105,28 @@ hubuum_caddy_is_running() {
   [[ -n "$(hubuum_service_container_id caddy)" ]]
 }
 
+hubuum_caddy_has_container_dependencies() {
+  local container_id
+  local dependencies
+
+  container_id="$(hubuum_service_container_id caddy)"
+  [[ -n "$container_id" ]] || return 1
+  dependencies="$(
+    "$ENGINE_PATH" inspect \
+      --format '{{range .Dependencies}}{{println .}}{{end}}' \
+      "$container_id" 2>/dev/null || true
+  )"
+  [[ -n "$dependencies" ]]
+}
+
+hubuum_remove_legacy_caddy_dependencies() {
+  hubuum_caddy_has_container_dependencies || return 0
+
+  echo "Recreating Caddy once to remove legacy Podman container dependencies..."
+  "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate caddy
+  hubuum_wait_for_healthy caddy "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
+}
+
 hubuum_reload_caddy() {
   echo "Reloading Caddy to refresh its upstream health state..."
   "${COMPOSE_CMD[@]}" exec -T caddy \
@@ -113,7 +135,7 @@ hubuum_reload_caddy() {
 
 hubuum_run_migrations() {
   echo "Running one-shot database migrations while the primary remains online..."
-  "${COMPOSE_CMD[@]}" run --rm --no-deps \
+  "${COMPOSE_CMD[@]}" run --rm --no-deps -T \
     --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 }
 
@@ -149,6 +171,7 @@ hubuum_rollout() {
     return 0
   fi
 
+  hubuum_remove_legacy_caddy_dependencies
   hubuum_ensure_infrastructure
   hubuum_run_migrations
 

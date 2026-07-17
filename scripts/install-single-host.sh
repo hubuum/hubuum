@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+fi
 INSTALL_DIR="/opt/hubuum"
 MODE="all"
 WEB_FQDN=""
@@ -365,11 +368,14 @@ AUTH_CONFIG_HOST_PATH="$(absolute_config_path "$AUTH_CONFIG_HOST_PATH")"
 
 install_management_script() {
   local script_name="$1"
-  local local_path="$SCRIPT_DIR/$script_name"
+  local local_path=""
   local dest_path="$INSTALL_DIR/$script_name"
   local temp_path
 
-  if [[ -f "$local_path" && "$local_path" != "$dest_path" ]]; then
+  if [[ -n "$SCRIPT_DIR" ]]; then
+    local_path="$SCRIPT_DIR/$script_name"
+  fi
+  if [[ -n "$local_path" && -f "$local_path" && "$local_path" != "$dest_path" ]]; then
     install -m 0755 "$local_path" "$dest_path"
     return 0
   fi
@@ -817,17 +823,7 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    depends_on:
-      - hubuum-api
-      - hubuum-api-standby
 EOF
-
-if [[ "$MODE" == "all" ]]; then
-  cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
-      - hubuum-web
-      - hubuum-web-standby
-EOF
-fi
 
 cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     networks:

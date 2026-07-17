@@ -9,8 +9,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
-- Fixed single-host install and update rollouts with older `podman-compose`
-  providers that do not accept service names after `compose ps -q`.
+- Fixed single-host installs and updates with older `podman-compose` providers:
+  service discovery no longer passes unsupported names to `compose ps`,
+  migrations do not consume piped installer input, and Caddy no longer holds
+  hard Podman dependencies that block rolling replica replacement. Existing
+  Caddy containers with legacy dependency metadata are recreated once.
+- Fixed an unbound `BASH_SOURCE` warning when running the installer through
+  `curl | bash`.
 
 ## [0.0.2] - 2026-07-17
 

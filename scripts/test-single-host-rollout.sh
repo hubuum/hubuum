@@ -14,6 +14,13 @@ set -euo pipefail
 
 printf '%s\n' "$*" >> "$COMMAND_LOG"
 
+if [[ "${1:-}" == "inspect" && "$*" == *".Dependencies"* ]]; then
+  if [[ "$FAKE_CADDY_DEPENDENCIES" == "true" && "${*: -1}" == "container-caddy" ]]; then
+    printf 'container-hubuum-api\n'
+  fi
+  exit 0
+fi
+
 if [[ "${1:-}" == "inspect" && "$*" == *"Config.Labels"* ]]; then
   service="${*: -1}"
   printf '%s\n' "${service#container-}"
@@ -54,7 +61,8 @@ fi
 EOF
 chmod +x "$FAKE_ENGINE"
 
-export COMMAND_LOG FAKE_CADDY_RUNNING TEST_ROOT
+FAKE_CADDY_DEPENDENCIES="false"
+export COMMAND_LOG FAKE_CADDY_DEPENDENCIES FAKE_CADDY_RUNNING TEST_ROOT
 export FAKE_MISSING_SERVICES=""
 export FAKE_UNHEALTHY_SERVICES=""
 ENGINE_PATH="$FAKE_ENGINE"
@@ -72,11 +80,13 @@ assert_commands() {
 }
 
 FAKE_CADDY_RUNNING="true"
+FAKE_CADDY_DEPENDENCIES="true"
 INSTALL_MODE="all"
 : > "$COMMAND_LOG"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-rolling.log" <<EOF
-compose --env-file .env -f compose.yml run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate caddy
+compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -86,11 +96,12 @@ compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --conf
 EOF
 assert_commands "$TEST_ROOT/expected-rolling.log"
 
+FAKE_CADDY_DEPENDENCIES="false"
 INSTALL_MODE="backend"
 : > "$COMMAND_LOG"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-reload.log" <<EOF
-compose --env-file .env -f compose.yml run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
@@ -105,7 +116,7 @@ rm -f "$TEST_ROOT/started-hubuum-api"
 : > "$COMMAND_LOG"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-recovery.log" <<EOF
-compose --env-file .env -f compose.yml run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
@@ -123,7 +134,7 @@ rm -f "$TEST_ROOT/started-valkey"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-missing-infrastructure.log" <<EOF
 compose --env-file .env -f compose.yml up -d --no-deps --no-recreate valkey
-compose --env-file .env -f compose.yml run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -136,6 +147,7 @@ assert_commands "$TEST_ROOT/expected-missing-infrastructure.log"
 FAKE_CADDY_RUNNING="false"
 FAKE_MISSING_SERVICES=""
 INSTALL_MODE="backend"
+rm -f "$TEST_ROOT/started-caddy"
 : > "$COMMAND_LOG"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-initial.log" <<EOF
