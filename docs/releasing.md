@@ -31,7 +31,8 @@ Use the helper script in [`scripts/release.sh`](../scripts/release.sh):
 
 1. Start from a clean local `main`.
 2. Run `./scripts/release.sh prepare 0.0.2`.
-3. Review the generated release branch `release/v0.0.2`, polish `CHANGELOG.md` if needed, and commit it.
+3. Review the generated release branch `release/v0.0.2`, including the full
+   `Cargo.lock` dependency refresh, polish `CHANGELOG.md` if needed, and commit it.
 4. Open and merge that release branch.
 5. Check out the merged `main` and run `./scripts/release.sh tag`.
 6. Push `main` and the new tag.
@@ -40,6 +41,8 @@ The helper script:
 
 - creates the `release/vX.Y.Z` branch from `main`
 - updates `Cargo.toml`
+- updates all Cargo dependencies to the newest versions allowed by the workspace
+  manifests
 - rolls the current `Unreleased` changelog notes into the new release section
 - regenerates `docs/openapi.json`
 - runs the existing release validation scripts before you commit or tag

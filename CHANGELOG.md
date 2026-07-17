@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-07-17
+
 ### Added
 
 - Added class-bound shared and human-owned personal computed object fields with
