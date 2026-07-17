@@ -81,7 +81,7 @@ write_old_caddyfile() {
 }
 
 :8080 {
-    reverse_proxy hubuum-api:8080 hubuum-api-standby:8080 {
+    reverse_proxy hubuum-api:8080 {
         health_uri /healthz
         health_interval 5s
         health_timeout 3s
@@ -96,7 +96,10 @@ EOF
 }
 
 write_candidate_caddyfile() {
-  cat > "$TEST_ROOT/Caddyfile" <<'EOF'
+  local caddyfile_temp
+
+  caddyfile_temp="$(mktemp "$TEST_ROOT/.Caddyfile.XXXXXX")"
+  cat > "$caddyfile_temp" <<'EOF'
 {
     auto_https off
 }
@@ -114,6 +117,11 @@ write_candidate_caddyfile() {
     }
 }
 EOF
+
+  # Match the installer: update the contents without replacing the inode that
+  # the already-running Caddy container bind-mounted from the legacy fixture.
+  cp "$caddyfile_temp" "$TEST_ROOT/Caddyfile"
+  rm -f "$caddyfile_temp"
 }
 
 write_old_caddyfile
@@ -233,20 +241,21 @@ wait_for_public_endpoint() {
 
 probe_worker() {
   local worker="$1"
-  local path="healthz"
+  local path
   local status
 
-  if (( worker % 2 == 0 )) && [[ -e "$READY_PROBES_FILE" ]]; then
-    path="readyz"
-  fi
-
   while [[ ! -e "$PROBE_STOP_FILE" ]]; do
+    path="healthz"
+    if (( worker % 2 == 0 )) && [[ -e "$READY_PROBES_FILE" ]]; then
+      path="readyz"
+    fi
+
     if status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
       --connect-timeout 1 --max-time 2 "$PUBLIC_URL/$path" \
       2>> "$TEST_ROOT/probe-${worker}.stderr")"; then
-      printf '%s\n' "$status" >> "$TEST_ROOT/probe-${worker}.log"
+      printf '%s %s\n' "$path" "$status" >> "$TEST_ROOT/probe-${worker}.log"
     else
-      printf 'curl-error\n' >> "$TEST_ROOT/probe-${worker}.log"
+      printf '%s curl-error\n' "$path" >> "$TEST_ROOT/probe-${worker}.log"
     fi
     sleep 0.05
   done
@@ -264,11 +273,15 @@ start_probes() {
 }
 
 assert_probes_succeeded() {
+  local health_request_count
+  local ready_request_count
   local request_count
   local failures="$TEST_ROOT/probe-failures.log"
 
   request_count="$(awk 'END { print NR }' "$TEST_ROOT"/probe-*.log)"
-  grep -Hnv '^200$' "$TEST_ROOT"/probe-*.log > "$failures" || true
+  health_request_count="$(awk '$1 == "healthz" && $2 == "200" { count++ } END { print count + 0 }' "$TEST_ROOT"/probe-*.log)"
+  ready_request_count="$(awk '$1 == "readyz" && $2 == "200" { count++ } END { print count + 0 }' "$TEST_ROOT"/probe-*.log)"
+  grep -HnvE '^(healthz|readyz) 200$' "$TEST_ROOT"/probe-*.log > "$failures" || true
 
   if [[ -s "$failures" ]]; then
     echo "ERROR: public HTTP requests failed during the rollout:" >&2
@@ -279,7 +292,11 @@ assert_probes_succeeded() {
     echo "ERROR: expected at least 100 probe requests, observed $request_count" >&2
     return 1
   fi
-  echo "Observed $request_count successful HTTP requests with no failures."
+  if (( health_request_count == 0 || ready_request_count == 0 )); then
+    echo "ERROR: expected successful health and readiness probes, observed healthz=$health_request_count readyz=$ready_request_count" >&2
+    return 1
+  fi
+  echo "Observed $request_count successful HTTP requests with no failures (healthz=$health_request_count, readyz=$ready_request_count)."
 }
 
 expect_rollout_failure() {

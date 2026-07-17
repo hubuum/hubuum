@@ -269,6 +269,16 @@ fn single_host_installer_generates_redundant_http_upstreams() {
 }
 
 #[test]
+fn single_host_installer_preserves_the_bind_mounted_caddyfile_inode() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
+        .expect("single-host installer should be readable");
+
+    assert!(installer.contains("cp \"$CADDYFILE_TEMP\" \"$INSTALL_DIR/Caddyfile\""));
+    assert!(!installer.contains("mv \"$CADDYFILE_TEMP\" \"$INSTALL_DIR/Caddyfile\""));
+}
+
+#[test]
 fn single_host_updater_never_tears_down_the_stack() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let updater = fs::read_to_string(repository.join("scripts/update-single-host.sh"))

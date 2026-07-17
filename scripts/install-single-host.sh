@@ -630,7 +630,11 @@ else
 EOF
 fi
 
-mv "$CADDYFILE_TEMP" "$INSTALL_DIR/Caddyfile"
+# Caddy bind-mounts this file directly. Preserve an existing destination inode
+# so a running container sees the new contents when hubuum_reload_caddy reads
+# /etc/caddy/Caddyfile on Linux.
+cp "$CADDYFILE_TEMP" "$INSTALL_DIR/Caddyfile"
+rm -f "$CADDYFILE_TEMP"
 
 cat > "$INSTALL_DIR/compose.yml" <<'EOF'
 services:
