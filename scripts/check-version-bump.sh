@@ -47,7 +47,10 @@ if [[ "$head_version" == "$base_version" ]]; then
   exit 0
 fi
 
-changed_files="$(git diff --name-only "$range")"
+changed_files="$({
+  git diff --name-only "$range"
+  git diff --name-only HEAD --
+} | sort -u)"
 
 file_changed() {
   local path="$1"

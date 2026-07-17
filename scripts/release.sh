@@ -129,6 +129,7 @@ prepare_release() {
   update_cargo_version "$version"
   roll_unreleased_into_release "$version" "$today"
 
+  cargo update
   cargo run --bin hubuum-openapi --locked > docs/openapi.json
   cargo fmt --all
 
