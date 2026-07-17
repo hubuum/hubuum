@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed single-host install and update rollouts with older `podman-compose`
+  providers that do not accept service names after `compose ps -q`.
+
 ## [0.0.2] - 2026-07-17
 
 ### Added

@@ -6,8 +6,24 @@
 
 hubuum_service_container_id() {
   local service="$1"
+  local container_id
+  local container_service
 
-  "${COMPOSE_CMD[@]}" ps -q "$service"
+  # Older podman-compose releases do not accept a service argument for `ps`,
+  # unlike Docker Compose. List this project's containers and select the
+  # requested service through the Compose label shared by both providers.
+  while IFS= read -r container_id; do
+    [[ -n "$container_id" ]] || continue
+    container_service="$(
+      "$ENGINE_PATH" inspect \
+        --format '{{ index .Config.Labels "com.docker.compose.service" }}' \
+        "$container_id" 2>/dev/null || true
+    )"
+    if [[ "$container_service" == "$service" ]]; then
+      printf '%s\n' "$container_id"
+      return 0
+    fi
+  done < <("${COMPOSE_CMD[@]}" ps -q)
 }
 
 hubuum_service_health() {

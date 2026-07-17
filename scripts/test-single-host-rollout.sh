@@ -14,6 +14,12 @@ set -euo pipefail
 
 printf '%s\n' "$*" >> "$COMMAND_LOG"
 
+if [[ "${1:-}" == "inspect" && "$*" == *"Config.Labels"* ]]; then
+  service="${*: -1}"
+  printf '%s\n' "${service#container-}"
+  exit 0
+fi
+
 if [[ "${1:-}" == "inspect" ]]; then
   service="${*: -1}"
   service="${service#container-}"
@@ -25,14 +31,20 @@ if [[ "${1:-}" == "inspect" ]]; then
   exit 0
 fi
 
-if [[ "$*" == *" ps -q "* ]]; then
-  service="${*: -1}"
-  if [[ "$service" == "caddy" && "$FAKE_CADDY_RUNNING" != "true" && ! -e "$TEST_ROOT/started-caddy" ]]; then
-    exit 0
-  fi
-  if [[ " ${FAKE_MISSING_SERVICES:-} " != *" $service "* || -e "$TEST_ROOT/started-$service" ]]; then
-    printf 'container-%s\n' "$service"
-  fi
+if [[ "$*" == *" ps -q"* ]]; then
+  [[ "$*" == *" ps -q" ]] || {
+    echo "service arguments to compose ps are unsupported" >&2
+    exit 2
+  }
+
+  for service in caddy postgres valkey hubuum-api hubuum-api-standby hubuum-web hubuum-web-standby; do
+    if [[ "$service" == "caddy" && "$FAKE_CADDY_RUNNING" != "true" && ! -e "$TEST_ROOT/started-caddy" ]]; then
+      continue
+    fi
+    if [[ " ${FAKE_MISSING_SERVICES:-} " != *" $service "* || -e "$TEST_ROOT/started-$service" ]]; then
+      printf 'container-%s\n' "$service"
+    fi
+  done
 fi
 
 if [[ "$*" == *" up "* ]]; then
