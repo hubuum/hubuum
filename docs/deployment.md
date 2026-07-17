@@ -40,6 +40,34 @@ sudo ./scripts/install-single-host.sh \
 
 This creates `/opt/hubuum` by default, generates `/opt/hubuum/.env`, writes `compose.yml` and `Caddyfile`, pulls published images, and starts the stack.
 
+### HTTP Availability Model
+
+Single-host installations run a primary and standby backend behind Caddy. The
+primary retains the default `all` runtime role, including background workers;
+the standby uses the HTTP-only `api` role. All-mode installations likewise run
+two frontend containers. Caddy actively checks backend `/readyz` and frontend
+HTTP health, excludes unavailable replicas, and retries connection failures
+against a healthy replica.
+
+The frontend BFF reaches the backend through a private Caddy listener, so it
+uses the same readiness-aware backend pool as direct API traffic. All-mode
+installs also use the bundled Valkey service for shared backend login throttling
+across the two API replicas.
+
+This removes planned HTTP interruption during ordinary application updates. It
+does not provide host, Caddy, PostgreSQL, or Valkey high availability because
+those components still have one instance on the same machine. Background work
+also pauses while the primary is replaced. Database migrations must remain
+compatible with the old application version for the duration of the rolling
+update; a migration that blocks application queries can still cause request
+latency even though an HTTP replica remains online.
+
+The standby owns its own database pool and application memory. Capacity-plan
+external PostgreSQL servers for both API pools, the primary's task-lease
+connection, migration/administration work, and operational headroom. See
+[Distributed Deployment](distributed_deployment.md#capacity-planning) for the
+connection-budget formula.
+
 The installer also creates an empty `/opt/hubuum/auth.toml` for local-only
 authentication. Use `--auth-config` to point the deployment at an existing
 external-auth TOML file instead.
@@ -61,10 +89,12 @@ All-in-one installs expose both public hostnames:
 The frontend is still configured as a BFF-style service. Browser clients can call frontend-owned routes such as `/api/v0/auth/login`, `/api/v1/...`, and `/api/hubuum/...`; the frontend reaches the backend over the private compose network with:
 
 ```env
-BACKEND_BASE_URL=http://hubuum-api:8080
+BACKEND_BASE_URL=http://caddy:8081
 ```
 
-That keeps backend bearer tokens server-side for frontend browser flows, while still leaving the backend API publicly available on the API hostname.
+The private Caddy listener load-balances both ready API replicas. Backend bearer
+tokens remain server-side for frontend browser flows, while the backend API is
+still publicly available on the API hostname.
 
 ## Shared Host Routing
 
@@ -123,6 +153,7 @@ The script installs management helpers into the install directory:
 
 - `install-single-host.sh`
 - `update-single-host.sh`
+- `single-host-rollout.sh`
 - `stop-single-host.sh`
 - `uninstall-single-host.sh`
 
@@ -205,11 +236,11 @@ cd /opt/hubuum
 sudo ./update-single-host.sh --auth-config /etc/hubuum/auth-next.toml
 ```
 
-The update helper validates and persists the new path before recreating the API
-container. Editing the currently mounted host file still requires an API
-container restart because auth-provider configuration is loaded at startup.
-Run `update-single-host.sh` without `--auth-config` to restart after such an
-edit.
+The update helper validates and persists the new path before rolling both API
+containers. Editing the currently mounted host file still requires the API
+containers to be replaced because auth-provider configuration is loaded at
+startup. Run `update-single-host.sh` without `--auth-config` to roll them after
+such an edit.
 
 See [External Authentication](external_auth.md) for the TOML schema and LDAP
 examples.
@@ -241,27 +272,71 @@ sudo systemctl stop hubuum
 sudo systemctl start hubuum
 ```
 
-The containers use `restart: unless-stopped`; a systemd unit adds an explicit host-boot contract. It runs `compose up -d` on start and `compose down` on stop from the install directory.
+The containers use `restart: unless-stopped`; a systemd unit adds an explicit
+host-boot contract. It runs `compose up -d` on start and `compose down` on stop
+from the install directory. An explicit `systemctl restart` therefore restarts
+the entire stack and is not the zero-downtime update path; use
+`update-single-host.sh` for application updates.
 
 Use `--service-name NAME` to install the unit under a different name. Without `--systemd`, manage the stack directly with Compose.
 
 ## Updates
 
 The installer copies `install-single-host.sh`, `update-single-host.sh`,
-`stop-single-host.sh`, and `uninstall-single-host.sh` into the install directory. A curl-based
-installer rerun refreshes all four management scripts before updating the deployment:
+`single-host-rollout.sh`, `stop-single-host.sh`, and
+`uninstall-single-host.sh` into the install directory. A curl-based installer
+rerun refreshes all five management scripts before updating the deployment:
 
 ```bash
 cd /opt/hubuum
 sudo ./update-single-host.sh
 ```
 
-For image-based installs, the update command pulls the latest configured images and restarts the stack. For source-build installs, it fetches the source checkouts, rebuilds the local app images, and restarts the stack.
+For image-based installs, the update command pulls the latest configured
+images. For source-build installs, it fetches the source checkouts and rebuilds
+the local app images. It then performs a rolling application update:
+
+1. Run embedded database migrations as a one-shot command while the current
+   primary continues serving HTTP.
+2. Replace the HTTP-only backend standby and wait for `/readyz`.
+3. Replace the frontend standby in all mode and wait for its health check.
+4. Reload Caddy after all standbys are healthy. This clears passive failure
+   state recorded while their old containers were unavailable.
+5. Replace the primary backend, then the primary frontend in all mode, and
+   reload Caddy once more after both are healthy.
+
+If a previous attempt left a primary unhealthy while its standby is healthy,
+the next run recovers and reloads that primary before touching the only usable
+standby. The helper also starts a missing or stopped managed PostgreSQL or
+Valkey service without recreating an existing infrastructure container.
+
+Caddy, PostgreSQL, and Valkey remain running throughout this sequence. Newly
+pulled images for those infrastructure services are not activated by the
+rolling application update; schedule a maintenance window when those services
+themselves need replacement.
 
 Pass `--auth-config /absolute/host/path.toml` to change the read-only external
-authentication file as part of the same update and restart.
+authentication file as part of the same update and rolling replacement.
 
-If the systemd unit exists, updates restart through systemd, whose stop/start steps recreate the containers. Otherwise the update tears the stack down and brings it back up (`compose down` then `compose up -d`) so the freshly pulled images are actually picked up; a plain `compose up -d` does not reliably recreate running containers, particularly under Podman.
+Updates use Compose directly even when the optional systemd unit exists. The
+unit remains active and continues to provide the host-boot and explicit-stop
+contract; it is not restarted during an application rollout.
+
+Installations created before rolling updates were introduced must re-run
+`install-single-host.sh` once to generate the standby services and
+readiness-aware Caddy configuration. The installer brings up the standby before
+replacing the existing primary. A subsequent `update-single-host.sh` refuses to
+fall back to a destructive restart when the installed Compose file lacks the
+rolling-update services.
+
+The live container contract test covers adoption from the published v0.0.1
+image: the old API remains online while the candidate applies all newer
+migrations, starts a ready standby, and replaces the old primary. Before this
+specific upgrade, allow queued and running tasks to drain. v0.0.1 co-locates
+lease-unaware task workers with its API, and the task-lease migration cannot
+safely transfer an in-flight task to a new worker. The tested idle-queue upgrade
+preserves HTTP availability; it does not promise uninterrupted background task
+execution.
 
 ### Re-running The Installer To Update
 
@@ -276,7 +351,10 @@ curl -fsSL https://raw.githubusercontent.com/hubuum/hubuum/main/scripts/install-
 sudo ./install-single-host.sh --backend-image ghcr.io/hubuum/hubuum-server:v1.2.3
 ```
 
-Any value passed explicitly on the command line overrides the stored one; everything else is taken from the existing `.env`. Compose applies only the services whose definition or image changed. For a clean recreate of every container (useful under Podman), use `update-single-host.sh` instead.
+Any value passed explicitly on the command line overrides the stored one;
+everything else is taken from the existing `.env`. Application containers are
+rolled in standby-then-primary order. Infrastructure-container changes remain
+pending until the operator schedules their replacement.
 
 ## Stop And Uninstall
 
@@ -358,12 +436,15 @@ Backend:
 - `HUBUUM_TOKEN_LIFETIME_HOURS=24`
 - `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS=5`
 - `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS=300`
+- `HUBUUM_LOGIN_RATE_LIMIT_BACKEND`: `valkey` in all-in-one mode and `memory`
+  in backend-only mode.
+- `HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL=redis://valkey:6379/1`
 - `HUBUUM_AUTH_CONFIG_HOST_PATH`: absolute source path on the container host.
 - `HUBUUM_AUTH_CONFIG_PATH=/etc/hubuum/auth.toml`: read-only path inside the API container.
 
 Frontend, all-in-one mode only:
 
-- `BACKEND_BASE_URL`: internal backend URL, derived from `--api-port`.
+- `BACKEND_BASE_URL=http://caddy:8081`: private readiness-aware API listener.
 - `VALKEY_URL=redis://valkey:6379/0`
 - `SESSION_TTL_SECONDS=28800`
 - `SESSION_PREFIX=hubuum:sess:`

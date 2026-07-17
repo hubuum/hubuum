@@ -8,7 +8,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 SCRIPT_DIR="$TEST_ROOT/installed"
 INSTALL_DIR="$SCRIPT_DIR"
 REMOTE_DIR="$TEST_ROOT/remote"
-SCRIPT_BASE_URL="https://example.invalid/scripts"
+export SCRIPT_BASE_URL="https://example.invalid/scripts"
 mkdir -p "$INSTALL_DIR" "$REMOTE_DIR"
 
 curl() {
@@ -45,6 +45,7 @@ eval "$function_source"
 management_scripts=(
   install-single-host.sh
   update-single-host.sh
+  single-host-rollout.sh
   stop-single-host.sh
   uninstall-single-host.sh
 )

@@ -51,21 +51,49 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Detect PostgreSQL storage benchmark changes
+        id: storage_changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
+            Cargo.toml Cargo.lock benches/postgres migrations crates src \
+            ':(exclude)src/tests/**'; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No PostgreSQL storage benchmark inputs changed."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Cache Cargo and target directories
+        if: steps.storage_changes.outputs.changed == 'true'
         uses: Swatinem/rust-cache@v2
       - name: Install PostgreSQL build tools
+        if: steps.storage_changes.outputs.changed == 'true'
         run: |
           sudo apt-get update --yes
           sudo apt-get install --yes libpq-dev
+      - name: Defer automatic checkpoints during benchmark comparison
+        if: steps.storage_changes.outputs.changed == 'true'
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql --host localhost --username postgres --dbname postgres \
+            --command "ALTER SYSTEM SET checkpoint_timeout = '30min'"
+          psql --host localhost --username postgres --dbname postgres \
+            --command "SELECT pg_reload_conf()"
       - name: Create isolated benchmark databases
+        if: steps.storage_changes.outputs.changed == 'true'
         env:
           PGPASSWORD: postgres
         run: |
           createdb --host localhost --username postgres hubuum_bench_base
           createdb --host localhost --username postgres hubuum_bench_head
       - name: Clear cached PostgreSQL benchmark results
+        if: steps.storage_changes.outputs.changed == 'true'
         run: rm -rf target/criterion/storage_postgres
       - name: Detect an existing base benchmark
+        if: steps.storage_changes.outputs.changed == 'true'
         id: base_benchmark
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -76,7 +104,9 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Record base benchmark
-        if: steps.base_benchmark.outputs.available == 'true'
+        if: >-
+          steps.storage_changes.outputs.changed == 'true' &&
+          steps.base_benchmark.outputs.available == 'true'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HUBUUM_BENCH_DATABASE_URL: ${{ env.BASE_DATABASE_URL }}
@@ -88,6 +118,7 @@ jobs:
             --bench storage_postgres_criterion -- \
             --save-baseline pr-base --noplot --sample-size 40 --measurement-time 4
       - name: Record and compare pull-request benchmark
+        if: steps.storage_changes.outputs.changed == 'true'
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           HUBUUM_BENCH_DATABASE_URL: ${{ env.HEAD_DATABASE_URL }}
@@ -108,5 +139,7 @@ jobs:
               >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Enforce credible PostgreSQL regressions
-        if: steps.base_benchmark.outputs.available == 'true'
+        if: >-
+          steps.storage_changes.outputs.changed == 'true' &&
+          steps.base_benchmark.outputs.available == 'true'
         run: scripts/check-criterion-regressions.sh target/criterion/storage_postgres 10 20

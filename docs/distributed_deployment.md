@@ -86,6 +86,108 @@ migration required by the binary. API `/readyz` performs the same schema check.
 This prevents a missed or incomplete migration job from making a replica appear
 ready, while keeping migration ownership in the one-shot job.
 
+## Kubernetes And Helm HTTP Availability
+
+This repository does not currently publish a Helm chart. Direct Kubernetes
+manifests and externally maintained charts should implement the following
+contract for application upgrades without HTTP downtime:
+
+- Run API and worker processes in separate Deployments with the `api` and
+  `worker` runtime roles. Do not put `all`-role pods behind the API Service.
+- Run at least two API replicas and use a `RollingUpdate` strategy with
+  `maxUnavailable: 0` and `maxSurge: 1` or greater. The default 25% values do
+  not state the availability requirement clearly and can behave differently as
+  the replica count changes.
+- Use `/readyz` for readiness and `/healthz` for startup and liveness. Only
+  ready API pods should receive Service or ingress traffic.
+- Allow endpoint and ingress changes to propagate before terminating the
+  process. A short `preStop` delay is a practical starting point, and the pod's
+  termination grace period must cover that delay plus Hubuum's 30-second
+  graceful worker-shutdown bound. Start with 60 seconds and tune the drain
+  delay for the actual ingress implementation.
+- Add a PodDisruptionBudget that keeps at least one API replica available, and
+  spread replicas across nodes or failure domains. A disruption budget protects
+  against voluntary evictions; the Deployment strategy still controls rolling
+  updates.
+
+The relevant API Deployment settings look like this. This is a fragment rather
+than a complete manifest:
+
+```yaml
+spec:
+  replicas: 2
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: hubuum-api
+          env:
+            - name: HUBUUM_RUNTIME_ROLE
+              value: api
+            - name: HUBUUM_SKIP_MIGRATIONS
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+```
+
+For Helm, make the one-shot migration Job a blocking `pre-install` and
+`pre-upgrade` hook, or run and await an equivalent uniquely named Job in the
+release pipeline before `helm upgrade`:
+
+```yaml
+metadata:
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+```
+
+The migration Job must use the new application image and the same database
+credentials as the Deployments. If the chart creates those credentials, make
+them available before the hook runs or keep migration ownership in the release
+pipeline. A failed migration must stop the rollout while the old API replicas
+remain online.
+
+Every migration used in this sequence must be compatible with both the old and
+new API versions. Use expand/backfill/switch/contract changes across releases;
+do not drop or reinterpret schema that the old pods still use. Helm rollback
+does not undo a completed database migration, so the previous application image
+must also remain compatible with the migrated schema. The task-lease migration
+still requires the worker drain order described above.
+
+These settings protect the HTTP application rollout. They do not make the
+ingress controller, Kubernetes nodes, PostgreSQL, or Valkey highly available;
+those layers need their own redundancy and maintenance procedures.
+
 ## Shared Configuration And Secrets
 
 All replicas must use the same values for settings that define cluster-wide

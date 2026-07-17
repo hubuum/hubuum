@@ -42,6 +42,8 @@ jobs:
         run: cargo test --bin hubuum-server dockerfile_copies_every_workspace_manifest --locked
       - name: Test deployment script refresh
         run: bash scripts/test-install-script-refresh.sh
+      - name: Test single-host rolling update
+        run: bash scripts/test-single-host-rollout.sh
       - name: Markdown lint
         uses: DavidAnson/markdownlint-cli2-action@v24
         with:
@@ -551,6 +553,11 @@ jobs:
             fi
             sleep 1
           done
+      - name: Test live single-host zero-downtime rollout
+        env:
+          HUBUUM_TEST_IMAGE: hubuum-server:ci
+          HUBUUM_OLD_TEST_IMAGE: ghcr.io/hubuum/hubuum-server:v0.0.1@sha256:061fc4cb3af57e2db06c33012db93e60834d4618815e30af4ebb4aa05a21f445
+        run: bash scripts/test-single-host-zero-downtime.sh
 
   verify-tag-main-ci-success:
     name: Verify tagged commit already passed CI on main

@@ -37,6 +37,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `worker` runtime roles, explicit one-shot migration ownership, supervised
   background workers, and a deployment guide for scaling API and worker
   replicas independently.
+- Added zero-HTTP-downtime single-host application updates with primary and
+  standby API/frontend containers, readiness-aware Caddy load balancing,
+  one-shot migrations, shared Valkey login throttling, and ordered rolling
+  replacement. PostgreSQL, Valkey, and Caddy now remain running during ordinary
+  backend and frontend updates. The distributed deployment guide now also
+  defines the Kubernetes and Helm rollout contract for HTTP availability.
 - Added durable PostgreSQL task leases with heartbeats, stale-worker fencing,
   terminal recovery without unsafe task replay, and lease recovery metrics.
 - Added an optional Valkey/Redis login-rate-limit backend for sharing login
@@ -48,6 +54,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking:** Existing single-host installations must rerun
+  `install-single-host.sh` once to generate the redundant API/frontend topology
+  before using `update-single-host.sh`; the updater now fails safely when those
+  rolling-update services are absent. Ordinary application updates use the
+  standby-first rollout helper, while explicit `systemctl restart` continues to
+  stop and start the whole stack.
 - Active task admission now uses a partial per-submitter and per-kind index so
   capacity checks remain bounded by queued, validating, and running work rather
   than scanning a submitter's completed task history.
