@@ -251,3 +251,33 @@ fn single_host_installer_limits_api_container_privileges() {
     assert!(installer.contains("cap_drop:"));
     assert!(installer.contains("no-new-privileges:true"));
 }
+
+#[test]
+fn single_host_installer_generates_redundant_http_upstreams() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
+        .expect("single-host installer should be readable");
+
+    assert!(installer.contains("hubuum-api-standby:"));
+    assert!(installer.contains("hubuum-web-standby:"));
+    assert!(installer.contains("command: [\"--runtime-role\", \"api\"]"));
+    assert!(installer.contains("health_uri /readyz"));
+    assert!(installer.contains("BACKEND_BASE_URL=http://caddy:8081"));
+    assert!(
+        installer.contains("HUBUUM_LOGIN_RATE_LIMIT_BACKEND: ${HUBUUM_LOGIN_RATE_LIMIT_BACKEND}")
+    );
+}
+
+#[test]
+fn single_host_updater_never_tears_down_the_stack() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let updater = fs::read_to_string(repository.join("scripts/update-single-host.sh"))
+        .expect("single-host updater should be readable");
+    let rollout = fs::read_to_string(repository.join("scripts/single-host-rollout.sh"))
+        .expect("single-host rollout helper should be readable");
+
+    assert!(updater.contains("hubuum_rollout false"));
+    assert!(!updater.contains("systemctl restart"));
+    assert!(!updater.contains("down --remove-orphans"));
+    assert!(!rollout.contains("down --remove-orphans"));
+}

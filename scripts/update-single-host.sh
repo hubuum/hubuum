@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="/opt/hubuum"
 ENGINE="auto"
 SERVICE_NAME=""
@@ -15,9 +16,9 @@ Usage:
 Options:
   --dir PATH              Install directory. Default: /opt/hubuum
   --engine ENGINE         Container engine: auto, docker, or podman. Default: auto
-  --auth-config PATH      Replace the host auth-provider TOML path before restarting
+  --auth-config PATH      Replace the host auth-provider TOML path before rolling the replicas
   --service-name NAME     systemd service name. Defaults to value in .env or hubuum
-  --no-systemd            Restart with compose directly even if a systemd service exists
+  --no-systemd            Retained for compatibility; rolling updates always use Compose directly
   -h, --help              Show this help
 EOF
 }
@@ -103,6 +104,8 @@ fi
 ENV_FILE="$INSTALL_DIR/.env"
 [[ -f "$ENV_FILE" ]] || die "missing $ENV_FILE; run install-single-host.sh first"
 [[ -f "$INSTALL_DIR/compose.yml" ]] || die "missing $INSTALL_DIR/compose.yml; run install-single-host.sh first"
+[[ -f "$SCRIPT_DIR/single-host-rollout.sh" ]] || die "missing $SCRIPT_DIR/single-host-rollout.sh; re-run install-single-host.sh first"
+grep -q '^  hubuum-api-standby:' "$INSTALL_DIR/compose.yml" || die "installed compose.yml does not support rolling updates; re-run install-single-host.sh first"
 
 if [[ -n "$AUTH_CONFIG_HOST_PATH" ]]; then
   grep -q 'HUBUUM_AUTH_CONFIG_PATH' "$INSTALL_DIR/compose.yml" || die "installed compose.yml does not support auth configuration; re-run install-single-host.sh first"
@@ -179,16 +182,12 @@ else
   "${COMPOSE_CMD[@]}" pull
 fi
 
+# shellcheck source=scripts/single-host-rollout.sh
+source "$SCRIPT_DIR/single-host-rollout.sh"
+hubuum_rollout false
+
 if [[ "$USE_SYSTEMD" == "true" && -d /run/systemd/system && "$(command -v systemctl || true)" ]] && systemctl cat "${SERVICE_NAME}.service" >/dev/null 2>&1; then
-  # The systemd unit's ExecStop/ExecStart run compose down then up, so a
-  # restart recreates containers against the freshly pulled images.
-  systemctl restart "$SERVICE_NAME"
-  echo "Hubuum updated and restarted via ${SERVICE_NAME}.service"
+  echo "Hubuum rolled via ${ENGINE_BIN} compose; ${SERVICE_NAME}.service remained active"
 else
-  # `compose up -d` on its own does not reliably recreate containers after a
-  # pull (notably under podman compose, which leaves running containers on the
-  # previous image). Tear the stack down first so the new images are picked up.
-  "${COMPOSE_CMD[@]}" down --remove-orphans
-  "${COMPOSE_CMD[@]}" up -d
-  echo "Hubuum updated and restarted via ${ENGINE_BIN} compose"
+  echo "Hubuum rolled via ${ENGINE_BIN} compose"
 fi

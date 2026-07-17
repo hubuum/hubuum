@@ -395,6 +395,7 @@ install_management_script() {
 
 install_management_script install-single-host.sh
 install_management_script update-single-host.sh
+install_management_script single-host-rollout.sh
 install_management_script stop-single-host.sh
 install_management_script uninstall-single-host.sh
 
@@ -460,6 +461,11 @@ if [[ -n "$EXTERNAL_DATABASE_URL" ]]; then
   HUBUUM_DATABASE_URL="$EXTERNAL_DATABASE_URL"
 fi
 
+LOGIN_RATE_LIMIT_BACKEND="memory"
+if [[ "$MODE" == "all" ]]; then
+  LOGIN_RATE_LIMIT_BACKEND="valkey"
+fi
+
 {
   printf 'INSTALL_MODE=%s\n' "$MODE"
   printf 'WEB_FQDN=%s\n' "$WEB_FQDN"
@@ -495,10 +501,12 @@ fi
   printf 'HUBUUM_TOKEN_LIFETIME_HOURS=24\n'
   printf 'HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS=5\n'
   printf 'HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS=300\n'
+  printf 'HUBUUM_LOGIN_RATE_LIMIT_BACKEND=%s\n' "$LOGIN_RATE_LIMIT_BACKEND"
+  printf 'HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL=redis://valkey:6379/1\n'
   printf 'HUBUUM_AUTH_CONFIG_HOST_PATH=%s\n' "$(quote_env "$AUTH_CONFIG_HOST_PATH")"
   printf 'HUBUUM_AUTH_CONFIG_PATH=%s\n' "$AUTH_CONFIG_CONTAINER_PATH"
   printf '\n'
-  printf 'BACKEND_BASE_URL=http://hubuum-api:%s\n' "$API_PORT"
+  printf 'BACKEND_BASE_URL=http://caddy:8081\n'
   printf 'VALKEY_URL=redis://valkey:6379/0\n'
   printf 'SESSION_TTL_SECONDS=28800\n'
   printf 'SESSION_PREFIX=hubuum:sess:\n'
@@ -507,69 +515,96 @@ fi
 
 chmod 0600 "$ENV_FILE"
 
-if [[ "$MODE" == "all" && -z "$SHARED_HOST_ROUTING" ]]; then
-  cat > "$INSTALL_DIR/Caddyfile" <<'EOF'
+CADDYFILE_TEMP="$(mktemp "$INSTALL_DIR/.Caddyfile.XXXXXX")"
+cat > "$CADDYFILE_TEMP" <<'EOF'
 {
     email {$LETSENCRYPT_EMAIL}
 }
 
+(api_proxy) {
+    reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT} hubuum-api-standby:{$HUBUUM_BIND_PORT} {
+        health_uri /readyz
+        health_interval 5s
+        health_timeout 3s
+        fail_duration 30s
+        max_fails 1
+        lb_try_duration 5s
+        lb_try_interval 250ms
+        stream_close_delay 5m
+    }
+}
+EOF
+
+if [[ "$MODE" == "all" ]]; then
+  cat >> "$CADDYFILE_TEMP" <<'EOF'
+(web_proxy) {
+    reverse_proxy hubuum-web:3000 hubuum-web-standby:3000 {
+        health_uri /
+        health_status 2xx
+        health_follow_redirects
+        health_interval 5s
+        health_timeout 3s
+        fail_duration 30s
+        max_fails 1
+        lb_try_duration 5s
+        lb_try_interval 250ms
+        stream_close_delay 5m
+    }
+}
+
+:8081 {
+    import api_proxy
+}
+EOF
+fi
+
+if [[ "$MODE" == "all" && -z "$SHARED_HOST_ROUTING" ]]; then
+  cat >> "$CADDYFILE_TEMP" <<'EOF'
 {$WEB_FQDN} {
     encode zstd gzip
-    reverse_proxy hubuum-web:3000
+    import web_proxy
 }
 
 {$API_FQDN} {
     encode zstd gzip
-    reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+    import api_proxy
 }
 EOF
 elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "bff" ]]; then
-  cat > "$INSTALL_DIR/Caddyfile" <<'EOF'
-{
-    email {$LETSENCRYPT_EMAIL}
-}
-
+  cat >> "$CADDYFILE_TEMP" <<'EOF'
 {$WEB_FQDN} {
     encode zstd gzip
-    reverse_proxy hubuum-web:3000
+    import web_proxy
 }
 EOF
 elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "direct" ]]; then
-  cat > "$INSTALL_DIR/Caddyfile" <<'EOF'
-{
-    email {$LETSENCRYPT_EMAIL}
-}
-
+  cat >> "$CADDYFILE_TEMP" <<'EOF'
 {$WEB_FQDN} {
     encode zstd gzip
 
     handle /api/v0* {
-        reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+        import api_proxy
     }
 
     handle /api/v1* {
-        reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+        import api_proxy
     }
 
     handle /api-doc* {
-        reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+        import api_proxy
     }
 
     handle /swagger-ui* {
-        reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+        import api_proxy
     }
 
     handle {
-        reverse_proxy hubuum-web:3000
+        import web_proxy
     }
 }
 EOF
 elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "prefixed" ]]; then
-  cat > "$INSTALL_DIR/Caddyfile" <<'EOF'
-{
-    email {$LETSENCRYPT_EMAIL}
-}
-
+  cat >> "$CADDYFILE_TEMP" <<'EOF'
 {$WEB_FQDN} {
     encode zstd gzip
 
@@ -578,26 +613,28 @@ elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "prefixed" ]]; then
     }
 
     handle_path /hubuum-api/* {
-        reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+        import api_proxy
     }
 
     handle {
-        reverse_proxy hubuum-web:3000
+        import web_proxy
     }
 }
 EOF
 else
-  cat > "$INSTALL_DIR/Caddyfile" <<'EOF'
-{
-    email {$LETSENCRYPT_EMAIL}
-}
-
+  cat >> "$CADDYFILE_TEMP" <<'EOF'
 {$API_FQDN} {
     encode zstd gzip
-    reverse_proxy hubuum-api:{$HUBUUM_BIND_PORT}
+    import api_proxy
 }
 EOF
 fi
+
+CADDY_CONFIG_CHANGED="true"
+if [[ -f "$INSTALL_DIR/Caddyfile" ]] && cmp -s "$CADDYFILE_TEMP" "$INSTALL_DIR/Caddyfile"; then
+  CADDY_CONFIG_CHANGED="false"
+fi
+mv "$CADDYFILE_TEMP" "$INSTALL_DIR/Caddyfile"
 
 cat > "$INSTALL_DIR/compose.yml" <<'EOF'
 services:
@@ -628,7 +665,7 @@ EOF
 fi
 
 cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
-  hubuum-api:
+  hubuum-api: &hubuum-api
 EOF
 
 if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
@@ -653,6 +690,8 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       - ALL
     security_opt:
       - no-new-privileges:true
+    # Allow Actix request draining and the separately bounded worker shutdown.
+    stop_grace_period: 75s
     environment:
       HUBUUM_BIND_IP: ${HUBUUM_BIND_IP}
       HUBUUM_BIND_PORT: ${HUBUUM_BIND_PORT}
@@ -665,6 +704,8 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       HUBUUM_TOKEN_LIFETIME_HOURS: ${HUBUUM_TOKEN_LIFETIME_HOURS}
       HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: ${HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS}
       HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS: ${HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS}
+      HUBUUM_LOGIN_RATE_LIMIT_BACKEND: ${HUBUUM_LOGIN_RATE_LIMIT_BACKEND}
+      HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL: ${HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL}
       HUBUUM_AUTH_CONFIG_PATH: ${HUBUUM_AUTH_CONFIG_PATH}
     volumes:
       - type: bind
@@ -686,6 +727,16 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       - "${HUBUUM_BIND_PORT}"
     networks:
       - hubuum_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --output-document=/dev/null http://127.0.0.1:${HUBUUM_BIND_PORT}/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+
+  hubuum-api-standby:
+    <<: *hubuum-api
+    container_name: hubuum-api-standby
+    command: ["--runtime-role", "api"]
 EOF
 
 if [[ "$MODE" == "all" ]]; then
@@ -706,7 +757,7 @@ if [[ "$MODE" == "all" ]]; then
       timeout: 5s
       retries: 10
 
-  hubuum-web:
+  hubuum-web: &hubuum-web
 EOF
 
   if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
@@ -724,6 +775,7 @@ EOF
   cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     container_name: hubuum-web
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -734,14 +786,21 @@ EOF
       SESSION_PREFIX: ${SESSION_PREFIX}
       NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME}
     depends_on:
-      hubuum-api:
-        condition: service_started
       valkey:
         condition: service_healthy
     expose:
       - "3000"
     networks:
       - hubuum_net
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(response => { if (!response.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+
+  hubuum-web-standby:
+    <<: *hubuum-web
+    container_name: hubuum-web-standby
 EOF
 fi
 
@@ -765,11 +824,13 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       - caddy_config:/config
     depends_on:
       - hubuum-api
+      - hubuum-api-standby
 EOF
 
 if [[ "$MODE" == "all" ]]; then
   cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       - hubuum-web
+      - hubuum-web-standby
 EOF
 fi
 
@@ -843,18 +904,24 @@ EOF
 
   systemctl daemon-reload
   systemctl enable "$SERVICE_NAME"
-  systemctl restart "$SERVICE_NAME"
 }
 
 SYSTEMD_STATUS="not installed"
 if [[ "$INSTALL_SYSTEMD" == "true" && -d /run/systemd/system && "$(command -v systemctl || true)" ]]; then
   install_systemd_unit
   SYSTEMD_STATUS="enabled as ${SERVICE_NAME}.service"
-else
-  "${COMPOSE_CMD[@]}" up -d
-  if [[ "$INSTALL_SYSTEMD" == "true" ]]; then
-    SYSTEMD_STATUS="skipped; systemd is not available"
-  fi
+elif [[ "$INSTALL_SYSTEMD" == "true" ]]; then
+  SYSTEMD_STATUS="skipped; systemd is not available"
+fi
+
+# shellcheck source=scripts/single-host-rollout.sh
+source "$INSTALL_DIR/single-host-rollout.sh"
+INSTALL_MODE="$MODE"
+hubuum_rollout "$CADDY_CONFIG_CHANGED"
+
+if [[ "$SYSTEMD_STATUS" == enabled* ]]; then
+  # Mark the oneshot unit active without restarting the already-rolled stack.
+  systemctl start "$SERVICE_NAME"
 fi
 
 cat <<EOF
@@ -913,18 +980,7 @@ if [[ "$MODE" == "all" ]]; then
 EOF
 fi
 
-PULL_SERVICES_DISPLAY="caddy"
-[[ "$BUILD_FROM_SOURCE" != "true" ]] && PULL_SERVICES_DISPLAY="${PULL_SERVICES_DISPLAY} hubuum-api"
-[[ "$BUILD_FROM_SOURCE" != "true" && "$MODE" == "all" ]] && PULL_SERVICES_DISPLAY="${PULL_SERVICES_DISPLAY} hubuum-web"
-[[ "$DATABASE_MANAGED" == "true" ]] && PULL_SERVICES_DISPLAY="${PULL_SERVICES_DISPLAY} postgres"
-[[ "$MODE" == "all" ]] && PULL_SERVICES_DISPLAY="${PULL_SERVICES_DISPLAY} valkey"
-
-UP_COMMAND="up -d"
-[[ "$BUILD_FROM_SOURCE" == "true" ]] && UP_COMMAND="up -d --build"
-
 cat <<EOF
-  ${ENGINE_BIN} compose --env-file .env -f compose.yml pull ${PULL_SERVICES_DISPLAY}
-  ${ENGINE_BIN} compose --env-file .env -f compose.yml ${UP_COMMAND}
 
 Important:
   Make sure DNS for ${API_FQDN} points to this host.

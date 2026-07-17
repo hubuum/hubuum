@@ -45,6 +45,7 @@ eval "$function_source"
 management_scripts=(
   install-single-host.sh
   update-single-host.sh
+  single-host-rollout.sh
   stop-single-host.sh
   uninstall-single-host.sh
 )

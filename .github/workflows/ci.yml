@@ -42,6 +42,8 @@ jobs:
         run: cargo test --bin hubuum-server dockerfile_copies_every_workspace_manifest --locked
       - name: Test deployment script refresh
         run: bash scripts/test-install-script-refresh.sh
+      - name: Test single-host rolling update
+        run: bash scripts/test-single-host-rollout.sh
       - name: Markdown lint
         uses: DavidAnson/markdownlint-cli2-action@v24
         with:
