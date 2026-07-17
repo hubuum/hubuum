@@ -13,9 +13,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   service discovery no longer passes unsupported names to `compose ps`,
   migrations do not consume piped installer input, and Caddy no longer holds
   hard Podman dependencies that block rolling replica replacement. Existing
-  Caddy containers with legacy dependency metadata are recreated once.
+  Caddy containers with legacy dependency metadata are recreated once. Routine
+  external-provider notices and successful Caddy reload logs are suppressed,
+  while reload failures retain their diagnostic output.
 - Fixed an unbound `BASH_SOURCE` warning when running the installer through
   `curl | bash`.
+- Generated Caddyfiles now use canonical formatting, no longer emit a
+  formatting warning during reload, and use valid prefixed-route redirect
+  syntax.
 
 ## [0.0.2] - 2026-07-17
 

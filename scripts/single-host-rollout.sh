@@ -128,9 +128,17 @@ hubuum_remove_legacy_caddy_dependencies() {
 }
 
 hubuum_reload_caddy() {
+  local output
+
   echo "Reloading Caddy to refresh its upstream health state..."
-  "${COMPOSE_CMD[@]}" exec -T caddy \
-    caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
+  if ! output="$(
+    "${COMPOSE_CMD[@]}" exec -T caddy \
+      caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1
+  )"; then
+    echo "ERROR: Caddy reload failed" >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
 }
 
 hubuum_run_migrations() {

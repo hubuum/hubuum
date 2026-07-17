@@ -263,12 +263,33 @@ fn single_host_installer_generates_redundant_http_upstreams() {
     assert!(!installer.contains("    depends_on:\n      - hubuum-api\n      - hubuum-api-standby"));
     assert!(installer.contains("command: [\"--runtime-role\", \"api\"]"));
     assert!(installer.contains("reverse_proxy hubuum-api:${API_PORT}"));
+    assert!(installer.contains("redir * /hubuum-api/"));
     assert!(!installer.contains("{$HUBUUM_BIND_PORT}"));
     assert!(installer.contains("health_uri /readyz"));
     assert!(installer.contains("BACKEND_BASE_URL=http://caddy:8081"));
     assert!(
         installer.contains("HUBUUM_LOGIN_RATE_LIMIT_BACKEND: ${HUBUUM_LOGIN_RATE_LIMIT_BACKEND}")
     );
+    assert!(installer.contains("export PODMAN_COMPOSE_WARNING_LOGS=false"));
+    assert!(installer.contains("Environment=PODMAN_COMPOSE_WARNING_LOGS=false"));
+}
+
+#[test]
+fn single_host_installer_emits_canonical_caddyfile_indentation() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
+        .expect("single-host installer should be readable");
+    let template_start = installer
+        .find("CADDYFILE_TEMP=")
+        .expect("installer should generate a Caddyfile");
+    let template_end = installer[template_start..]
+        .find("# Caddy bind-mounts")
+        .map(|offset| template_start + offset)
+        .expect("Caddyfile generation should have a known end marker");
+    let template = &installer[template_start..template_end];
+
+    assert!(template.lines().any(|line| line.starts_with('\t')));
+    assert!(!template.lines().any(|line| line.starts_with("    ")));
 }
 
 #[test]
@@ -290,6 +311,7 @@ fn single_host_updater_never_tears_down_the_stack() {
         .expect("single-host rollout helper should be readable");
 
     assert!(updater.contains("hubuum_rollout"));
+    assert!(updater.contains("export PODMAN_COMPOSE_WARNING_LOGS=false"));
     assert!(!updater.contains("systemctl restart"));
     assert!(!updater.contains("down --remove-orphans"));
     assert!(!rollout.contains("down --remove-orphans"));

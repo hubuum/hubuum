@@ -14,6 +14,12 @@ set -euo pipefail
 
 printf '%s\n' "$*" >> "$COMMAND_LOG"
 
+if [[ "$*" == *" exec -T caddy caddy reload "* ]]; then
+  printf '{"level":"info","msg":"fake reload diagnostic"}\n' >&2
+  [[ "$FAKE_CADDY_RELOAD_FAIL" != "true" ]]
+  exit
+fi
+
 if [[ "${1:-}" == "inspect" && "$*" == *".Dependencies"* ]]; then
   if [[ "$FAKE_CADDY_DEPENDENCIES" == "true" && "${*: -1}" == "container-caddy" ]]; then
     printf 'container-hubuum-api\n'
@@ -62,7 +68,9 @@ EOF
 chmod +x "$FAKE_ENGINE"
 
 FAKE_CADDY_DEPENDENCIES="false"
-export COMMAND_LOG FAKE_CADDY_DEPENDENCIES FAKE_CADDY_RUNNING TEST_ROOT
+FAKE_CADDY_RELOAD_FAIL="false"
+export COMMAND_LOG FAKE_CADDY_DEPENDENCIES FAKE_CADDY_RELOAD_FAIL
+export FAKE_CADDY_RUNNING TEST_ROOT
 export FAKE_MISSING_SERVICES=""
 export FAKE_UNHEALTHY_SERVICES=""
 ENGINE_PATH="$FAKE_ENGINE"
@@ -156,5 +164,19 @@ compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps caddy
 EOF
 assert_commands "$TEST_ROOT/expected-initial.log"
+
+reload_output="$(hubuum_reload_caddy 2>&1)"
+[[ "$reload_output" == "Reloading Caddy to refresh its upstream health state..." ]] || {
+  printf 'successful Caddy reload emitted unexpected output:\n%s\n' "$reload_output" >&2
+  exit 1
+}
+
+FAKE_CADDY_RELOAD_FAIL="true"
+if reload_output="$(hubuum_reload_caddy 2>&1)"; then
+  echo "failed Caddy reload unexpectedly succeeded" >&2
+  exit 1
+fi
+[[ "$reload_output" == *"ERROR: Caddy reload failed"* ]]
+[[ "$reload_output" == *'fake reload diagnostic'* ]]
 
 echo "Single-host rolling update test passed"
