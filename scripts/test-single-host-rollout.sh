@@ -67,10 +67,10 @@ cat > "$TEST_ROOT/expected-rolling.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
-compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
-compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 EOF
 assert_commands "$TEST_ROOT/expected-rolling.log"
 
@@ -80,9 +80,9 @@ hubuum_rollout
 cat > "$TEST_ROOT/expected-reload.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
-compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
-compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 EOF
 assert_commands "$TEST_ROOT/expected-reload.log"
 
@@ -95,12 +95,12 @@ hubuum_rollout
 cat > "$TEST_ROOT/expected-recovery.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
-compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
-compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
-compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 EOF
 assert_commands "$TEST_ROOT/expected-recovery.log"
 
@@ -114,10 +114,10 @@ compose --env-file .env -f compose.yml up -d --no-deps --no-recreate valkey
 compose --env-file .env -f compose.yml run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
-compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
-compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 EOF
 assert_commands "$TEST_ROOT/expected-missing-infrastructure.log"
 

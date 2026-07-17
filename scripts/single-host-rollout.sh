@@ -92,7 +92,7 @@ hubuum_caddy_is_running() {
 hubuum_reload_caddy() {
   echo "Reloading Caddy to refresh its upstream health state..."
   "${COMPOSE_CMD[@]}" exec -T caddy \
-    caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+    caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile
 }
 
 hubuum_run_migrations() {
