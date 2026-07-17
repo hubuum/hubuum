@@ -553,6 +553,10 @@ jobs:
             fi
             sleep 1
           done
+      - name: Test live single-host zero-downtime rollout
+        env:
+          HUBUUM_TEST_IMAGE: hubuum-server:ci
+        run: bash scripts/test-single-host-zero-downtime.sh
 
   verify-tag-main-ci-success:
     name: Verify tagged commit already passed CI on main

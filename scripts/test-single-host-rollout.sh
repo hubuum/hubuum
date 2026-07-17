@@ -46,31 +46,34 @@ assert_commands() {
 FAKE_CADDY_RUNNING="true"
 INSTALL_MODE="all"
 : > "$COMMAND_LOG"
-hubuum_rollout false
+hubuum_rollout
 cat > "$TEST_ROOT/expected-rolling.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 EOF
 assert_commands "$TEST_ROOT/expected-rolling.log"
 
 INSTALL_MODE="backend"
 : > "$COMMAND_LOG"
-hubuum_rollout true
+hubuum_rollout
 cat > "$TEST_ROOT/expected-reload.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 EOF
 assert_commands "$TEST_ROOT/expected-reload.log"
 
 FAKE_CADDY_RUNNING="false"
 INSTALL_MODE="backend"
 : > "$COMMAND_LOG"
-hubuum_rollout false
+hubuum_rollout
 cat > "$TEST_ROOT/expected-initial.log" <<EOF
 compose --env-file .env -f compose.yml up -d hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby

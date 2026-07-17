@@ -630,10 +630,6 @@ else
 EOF
 fi
 
-CADDY_CONFIG_CHANGED="true"
-if [[ -f "$INSTALL_DIR/Caddyfile" ]] && cmp -s "$CADDYFILE_TEMP" "$INSTALL_DIR/Caddyfile"; then
-  CADDY_CONFIG_CHANGED="false"
-fi
 mv "$CADDYFILE_TEMP" "$INSTALL_DIR/Caddyfile"
 
 cat > "$INSTALL_DIR/compose.yml" <<'EOF'
@@ -917,7 +913,7 @@ fi
 # shellcheck source=scripts/single-host-rollout.sh
 source "$INSTALL_DIR/single-host-rollout.sh"
 INSTALL_MODE="$MODE"
-hubuum_rollout "$CADDY_CONFIG_CHANGED"
+hubuum_rollout
 
 if [[ "$SYSTEMD_STATUS" == enabled* ]]; then
   # Mark the oneshot unit active without restarting the already-rolled stack.

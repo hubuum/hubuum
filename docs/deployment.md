@@ -297,7 +297,10 @@ the local app images. It then performs a rolling application update:
    primary continues serving HTTP.
 2. Replace the HTTP-only backend standby and wait for `/readyz`.
 3. Replace the frontend standby in all mode and wait for its health check.
-4. Replace the primary backend, then the primary frontend in all mode.
+4. Reload Caddy after all standbys are healthy. This clears passive failure
+   state recorded while their old containers were unavailable.
+5. Replace the primary backend, then the primary frontend in all mode, and
+   reload Caddy once more after both are healthy.
 
 Caddy, PostgreSQL, and Valkey remain running throughout this sequence. Newly
 pulled images for those infrastructure services are not activated by the

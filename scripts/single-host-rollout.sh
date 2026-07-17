@@ -56,7 +56,7 @@ hubuum_roll_service() {
 
   echo "Rolling $service..."
   "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate "$service"
-  hubuum_wait_for_healthy "$service"
+  hubuum_wait_for_healthy "$service" "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
 }
 
 hubuum_caddy_is_running() {
@@ -64,7 +64,7 @@ hubuum_caddy_is_running() {
 }
 
 hubuum_reload_caddy() {
-  echo "Reloading Caddy with the redundant upstream configuration..."
+  echo "Reloading Caddy to refresh its upstream health state..."
   "${COMPOSE_CMD[@]}" exec -T caddy \
     caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 }
@@ -81,23 +81,21 @@ hubuum_start_stack() {
   # Start the migration-owning primary first. Starting both API containers at
   # once could make two fresh containers race to apply the same migrations.
   "${COMPOSE_CMD[@]}" up -d hubuum-api
-  hubuum_wait_for_healthy hubuum-api
+  hubuum_wait_for_healthy hubuum-api "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
 
   "${COMPOSE_CMD[@]}" up -d --no-deps hubuum-api-standby
-  hubuum_wait_for_healthy hubuum-api-standby
+  hubuum_wait_for_healthy hubuum-api-standby "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
 
   if [[ "$INSTALL_MODE" == "all" ]]; then
     "${COMPOSE_CMD[@]}" up -d hubuum-web hubuum-web-standby
-    hubuum_wait_for_healthy hubuum-web
-    hubuum_wait_for_healthy hubuum-web-standby
+    hubuum_wait_for_healthy hubuum-web "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
+    hubuum_wait_for_healthy hubuum-web-standby "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
   fi
 
   "${COMPOSE_CMD[@]}" up -d --no-deps caddy
 }
 
 hubuum_rollout() {
-  local reload_caddy="${1:-false}"
-
   if ! hubuum_caddy_is_running; then
     hubuum_start_stack
     return 0
@@ -105,21 +103,20 @@ hubuum_rollout() {
 
   hubuum_run_migrations
 
-  # The standby is upgraded and proven ready while the primary remains the
-  # currently configured upstream. On first adoption, reload Caddy only after
-  # that safety copy exists. Routine updates keep Caddy and its configuration
-  # untouched, preserving long-lived connections.
+  # Upgrade every standby while its primary remains available. Caddy can retain
+  # a passive failure mark for a container that was unavailable during
+  # replacement, so reload only after all standbys are proven healthy. The
+  # configured stream_close_delay protects long-lived connections across this
+  # zero-downtime configuration reload.
   hubuum_roll_service hubuum-api-standby
-  if [[ "$reload_caddy" == "true" ]]; then
-    hubuum_reload_caddy
-  fi
-
   if [[ "$INSTALL_MODE" == "all" ]]; then
     hubuum_roll_service hubuum-web-standby
   fi
+  hubuum_reload_caddy
 
   hubuum_roll_service hubuum-api
   if [[ "$INSTALL_MODE" == "all" ]]; then
     hubuum_roll_service hubuum-web
   fi
+  hubuum_reload_caddy
 }

@@ -276,8 +276,19 @@ fn single_host_updater_never_tears_down_the_stack() {
     let rollout = fs::read_to_string(repository.join("scripts/single-host-rollout.sh"))
         .expect("single-host rollout helper should be readable");
 
-    assert!(updater.contains("hubuum_rollout false"));
+    assert!(updater.contains("hubuum_rollout"));
     assert!(!updater.contains("systemctl restart"));
     assert!(!updater.contains("down --remove-orphans"));
     assert!(!rollout.contains("down --remove-orphans"));
+}
+
+#[test]
+fn container_ci_exercises_live_single_host_http_continuity() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workflow = fs::read_to_string(repository.join(".github/workflows/ci.yml"))
+        .expect("CI workflow should be readable");
+    let live_test = repository.join("scripts/test-single-host-zero-downtime.sh");
+
+    assert!(live_test.is_file());
+    assert!(workflow.contains("bash scripts/test-single-host-zero-downtime.sh"));
 }

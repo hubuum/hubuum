@@ -184,7 +184,7 @@ fi
 
 # shellcheck source=scripts/single-host-rollout.sh
 source "$SCRIPT_DIR/single-host-rollout.sh"
-hubuum_rollout false
+hubuum_rollout
 
 if [[ "$USE_SYSTEMD" == "true" && -d /run/systemd/system && "$(command -v systemctl || true)" ]] && systemctl cat "${SERVICE_NAME}.service" >/dev/null 2>&1; then
   echo "Hubuum rolled via ${ENGINE_BIN} compose; ${SERVICE_NAME}.service remained active"
