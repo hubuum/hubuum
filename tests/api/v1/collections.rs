@@ -5,7 +5,9 @@ mod tests {
         Permission, Permissions, UpdateCollection,
     };
 
-    use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
+    use crate::pagination::{
+        NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits,
+    };
     use crate::tests::api_operations::{
         delete_request, get_request, patch_request, post_request, put_request,
     };
@@ -942,6 +944,31 @@ mod tests {
         CollectionFixture::cleanup_all(&created_collections)
             .await
             .unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_collections_clamps_limit_above_configured_maximum(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let max_page_limit = page_limits().unwrap().1;
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{COLLECTION_ENDPOINT}/?limit={}&sort=id",
+                max_page_limit.saturating_add(1)
+            ),
+        )
+        .await;
+        let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        let expected_page_limit = max_page_limit.to_string();
+
+        assert_eq!(
+            header_value(&resp, PAGE_LIMIT_HEADER).as_deref(),
+            Some(expected_page_limit.as_str())
+        );
     }
 
     #[rstest]

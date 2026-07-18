@@ -7,10 +7,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Added unauthenticated `GET /api/v1/config` client capability discovery with
+  the effective default and maximum pagination limits, including values
+  overridden by server configuration.
+
 ### Changed
 
 - Successful `/healthz` and `/readyz` request-completion logs now use `DEBUG`
   severity, while failed probes retain their status-derived severity.
+- Pagination now clamps positive client limits above the configured maximum
+  instead of returning `400 Bad Request`, and paginated responses expose the
+  effective value in `X-Page-Limit`.
 
 ### Fixed
 

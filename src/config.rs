@@ -1913,16 +1913,16 @@ mod tests {
     #[test]
     fn page_limits_are_parsed_from_env() {
         let _lock = TEST_ENV_LOCK.lock().unwrap();
-        let _default_guard = EnvVarGuard::set("HUBUUM_DEFAULT_PAGE_LIMIT", Some("25"));
-        let _max_guard = EnvVarGuard::set("HUBUUM_MAX_PAGE_LIMIT", Some("75"));
+        let _default_guard = EnvVarGuard::set("HUBUUM_DEFAULT_PAGE_LIMIT", Some("100"));
+        let _max_guard = EnvVarGuard::set("HUBUUM_MAX_PAGE_LIMIT", Some("500"));
 
         let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
         let loaded = get_config_from_env().unwrap();
 
-        assert_eq!(parsed.default_page_limit, 25);
-        assert_eq!(parsed.max_page_limit, 75);
-        assert_eq!(loaded.default_page_limit, 25);
-        assert_eq!(loaded.max_page_limit, 75);
+        assert_eq!(parsed.default_page_limit, 100);
+        assert_eq!(parsed.max_page_limit, 500);
+        assert_eq!(loaded.default_page_limit, 100);
+        assert_eq!(loaded.max_page_limit, 500);
     }
 
     #[test]

@@ -8,6 +8,8 @@ services:
       HUBUUM_CLIENT_ALLOWLIST: "*"
       HUBUUM_DATABASE_URL: postgres://hubuum:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db/hubuum
       HUBUUM_LOG_LEVEL: debug
+      HUBUUM_DEFAULT_PAGE_LIMIT: ${HUBUUM_DEFAULT_PAGE_LIMIT:-100}
+      HUBUUM_MAX_PAGE_LIMIT: ${HUBUUM_MAX_PAGE_LIMIT:-250}
       DATABASE_URL: postgres://hubuum:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db/hubuum
     depends_on:
       db:

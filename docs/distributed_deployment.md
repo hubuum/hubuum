@@ -201,6 +201,8 @@ identity or behavior. In particular:
   equivalent on every API and worker replica.
 - Task lease and event lock durations should be consistent across worker
   replicas.
+- Client-visible pagination defaults and maxima must be consistent across API
+  replicas.
 - Reverse-proxy trust and client-allowlist settings should be consistent across
   API replicas.
 

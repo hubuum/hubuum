@@ -13,7 +13,7 @@ use tracing::debug;
 use crate::api::openapi::MessageResponse;
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
-use crate::pagination::{CursorPaginated, finalize_page, pagination_headers};
+use crate::pagination::{CursorPaginated, effective_page_limit, finalize_page, pagination_headers};
 
 static NO_CONTENT_STATUS_CODES: LazyLock<HashSet<StatusCode>> = LazyLock::new(|| {
     let mut m = HashSet::new();
@@ -44,6 +44,14 @@ impl<T> ApiResponse<T> {
             data,
             status,
             headers: None,
+        }
+    }
+
+    pub fn new_with_headers(data: T, status: StatusCode, headers: HashMap<String, String>) -> Self {
+        Self::Json {
+            data,
+            status,
+            headers: Some(headers),
         }
     }
 
@@ -93,9 +101,10 @@ impl<T> ApiResponse<T> {
         data: T,
         next_cursor: &Option<String>,
         total_count: i64,
+        effective_limit: usize,
         no_store: bool,
     ) -> Self {
-        let mut headers = pagination_headers(next_cursor, total_count);
+        let mut headers = pagination_headers(next_cursor, total_count, effective_limit);
         if no_store {
             headers.insert(
                 header::CACHE_CONTROL.to_string(),
@@ -120,10 +129,15 @@ where
         query_options: &QueryOptions,
     ) -> Result<Self, ApiError> {
         let page = finalize_page(data, query_options)?;
+        let effective_limit = effective_page_limit(query_options)?;
         Ok(Self::Json {
             data: page.items,
             status: StatusCode::OK,
-            headers: Some(pagination_headers(&page.next_cursor, total_count)),
+            headers: Some(pagination_headers(
+                &page.next_cursor,
+                total_count,
+                effective_limit,
+            )),
         })
     }
 }
@@ -140,10 +154,15 @@ impl<U> ApiResponse<Vec<U>> {
         F: FnOnce(Vec<T>) -> Vec<U>,
     {
         let page = finalize_page(data, query_options)?;
+        let effective_limit = effective_page_limit(query_options)?;
         Ok(Self::Json {
             data: map(page.items),
             status: StatusCode::OK,
-            headers: Some(pagination_headers(&page.next_cursor, total_count)),
+            headers: Some(pagination_headers(
+                &page.next_cursor,
+                total_count,
+                effective_limit,
+            )),
         })
     }
 }

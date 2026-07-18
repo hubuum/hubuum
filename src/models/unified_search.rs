@@ -933,9 +933,9 @@ mod tests {
             parse_unified_search_query_with_limits("q=server&limit_per_kind=50", 25, 100).unwrap();
         assert_eq!(parsed.limit_per_kind, 50);
 
-        let error = parse_unified_search_query_with_limits("q=server&limit_per_kind=101", 25, 100)
-            .unwrap_err();
-        assert_eq!(error.to_string(), "limit must be at most 100");
+        let clamped =
+            parse_unified_search_query_with_limits("q=server&limit_per_kind=101", 25, 100).unwrap();
+        assert_eq!(clamped.limit_per_kind, 100);
     }
 
     #[test]

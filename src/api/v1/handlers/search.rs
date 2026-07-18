@@ -2,6 +2,7 @@ use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode};
 use bytes::Bytes;
 use futures_util::stream;
 use serde::Serialize;
+use std::collections::HashMap;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -12,6 +13,7 @@ use crate::models::{
     UnifiedSearchStartedEvent, execute_unified_search, execute_unified_search_batch,
     parse_unified_search_query,
 };
+use crate::pagination::PAGE_LIMIT_HEADER;
 use crate::permissions::AppContext;
 
 fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> {
@@ -51,7 +53,14 @@ pub async fn get_search(
     let params = parse_unified_search_query(req.query_string())?;
     let response =
         execute_unified_search(&requestor.principal, &pool, &params, requestor.scopes()).await?;
-    Ok(ApiResponse::new(response, StatusCode::OK))
+    Ok(ApiResponse::new_with_headers(
+        response,
+        StatusCode::OK,
+        HashMap::from([(
+            PAGE_LIMIT_HEADER.to_string(),
+            params.limit_per_kind.to_string(),
+        )]),
+    ))
 }
 
 #[utoipa::path(
@@ -125,6 +134,7 @@ pub async fn stream_search(
                 return Ok(HttpResponse::Ok()
                     .insert_header(("Content-Type", "text/event-stream"))
                     .insert_header(("Cache-Control", "no-cache"))
+                    .insert_header((PAGE_LIMIT_HEADER, params.limit_per_kind.to_string()))
                     .streaming(stream));
             }
         }
@@ -147,5 +157,6 @@ pub async fn stream_search(
     Ok(HttpResponse::Ok()
         .insert_header(("Content-Type", "text/event-stream"))
         .insert_header(("Cache-Control", "no-cache"))
+        .insert_header((PAGE_LIMIT_HEADER, params.limit_per_kind.to_string()))
         .streaming(stream))
 }

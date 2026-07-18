@@ -1857,9 +1857,8 @@ mod test {
 
     // Covers docs/querying.md "Cursor pagination" (maximum page size is `250`).
     #[test]
-    fn docs_parse_query_parameter_rejects_limit_above_maximum() {
-        let error = parse_query_parameter("limit=251").unwrap_err();
-        assert!(matches!(error, ApiError::BadRequest(_)));
-        assert_eq!(error.to_string(), "limit must be at most 250");
+    fn docs_parse_query_parameter_clamps_limit_above_maximum() {
+        let query_options = parse_query_parameter("limit=251").unwrap();
+        assert_eq!(query_options.limit, Some(250));
     }
 }

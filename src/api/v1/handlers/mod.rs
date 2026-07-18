@@ -1,5 +1,6 @@
 pub mod backups;
 pub mod classes;
+pub mod client_config;
 pub mod collections;
 pub mod computed_fields;
 pub mod event_deliveries;
