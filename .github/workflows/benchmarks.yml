@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 45
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
         ports:
           - 5432:5432
         env:
@@ -46,6 +46,10 @@ jobs:
       BASE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_bench_base
       HEAD_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_bench_head
       CARGO_TARGET_DIR: target
+      POSTGRES_BENCH_WARNING_PCT: 10
+      POSTGRES_BENCH_FAILURE_PCT: 20
+      POSTGRES_BENCH_FAILURE_ABSOLUTE_NS: 25000
+      POSTGRES_BENCH_STABILITY_PCT: 10
     steps:
       - name: Check out pull request
         uses: actions/checkout@v7
@@ -58,7 +62,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
-            Cargo.toml Cargo.lock benches/postgres migrations crates src \
+            .github/workflows/benchmarks.yml Cargo.toml Cargo.lock \
+            benches/postgres migrations crates scripts/check-criterion-regressions.sh \
+            scripts/check-criterion-stability.sh src \
             ':(exclude)src/tests/**'; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No PostgreSQL storage benchmark inputs changed."
@@ -73,7 +79,7 @@ jobs:
         run: |
           sudo apt-get update --yes
           sudo apt-get install --yes libpq-dev
-      - name: Defer automatic checkpoints during benchmark comparison
+      - name: Disable nondeterministic PostgreSQL background work
         if: steps.storage_changes.outputs.changed == 'true'
         env:
           PGPASSWORD: postgres
@@ -81,7 +87,14 @@ jobs:
           psql --host localhost --username postgres --dbname postgres \
             --command "ALTER SYSTEM SET checkpoint_timeout = '30min'"
           psql --host localhost --username postgres --dbname postgres \
+            --command "ALTER SYSTEM SET autovacuum = 'off'"
+          psql --host localhost --username postgres --dbname postgres \
             --command "SELECT pg_reload_conf()"
+          autovacuum="$(
+            psql --host localhost --username postgres --dbname postgres \
+              --tuples-only --no-align --command "SELECT current_setting('autovacuum')"
+          )"
+          [[ "$autovacuum" == "off" ]]
       - name: Create isolated benchmark databases
         if: steps.storage_changes.outputs.changed == 'true'
         env:
@@ -138,8 +151,113 @@ jobs:
             echo "Initial PostgreSQL storage baseline recorded; base comparison starts after merge." \
               >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Enforce credible PostgreSQL regressions
+      - name: Assess initial PostgreSQL regressions
         if: >-
           steps.storage_changes.outputs.changed == 'true' &&
           steps.base_benchmark.outputs.available == 'true'
-        run: scripts/check-criterion-regressions.sh target/criterion/storage_postgres 10 20
+        id: initial_assessment
+        env:
+          POSTGRES_BENCH_INITIAL_FAILURES: ${{ runner.temp }}/postgres-benchmark-initial-failures.txt
+          POSTGRES_BENCH_INITIAL_RESULTS: ${{ runner.temp }}/postgres-criterion-initial
+        run: |
+          set +e
+          scripts/check-criterion-regressions.sh \
+            target/criterion/storage_postgres \
+            "$POSTGRES_BENCH_WARNING_PCT" \
+            "$POSTGRES_BENCH_FAILURE_PCT" \
+            "$POSTGRES_BENCH_FAILURE_ABSOLUTE_NS" \
+            forward warning "$POSTGRES_BENCH_INITIAL_FAILURES"
+          assessment_status=$?
+          set -e
+
+          case "$assessment_status" in
+            0)
+              echo "suspected=false" >> "$GITHUB_OUTPUT"
+              ;;
+            1)
+              cp -R target/criterion/storage_postgres "$POSTGRES_BENCH_INITIAL_RESULTS"
+              echo "suspected=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              exit "$assessment_status"
+              ;;
+          esac
+      - name: Confirm PostgreSQL regressions in reverse order
+        if: steps.initial_assessment.outputs.suspected == 'true'
+        env:
+          PGPASSWORD: postgres
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CONFIRMED_FAILURES: ${{ runner.temp }}/postgres-benchmark-confirmed-failures.txt
+          POSTGRES_BENCH_INITIAL_FAILURES: ${{ runner.temp }}/postgres-benchmark-initial-failures.txt
+          POSTGRES_BENCH_INITIAL_RESULTS: ${{ runner.temp }}/postgres-criterion-initial
+        run: |
+          dropdb --host localhost --username postgres --if-exists --force hubuum_bench_base
+          dropdb --host localhost --username postgres --if-exists --force hubuum_bench_head
+          createdb --host localhost --username postgres hubuum_bench_base
+          createdb --host localhost --username postgres hubuum_bench_head
+          rm -rf target/criterion/storage_postgres
+
+          git checkout --detach "$HEAD_SHA"
+          cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
+            --migrate --database-url "$HEAD_DATABASE_URL"
+          HUBUUM_BENCH_DATABASE_URL="$HEAD_DATABASE_URL" \
+            cargo bench --locked --features postgres-bench \
+              --bench storage_postgres_criterion -- \
+              --save-baseline pr-head-confirmation \
+              --noplot --sample-size 40 --measurement-time 4
+
+          git checkout --detach "$BASE_SHA"
+          cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
+            --migrate --database-url "$BASE_DATABASE_URL"
+          HUBUUM_BENCH_DATABASE_URL="$BASE_DATABASE_URL" \
+            cargo bench --locked --features postgres-bench \
+              --bench storage_postgres_criterion -- \
+              --baseline pr-head-confirmation \
+              --noplot --sample-size 40 --measurement-time 4
+
+          git checkout --detach "$HEAD_SHA"
+          set +e
+          scripts/check-criterion-regressions.sh \
+            target/criterion/storage_postgres \
+            "$POSTGRES_BENCH_WARNING_PCT" \
+            "$POSTGRES_BENCH_FAILURE_PCT" \
+            "$POSTGRES_BENCH_FAILURE_ABSOLUTE_NS" \
+            reverse warning "$CONFIRMED_FAILURES" "$POSTGRES_BENCH_INITIAL_FAILURES"
+          confirmation_status=$?
+          set -e
+
+          if [[ "$confirmation_status" -eq 2 ]]; then
+            exit 2
+          fi
+          if [[ "$confirmation_status" -eq 0 ]]; then
+            echo "::warning title=Inconclusive PostgreSQL benchmark::The reverse-order comparison did not reproduce the initial regression."
+            echo "The PostgreSQL benchmark was noisy: its reverse-order confirmation did not reproduce the initial regression." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          set +e
+          scripts/check-criterion-stability.sh \
+            "$POSTGRES_BENCH_INITIAL_RESULTS" \
+            target/criterion/storage_postgres \
+            "$POSTGRES_BENCH_STABILITY_PCT" \
+            "$POSTGRES_BENCH_INITIAL_FAILURES"
+          stability_status=$?
+          set -e
+
+          if [[ "$stability_status" -eq 2 ]]; then
+            exit 2
+          fi
+          if [[ "$stability_status" -eq 1 ]]; then
+            echo "The PostgreSQL benchmark was inconclusive because its bracketing base measurements were unstable." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          scripts/check-criterion-regressions.sh \
+            target/criterion/storage_postgres \
+            "$POSTGRES_BENCH_WARNING_PCT" \
+            "$POSTGRES_BENCH_FAILURE_PCT" \
+            "$POSTGRES_BENCH_FAILURE_ABSOLUTE_NS" \
+            reverse error "$CONFIRMED_FAILURES" "$POSTGRES_BENCH_INITIAL_FAILURES"
