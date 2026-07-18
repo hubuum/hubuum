@@ -776,33 +776,40 @@ macro_rules! filter_fields {
         #[derive(Debug, PartialEq, Clone)]
         pub enum FilterField {
             $($variant),*,
-            Computed(ComputedSortField),
+            Computed(Box<ComputedSortField>),
         }
 
         impl FromStr for FilterField {
             type Err = QueryError;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
-                if let Some(key) = s
-                    .strip_prefix("computed.shared.")
-                    .or_else(|| s.strip_prefix("computed.public."))
-                {
-                    return ComputedSortField::unresolved(ComputedFieldScope::Shared, key)
-                        .map(FilterField::Computed);
-                }
-                if let Some(key) = s
-                    .strip_prefix("computed.personal.")
-                    .or_else(|| s.strip_prefix("computed.private."))
-                {
-                    return ComputedSortField::unresolved(ComputedFieldScope::Personal, key)
-                        .map(FilterField::Computed);
-                }
                 match s {
                     $($str_rep => Ok(FilterField::$variant),)*
-                    _ => Err(QueryError::BadRequest(format!(
-                        "Invalid search field: '{}'",
-                        s
-                    ))),
+                    _ => {
+                        if let Some(key) = s
+                            .strip_prefix("computed.shared.")
+                            .or_else(|| s.strip_prefix("computed.public."))
+                        {
+                            return ComputedSortField::unresolved(ComputedFieldScope::Shared, key)
+                                .map(Box::new)
+                                .map(FilterField::Computed);
+                        }
+                        if let Some(key) = s
+                            .strip_prefix("computed.personal.")
+                            .or_else(|| s.strip_prefix("computed.private."))
+                        {
+                            return ComputedSortField::unresolved(
+                                ComputedFieldScope::Personal,
+                                key,
+                            )
+                            .map(Box::new)
+                            .map(FilterField::Computed);
+                        }
+                        Err(QueryError::BadRequest(format!(
+                            "Invalid search field: '{}'",
+                            s
+                        )))
+                    }
                 }
             }
         }
@@ -832,7 +839,7 @@ macro_rules! filter_fields {
                 }
             }
 
-            pub const fn computed_sort(&self) -> Option<&ComputedSortField> {
+            pub fn computed_sort(&self) -> Option<&ComputedSortField> {
                 match self {
                     FilterField::Computed(field) => Some(field),
                     _ => None,
@@ -962,6 +969,14 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, QueryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filter_field_keeps_ordinary_variants_compact() {
+        assert!(
+            std::mem::size_of::<FilterField>() <= 2 * std::mem::size_of::<usize>(),
+            "FilterField should keep computed sort state behind indirection"
+        );
+    }
 
     #[test]
     fn parses_filters_sort_cursor_and_limit() {

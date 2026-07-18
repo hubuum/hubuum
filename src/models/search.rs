@@ -309,8 +309,7 @@ impl ParsedQueryParamExt for ParsedQueryParam {
     }
 
     fn as_json_sql(&self) -> Result<SQLComponent, ApiError> {
-        let field = self.field.clone();
-        self.as_json_sql_for_field_expr(field.table_field())
+        self.as_json_sql_for_field_expr(self.field.table_field())
     }
 
     fn as_json_sql_for_field_expr(&self, jsonb_field_expr: &str) -> Result<SQLComponent, ApiError> {
