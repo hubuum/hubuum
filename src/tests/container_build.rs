@@ -10,6 +10,57 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rstest::rstest;
 
 #[cfg(unix)]
+static TEST_DIRECTORY_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(unix)]
+fn test_directory(prefix: &str) -> PathBuf {
+    let directory = std::env::temp_dir().join(format!(
+        "hubuum-{prefix}-{}-{}",
+        std::process::id(),
+        TEST_DIRECTORY_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&directory).expect("test directory should be created");
+    directory
+}
+
+#[cfg(unix)]
+fn write_criterion_estimates(
+    criterion_directory: &std::path::Path,
+    benchmark: &str,
+    baseline_name: &str,
+    change: (f64, f64, f64),
+    base_median_ns: f64,
+    new_median_ns: f64,
+) {
+    let benchmark_directory = criterion_directory.join(benchmark);
+    for estimate_kind in ["change", baseline_name, "new"] {
+        fs::create_dir_all(benchmark_directory.join(estimate_kind))
+            .expect("Criterion estimate directory should be created");
+    }
+    fs::write(
+        benchmark_directory.join("change/estimates.json"),
+        serde_json::json!({
+            "median": {
+                "point_estimate": change.0,
+                "confidence_interval": {
+                    "lower_bound": change.1,
+                    "upper_bound": change.2
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("Criterion change estimate should be written");
+    for (estimate_kind, median_ns) in [(baseline_name, base_median_ns), ("new", new_median_ns)] {
+        fs::write(
+            benchmark_directory.join(format!("{estimate_kind}/estimates.json")),
+            serde_json::json!({"median": {"point_estimate": median_ns}}).to_string(),
+        )
+        .expect("Criterion median estimate should be written");
+    }
+}
+
+#[cfg(unix)]
 fn run_entrypoint(runtime_role: &str, arguments: &[&str]) -> Output {
     use std::os::unix::fs::PermissionsExt;
 
@@ -212,11 +263,172 @@ fn container_dependency_images_are_pinned() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workflow = fs::read_to_string(repository.join(".github/workflows/ci.yml"))
         .expect("CI workflow should be readable");
+    let benchmark_workflow =
+        fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
+            .expect("benchmark workflow should be readable");
     let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
         .expect("single-host installer should be readable");
 
     assert!(workflow.contains("postgres:18.4@sha256:"));
+    assert!(benchmark_workflow.contains("postgres:18.4-alpine3.24@sha256:"));
     assert!(installer.contains("postgres:18.4-alpine3.24@sha256:"));
+}
+
+#[test]
+fn postgres_benchmark_workflow_confirms_regressions_on_stable_base_runs() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workflow = fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
+        .expect("benchmark workflow should be readable");
+
+    assert!(workflow.contains("Confirm PostgreSQL regressions in reverse order"));
+    assert!(workflow.contains("check-criterion-stability.sh"));
+    assert!(workflow.contains("ALTER SYSTEM SET autovacuum = 'off'"));
+    assert!(workflow.contains("POSTGRES_BENCH_FAILURE_ABSOLUTE_NS"));
+    let stability_invocation = workflow
+        .rsplit_once("scripts/check-criterion-stability.sh")
+        .expect("workflow should invoke the stability checker")
+        .1
+        .lines()
+        .take(6)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(stability_invocation.contains("$CONFIRMED_FAILURES"));
+    assert!(!stability_invocation.contains("$POSTGRES_BENCH_INITIAL_FAILURES"));
+    assert!(stability_invocation.contains("pr-base"));
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case(0.05, 50_000.0, true)]
+#[case(0.25, 10_000.0, true)]
+#[case(0.25, 50_000.0, false)]
+fn criterion_regression_requires_confident_relative_and_absolute_changes(
+    #[case] relative_lower_bound: f64,
+    #[case] absolute_change_ns: f64,
+    #[case] expected_success: bool,
+) {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let test_directory = test_directory("criterion-regression");
+    let criterion_directory = test_directory.join("criterion");
+    let failures = test_directory.join("failures.txt");
+    write_criterion_estimates(
+        &criterion_directory,
+        "point_read",
+        "pr-base",
+        (0.40, relative_lower_bound, 0.50),
+        100_000.0,
+        100_000.0 + absolute_change_ns,
+    );
+
+    let output = Command::new(repository.join("scripts/check-criterion-regressions.sh"))
+        .arg(&criterion_directory)
+        .args(["10", "20", "25000", "forward", "none"])
+        .arg(&failures)
+        .arg("")
+        .arg("pr-base")
+        .output()
+        .expect("Criterion regression checker should run");
+    let diagnostics = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(output.status.success(), expected_success, "{diagnostics}");
+    if expected_success {
+        assert_eq!(fs::read_to_string(&failures).unwrap(), "");
+    } else {
+        assert_eq!(fs::read_to_string(&failures).unwrap(), "point_read\n");
+    }
+    fs::remove_dir_all(test_directory).expect("test directory should be removed");
+}
+
+#[cfg(unix)]
+#[test]
+fn criterion_reverse_comparison_reports_the_same_head_regression() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let test_directory = test_directory("criterion-reverse");
+    let criterion_directory = test_directory.join("criterion");
+    let failures = test_directory.join("failures.txt");
+    let filter = test_directory.join("filter.txt");
+    fs::write(&filter, "point_read\n").expect("benchmark filter should be written");
+    write_criterion_estimates(
+        &criterion_directory,
+        "point_read",
+        "pr-head-confirmation",
+        (-0.285_714, -0.35, -0.25),
+        140_000.0,
+        100_000.0,
+    );
+
+    let output = Command::new(repository.join("scripts/check-criterion-regressions.sh"))
+        .arg(&criterion_directory)
+        .args(["10", "20", "25000", "reverse", "none"])
+        .arg(&failures)
+        .arg(&filter)
+        .arg("pr-head-confirmation")
+        .output()
+        .expect("Criterion reverse regression checker should run");
+    let diagnostics = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(output.status.code(), Some(1), "{diagnostics}");
+    assert_eq!(fs::read_to_string(&failures).unwrap(), "point_read\n");
+    fs::remove_dir_all(test_directory).expect("test directory should be removed");
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case(109_000.0, true)]
+#[case(111_000.0, false)]
+fn criterion_stability_rejects_excessive_base_to_base_drift(
+    #[case] confirmation_base_median_ns: f64,
+    #[case] expected_success: bool,
+) {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let test_directory = test_directory("criterion-stability");
+    let initial_directory = test_directory.join("initial");
+    let confirmation_directory = test_directory.join("confirmation");
+    let filter = test_directory.join("filter.txt");
+    fs::write(&filter, "point_read\n").expect("benchmark filter should be written");
+    write_criterion_estimates(
+        &initial_directory,
+        "point_read",
+        "pr-base",
+        (0.0, 0.0, 0.0),
+        100_000.0,
+        100_000.0,
+    );
+    write_criterion_estimates(
+        &confirmation_directory,
+        "point_read",
+        "pr-head-confirmation",
+        (0.0, 0.0, 0.0),
+        140_000.0,
+        confirmation_base_median_ns,
+    );
+
+    let output = Command::new(repository.join("scripts/check-criterion-stability.sh"))
+        .args([
+            &initial_directory,
+            &confirmation_directory,
+            std::path::Path::new("10"),
+            &filter,
+            std::path::Path::new("pr-base"),
+        ])
+        .output()
+        .expect("Criterion stability checker should run");
+    let diagnostics = format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(output.status.success(), expected_success, "{diagnostics}");
+    fs::remove_dir_all(test_directory).expect("test directory should be removed");
 }
 
 #[test]

@@ -4,12 +4,16 @@
 //! authentication and routing should not hide an extra pool checkout or an
 //! N+1 introduced while storage capabilities are extracted.
 
-use crate::db::capture_queries;
+use diesel::sql_types::{Integer, Json, Text};
+use serde_json::Value;
+
+use crate::db::prelude::{QueryableByName, RunQueryDsl};
 use crate::db::traits::history::{
     collection_history_paginated_with_total_count, resolve_actor_usernames,
 };
 use crate::db::traits::user::UserSearchBackend;
 use crate::db::with_actor_scope;
+use crate::db::{DbPool, capture_queries, with_connection};
 use crate::events::EventContext;
 use crate::models::collection::effective_group_on;
 use crate::models::search::parse_query_parameter;
@@ -19,6 +23,103 @@ use crate::models::{
 };
 use crate::tests::{TestScope, ensure_admin_user};
 use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors};
+
+const REPRESENTATIVE_COLLECTION_ROWS: i32 = 2_000;
+
+#[derive(QueryableByName)]
+struct ExplainPlanRow {
+    #[diesel(sql_type = Json)]
+    #[diesel(column_name = "QUERY PLAN")]
+    query_plan: Value,
+}
+
+fn plan_uses_index(plan: &Value, index_name_prefix: &str) -> bool {
+    match plan {
+        Value::Array(values) => values
+            .iter()
+            .any(|value| plan_uses_index(value, index_name_prefix)),
+        Value::Object(fields) => {
+            fields
+                .get("Index Name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name.starts_with(index_name_prefix))
+                || fields
+                    .values()
+                    .any(|value| plan_uses_index(value, index_name_prefix))
+        }
+        _ => false,
+    }
+}
+
+fn root_plan(plan: &Value) -> &Value {
+    plan.as_array()
+        .and_then(|plans| plans.as_slice().first())
+        .and_then(|explain| explain.get("Plan"))
+        .expect("EXPLAIN JSON should contain a root plan")
+}
+
+fn root_shared_blocks(plan: &Value) -> u64 {
+    let root = root_plan(plan);
+    root.get("Shared Hit Blocks")
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+        + root
+            .get("Shared Read Blocks")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+}
+
+async fn add_representative_collection_rows(pool: &DbPool, name_prefix: &str, parent_id: i32) {
+    with_connection(pool, async |conn| {
+        diesel::sql_query(
+            "WITH inserted AS (\
+                INSERT INTO collections (name, description, parent_collection_id) \
+                SELECT $1 || '-' || sequence::text, 'query plan scale row', $2 \
+                FROM generate_series(1, $3) AS sequence \
+                RETURNING id\
+            ) \
+            INSERT INTO collection_closure \
+                (ancestor_collection_id, descendant_collection_id, depth) \
+            SELECT id, id, 0 FROM inserted",
+        )
+        .bind::<Text, _>(name_prefix)
+        .bind::<Integer, _>(parent_id)
+        .bind::<Integer, _>(REPRESENTATIVE_COLLECTION_ROWS)
+        .execute(conn)
+        .await?;
+        diesel::sql_query("ANALYZE collections")
+            .execute(conn)
+            .await?;
+        diesel::sql_query("ANALYZE collection_closure")
+            .execute(conn)
+            .await
+    })
+    .await
+    .expect("representative query-plan rows should be created");
+}
+
+async fn remove_representative_collection_rows(pool: &DbPool, name_prefix: &str) {
+    with_connection(pool, async |conn| {
+        diesel::sql_query("DELETE FROM collections WHERE left(name, length($1)) = $1")
+            .bind::<Text, _>(name_prefix)
+            .execute(conn)
+            .await
+    })
+    .await
+    .expect("representative query-plan rows should be removed");
+}
+
+async fn explain_storage_query(pool: &DbPool, query: &'static str, collection_id: i32) -> Value {
+    with_connection(pool, async |conn| {
+        diesel::sql_query(query)
+            .bind::<Integer, _>(collection_id)
+            .get_result::<ExplainPlanRow>(conn)
+            .await
+    })
+    .await
+    .expect("storage query should produce an EXPLAIN plan")
+    .query_plan
+}
 
 fn assert_same_query_shape(
     smaller: &crate::db::QueryCaptureSnapshot,
@@ -54,6 +155,37 @@ async fn collection_point_read_uses_one_query() {
     assert_eq!(queries.connection_checkouts(), 1);
     assert_eq!(queries.queries_matching("FROM \"collections\""), 1);
 
+    fixture.cleanup().await.expect("fixture cleanup");
+}
+
+#[actix_web::test]
+async fn collection_point_read_plan_has_bounded_logical_work_at_representative_scale() {
+    let scope = TestScope::new();
+    let fixture = scope.collection_fixture("query_plan_point_read").await;
+    let scale_prefix = scope.scoped_name("query_plan_point_read_scale");
+    add_representative_collection_rows(scope.pool.get_ref(), &scale_prefix, fixture.collection.id)
+        .await;
+
+    let plan = explain_storage_query(
+        scope.pool.get_ref(),
+        "EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, FORMAT JSON) \
+         SELECT id, name, description, created_at, updated_at, parent_collection_id \
+         FROM collections WHERE id = $1",
+        fixture.collection.id,
+    )
+    .await;
+
+    assert!(
+        plan_uses_index(&plan, "collections_pkey"),
+        "point read should use the collections primary-key index: {plan:#}"
+    );
+    assert_eq!(root_plan(&plan)["Actual Rows"].as_f64(), Some(1.0));
+    assert!(
+        root_shared_blocks(&plan) <= 8,
+        "point read touched too many shared blocks: {plan:#}"
+    );
+
+    remove_representative_collection_rows(scope.pool.get_ref(), &scale_prefix).await;
     fixture.cleanup().await.expect("fixture cleanup");
 }
 
@@ -105,6 +237,68 @@ async fn collection_ancestor_query_count_is_constant_with_depth() {
             .expect("nested collection cleanup");
     }
     root_fixture.cleanup().await.expect("root fixture cleanup");
+}
+
+#[actix_web::test]
+async fn collection_ancestor_plan_has_bounded_logical_work_at_representative_scale() {
+    let scope = TestScope::new();
+    let fixture = scope.collection_fixture("query_plan_ancestors").await;
+    let mut collections = vec![fixture.collection.clone()];
+
+    for depth in 1..=16 {
+        let parent_id = collections.last().expect("parent collection").id;
+        let collection = NewCollectionWithAssignee {
+            name: scope.scoped_name(&format!("query_plan_ancestor_{depth}")),
+            description: format!("query plan ancestor level {depth}"),
+            group_id: fixture.owner_group.id,
+            parent_collection_id: Some(
+                CollectionID::new(parent_id).expect("valid parent collection id"),
+            ),
+        }
+        .save_without_events(&scope.pool)
+        .await
+        .expect("nested collection should save");
+        collections.push(collection);
+    }
+
+    let scale_prefix = scope.scoped_name("query_plan_ancestor_scale");
+    add_representative_collection_rows(scope.pool.get_ref(), &scale_prefix, fixture.collection.id)
+        .await;
+    let leaf_id = collections.last().expect("leaf collection").id;
+    let plan = explain_storage_query(
+        scope.pool.get_ref(),
+        "EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF, FORMAT JSON) \
+         SELECT collections.id, collections.name, collections.description, \
+                collections.created_at, collections.updated_at, \
+                collections.parent_collection_id \
+         FROM collection_closure \
+         INNER JOIN collections \
+             ON collections.id = collection_closure.ancestor_collection_id \
+         WHERE collection_closure.descendant_collection_id = $1 \
+           AND collection_closure.depth > 0 \
+         ORDER BY collection_closure.depth ASC",
+        leaf_id,
+    )
+    .await;
+
+    assert!(
+        plan_uses_index(&plan, "collection_closure_descendant"),
+        "ancestor read should use a descendant-first closure index: {plan:#}"
+    );
+    assert_eq!(root_plan(&plan)["Actual Rows"].as_f64(), Some(17.0));
+    assert!(
+        root_shared_blocks(&plan) <= 128,
+        "ancestor read touched too many shared blocks: {plan:#}"
+    );
+
+    remove_representative_collection_rows(scope.pool.get_ref(), &scale_prefix).await;
+    for collection in collections.iter().skip(1).rev() {
+        collection
+            .delete_without_events(&scope.pool)
+            .await
+            .expect("nested collection cleanup");
+    }
+    fixture.cleanup().await.expect("fixture cleanup");
 }
 
 #[actix_web::test]
