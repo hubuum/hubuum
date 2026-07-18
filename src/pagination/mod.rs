@@ -86,6 +86,11 @@ pub fn validate_page_limit_with_max(
             "limit must be greater than 0".to_string(),
         ));
     }
+    if max_page_limit == 0 {
+        return Err(ApiError::BadRequest(
+            "max_page_limit must be greater than 0".to_string(),
+        ));
+    }
 
     Ok(limit.min(max_page_limit))
 }
@@ -779,6 +784,12 @@ mod tests {
     fn validate_page_limit_with_max_rejects_zero() {
         let error = validate_page_limit_with_max(0, 100).unwrap_err();
         assert_eq!(error.to_string(), "limit must be greater than 0");
+    }
+
+    #[test]
+    fn validate_page_limit_with_max_rejects_zero_maximum() {
+        let error = validate_page_limit_with_max(1, 0).unwrap_err();
+        assert_eq!(error.to_string(), "max_page_limit must be greater than 0");
     }
 
     #[test]

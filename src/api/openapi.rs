@@ -630,39 +630,54 @@ impl Modify for OperationDefaults {
     }
 }
 
+const CURSOR_PAGINATED_GET_PATHS: &[&str] = &[
+    "/api/v1/iam/users",
+    "/api/v1/iam/users/{user_id}/events",
+    "/api/v1/iam/service-accounts",
+    "/api/v1/iam/me/tokens",
+    "/api/v1/iam/me/groups",
+    "/api/v1/iam/me/computed-fields",
+    "/api/v1/iam/principals/{principal_id}/tokens",
+    "/api/v1/iam/principals/{principal_id}/groups",
+    "/api/v1/iam/groups",
+    "/api/v1/iam/groups/{group_id}/members",
+    "/api/v1/iam/groups/{group_id}/events",
+    "/api/v1/collections",
+    "/api/v1/collections/{collection_id}/event-subscriptions",
+    "/api/v1/collections/{collection_id}/events",
+    "/api/v1/collections/{collection_id}/history",
+    "/api/v1/collections/{collection_id}/permissions",
+    "/api/v1/collections/{collection_id}/permissions/principal/{principal_id}",
+    "/api/v1/collections/{collection_id}/has_permissions/{permission}",
+    "/api/v1/event-deliveries",
+    "/api/v1/event-sinks",
+    "/api/v1/imports/{task_id}/results",
+    "/api/v1/tasks",
+    "/api/v1/tasks/{task_id}/events",
+    "/api/v1/export-templates",
+    "/api/v1/export-templates/{template_id}/events",
+    "/api/v1/export-templates/{template_id}/history",
+    "/api/v1/remote-targets",
+    "/api/v1/remote-targets/{target_id}/events",
+    "/api/v1/remote-targets/{remote_target_id}/history",
+    "/api/v1/events",
+    "/api/v1/relations/classes",
+    "/api/v1/relations/objects",
+    "/api/v1/classes",
+    "/api/v1/classes/{class_id}/events",
+    "/api/v1/classes/{class_id}/history",
+    "/api/v1/classes/{class_id}/permissions",
+    "/api/v1/classes/{class_id}/related/classes",
+    "/api/v1/classes/{class_id}/related/relations",
+    "/api/v1/classes/{class_id}/",
+    "/api/v1/classes/{class_id}/{object_id}/events",
+    "/api/v1/classes/{class_id}/{object_id}/history",
+    "/api/v1/classes/{class_id}/objects/{object_id}/related/objects",
+    "/api/v1/classes/{class_id}/objects/{object_id}/related/relations",
+];
+
 fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
-    method.eq_ignore_ascii_case("get")
-        && matches!(
-            path,
-            "/api/v1/iam/users"
-                | "/api/v1/iam/service-accounts"
-                | "/api/v1/iam/me/tokens"
-                | "/api/v1/iam/me/groups"
-                | "/api/v1/iam/principals/{principal_id}/tokens"
-                | "/api/v1/iam/principals/{principal_id}/groups"
-                | "/api/v1/iam/groups"
-                | "/api/v1/iam/groups/{group_id}/members"
-                | "/api/v1/collections"
-                | "/api/v1/collections/{collection_id}/history"
-                | "/api/v1/collections/{collection_id}/permissions"
-                | "/api/v1/collections/{collection_id}/permissions/principal/{principal_id}"
-                | "/api/v1/collections/{collection_id}/has_permissions/{permission}"
-                | "/api/v1/tasks"
-                | "/api/v1/export-templates"
-                | "/api/v1/export-templates/{template_id}/history"
-                | "/api/v1/remote-targets/{remote_target_id}/history"
-                | "/api/v1/relations/classes"
-                | "/api/v1/relations/objects"
-                | "/api/v1/classes"
-                | "/api/v1/classes/{class_id}/history"
-                | "/api/v1/classes/{class_id}/permissions"
-                | "/api/v1/classes/{class_id}/related/classes"
-                | "/api/v1/classes/{class_id}/related/relations"
-                | "/api/v1/classes/{class_id}/"
-                | "/api/v1/classes/{class_id}/{object_id}/history"
-                | "/api/v1/classes/{class_id}/objects/{object_id}/related/objects"
-                | "/api/v1/classes/{class_id}/objects/{object_id}/related/relations"
-        )
+    method.eq_ignore_ascii_case("get") && CURSOR_PAGINATED_GET_PATHS.contains(&path)
 }
 
 fn is_unified_search_get(path: &str, method: &str) -> bool {
@@ -1233,6 +1248,43 @@ mod tests {
     #[test]
     fn openapi_documents_cursor_pagination_for_list_endpoints() {
         let json = openapi_json();
+        let (default_page_limit, max_page_limit) = page_limits_or_defaults();
+
+        for path in CURSOR_PAGINATED_GET_PATHS {
+            let pointer_path = path.replace('~', "~0").replace('/', "~1");
+            let operation = json
+                .pointer(&format!("/paths/{pointer_path}/get"))
+                .unwrap_or_else(|| panic!("paginated GET {path} must be present"));
+            let parameters = operation["parameters"]
+                .as_array()
+                .unwrap_or_else(|| panic!("paginated GET {path} must document query parameters"));
+            let limit = parameters
+                .iter()
+                .find(|parameter| parameter["name"] == "limit")
+                .unwrap_or_else(|| panic!("paginated GET {path} must document limit"));
+
+            assert_eq!(
+                limit["schema"]["minimum"], 1,
+                "incorrect minimum for {path}"
+            );
+            assert_eq!(
+                limit["schema"]["default"], default_page_limit,
+                "incorrect default for {path}"
+            );
+            assert_eq!(
+                limit["schema"]["maximum"], max_page_limit,
+                "incorrect maximum for {path}"
+            );
+
+            for header in [NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, PAGE_LIMIT_HEADER] {
+                assert!(
+                    operation["responses"]["200"]["headers"][header]["description"]
+                        .as_str()
+                        .is_some(),
+                    "paginated GET {path} must document {header}"
+                );
+            }
+        }
 
         let parameters = json
             .pointer("/paths/~1api~1v1~1classes/get/parameters")
@@ -1252,7 +1304,6 @@ mod tests {
             .iter()
             .find(|parameter| parameter["name"] == "limit")
             .expect("limit parameter must be present");
-        let (default_page_limit, max_page_limit) = page_limits_or_defaults();
         assert_eq!(limit["schema"]["minimum"], 1);
         assert_eq!(limit["schema"]["default"], default_page_limit);
         assert_eq!(limit["schema"]["maximum"], max_page_limit);
