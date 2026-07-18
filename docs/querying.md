@@ -112,6 +112,8 @@ Limits:
 
 - default page size: `100`
 - maximum page size: `250`
+- a positive `limit` above the configured maximum is clamped to the maximum
+- `limit=0` remains a `400 Bad Request`
 
 Behavior:
 
@@ -119,9 +121,23 @@ Behavior:
 - by default, paginated responses include `X-Total-Count` with the exact number of matching results
 - set `include_total=false` to skip that count query on latency-sensitive requests; `X-Total-Count` is then omitted
 - if another page exists, the response includes `X-Next-Cursor`
+- `X-Page-Limit` reports the effective page size after applying the default and maximum
 - send that cursor back unchanged to fetch the next page
 - if `X-Next-Cursor` is absent, there is no next page
-- total pages can be derived client-side as `ceil(X-Total-Count / limit)`
+- total pages can be derived client-side as `ceil(X-Total-Count / X-Page-Limit)`
+
+Clients should read the effective default and maximum limits from the public
+client configuration endpoint rather than assuming the built-in values shown
+above:
+
+```text
+GET /api/v1/config
+```
+
+The served `/api-doc/openapi.json` also applies the effective values to the
+`default` and `maximum` schema constraints for `limit` and unified search's
+`limit_per_kind`. The committed `docs/openapi.json` is a build-time snapshot and
+normally reflects the built-in defaults.
 
 Example:
 

@@ -24,6 +24,25 @@ pub struct RunningConfig {
     pub network: NetworkConfig,
 }
 
+/// Public configuration values that API consumers need to use the service correctly.
+///
+/// Keep this projection deliberately small. Adding a value here makes it available without
+/// authentication through the client configuration endpoint.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ClientConfig {
+    pub pagination: ClientPaginationConfig,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ClientPaginationConfig {
+    /// Number of items returned when a paginated request omits its limit.
+    #[schema(minimum = 1)]
+    pub default_page_limit: usize,
+    /// Largest effective page size used for a client request.
+    #[schema(minimum = 1)]
+    pub max_page_limit: usize,
+}
+
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct SecretStatus {
     /// Whether a value is configured. The value itself is never returned.
@@ -183,6 +202,17 @@ pub struct NetworkConfig {
 pub struct ClientAllowlistStatus {
     pub allows_any: bool,
     pub network_count: usize,
+}
+
+impl From<&RunningConfig> for ClientConfig {
+    fn from(config: &RunningConfig) -> Self {
+        Self {
+            pagination: ClientPaginationConfig {
+                default_page_limit: config.pagination.default_page_limit,
+                max_page_limit: config.pagination.max_page_limit,
+            },
+        }
+    }
 }
 
 impl From<&AppConfig> for RunningConfig {

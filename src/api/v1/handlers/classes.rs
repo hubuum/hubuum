@@ -25,8 +25,8 @@ use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection as collection_model;
 use crate::models::traits::{ExpandCollection, ToHubuumObjects, check_if_object_in_class};
 use crate::pagination::{
-    SKIPPED_TOTAL_COUNT, count_query_options, page_limits, prepare_db_pagination,
-    validate_page_limit,
+    SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, page_limits,
+    prepare_db_pagination, validate_page_limit,
 };
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{
@@ -96,12 +96,14 @@ async fn computed_personal_owner(
 fn serialized_object_page<T: serde::Serialize>(
     page: Page<T>,
     total_count: i64,
+    effective_limit: usize,
     no_store: bool,
 ) -> Result<ApiResponse<serde_json::Value>, ApiError> {
     Ok(ApiResponse::paginated_items(
         serde_json::to_value(page.items)?,
         &page.next_cursor,
         total_count,
+        effective_limit,
         no_store,
     ))
 }
@@ -1023,7 +1025,12 @@ async fn get_objects_in_class(
     } else {
         if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
             let page = finalize_page(Vec::<HubuumObject>::new(), &params)?;
-            return serialized_object_page(page, 0, include_computed);
+            return serialized_object_page(
+                page,
+                0,
+                effective_page_limit(&params)?,
+                include_computed,
+            );
         }
         let candidates = user
             .search_objects_from_backend_with_admin_status(
@@ -1068,10 +1075,11 @@ async fn get_objects_in_class(
                 next_cursor,
             },
             total_count,
+            effective_page_limit(&params)?,
             true,
         )
     } else {
-        serialized_object_page(page, total_count, false)
+        serialized_object_page(page, total_count, effective_page_limit(&params)?, false)
     }
 }
 

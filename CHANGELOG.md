@@ -7,6 +7,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Added unauthenticated `GET /api/v1/config` client capability discovery with
+  the effective default and maximum pagination limits, including values
+  overridden by server configuration.
+
+### Changed
+
+- Pagination now clamps positive client limits above the configured maximum
+  instead of returning `400 Bad Request`, and paginated responses expose the
+  effective value in `X-Page-Limit`.
+
 ### Fixed
 
 - Fixed single-host installs and updates with older `podman-compose` providers:
