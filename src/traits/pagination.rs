@@ -88,9 +88,10 @@ fn compare_jsonb(left: &serde_json::Value, right: &serde_json::Value) -> Orderin
         (Value::Object(left), Value::Object(right)) => {
             let mut left = left.iter().collect::<Vec<_>>();
             let mut right = right.iter().collect::<Vec<_>>();
-            let key_order = |(left, _): &(&String, &Value), (right, _): &(&String, &Value)| {
-                left.len().cmp(&right.len()).then_with(|| left.cmp(right))
-            };
+            // PostgreSQL compares object cardinality first, then key/value
+            // pairs with keys in C-collation lexical order.
+            let key_order =
+                |(left, _): &(&String, &Value), (right, _): &(&String, &Value)| left.cmp(right);
             left.sort_by(key_order);
             right.sort_by(key_order);
             left.len().cmp(&right.len()).then_with(|| {
@@ -98,9 +99,7 @@ fn compare_jsonb(left: &serde_json::Value, right: &serde_json::Value) -> Orderin
                     .zip(right.iter())
                     .find_map(|((left_key, left_value), (right_key, right_value))| {
                         let ordering = left_key
-                            .len()
-                            .cmp(&right_key.len())
-                            .then_with(|| left_key.cmp(right_key))
+                            .cmp(right_key)
                             .then_with(|| compare_jsonb(left_value, right_value));
                         (ordering != Ordering::Equal).then_some(ordering)
                     })
@@ -148,4 +147,17 @@ pub struct CursorSqlField {
 
 pub trait CursorSqlMapping: CursorPaginated {
     fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jsonb_object_comparison_uses_lexical_key_order() {
+        let left = CursorValue::Json(serde_json::json!({"aa": 0}));
+        let right = CursorValue::Json(serde_json::json!({"b": 0}));
+
+        assert_eq!(left.cmp(&right), Ordering::Less);
+    }
 }

@@ -468,7 +468,7 @@ fn decode_cursor(cursor: &str, sorts: &[SortParam]) -> Result<CursorToken, ApiEr
         .decode(cursor)
         .map_err(|error| ApiError::BadRequest(format!("invalid cursor: {error}")))?;
 
-    let token: CursorToken = serde_json::from_slice(&bytes)
+    let mut token: CursorToken = serde_json::from_slice(&bytes)
         .map_err(|error| ApiError::BadRequest(format!("invalid cursor: {error}")))?;
 
     let expected_sorts: Vec<CursorSort> = sorts
@@ -483,6 +483,15 @@ fn decode_cursor(cursor: &str, sorts: &[SortParam]) -> Result<CursorToken, ApiEr
         return Err(ApiError::BadRequest(
             "cursor does not match current sort order".to_string(),
         ));
+    }
+
+    for value in &mut token.values {
+        if let CursorValue::Decimal(source) = value {
+            *source =
+                hubuum_computed_fields::canonical_decimal_string(source).ok_or_else(|| {
+                    ApiError::BadRequest("cursor contains an invalid decimal value".to_string())
+                })?;
+        }
     }
 
     Ok(token)
@@ -564,9 +573,10 @@ where
         ))),
         (CursorSqlType::Integer, CursorValue::Integer(value)) => Ok(value.to_string()),
         (CursorSqlType::Numeric, CursorValue::Decimal(value)) => {
-            hubuum_computed_fields::compare_decimal_strings(value, value).ok_or_else(|| {
-                ApiError::BadRequest("cursor contains an invalid decimal value".to_string())
-            })?;
+            let value =
+                hubuum_computed_fields::canonical_decimal_string(value).ok_or_else(|| {
+                    ApiError::BadRequest("cursor contains an invalid decimal value".to_string())
+                })?;
             Ok(format!("{value}::numeric"))
         }
         (CursorSqlType::Boolean, CursorValue::Boolean(value)) => Ok(value.to_string()),
@@ -1041,6 +1051,58 @@ mod tests {
         assert_eq!(
             sql,
             Some("(((users.email < 'b@example.com' OR users.email IS NULL)))".to_string())
+        );
+    }
+
+    fn encoded_cursor(sort: &SortParam, value: CursorValue) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&CursorToken {
+                sorts: vec![CursorSort {
+                    field: sort.field.to_string(),
+                    descending: sort.descending,
+                }],
+                values: vec![value],
+            })
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn numeric_cursor_sql_uses_a_canonical_decimal_literal() {
+        let sort = SortParam {
+            field: FilterField::Id,
+            descending: false,
+        };
+        let fields = [OwnedCursorSqlField {
+            expression: "computed_value".to_string(),
+            sql_type: CursorSqlType::Numeric,
+            nullable: false,
+        }];
+        let cursor = encoded_cursor(&sort, CursorValue::Decimal("1_".to_string()));
+
+        let sql = cursor_filter_sql_for_fields(&[sort], &fields, Some(&cursor)).unwrap();
+
+        assert_eq!(sql.as_deref(), Some("((computed_value > 1::numeric))"));
+    }
+
+    #[test]
+    fn numeric_cursor_sql_rejects_a_decimal_outside_evaluator_bounds() {
+        let sort = SortParam {
+            field: FilterField::Id,
+            descending: false,
+        };
+        let fields = [OwnedCursorSqlField {
+            expression: "computed_value".to_string(),
+            sql_type: CursorSqlType::Numeric,
+            nullable: false,
+        }];
+        let cursor = encoded_cursor(&sort, CursorValue::Decimal("1e200000".to_string()));
+
+        let error = cursor_filter_sql_for_fields(&[sort], &fields, Some(&cursor)).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "cursor contains an invalid decimal value"
         );
     }
 

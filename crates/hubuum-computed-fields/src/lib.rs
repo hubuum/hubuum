@@ -31,6 +31,15 @@ pub fn compare_decimal_strings(left: &str, right: &str) -> Option<Ordering> {
     Some(left.cmp(&right))
 }
 
+pub fn canonical_decimal_string(source: &str) -> Option<String> {
+    if source.len() > MAX_DECIMAL_SOURCE_BYTES {
+        return None;
+    }
+    let value = BigDecimal::from_str(source).ok()?;
+    validate_decimal(&value, None).ok()?;
+    Some(value.normalized().to_string())
+}
+
 /// Release-owned safety limits applied to one evaluation scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EvaluationLimits {
@@ -940,6 +949,21 @@ mod tests {
             EvaluationLimits::standard(),
         )
         .unwrap()
+    }
+
+    #[rstest]
+    #[case("1_", Some("1"))]
+    #[case("+1.2300", Some("1.23"))]
+    #[case("1e308", Some("1e+308"))]
+    #[case("1e309", None)]
+    #[case("1e-309", None)]
+    #[case("12345678901234567890123456789012345", None)]
+    #[case("1e200000", None)]
+    fn decimal_cursor_canonicalization_respects_evaluator_bounds(
+        #[case] source: &str,
+        #[case] expected: Option<&str>,
+    ) {
+        assert_eq!(canonical_decimal_string(source).as_deref(), expected);
     }
 
     #[rstest]
