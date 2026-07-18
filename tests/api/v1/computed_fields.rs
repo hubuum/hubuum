@@ -20,8 +20,8 @@ mod tests {
     use crate::tests::api_operations::{get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
-        TestContext, create_test_group, create_test_service_account, service_account_token,
-        test_context,
+        TestContext, create_test_group, create_test_service_account, scoped_token,
+        service_account_token, test_context,
     };
     use crate::traits::{CanDelete, CanSave, PermissionController, SelfAccessors};
 
@@ -433,6 +433,12 @@ mod tests {
         group
     }
 
+    #[derive(Clone, Copy)]
+    enum ComputedSortDenial {
+        Scope,
+        ListVisibility,
+    }
+
     #[rstest::rstest]
     #[tokio::test]
     async fn shared_definition_live_fallback_repairs_stale_materialization(
@@ -782,7 +788,11 @@ mod tests {
     ) {
         let fixture = fixture(&test_context, "service account personal exclusion").await;
         let group = create_test_group(&test_context.pool).await;
-        for permission in [Permissions::ReadClass, Permissions::ReadObject] {
+        for permission in [
+            Permissions::ReadClass,
+            Permissions::ReadCollection,
+            Permissions::ReadObject,
+        ] {
             fixture
                 .collection
                 .collection
@@ -1012,11 +1022,12 @@ mod tests {
     #[case::existing("display_name")]
     #[case::missing("hidden_definition")]
     #[tokio::test]
-    async fn computed_sort_keys_are_hidden_without_object_visibility(
+    async fn computed_sort_keys_are_hidden_without_full_object_list_visibility(
         #[future(awt)] test_context: TestContext,
         #[case] key: &str,
     ) {
         let fixture = fixture(&test_context, "computed sort key visibility").await;
+        let group = grant_normal_user(&test_context, &fixture, &[Permissions::ReadObject]).await;
         let response = post_request(
             &test_context.pool,
             &test_context.admin_token,
@@ -1044,6 +1055,48 @@ mod tests {
         assert!(objects.is_empty());
 
         finish_active_rebuild(&test_context, fixture.class.id).await;
+        fixture.cleanup().await.unwrap();
+        group
+            .delete_without_events(&test_context.pool)
+            .await
+            .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case::scope(ComputedSortDenial::Scope)]
+    #[case::list_visibility(ComputedSortDenial::ListVisibility)]
+    #[tokio::test]
+    async fn denied_computed_sort_pages_omit_totals_when_disabled(
+        #[future(awt)] test_context: TestContext,
+        #[case] denial: ComputedSortDenial,
+    ) {
+        let fixture = fixture(&test_context, "computed sort denied total").await;
+        let token = match denial {
+            ComputedSortDenial::Scope => {
+                scoped_token(
+                    &test_context.pool,
+                    test_context.admin_user.id,
+                    &[Permissions::ReadCollection],
+                )
+                .await
+            }
+            ComputedSortDenial::ListVisibility => test_context.normal_token.clone(),
+        };
+
+        let response = get_request(
+            &test_context.pool,
+            &token,
+            &format!(
+                "/api/v1/classes/{}/?include_total=false&sort=computed.shared.hidden",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert!(header_value(&response, TOTAL_COUNT_HEADER).is_none());
+        let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert!(objects.is_empty());
+
         fixture.cleanup().await.unwrap();
     }
 

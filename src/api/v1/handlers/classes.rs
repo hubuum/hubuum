@@ -96,18 +96,23 @@ async fn computed_personal_owner(
     }
 }
 
-async fn can_read_objects_in_class(
+async fn can_list_objects_in_class(
     pool: &AppContext,
     requestor: &Authenticated,
     class: &HubuumClass,
 ) -> Result<bool, ApiError> {
     let resource = class.to_resource_ref(pool.db_pool()).await?;
+    let permissions = if pool.permission_backend().supports_sql_visibility_pushdown() {
+        vec![Permissions::ReadObject, Permissions::ReadCollection]
+    } else {
+        vec![Permissions::ReadObject]
+    };
     match authorize_resources(
         pool.permission_backend(),
         pool,
         &requestor.principal,
         requestor.scopes(),
-        vec![Permissions::ReadObject],
+        permissions,
         vec![resource],
     )
     .await
@@ -1047,19 +1052,19 @@ async fn get_objects_in_class(
                     items: Vec::new(),
                     next_cursor: None,
                 },
-                0,
+                known_count_or_skipped(&params, 0),
                 effective_page_limit(&params)?,
                 true,
             );
         }
         let class_instance = class.instance(&pool).await?;
-        if !can_read_objects_in_class(&pool, &requestor, &class_instance).await? {
+        if !can_list_objects_in_class(&pool, &requestor, &class_instance).await? {
             return serialized_object_page(
                 Page::<HubuumObjectComputedResponse> {
                     items: Vec::new(),
                     next_cursor: None,
                 },
-                0,
+                known_count_or_skipped(&params, 0),
                 effective_page_limit(&params)?,
                 true,
             );

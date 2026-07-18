@@ -135,6 +135,8 @@ Behavior:
 - encoded cursors are limited to 64 KiB; a page whose sort values would exceed
   that limit returns `400 Bad Request`, so clients must select fewer sort fields
   or smaller sortable values
+- malformed cursors, including JSON sort values PostgreSQL cannot represent,
+  return `400 Bad Request`
 
 Clients should read the effective default and maximum limits from the public
 client configuration endpoint rather than assuming the built-in values shown

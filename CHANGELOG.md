@@ -15,9 +15,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Added database-backed cursor sorting for shared and personal computed object
   fields, including public/private query aliases, typed null-safe ordering,
   hash-verified stale shared-cache fallback, owner-only scope-consistent
-  personal evaluation, visibility-safe definition resolution, two-key
-  computed-sort bounds, 64 KiB cursor tokens, read-only stale-cache fallback,
-  and fixed query counts across page sizes.
+  personal evaluation, full-list-visibility-safe definition resolution,
+  two-key computed-sort bounds, PostgreSQL-compatible 64 KiB cursor tokens,
+  read-only stale-cache fallback, and fixed query counts across page sizes.
 
 ### Changed
 

@@ -622,17 +622,105 @@ where
                 ))
             }
         }
-        (CursorSqlType::Json, CursorValue::Json(value)) => Ok(format!(
-            "'{}'::jsonb",
-            serde_json::to_string(value)
-                .map_err(ApiError::from)?
-                .replace('\'', "''")
-        )),
+        (CursorSqlType::Json, CursorValue::Json(value)) => {
+            validate_postgres_jsonb_cursor_value(value)?;
+            Ok(format!(
+                "'{}'::jsonb",
+                serde_json::to_string(value)
+                    .map_err(ApiError::from)?
+                    .replace('\'', "''")
+            ))
+        }
         _ => Err(ApiError::BadRequest(format!(
             "cursor value does not match expected type for '{}'",
             field.expression()
         ))),
     }
+}
+
+const POSTGRES_NUMERIC_MAX_INTEGRAL_DIGITS: i64 = 131_072;
+const POSTGRES_NUMERIC_MAX_FRACTIONAL_DIGITS: i64 = 16_383;
+const POSTGRES_NUMERIC_MAX_EXPONENT_ABS: i64 = i32::MAX as i64 / 2;
+
+fn validate_postgres_jsonb_cursor_value(value: &serde_json::Value) -> Result<(), ApiError> {
+    match value {
+        serde_json::Value::String(value) if value.contains('\0') => {
+            Err(invalid_postgres_jsonb_cursor())
+        }
+        serde_json::Value::Number(value) if !postgres_numeric_can_represent(value) => {
+            Err(invalid_postgres_jsonb_cursor())
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                validate_postgres_jsonb_cursor_value(value)?;
+            }
+            Ok(())
+        }
+        serde_json::Value::Object(values) => {
+            for (key, value) in values {
+                if key.contains('\0') {
+                    return Err(invalid_postgres_jsonb_cursor());
+                }
+                validate_postgres_jsonb_cursor_value(value)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn invalid_postgres_jsonb_cursor() -> ApiError {
+    ApiError::BadRequest("cursor contains JSON that PostgreSQL JSONB cannot represent".to_string())
+}
+
+fn postgres_numeric_can_represent(value: &serde_json::Number) -> bool {
+    // PostgreSQL strips leading zero groups when determining numeric weight,
+    // but retains the input scale after applying any exponent.
+    let source = value.to_string();
+    let unsigned = source.strip_prefix('-').unwrap_or(&source);
+    let exponent_start = unsigned.find(['e', 'E']);
+    let (mantissa, exponent) = match exponent_start {
+        Some(index) => {
+            let Ok(exponent) = unsigned[index + 1..].parse::<i64>() else {
+                return false;
+            };
+            (&unsigned[..index], exponent)
+        }
+        None => (unsigned, 0),
+    };
+    if !(-POSTGRES_NUMERIC_MAX_EXPONENT_ABS..=POSTGRES_NUMERIC_MAX_EXPONENT_ABS).contains(&exponent)
+    {
+        return false;
+    }
+    let integral_digits = mantissa.find('.').unwrap_or(mantissa.len());
+    let total_digits = mantissa.len() - usize::from(mantissa.contains('.'));
+    let first_nonzero = mantissa
+        .bytes()
+        .filter(|digit| *digit != b'.')
+        .position(|digit| digit != b'0');
+    let Ok(integral_digits) = i64::try_from(integral_digits) else {
+        return false;
+    };
+    let Ok(total_digits) = i64::try_from(total_digits) else {
+        return false;
+    };
+    let Some(decimal_position) = integral_digits.checked_add(exponent) else {
+        return false;
+    };
+    let digits_before_decimal = match first_nonzero {
+        Some(first_nonzero) => {
+            let Ok(first_nonzero) = i64::try_from(first_nonzero) else {
+                return false;
+            };
+            decimal_position.saturating_sub(first_nonzero).max(0)
+        }
+        None => 0,
+    };
+    let fractional_digits = total_digits - integral_digits;
+    let digits_after_decimal = fractional_digits.saturating_sub(exponent).max(0);
+
+    digits_before_decimal <= POSTGRES_NUMERIC_MAX_INTEGRAL_DIGITS
+        && digits_after_decimal <= POSTGRES_NUMERIC_MAX_FRACTIONAL_DIGITS
 }
 
 #[macro_export]
@@ -884,6 +972,7 @@ macro_rules! apply_query_options {
 #[cfg(test)]
 mod tests {
     use chrono::NaiveDate;
+    use rstest::rstest;
 
     use super::*;
     use crate::models::{Collection, UserWithName};
@@ -1171,6 +1260,56 @@ mod tests {
             error.to_string(),
             "cursor contains an invalid decimal value"
         );
+    }
+
+    #[rstest]
+    #[case::nul_string(r#"{"value":"\u0000"}"#)]
+    #[case::nul_key(r#"{"\u0000":true}"#)]
+    #[case::integral_overflow(r#"{"value":1e131072}"#)]
+    #[case::fractional_overflow(r#"{"value":1e-16384}"#)]
+    fn json_cursor_sql_rejects_values_postgres_jsonb_cannot_represent(#[case] json: &str) {
+        let sort = SortParam {
+            field: FilterField::Id,
+            descending: false,
+        };
+        let fields = [OwnedCursorSqlField {
+            expression: "computed_value".to_string(),
+            sql_type: CursorSqlType::Json,
+            nullable: false,
+        }];
+        let value = serde_json::from_str(json).unwrap();
+        let cursor = encoded_cursor(&sort, CursorValue::Json(value));
+
+        let error = cursor_filter_sql_for_fields(&[sort], &fields, Some(&cursor)).unwrap_err();
+
+        assert_eq!(
+            error,
+            ApiError::BadRequest(
+                "cursor contains JSON that PostgreSQL JSONB cannot represent".to_string()
+            )
+        );
+    }
+
+    #[rstest]
+    #[case::maximum_integral_digits(r#"{"value":1e131071}"#)]
+    #[case::normalized_maximum_integral_digits(r#"{"value":0.1e131072}"#)]
+    #[case::maximum_fractional_digits(r#"{"value":1e-16383}"#)]
+    fn json_cursor_sql_accepts_postgres_numeric_boundaries(#[case] json: &str) {
+        let sort = SortParam {
+            field: FilterField::Id,
+            descending: false,
+        };
+        let fields = [OwnedCursorSqlField {
+            expression: "computed_value".to_string(),
+            sql_type: CursorSqlType::Json,
+            nullable: false,
+        }];
+        let value = serde_json::from_str(json).unwrap();
+        let cursor = encoded_cursor(&sort, CursorValue::Json(value));
+
+        let sql = cursor_filter_sql_for_fields(&[sort], &fields, Some(&cursor)).unwrap();
+
+        assert!(sql.is_some());
     }
 
     #[test]
