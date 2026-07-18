@@ -5,16 +5,18 @@ mod tests {
 
     use crate::db::traits::computed_field::{
         class_computation_state_for, create_personal_definition, create_shared_definition,
-        execute_computed_reindex_task, request_class_rebuild,
+        enrich_objects_with_computed_sort_snapshot, execute_computed_reindex_task,
+        request_class_rebuild, resolve_computed_sort_fields, source_data_sha256,
     };
     use crate::db::traits::task::recover_expired_task_leases;
     use crate::db::{capture_queries, with_connection};
     use crate::events::EventContext;
+    use crate::models::search::parse_query_parameter;
     use crate::models::{
         ComputedFieldDefinitionRequest, HubuumClassID, NewHubuumClass, NewHubuumObject,
         Permissions, TaskID, TaskStatus,
     };
-    use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
+    use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, finalize_page};
     use crate::tests::api_operations::{get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
@@ -27,6 +29,35 @@ mod tests {
     struct ComputedSortSqlValue {
         #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Jsonb>)]
         value: Option<serde_json::Value>,
+    }
+
+    #[derive(QueryableByName)]
+    struct ComputedSourceHashSqlValue {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        value: String,
+    }
+
+    async fn evaluate_sql_scope(
+        context: &TestContext,
+        data: &serde_json::Value,
+        definitions: &[hubuum_computed_fields::Definition],
+    ) -> serde_json::Value {
+        let definitions = serde_json::to_value(definitions).unwrap();
+        with_connection(&context.pool, async |conn| {
+            diesel::sql_query("SELECT hubuum_computed_evaluate_scope($1, $2) AS value")
+                .bind::<diesel::sql_types::Jsonb, _>(data)
+                .bind::<diesel::sql_types::Jsonb, _>(&definitions)
+                .get_result::<ComputedSortSqlValue>(conn)
+                .await
+        })
+        .await
+        .unwrap()
+        .value
+        .expect("scope evaluator always returns JSON")
+    }
+
+    fn evaluator_definition(value: serde_json::Value) -> hubuum_computed_fields::Definition {
+        serde_json::from_value(value).unwrap()
     }
 
     fn definition(key: &str) -> serde_json::Value {
@@ -247,6 +278,133 @@ mod tests {
                 _ => assert_eq!(actual, expected, "operation: {operation}, data: {data}"),
             }
         }
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn database_scope_evaluator_preserves_the_empty_pointer_token(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let definition = evaluator_definition(serde_json::json!({
+            "key": "empty_key",
+            "label": "Empty key",
+            "operation": {"type": "first_non_null", "paths": ["/"]},
+            "result_type": "string"
+        }));
+        let data = serde_json::json!({"": "selected"});
+        let actual = evaluate_sql_scope(&test_context, &data, &[definition]).await;
+
+        assert_eq!(actual["values"]["empty_key"], "selected");
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn database_source_hash_matches_the_domain_canonical_json(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let data = serde_json::json!({
+            "z": [1, {"quote": "'\"", "unicode": "blåbær 🫐"}],
+            "a": {"nested": true, "control": "line\nbreak"}
+        });
+        let expected = source_data_sha256(&data).unwrap();
+
+        let actual = with_connection(&test_context.pool, async |conn| {
+            diesel::sql_query("SELECT hubuum_computed_source_sha256($1) AS value")
+                .bind::<diesel::sql_types::Jsonb, _>(&data)
+                .get_result::<ComputedSourceHashSqlValue>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(actual.value, expected);
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn database_scope_evaluator_measures_compact_json_input(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let definition = evaluator_definition(serde_json::json!({
+            "key": "present",
+            "label": "Present",
+            "operation": {"type": "count_present", "paths": ["/value"]},
+            "result_type": "integer"
+        }));
+        let data = serde_json::json!({
+            "value": "x".repeat(hubuum_computed_fields::MAX_INPUT_BYTES - 12)
+        });
+        assert_eq!(
+            serde_json::to_vec(&data).unwrap().len(),
+            hubuum_computed_fields::MAX_INPUT_BYTES
+        );
+
+        let actual = evaluate_sql_scope(&test_context, &data, &[definition]).await;
+
+        assert_eq!(actual["values"]["present"], 1);
+        assert_eq!(actual["errors"], serde_json::json!({}));
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn database_scope_evaluator_preserves_scope_output_limits(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let definitions = (0..5)
+            .map(|index| {
+                evaluator_definition(serde_json::json!({
+                    "key": format!("value_{index}"),
+                    "label": format!("Value {index}"),
+                    "operation": {"type": "first_non_null", "paths": ["/value"]},
+                    "result_type": "string"
+                }))
+            })
+            .collect::<Vec<_>>();
+        let data = serde_json::json!({"value": "x".repeat(60_000)});
+        let expected = hubuum_computed_fields::evaluate(
+            &data,
+            &definitions,
+            definitions.len(),
+            hubuum_computed_fields::EvaluationLimits::standard(),
+        )
+        .unwrap();
+
+        let actual = evaluate_sql_scope(&test_context, &data, &definitions).await;
+
+        assert_eq!(actual, serde_json::to_value(expected).unwrap());
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn database_scope_evaluator_preserves_scope_work_limits(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let definitions = (0..9)
+            .map(|index| {
+                evaluator_definition(serde_json::json!({
+                    "key": format!("equal_{index}"),
+                    "label": format!("Equal {index}"),
+                    "operation": {
+                        "type": "all_present_and_equal",
+                        "paths": ["/left", "/right"]
+                    },
+                    "result_type": "boolean"
+                }))
+            })
+            .collect::<Vec<_>>();
+        let values = (0..6_000).collect::<Vec<_>>();
+        let data = serde_json::json!({"left": values.clone(), "right": values});
+        let expected = hubuum_computed_fields::evaluate(
+            &data,
+            &definitions,
+            definitions.len(),
+            hubuum_computed_fields::EvaluationLimits::standard(),
+        )
+        .unwrap();
+
+        let actual = evaluate_sql_scope(&test_context, &data, &definitions).await;
+
+        assert_eq!(actual, serde_json::to_value(expected).unwrap());
     }
 
     async fn grant_normal_user(
@@ -847,6 +1005,134 @@ mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
+    async fn shared_computed_sort_rejects_a_cache_row_for_old_source_data(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let mut fixture = fixture(&test_context, "computed sorting stale source hash").await;
+        fixture.objects.push(
+            NewHubuumObject {
+                collection_id: fixture.class.collection_id,
+                hubuum_class_id: fixture.class.id,
+                name: test_context.scoped_name("beta computed sort"),
+                description: "Computed sorting object".to_string(),
+                data: serde_json::json!({"inventory": {"hostname": "beta.example"}}),
+            }
+            .save_without_events(&test_context.pool)
+            .await
+            .unwrap(),
+        );
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            definition("display_name"),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+
+        with_connection(&test_context.pool, async |conn| {
+            use crate::schema::hubuumobject::dsl::{data, hubuumobject, id};
+            diesel::update(hubuumobject.filter(id.eq(fixture.objects[0].id)))
+                .set(data.eq(serde_json::json!({
+                    "inventory": {"hostname": "aardvark.example"}
+                })))
+                .execute(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?include=computed&sort=computed.shared.display_name&limit=1",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let page: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+        assert_eq!(page[0]["id"], fixture.objects[0].id);
+        assert_eq!(
+            page[0]["computed"]["shared"]["values"]["display_name"],
+            "aardvark.example"
+        );
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn computed_sort_cursor_uses_the_resolved_definition_snapshot(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let mut fixture = fixture(&test_context, "computed sorting definition snapshot").await;
+        fixture.objects.push(
+            NewHubuumObject {
+                collection_id: fixture.class.collection_id,
+                hubuum_class_id: fixture.class.id,
+                name: test_context.scoped_name("snapshot second object"),
+                description: "Computed sorting snapshot object".to_string(),
+                data: serde_json::json!({"inventory": {"hostname": "second.example"}}),
+            }
+            .save_without_events(&test_context.pool)
+            .await
+            .unwrap(),
+        );
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            definition("display_name"),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+
+        let mut params =
+            parse_query_parameter("sort=computed.shared.display_name&limit=1&include_total=false")
+                .unwrap();
+        let snapshot = resolve_computed_sort_fields(
+            &test_context.pool,
+            fixture.class.id,
+            Some(test_context.admin_user.id),
+            &mut params.sort,
+        )
+        .await
+        .unwrap();
+        with_connection(&test_context.pool, async |conn| {
+            use crate::schema::computed_field_definitions::dsl::{
+                class_id, computed_field_definitions,
+            };
+            diesel::delete(computed_field_definitions.filter(class_id.eq(fixture.class.id)))
+                .execute(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        let enriched = enrich_objects_with_computed_sort_snapshot(
+            &test_context.pool,
+            fixture.objects.clone(),
+            Some(test_context.admin_user.id),
+            &snapshot,
+        )
+        .await
+        .unwrap();
+        let page = finalize_page(enriched, &params).unwrap();
+
+        assert_eq!(page.items.len(), 1);
+        assert!(page.next_cursor.is_some());
+        assert!(page.items[0].computed.shared.values["display_name"].is_string());
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
     async fn numeric_computed_sort_cursor_matches_domain_precision(
         #[future(awt)] test_context: TestContext,
     ) {
@@ -1095,7 +1381,7 @@ mod tests {
         );
         assert_eq!(large_queries.query_counts(), small_queries.query_counts());
         assert_eq!(
-            large_queries.queries_matching("hubuum_computed_sort_value"),
+            large_queries.queries_matching("hubuum_computed_evaluate_scope"),
             1
         );
 

@@ -203,12 +203,15 @@ whose order depends on computed state use `Cache-Control: private, no-store`.
 With the default SQL authorization backend, sorting happens in PostgreSQL
 before pagination. Current shared materialization is used directly, with live
 evaluation only for missing or stale cache rows. Personal sorting evaluates
-only the requested definitions from raw object data without write-time user
-fan-out. Computed-sort query counts are independent of page size, and requests
-without computed sorting retain the existing query path. Computed filtering
-and declarative indexing are not yet supported. Unsupported query fields fail
-validation; Hubuum never filters or sorts computed data after database
-pagination on the SQL path.
+the owner's entire enabled scope from raw object data without write-time user
+fan-out, so scope work and output limits remain identical to response
+enrichment. Live evaluation cost grows with the candidate count, object JSON
+size, and enabled-scope complexity; materialized shared fields are preferable
+for high-volume sorting. Computed-sort query counts are independent of page
+size, and requests without computed sorting retain the existing query path.
+Computed filtering and declarative indexing are not yet supported. Unsupported
+query fields fail validation; Hubuum never filters or sorts computed data after
+database pagination on the SQL path.
 
 ## Materialization freshness
 

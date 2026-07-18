@@ -14,8 +14,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   overridden by server configuration.
 - Added database-backed cursor sorting for shared and personal computed object
   fields, including public/private query aliases, typed null-safe ordering,
-  stale shared-cache fallback, owner-only personal evaluation, and fixed
-  query counts across page sizes.
+  hash-verified stale shared-cache fallback, owner-only scope-consistent
+  personal evaluation, and fixed query counts across page sizes.
 
 ### Changed
 

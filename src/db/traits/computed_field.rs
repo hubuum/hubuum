@@ -170,14 +170,16 @@ pub async fn resolve_computed_sort_fields(
     target_class_id: i32,
     personal_owner_id: Option<i32>,
     sorts: &mut [SortParam],
-) -> Result<(), ApiError> {
+) -> Result<ComputedSortSnapshot, ApiError> {
     let requested = sorts
         .iter()
         .filter_map(|sort| sort.field.computed_sort())
         .map(|field| (field.scope(), field.key().to_string()))
         .collect::<BTreeSet<_>>();
     if requested.is_empty() {
-        return Ok(());
+        return Err(ApiError::InternalServerError(
+            "Computed sort resolution requires at least one computed field".to_string(),
+        ));
     }
     if personal_owner_id.is_none()
         && requested
@@ -189,32 +191,44 @@ pub async fn resolve_computed_sort_fields(
         ));
     }
 
-    use crate::schema::computed_field_definitions::dsl::{
-        class_id, computed_field_definitions, enabled, owner_user_id, visibility,
-    };
-    let definitions = with_connection(pool, async |conn| {
-        let mut query = computed_field_definitions
-            .filter(class_id.eq(target_class_id))
-            .filter(enabled.eq(true))
+    let (definitions, state) = with_transaction(pool, async |conn| -> Result<_, ApiError> {
+        acquire_computed_class_shared_lock(conn, target_class_id).await?;
+        use crate::schema::class_computation_state::dsl as state;
+        use crate::schema::computed_field_definitions::dsl as definition;
+        let mut query = definition::computed_field_definitions
+            .filter(definition::class_id.eq(target_class_id))
             .into_boxed();
         query = match personal_owner_id {
             Some(owner_id) => query.filter(
-                visibility
+                definition::visibility
                     .eq(COMPUTED_FIELD_VISIBILITY_SHARED)
-                    .or(visibility
+                    .or(definition::visibility
                         .eq(COMPUTED_FIELD_VISIBILITY_PERSONAL)
-                        .and(owner_user_id.eq(Some(owner_id)))),
+                        .and(definition::owner_user_id.eq(Some(owner_id)))),
             ),
-            None => query.filter(visibility.eq(COMPUTED_FIELD_VISIBILITY_SHARED)),
+            None => query.filter(definition::visibility.eq(COMPUTED_FIELD_VISIBILITY_SHARED)),
         };
-        query
+        let definitions = query
+            .order(definition::id.asc())
             .select(ComputedFieldDefinition::as_select())
             .load::<ComputedFieldDefinition>(conn)
+            .await?;
+        let state = state::class_computation_state
+            .filter(state::class_id.eq(target_class_id))
+            .select(ClassComputationState::as_select())
+            .first(conn)
             .await
+            .optional()?
+            .unwrap_or_else(|| ClassComputationState::ready_without_definitions(target_class_id));
+        Ok((definitions, state))
     })
     .await?;
-    let definitions = definitions
-        .into_iter()
+    for definition in definitions.iter().filter(|definition| definition.enabled) {
+        let _ = definition.evaluator_definition()?;
+    }
+    let definitions_by_key = definitions
+        .iter()
+        .filter(|definition| definition.enabled)
         .map(|definition| {
             let scope = if definition.is_shared() {
                 ComputedFieldScope::Shared
@@ -224,12 +238,21 @@ pub async fn resolve_computed_sort_fields(
             ((scope, definition.key.clone()), definition)
         })
         .collect::<HashMap<_, _>>();
+    let shared_scope_sql = computed_scope_sql(
+        definitions
+            .iter()
+            .filter(|definition| definition.is_shared() && definition.enabled),
+    )?;
+    let personal_scope_sql = computed_scope_sql(definitions.iter().filter(|definition| {
+        definition.enabled
+            && personal_owner_id.is_some_and(|owner_id| definition.is_personal_for(owner_id))
+    }))?;
 
     for sort in sorts {
         let Some(field) = sort.field.computed_sort_mut() else {
             continue;
         };
-        let definition = definitions
+        let definition = definitions_by_key
             .get(&(field.scope(), field.key().to_string()))
             .ok_or_else(|| {
                 ApiError::BadRequest(format!(
@@ -240,26 +263,62 @@ pub async fn resolve_computed_sort_fields(
             })?;
         let value_type =
             crate::models::ComputedResultType::from_db(&definition.result_type)?.into();
-        field.resolve(computed_sort_value_sql(definition), value_type);
+        let scope_sql = match field.scope() {
+            ComputedFieldScope::Shared => &shared_scope_sql,
+            ComputedFieldScope::Personal => &personal_scope_sql,
+        };
+        field.resolve(
+            computed_sort_value_sql(definition, scope_sql, state.evaluation_revision),
+            value_type,
+        );
     }
-    Ok(())
+    Ok(ComputedSortSnapshot {
+        class_id: target_class_id,
+        definitions,
+        state,
+    })
 }
 
-fn computed_sort_value_sql(definition: &ComputedFieldDefinition) -> String {
+#[derive(Debug, Clone)]
+pub struct ComputedSortSnapshot {
+    class_id: i32,
+    definitions: Vec<ComputedFieldDefinition>,
+    state: ClassComputationState,
+}
+
+fn computed_scope_sql<'a>(
+    definitions: impl Iterator<Item = &'a ComputedFieldDefinition>,
+) -> Result<String, ApiError> {
+    let definitions = definitions
+        .map(|definition| {
+            serde_json::json!({
+                "key": definition.key,
+                "operation": definition.operation,
+                "result_type": definition.result_type,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(serde_json::to_string(&definitions)?.replace('\'', "''"))
+}
+
+fn computed_sort_value_sql(
+    definition: &ComputedFieldDefinition,
+    scope_sql: &str,
+    evaluation_revision: i64,
+) -> String {
+    let key = definition.key.replace('\'', "''");
     let live_value = format!(
-        "hubuum_computed_sort_value(\
-            hubuumobject.data, \
-            (SELECT sort_definition.operation \
-             FROM computed_field_definitions AS sort_definition \
-             WHERE sort_definition.id = {}), \
-            '{}')",
-        definition.id,
-        definition.result_type.replace('\'', "''")
+        "NULLIF(\
+            hubuum_computed_evaluate_scope(\
+                hubuumobject.data, \
+                '{scope_sql}'::jsonb\
+            ) -> 'values' -> '{key}', \
+            'null'::jsonb\
+        )"
     );
     if !definition.is_shared() {
         return live_value;
     }
-    let key = definition.key.replace('\'', "''");
     format!(
         "(SELECT CASE \
             WHEN sort_cache.present THEN sort_cache.value \
@@ -270,12 +329,11 @@ fn computed_sort_value_sql(definition: &ComputedFieldDefinition) -> String {
             SELECT TRUE AS present, \
                    NULLIF(sort_values.values -> '{key}', 'null'::jsonb) AS value \
             FROM object_computed_data AS sort_values \
-            JOIN class_computation_state AS sort_state \
-              ON sort_state.class_id = sort_values.class_id \
             WHERE sort_values.object_id = hubuumobject.id \
               AND sort_values.class_id = {} \
-              AND sort_values.evaluation_revision = sort_state.evaluation_revision \
-              AND sort_values.computed_at >= hubuumobject.updated_at \
+              AND sort_values.evaluation_revision = {evaluation_revision} \
+              AND sort_values.source_data_sha256 = \
+                  hubuum_computed_source_sha256(hubuumobject.data) \
               AND sort_values.values ? '{key}' \
           ) AS sort_cache ON TRUE)",
         definition.class_id
@@ -1121,6 +1179,64 @@ pub async fn enrich_objects_with_computed(
         })
         .await?;
 
+    enrich_objects_from_snapshot(
+        pool,
+        objects,
+        personal_owner_id,
+        definitions,
+        states,
+        materialized,
+    )
+    .await
+}
+
+pub async fn enrich_objects_with_computed_sort_snapshot(
+    pool: &DbPool,
+    objects: Vec<HubuumObject>,
+    personal_owner_id: Option<i32>,
+    snapshot: &ComputedSortSnapshot,
+) -> Result<Vec<HubuumObjectComputedResponse>, ApiError> {
+    if objects.is_empty() {
+        return Ok(Vec::new());
+    }
+    if objects
+        .iter()
+        .any(|object| object.hubuum_class_id != snapshot.class_id)
+    {
+        return Err(ApiError::InternalServerError(
+            "Computed sort snapshot cannot enrich objects from another class".to_string(),
+        ));
+    }
+    let object_ids = objects.iter().map(|object| object.id).collect::<Vec<_>>();
+    let materialized = with_connection(pool, async |conn| {
+        use crate::schema::object_computed_data::dsl as computed;
+        computed::object_computed_data
+            .filter(computed::object_id.eq_any(&object_ids))
+            .select(ObjectComputedData::as_select())
+            .load::<ObjectComputedData>(conn)
+            .await
+    })
+    .await?;
+
+    enrich_objects_from_snapshot(
+        pool,
+        objects,
+        personal_owner_id,
+        snapshot.definitions.clone(),
+        vec![snapshot.state.clone()],
+        materialized,
+    )
+    .await
+}
+
+async fn enrich_objects_from_snapshot(
+    pool: &DbPool,
+    objects: Vec<HubuumObject>,
+    personal_owner_id: Option<i32>,
+    definitions: Vec<ComputedFieldDefinition>,
+    states: Vec<ClassComputationState>,
+    materialized: Vec<ObjectComputedData>,
+) -> Result<Vec<HubuumObjectComputedResponse>, ApiError> {
     let mut shared_by_class: HashMap<i32, Vec<ComputedFieldDefinition>> = HashMap::new();
     let mut personal_by_class: HashMap<i32, Vec<ComputedFieldDefinition>> = HashMap::new();
     for definition in definitions {

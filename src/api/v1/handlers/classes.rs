@@ -11,7 +11,8 @@ use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::computed_field::{
-    enrich_objects_with_computed, resolve_computed_sort_fields,
+    enrich_objects_with_computed, enrich_objects_with_computed_sort_snapshot,
+    resolve_computed_sort_fields,
 };
 use crate::db::traits::history::{
     class_as_of, class_history_paginated_with_total_count, object_as_of,
@@ -1031,7 +1032,7 @@ async fn get_objects_in_class(
         }
         let class_instance = class.instance(&pool).await?;
         let personal_owner = computed_personal_owner(&pool, &requestor, &class_instance).await?;
-        resolve_computed_sort_fields(
+        let computed_sort_snapshot = resolve_computed_sort_fields(
             pool.db_pool(),
             class_instance.id,
             personal_owner,
@@ -1051,7 +1052,13 @@ async fn get_objects_in_class(
             let objects = user
                 .search_objects(&pool, search_params, requestor.scopes())
                 .await?;
-            enrich_objects_with_computed(pool.db_pool(), objects, personal_owner).await?
+            enrich_objects_with_computed_sort_snapshot(
+                pool.db_pool(),
+                objects,
+                personal_owner,
+                &computed_sort_snapshot,
+            )
+            .await?
         } else {
             let candidates = user
                 .search_objects_from_backend_with_admin_status(
@@ -1080,8 +1087,13 @@ async fn get_objects_in_class(
             )
             .await?;
             total_count = known_count_or_skipped(&params, authorized.len() as i64);
-            let enriched =
-                enrich_objects_with_computed(pool.db_pool(), authorized, personal_owner).await?;
+            let enriched = enrich_objects_with_computed_sort_snapshot(
+                pool.db_pool(),
+                authorized,
+                personal_owner,
+                &computed_sort_snapshot,
+            )
+            .await?;
             let search_params = prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?;
             paginate_in_memory(enriched, &search_params)?
         };
