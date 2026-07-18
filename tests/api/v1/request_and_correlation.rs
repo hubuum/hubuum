@@ -127,6 +127,10 @@ mod tests {
         HttpResponse::InternalServerError().finish()
     }
 
+    async fn service_unavailable_handler() -> HttpResponse {
+        HttpResponse::ServiceUnavailable().finish()
+    }
+
     async fn principal_handler() -> HttpResponse {
         record_principal_on_current_span(77);
         HttpResponse::Ok().finish()
@@ -171,6 +175,57 @@ mod tests {
         assert_eq!(event["correlation_id"], "request-log-correlation");
         assert!(event["request_id"].as_str().is_some());
         assert!(event["elapsed_ms"].as_u64().is_some());
+    }
+
+    #[rstest]
+    #[case::liveness("/healthz")]
+    #[case::readiness("/readyz")]
+    #[actix_web::test]
+    async fn tracing_middleware_logs_successful_probes_at_debug(#[case] path: &str) {
+        let (writer, _guard) = capture_request_logs();
+        let app = test::init_service(
+            App::new()
+                .wrap(TracingMiddleware::new())
+                .route("/healthz", web::get().to(ok_handler))
+                .route("/readyz", web::get().to(ok_handler)),
+        )
+        .await;
+
+        let resp = test::TestRequest::get().uri(path).send_request(&app).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let event = writer
+            .output()
+            .into_iter()
+            .find(|event| event["message"] == "request complete")
+            .expect("request completion log");
+        assert_eq!(event["severity"], "DEBUG");
+        assert_eq!(event["path"], path);
+    }
+
+    #[actix_web::test]
+    async fn tracing_middleware_keeps_failed_readiness_probes_at_error() {
+        let (writer, _guard) = capture_request_logs();
+        let app = test::init_service(
+            App::new()
+                .wrap(TracingMiddleware::new())
+                .route("/readyz", web::get().to(service_unavailable_handler)),
+        )
+        .await;
+
+        let resp = test::TestRequest::get()
+            .uri("/readyz")
+            .send_request(&app)
+            .await;
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let event = writer
+            .output()
+            .into_iter()
+            .find(|event| event["message"] == "request complete")
+            .expect("request completion log");
+        assert_eq!(event["severity"], "ERROR");
+        assert_eq!(event["path"], "/readyz");
     }
 
     #[actix_web::test]

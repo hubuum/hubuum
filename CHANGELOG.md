@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- Successful `/healthz` and `/readyz` request-completion logs now use `DEBUG`
+  severity, while failed probes retain their status-derived severity.
+
 ### Fixed
 
 - Fixed single-host installs and updates with older `podman-compose` providers:
