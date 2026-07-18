@@ -11,6 +11,15 @@ REMOTE_DIR="$TEST_ROOT/remote"
 export SCRIPT_BASE_URL="https://example.invalid/scripts"
 mkdir -p "$INSTALL_DIR" "$REMOTE_DIR"
 
+installer_preamble="$(
+  sed -n '1,/^INSTALL_DIR=/p' "$REPOSITORY_ROOT/scripts/install-single-host.sh"
+)"
+piped_output="$(printf '%s\n' "$installer_preamble" | bash 2>&1)"
+[[ -z "$piped_output" ]] || {
+  printf 'installer preamble emitted output under curl-style execution:\n%s\n' "$piped_output" >&2
+  exit 1
+}
+
 curl() {
   local output_path=""
   local url=""

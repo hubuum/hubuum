@@ -162,6 +162,9 @@ update_source_checkout() {
 
 detect_engine
 ENGINE_PATH="$(command -v "$ENGINE_BIN")"
+if [[ "$ENGINE_BIN" == "podman" ]]; then
+  export PODMAN_COMPOSE_WARNING_LOGS=false
+fi
 COMPOSE_CMD=("$ENGINE_PATH" compose --env-file .env -f compose.yml)
 
 cd "$INSTALL_DIR"
