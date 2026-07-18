@@ -100,7 +100,8 @@ Notes:
   `computed.shared.<key>` or the owning user's `computed.personal.<key>`.
   `computed.public.<key>` and `computed.private.<key>` are aliases. See
   [Computed fields](computed_fields.md#reading-computed-values) for visibility,
-  null, and pagination semantics.
+  null, and pagination semantics. Requests that use computed sorting support at
+  most two explicit sort fields.
 
 ## Cursor pagination
 
@@ -117,6 +118,7 @@ Limits:
 
 - default page size: `100`
 - maximum page size: `250`
+- maximum encoded cursor size: `64 KiB`
 - a positive `limit` above the configured maximum is clamped to the maximum
 - `limit=0` remains a `400 Bad Request`
 
@@ -130,6 +132,9 @@ Behavior:
 - send that cursor back unchanged to fetch the next page
 - if `X-Next-Cursor` is absent, there is no next page
 - total pages can be derived client-side as `ceil(X-Total-Count / X-Page-Limit)`
+- encoded cursors are limited to 64 KiB; a page whose sort values would exceed
+  that limit returns `400 Bad Request`, so clients must select fewer sort fields
+  or smaller sortable values
 
 Clients should read the effective default and maximum limits from the public
 client configuration endpoint rather than assuming the built-in values shown

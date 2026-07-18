@@ -15,6 +15,7 @@ pub const NEXT_CURSOR_HEADER: &str = "X-Next-Cursor";
 pub const PAGE_LIMIT_HEADER: &str = "X-Page-Limit";
 pub const TOTAL_COUNT_HEADER: &str = "X-Total-Count";
 pub const SKIPPED_TOTAL_COUNT: i64 = -1;
+pub const MAX_ENCODED_CURSOR_BYTES: usize = 64 * 1024;
 
 pub async fn exact_count_or_skipped(
     query_options: &QueryOptions,
@@ -459,11 +460,18 @@ where
     let bytes = serde_json::to_vec(&token).map_err(|error| {
         ApiError::InternalServerError(format!("failed to serialize cursor: {error}"))
     })?;
+    let encoded_length = bytes.len().saturating_mul(4).saturating_add(2) / 3;
+    if encoded_length > MAX_ENCODED_CURSOR_BYTES {
+        return Err(cursor_too_large());
+    }
 
-    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+    let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    ensure_cursor_within_limit(&cursor)?;
+    Ok(cursor)
 }
 
 fn decode_cursor(cursor: &str, sorts: &[SortParam]) -> Result<CursorToken, ApiError> {
+    ensure_cursor_within_limit(cursor)?;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(cursor)
         .map_err(|error| ApiError::BadRequest(format!("invalid cursor: {error}")))?;
@@ -495,6 +503,19 @@ fn decode_cursor(cursor: &str, sorts: &[SortParam]) -> Result<CursorToken, ApiEr
     }
 
     Ok(token)
+}
+
+fn ensure_cursor_within_limit(cursor: &str) -> Result<(), ApiError> {
+    if cursor.len() > MAX_ENCODED_CURSOR_BYTES {
+        return Err(cursor_too_large());
+    }
+    Ok(())
+}
+
+fn cursor_too_large() -> ApiError {
+    ApiError::BadRequest(format!(
+        "pagination cursor exceeds the maximum encoded size of {MAX_ENCODED_CURSOR_BYTES} bytes; use smaller sort values"
+    ))
 }
 
 pub fn decode_cursor_values(
@@ -983,6 +1004,52 @@ mod tests {
             vec!["gamma".to_string(), "beta".to_string()]
         );
         assert!(page.next_cursor.is_some());
+    }
+
+    #[test]
+    fn cursor_encoding_rejects_an_oversized_token() {
+        let error = finalize_page(
+            vec![
+                collection(1, &"a".repeat(MAX_ENCODED_CURSOR_BYTES)),
+                collection(2, "z"),
+            ],
+            &QueryOptions {
+                filters: vec![],
+                sort: vec![SortParam {
+                    field: FilterField::Name,
+                    descending: false,
+                }],
+                limit: Some(1),
+                cursor: None,
+                include_total: true,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "pagination cursor exceeds the maximum encoded size of {MAX_ENCODED_CURSOR_BYTES} bytes; use smaller sort values"
+            )
+        );
+    }
+
+    #[test]
+    fn cursor_decoding_rejects_an_oversized_token_before_parsing() {
+        let sort = SortParam {
+            field: FilterField::Id,
+            descending: false,
+        };
+
+        let error =
+            decode_cursor_values(&"a".repeat(MAX_ENCODED_CURSOR_BYTES + 1), &[sort]).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "pagination cursor exceeds the maximum encoded size of {MAX_ENCODED_CURSOR_BYTES} bytes; use smaller sort values"
+            )
+        );
     }
 
     #[test]

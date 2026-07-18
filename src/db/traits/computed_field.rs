@@ -28,6 +28,7 @@ use crate::models::{
 
 const COMPUTED_CLASS_LOCK_NAMESPACE: i32 = 1_133_113;
 const REINDEX_PAYLOAD_TYPE: &str = "computed_fields";
+pub const MAX_SORT_FIELDS_WITH_COMPUTED: usize = 2;
 
 fn reindex_batch_size() -> i64 {
     crate::config::get_config()
@@ -181,6 +182,7 @@ pub async fn resolve_computed_sort_fields(
             "Computed sort resolution requires at least one computed field".to_string(),
         ));
     }
+    validate_computed_sort_count(sorts.len())?;
     if personal_owner_id.is_none()
         && requested
             .iter()
@@ -277,6 +279,15 @@ pub async fn resolve_computed_sort_fields(
         definitions,
         state,
     })
+}
+
+fn validate_computed_sort_count(sort_count: usize) -> Result<(), ApiError> {
+    if sort_count > MAX_SORT_FIELDS_WITH_COMPUTED {
+        return Err(ApiError::BadRequest(format!(
+            "Computed sorting supports at most {MAX_SORT_FIELDS_WITH_COMPUTED} explicit sort fields per request"
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -1095,6 +1106,12 @@ type ResponseEvaluationMaps = (
     BTreeMap<String, ComputedFieldErrorResponse>,
 );
 
+#[derive(Clone, Copy)]
+enum MaterializationRepair {
+    Apply,
+    Defer,
+}
+
 fn evaluation_maps(result: EvaluationResult) -> ResponseEvaluationMaps {
     (
         result.values,
@@ -1186,6 +1203,7 @@ pub async fn enrich_objects_with_computed(
         definitions,
         states,
         materialized,
+        MaterializationRepair::Apply,
     )
     .await
 }
@@ -1225,6 +1243,7 @@ pub async fn enrich_objects_with_computed_sort_snapshot(
         snapshot.definitions.clone(),
         vec![snapshot.state.clone()],
         materialized,
+        MaterializationRepair::Defer,
     )
     .await
 }
@@ -1236,6 +1255,7 @@ async fn enrich_objects_from_snapshot(
     definitions: Vec<ComputedFieldDefinition>,
     states: Vec<ClassComputationState>,
     materialized: Vec<ObjectComputedData>,
+    repair: MaterializationRepair,
 ) -> Result<Vec<HubuumObjectComputedResponse>, ApiError> {
     let mut shared_by_class: HashMap<i32, Vec<ComputedFieldDefinition>> = HashMap::new();
     let mut personal_by_class: HashMap<i32, Vec<ComputedFieldDefinition>> = HashMap::new();
@@ -1287,7 +1307,9 @@ async fn enrich_objects_from_snapshot(
         } else if fresh {
             stored_evaluation_maps(stored.expect("fresh materialization exists"))?
         } else {
-            stale_objects.push(object.clone());
+            if matches!(repair, MaterializationRepair::Apply) {
+                stale_objects.push(object.clone());
+            }
             crate::observability::metrics::computed_live_fallback();
             evaluation_maps(evaluate_definitions(
                 &object.data,
@@ -1666,6 +1688,7 @@ pub(crate) async fn mark_recovered_computed_reindex_failed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::search::parse_query_parameter;
 
     #[test]
     fn canonical_hash_ignores_object_key_order() {
@@ -1683,6 +1706,20 @@ mod tests {
         assert_ne!(
             source_data_sha256(&serde_json::json!([1, 2])).unwrap(),
             source_data_sha256(&serde_json::json!([2, 1])).unwrap()
+        );
+    }
+
+    #[test]
+    fn computed_sort_request_size_is_bounded_before_sql_resolution() {
+        let sorts = parse_query_parameter("sort=computed.shared.first,computed.shared.second,name")
+            .unwrap()
+            .sort;
+
+        let error = validate_computed_sort_count(sorts.len()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Computed sorting supports at most 2 explicit sort fields per request"
         );
     }
 }

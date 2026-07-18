@@ -96,6 +96,28 @@ async fn computed_personal_owner(
     }
 }
 
+async fn can_read_objects_in_class(
+    pool: &AppContext,
+    requestor: &Authenticated,
+    class: &HubuumClass,
+) -> Result<bool, ApiError> {
+    let resource = class.to_resource_ref(pool.db_pool()).await?;
+    match authorize_resources(
+        pool.permission_backend(),
+        pool,
+        &requestor.principal,
+        requestor.scopes(),
+        vec![Permissions::ReadObject],
+        vec![resource],
+    )
+    .await
+    {
+        Ok(()) => Ok(true),
+        Err(ApiError::Forbidden(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 fn serialized_object_page<T: serde::Serialize>(
     page: Page<T>,
     total_count: i64,
@@ -981,7 +1003,7 @@ async fn get_related_class_graph(
     params(
         ("class_id" = i32, Path, description = "Class ID"),
         ("include" = Option<String>, Query, description = "Set to computed to enrich each object"),
-        ("sort" = Option<String>, Query, description = "Sort by object fields or computed.shared.<key>/computed.personal.<key>")
+        ("sort" = Option<String>, Query, description = "Sort by object fields or computed.shared.<key>/computed.personal.<key>; computed sorting supports at most two explicit sort fields")
     ),
     responses(
         (status = 200, description = "Objects in class, optionally enriched with computed fields", body = [crate::models::HubuumObjectReadResponse]),
@@ -1031,6 +1053,17 @@ async fn get_objects_in_class(
             );
         }
         let class_instance = class.instance(&pool).await?;
+        if !can_read_objects_in_class(&pool, &requestor, &class_instance).await? {
+            return serialized_object_page(
+                Page::<HubuumObjectComputedResponse> {
+                    items: Vec::new(),
+                    next_cursor: None,
+                },
+                0,
+                effective_page_limit(&params)?,
+                true,
+            );
+        }
         let personal_owner = computed_personal_owner(&pool, &requestor, &class_instance).await?;
         let computed_sort_snapshot = resolve_computed_sort_fields(
             pool.db_pool(),

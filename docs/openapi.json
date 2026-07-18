@@ -1428,7 +1428,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "Sort by object fields or computed.shared.<key>/computed.personal.<key>",
+            "description": "Sort by object fields or computed.shared.<key>/computed.personal.<key>; computed sorting supports at most two explicit sort fields",
             "required": false,
             "schema": {
               "type": "string"

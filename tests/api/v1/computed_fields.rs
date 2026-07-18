@@ -1009,6 +1009,138 @@ mod tests {
     }
 
     #[rstest::rstest]
+    #[case::existing("display_name")]
+    #[case::missing("hidden_definition")]
+    #[tokio::test]
+    async fn computed_sort_keys_are_hidden_without_object_visibility(
+        #[future(awt)] test_context: TestContext,
+        #[case] key: &str,
+    ) {
+        let fixture = fixture(&test_context, "computed sort key visibility").await;
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            definition("display_name"),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.normal_token,
+            &format!(
+                "/api/v1/classes/{}/?sort=computed.shared.{key}",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            header_value(&response, TOTAL_COUNT_HEADER).as_deref(),
+            Some("0")
+        );
+        let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert!(objects.is_empty());
+
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn computed_sort_rejects_more_than_two_explicit_sort_fields(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let fixture = fixture(&test_context, "computed sort field limit").await;
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?sort=computed.shared.first,computed.shared.second,name",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::BAD_REQUEST).await;
+        let body: serde_json::Value = test::read_body_json(response).await;
+
+        assert_eq!(
+            body["message"],
+            "Computed sorting supports at most 2 explicit sort fields per request"
+        );
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn computed_sort_rejects_a_cursor_too_large_for_the_next_request(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let mut fixture = fixture(&test_context, "computed sort cursor size").await;
+        for (key, path) in [("first_large", "/first"), ("second_large", "/second")] {
+            let request = serde_json::from_value(serde_json::json!({
+                "key": key,
+                "label": key,
+                "operation": {"type": "first_non_null", "paths": [path]},
+                "result_type": "string",
+                "enabled": true
+            }))
+            .unwrap();
+            create_shared_definition(
+                &test_context.pool,
+                fixture.class.id,
+                fixture.class.collection_id,
+                test_context.admin_user.id,
+                request,
+                &EventContext::system(),
+            )
+            .await
+            .unwrap();
+        }
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+
+        for index in 0..2 {
+            fixture.objects.push(
+                NewHubuumObject {
+                    collection_id: fixture.class.collection_id,
+                    hubuum_class_id: fixture.class.id,
+                    name: test_context.scoped_name(&format!("large cursor {index}")),
+                    description: "Large computed cursor object".to_string(),
+                    data: serde_json::json!({
+                        "first": format!("{index}{}", "a".repeat(50 * 1024)),
+                        "second": "b".repeat(50 * 1024)
+                    }),
+                }
+                .save_without_events(&test_context.pool)
+                .await
+                .unwrap(),
+            );
+        }
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?sort=computed.shared.first_large.desc,computed.shared.second_large.desc&limit=1",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::BAD_REQUEST).await;
+        let body: serde_json::Value = test::read_body_json(response).await;
+
+        assert_eq!(
+            body["message"],
+            "pagination cursor exceeds the maximum encoded size of 65536 bytes; use smaller sort values"
+        );
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
     #[tokio::test]
     async fn shared_computed_sort_rejects_a_cache_row_for_old_source_data(
         #[future(awt)] test_context: TestContext,
@@ -1384,7 +1516,7 @@ mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
-    async fn computed_sort_query_count_is_constant_with_page_size(
+    async fn computed_sort_query_count_is_constant_with_stale_pages(
         #[future(awt)] test_context: TestContext,
     ) {
         let mut fixture = fixture(&test_context, "computed sort query count").await;
@@ -1415,8 +1547,17 @@ mod tests {
             );
         }
 
+        with_connection(&test_context.pool, async |conn| {
+            use crate::schema::object_computed_data::dsl::{class_id, object_computed_data};
+            diesel::delete(object_computed_data.filter(class_id.eq(fixture.class.id)))
+                .execute(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
         let small_endpoint = format!(
-            "/api/v1/classes/{}/?include=computed&include_total=false&sort=computed.shared.display_name&limit=1",
+            "/api/v1/classes/{}/?include_total=false&sort=computed.shared.display_name&limit=1",
             fixture.class.id
         );
         let (small_response, small_queries) = capture_queries(get_request(
@@ -1430,7 +1571,7 @@ mod tests {
         assert_eq!(small_page.len(), 1);
 
         let large_endpoint = format!(
-            "/api/v1/classes/{}/?include=computed&include_total=false&sort=computed.shared.display_name&limit=8",
+            "/api/v1/classes/{}/?include_total=false&sort=computed.shared.display_name&limit=8",
             fixture.class.id
         );
         let (large_response, large_queries) = capture_queries(get_request(
@@ -1457,6 +1598,17 @@ mod tests {
             large_queries.queries_matching("hubuum_computed_evaluate_scope"),
             1
         );
+        let materialized_count = with_connection(&test_context.pool, async |conn| {
+            use crate::schema::object_computed_data::dsl::{class_id, object_computed_data};
+            object_computed_data
+                .filter(class_id.eq(fixture.class.id))
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(materialized_count, 0);
 
         fixture.cleanup().await.unwrap();
     }

@@ -191,8 +191,12 @@ GET /api/v1/classes/{class_id}/?sort=computed.personal.my_priority.desc
 `shared` and `personal` match the response namespaces. `public` and `private`
 are accepted as aliases. Computed sorts support the normal ascending,
 descending, multi-field, deterministic tie-breaker, and cursor-pagination
-behavior. Null or failed results sort first in ascending order and last in
-descending order. Object and array results use PostgreSQL JSONB ordering.
+behavior, with at most two explicit sort fields in any request that uses a
+computed sort. Null or failed results sort first in ascending order and last
+in descending order. Object and array results use PostgreSQL JSONB ordering.
+The encoded cursor is limited to 64 KiB, so sorting large results can return
+`400 Bad Request` when another page would require an oversized cursor; use
+fewer sort fields or definitions with smaller outputs.
 
 A personal sort is available only to the owning human user and still requires
 class access. Service accounts cannot sort on personal definitions. The
@@ -209,6 +213,8 @@ enrichment. Live evaluation cost grows with the candidate count, object JSON
 size, and enabled-scope complexity; materialized shared fields are preferable
 for high-volume sorting. Computed-sort query counts are independent of page
 size, and requests without computed sorting retain the existing query path.
+Computed-sort reads use live values for missing or stale materializations but
+defer cache repair to the rebuild path, keeping list requests read-only.
 Computed filtering and declarative indexing are not yet supported. Unsupported
 query fields fail validation; Hubuum never filters or sorts computed data after
 database pagination on the SQL path.
