@@ -19,6 +19,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `group_rules` instead of raw LDAP attribute values. Replace filters containing
   raw directory structure, such as distinguished-name components, with patterns
   matching the configured `name` template.
+- Successful `/healthz` and `/readyz` request-completion logs now use `DEBUG`
+  severity, while failed probes retain their status-derived severity.
 - Pagination now clamps positive client limits above the configured maximum
   instead of returning `400 Bad Request`, and paginated responses expose the
   effective value in `X-Page-Limit`.

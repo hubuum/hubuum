@@ -42,11 +42,12 @@ Severity is derived from the outcome:
 
 | Outcome | Severity |
 | ------- | -------- |
+| Successful `/healthz` and `/readyz` probes | `DEBUG` |
 | `2xx` and `3xx` | `INFO` |
 | `4xx` | `WARN` |
 | `5xx` | `ERROR` |
 
-Hubuum applies the status-to-severity mapping to downstream service errors as well as normal responses. Early middleware rejections, including client-allowlist denials, are returned as responses so they receive the same completion event and `x-request-id` header as handler responses.
+Hubuum applies the status-to-severity mapping to downstream service errors as well as normal responses. Successful liveness and readiness probe completions use `DEBUG` to avoid flooding normal operational logs; failed probes retain their status-derived severity. Early middleware rejections, including client-allowlist denials, are returned as responses so they receive the same completion event and `x-request-id` header as handler responses.
 
 Clients may send `X-Correlation-ID`. Accepted values are 1 to 128 visible ASCII bytes without whitespace. Hubuum echoes accepted values as `x-correlation-id`; invalid values are ignored without logging or echoing the supplied value. Hubuum always returns `x-request-id`.
 

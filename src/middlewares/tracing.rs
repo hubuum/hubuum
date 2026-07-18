@@ -9,7 +9,7 @@ use actix_web::{
     http::header::{HeaderName, HeaderValue},
 };
 use futures_util::future::{self, LocalBoxFuture, Ready};
-use tracing::{Instrument, Level, Span, error, field, info, span, warn};
+use tracing::{Instrument, Level, Span, debug, error, field, info, span, warn};
 use uuid::Uuid;
 
 use crate::events::RequestProvenance;
@@ -247,6 +247,15 @@ where
                     );
                 } else if status.is_client_error() {
                     warn!(
+                        message = "request complete",
+                        method = method.as_str(),
+                        path = path.as_str(),
+                        status = status_code,
+                        client_ip = client_ip_s.as_deref(),
+                        elapsed_ms,
+                    );
+                } else if status.is_success() && matches!(path.as_str(), "/healthz" | "/readyz") {
+                    debug!(
                         message = "request complete",
                         method = method.as_str(),
                         path = path.as_str(),
