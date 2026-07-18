@@ -307,18 +307,18 @@ impl LdapIdentityProvider {
                 continue;
             };
             for value in values {
-                if !self.group_filters.is_empty()
-                    && !self
-                        .group_filters
-                        .iter()
-                        .any(|filter| filter.is_match(value))
-                {
-                    continue;
-                }
                 for rule in &self.rules {
                     if let Some(captures) = rule.pattern.captures(value) {
                         let name = expand_template(&rule.name, &captures);
                         if name.trim().is_empty() {
+                            continue;
+                        }
+                        if !self.group_filters.is_empty()
+                            && !self
+                                .group_filters
+                                .iter()
+                                .any(|filter| filter.is_match(&name))
+                        {
                             continue;
                         }
                         let key = rule
@@ -624,10 +624,10 @@ mod tests {
     }
 
     #[test]
-    fn group_filters_include_values_matching_any_configured_regex() {
+    fn group_filters_include_mapped_names_matching_any_configured_regex() {
         let provider = LdapIdentityProvider::new(LdapScopeConfig {
             group_attributes: vec!["memberOf".into()],
-            group_filters: vec!["^cn=hubuum-".into(), "^cn=admin,".into()],
+            group_filters: vec!["-editors$".into(), "^admin$".into()],
             group_rules: vec![GroupMappingRuleConfig {
                 pattern: "^cn=([^,]+),ou=groups,dc=example,dc=org$".into(),
                 name: "$1".into(),
