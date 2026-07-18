@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+fi
 INSTALL_DIR="/opt/hubuum"
 MODE="all"
 WEB_FQDN=""
@@ -327,6 +330,9 @@ uninstall_stack() {
 load_existing_runtime
 detect_engine
 ENGINE_PATH="$(command -v "$ENGINE_BIN")"
+if [[ "$ENGINE_BIN" == "podman" ]]; then
+  export PODMAN_COMPOSE_WARNING_LOGS=false
+fi
 COMPOSE_CMD=("$ENGINE_PATH" compose --env-file .env -f compose.yml)
 
 if [[ "$ACTION" == "stop" ]]; then
@@ -365,11 +371,14 @@ AUTH_CONFIG_HOST_PATH="$(absolute_config_path "$AUTH_CONFIG_HOST_PATH")"
 
 install_management_script() {
   local script_name="$1"
-  local local_path="$SCRIPT_DIR/$script_name"
+  local local_path=""
   local dest_path="$INSTALL_DIR/$script_name"
   local temp_path
 
-  if [[ -f "$local_path" && "$local_path" != "$dest_path" ]]; then
+  if [[ -n "$SCRIPT_DIR" ]]; then
+    local_path="$SCRIPT_DIR/$script_name"
+  fi
+  if [[ -n "$local_path" && -f "$local_path" && "$local_path" != "$dest_path" ]]; then
     install -m 0755 "$local_path" "$dest_path"
     return 0
   fi
@@ -520,42 +529,42 @@ chmod 0600 "$ENV_FILE"
 CADDYFILE_TEMP="$(mktemp "$INSTALL_DIR/.Caddyfile.XXXXXX")"
 cat > "$CADDYFILE_TEMP" <<EOF
 {
-    email ${LETSENCRYPT_EMAIL}
+	email ${LETSENCRYPT_EMAIL}
 }
 
 (api_proxy) {
-    reverse_proxy hubuum-api:${API_PORT} hubuum-api-standby:${API_PORT} {
-        health_uri /readyz
-        health_interval 5s
-        health_timeout 3s
-        fail_duration 30s
-        max_fails 1
-        lb_try_duration 5s
-        lb_try_interval 250ms
-        stream_close_delay 5m
-    }
+	reverse_proxy hubuum-api:${API_PORT} hubuum-api-standby:${API_PORT} {
+		health_uri /readyz
+		health_interval 5s
+		health_timeout 3s
+		fail_duration 30s
+		max_fails 1
+		lb_try_duration 5s
+		lb_try_interval 250ms
+		stream_close_delay 5m
+	}
 }
 EOF
 
 if [[ "$MODE" == "all" ]]; then
   cat >> "$CADDYFILE_TEMP" <<'EOF'
 (web_proxy) {
-    reverse_proxy hubuum-web:3000 hubuum-web-standby:3000 {
-        health_uri /
-        health_status 2xx
-        health_follow_redirects
-        health_interval 5s
-        health_timeout 3s
-        fail_duration 30s
-        max_fails 1
-        lb_try_duration 5s
-        lb_try_interval 250ms
-        stream_close_delay 5m
-    }
+	reverse_proxy hubuum-web:3000 hubuum-web-standby:3000 {
+		health_uri /
+		health_status 2xx
+		health_follow_redirects
+		health_interval 5s
+		health_timeout 3s
+		fail_duration 30s
+		max_fails 1
+		lb_try_duration 5s
+		lb_try_interval 250ms
+		stream_close_delay 5m
+	}
 }
 
 :8081 {
-    import api_proxy
+	import api_proxy
 }
 EOF
 fi
@@ -563,71 +572,71 @@ fi
 if [[ "$MODE" == "all" && -z "$SHARED_HOST_ROUTING" ]]; then
   cat >> "$CADDYFILE_TEMP" <<EOF
 ${WEB_FQDN} {
-    encode zstd gzip
-    import web_proxy
+	encode zstd gzip
+	import web_proxy
 }
 
 ${API_FQDN} {
-    encode zstd gzip
-    import api_proxy
+	encode zstd gzip
+	import api_proxy
 }
 EOF
 elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "bff" ]]; then
   cat >> "$CADDYFILE_TEMP" <<EOF
 ${WEB_FQDN} {
-    encode zstd gzip
-    import web_proxy
+	encode zstd gzip
+	import web_proxy
 }
 EOF
 elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "direct" ]]; then
   cat >> "$CADDYFILE_TEMP" <<EOF
 ${WEB_FQDN} {
-    encode zstd gzip
+	encode zstd gzip
 
-    handle /api/v0* {
-        import api_proxy
-    }
+	handle /api/v0* {
+		import api_proxy
+	}
 
-    handle /api/v1* {
-        import api_proxy
-    }
+	handle /api/v1* {
+		import api_proxy
+	}
 
-    handle /api-doc* {
-        import api_proxy
-    }
+	handle /api-doc* {
+		import api_proxy
+	}
 
-    handle /swagger-ui* {
-        import api_proxy
-    }
+	handle /swagger-ui* {
+		import api_proxy
+	}
 
-    handle {
-        import web_proxy
-    }
+	handle {
+		import web_proxy
+	}
 }
 EOF
 elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "prefixed" ]]; then
   cat >> "$CADDYFILE_TEMP" <<EOF
 ${WEB_FQDN} {
-    encode zstd gzip
+	encode zstd gzip
 
-    handle /hubuum-api {
-        redir /hubuum-api/
-    }
+	handle /hubuum-api {
+		redir * /hubuum-api/
+	}
 
-    handle_path /hubuum-api/* {
-        import api_proxy
-    }
+	handle_path /hubuum-api/* {
+		import api_proxy
+	}
 
-    handle {
-        import web_proxy
-    }
+	handle {
+		import web_proxy
+	}
 }
 EOF
 else
   cat >> "$CADDYFILE_TEMP" <<EOF
 ${API_FQDN} {
-    encode zstd gzip
-    import api_proxy
+	encode zstd gzip
+	import api_proxy
 }
 EOF
 fi
@@ -821,17 +830,7 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    depends_on:
-      - hubuum-api
-      - hubuum-api-standby
 EOF
-
-if [[ "$MODE" == "all" ]]; then
-  cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
-      - hubuum-web
-      - hubuum-web-standby
-EOF
-fi
 
 cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
     networks:
@@ -892,6 +891,7 @@ After=network-online.target docker.service podman.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=${INSTALL_DIR}
+Environment=PODMAN_COMPOSE_WARNING_LOGS=false
 ExecStart=${ENGINE_PATH} compose --env-file .env -f compose.yml up -d
 ExecStop=${ENGINE_PATH} compose --env-file .env -f compose.yml down
 TimeoutStartSec=0
