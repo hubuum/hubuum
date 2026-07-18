@@ -16,7 +16,7 @@ use crate::db::traits::task::{
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
-use crate::models::search::QueryOptions;
+use crate::models::search::{ComputedFieldScope, QueryOptions, SortParam};
 use crate::models::{
     COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ClassComputationState,
     ComputedFieldDefinition, ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest,
@@ -163,6 +163,123 @@ pub async fn class_computation_state_for(
     })
     .await?
     .unwrap_or_else(|| ClassComputationState::ready_without_definitions(target_class_id)))
+}
+
+pub async fn resolve_computed_sort_fields(
+    pool: &DbPool,
+    target_class_id: i32,
+    personal_owner_id: Option<i32>,
+    sorts: &mut [SortParam],
+) -> Result<(), ApiError> {
+    let requested = sorts
+        .iter()
+        .filter_map(|sort| sort.field.computed_sort())
+        .map(|field| (field.scope(), field.key().to_string()))
+        .collect::<BTreeSet<_>>();
+    if requested.is_empty() {
+        return Ok(());
+    }
+    if personal_owner_id.is_none()
+        && requested
+            .iter()
+            .any(|(scope, _)| *scope == ComputedFieldScope::Personal)
+    {
+        return Err(ApiError::BadRequest(
+            "Personal computed fields can only be sorted by their owning human user".to_string(),
+        ));
+    }
+
+    use crate::schema::computed_field_definitions::dsl::{
+        class_id, computed_field_definitions, enabled, owner_user_id, visibility,
+    };
+    let definitions = with_connection(pool, async |conn| {
+        let mut query = computed_field_definitions
+            .filter(class_id.eq(target_class_id))
+            .filter(enabled.eq(true))
+            .into_boxed();
+        query = match personal_owner_id {
+            Some(owner_id) => query.filter(
+                visibility
+                    .eq(COMPUTED_FIELD_VISIBILITY_SHARED)
+                    .or(visibility
+                        .eq(COMPUTED_FIELD_VISIBILITY_PERSONAL)
+                        .and(owner_user_id.eq(Some(owner_id)))),
+            ),
+            None => query.filter(visibility.eq(COMPUTED_FIELD_VISIBILITY_SHARED)),
+        };
+        query
+            .select(ComputedFieldDefinition::as_select())
+            .load::<ComputedFieldDefinition>(conn)
+            .await
+    })
+    .await?;
+    let definitions = definitions
+        .into_iter()
+        .map(|definition| {
+            let scope = if definition.is_shared() {
+                ComputedFieldScope::Shared
+            } else {
+                ComputedFieldScope::Personal
+            };
+            ((scope, definition.key.clone()), definition)
+        })
+        .collect::<HashMap<_, _>>();
+
+    for sort in sorts {
+        let Some(field) = sort.field.computed_sort_mut() else {
+            continue;
+        };
+        let definition = definitions
+            .get(&(field.scope(), field.key().to_string()))
+            .ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "Enabled {} computed field '{}' was not found for this class",
+                    field.scope().as_str(),
+                    field.key()
+                ))
+            })?;
+        let value_type =
+            crate::models::ComputedResultType::from_db(&definition.result_type)?.into();
+        field.resolve(computed_sort_value_sql(definition), value_type);
+    }
+    Ok(())
+}
+
+fn computed_sort_value_sql(definition: &ComputedFieldDefinition) -> String {
+    let live_value = format!(
+        "hubuum_computed_sort_value(\
+            hubuumobject.data, \
+            (SELECT sort_definition.operation \
+             FROM computed_field_definitions AS sort_definition \
+             WHERE sort_definition.id = {}), \
+            '{}')",
+        definition.id,
+        definition.result_type.replace('\'', "''")
+    );
+    if !definition.is_shared() {
+        return live_value;
+    }
+    let key = definition.key.replace('\'', "''");
+    format!(
+        "(SELECT CASE \
+            WHEN sort_cache.present THEN sort_cache.value \
+            ELSE {live_value} \
+          END \
+          FROM (VALUES (TRUE)) AS sort_fallback(seed) \
+          LEFT JOIN LATERAL ( \
+            SELECT TRUE AS present, \
+                   NULLIF(sort_values.values -> '{key}', 'null'::jsonb) AS value \
+            FROM object_computed_data AS sort_values \
+            JOIN class_computation_state AS sort_state \
+              ON sort_state.class_id = sort_values.class_id \
+            WHERE sort_values.object_id = hubuumobject.id \
+              AND sort_values.class_id = {} \
+              AND sort_values.evaluation_revision = sort_state.evaluation_revision \
+              AND sort_values.computed_at >= hubuumobject.updated_at \
+              AND sort_values.values ? '{key}' \
+          ) AS sort_cache ON TRUE)",
+        definition.class_id
+    )
 }
 
 pub async fn list_shared_definitions(

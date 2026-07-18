@@ -257,13 +257,64 @@ where
     T::sql_field(field)
 }
 
-pub fn order_sql_clause<T>(sort: &SortParam) -> Result<String, ApiError>
-where
-    T: CursorSqlMapping,
-{
-    let field = cursor_sql_field::<T>(&sort.field)?;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnedCursorSqlField {
+    pub expression: String,
+    pub sql_type: CursorSqlType,
+    pub nullable: bool,
+}
+
+impl From<CursorSqlField> for OwnedCursorSqlField {
+    fn from(field: CursorSqlField) -> Self {
+        Self {
+            expression: field.column.to_string(),
+            sql_type: field.sql_type,
+            nullable: field.nullable,
+        }
+    }
+}
+
+trait CursorSqlFieldView {
+    fn expression(&self) -> &str;
+    fn sql_type(&self) -> CursorSqlType;
+    fn nullable(&self) -> bool;
+}
+
+impl CursorSqlFieldView for CursorSqlField {
+    fn expression(&self) -> &str {
+        self.column
+    }
+
+    fn sql_type(&self) -> CursorSqlType {
+        self.sql_type
+    }
+
+    fn nullable(&self) -> bool {
+        self.nullable
+    }
+}
+
+impl CursorSqlFieldView for OwnedCursorSqlField {
+    fn expression(&self) -> &str {
+        &self.expression
+    }
+
+    fn sql_type(&self) -> CursorSqlType {
+        self.sql_type
+    }
+
+    fn nullable(&self) -> bool {
+        self.nullable
+    }
+}
+
+pub fn order_sql_clause_for_field(sort: &SortParam, field: &OwnedCursorSqlField) -> String {
+    order_sql_clause_for_expression(sort, field.expression(), field.nullable())
+}
+
+fn order_sql_clause_for_expression(sort: &SortParam, expression: &str, nullable: bool) -> String {
     let direction = if sort.descending { "DESC" } else { "ASC" };
-    let nulls = if field.nullable {
+    let nulls = if nullable {
         if sort.descending {
             " NULLS LAST"
         } else {
@@ -273,7 +324,19 @@ where
         ""
     };
 
-    Ok(format!("{} {}{}", field.column, direction, nulls))
+    format!("{expression} {direction}{nulls}")
+}
+
+pub fn order_sql_clause<T>(sort: &SortParam) -> Result<String, ApiError>
+where
+    T: CursorSqlMapping,
+{
+    let field = cursor_sql_field::<T>(&sort.field)?;
+    Ok(order_sql_clause_for_expression(
+        sort,
+        field.expression(),
+        field.nullable(),
+    ))
 }
 
 pub fn cursor_filter_sql<T>(
@@ -287,11 +350,39 @@ where
         return Ok(None);
     };
 
-    let cursor_values = decode_cursor_values(cursor, sorts)?;
     let fields = sorts
         .iter()
         .map(|sort| cursor_sql_field::<T>(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
+
+    cursor_filter_sql_from_fields(sorts, &fields, Some(cursor))
+}
+
+pub fn cursor_filter_sql_for_fields(
+    sorts: &[SortParam],
+    fields: &[OwnedCursorSqlField],
+    cursor: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    cursor_filter_sql_from_fields(sorts, fields, cursor)
+}
+
+fn cursor_filter_sql_from_fields<F>(
+    sorts: &[SortParam],
+    fields: &[F],
+    cursor: Option<&str>,
+) -> Result<Option<String>, ApiError>
+where
+    F: CursorSqlFieldView,
+{
+    let Some(cursor) = cursor else {
+        return Ok(None);
+    };
+    if fields.len() != sorts.len() {
+        return Err(ApiError::InternalServerError(
+            "cursor SQL field count does not match sort count".to_string(),
+        ));
+    }
+    let cursor_values = decode_cursor_values(cursor, sorts)?;
 
     let mut clauses = Vec::with_capacity(sorts.len());
     for current_index in 0..sorts.len() {
@@ -404,67 +495,81 @@ pub fn decode_cursor_values(
     Ok(decode_cursor(cursor, sorts)?.values)
 }
 
-fn cursor_equality_sql(field: &CursorSqlField, value: &CursorValue) -> Result<String, ApiError> {
+fn cursor_equality_sql<F>(field: &F, value: &CursorValue) -> Result<String, ApiError>
+where
+    F: CursorSqlFieldView,
+{
     match value {
         CursorValue::Null => {
-            if !field.nullable {
+            if !field.nullable() {
                 return Err(ApiError::BadRequest(format!(
                     "cursor contains null for non-nullable field '{}'",
-                    field.column
+                    field.expression()
                 )));
             }
-            Ok(format!("{} IS NULL", field.column))
+            Ok(format!("{} IS NULL", field.expression()))
         }
         _ => Ok(format!(
             "{} = {}",
-            field.column,
+            field.expression(),
             cursor_literal_sql(field, value)?
         )),
     }
 }
 
-fn cursor_after_sql(
-    field: &CursorSqlField,
-    sort: &SortParam,
-    value: &CursorValue,
-) -> Result<String, ApiError> {
+fn cursor_after_sql<F>(field: &F, sort: &SortParam, value: &CursorValue) -> Result<String, ApiError>
+where
+    F: CursorSqlFieldView,
+{
     match value {
         CursorValue::Null => {
-            if !field.nullable {
+            if !field.nullable() {
                 return Err(ApiError::BadRequest(format!(
                     "cursor contains null for non-nullable field '{}'",
-                    field.column
+                    field.expression()
                 )));
             }
 
             if sort.descending {
                 Ok("FALSE".to_string())
             } else {
-                Ok(format!("{} IS NOT NULL", field.column))
+                Ok(format!("{} IS NOT NULL", field.expression()))
             }
         }
         _ => {
             let literal = cursor_literal_sql(field, value)?;
-            if field.nullable && sort.descending {
+            if field.nullable() && sort.descending {
                 Ok(format!(
                     "({} < {} OR {} IS NULL)",
-                    field.column, literal, field.column
+                    field.expression(),
+                    literal,
+                    field.expression()
                 ))
             } else {
                 let operator = if sort.descending { "<" } else { ">" };
-                Ok(format!("{} {} {}", field.column, operator, literal))
+                Ok(format!("{} {} {}", field.expression(), operator, literal))
             }
         }
     }
 }
 
-fn cursor_literal_sql(field: &CursorSqlField, value: &CursorValue) -> Result<String, ApiError> {
-    match (field.sql_type, value) {
+fn cursor_literal_sql<F>(field: &F, value: &CursorValue) -> Result<String, ApiError>
+where
+    F: CursorSqlFieldView,
+{
+    match (field.sql_type(), value) {
         (_, CursorValue::Null) => Err(ApiError::BadRequest(format!(
             "cursor contains null for field '{}'",
-            field.column
+            field.expression()
         ))),
         (CursorSqlType::Integer, CursorValue::Integer(value)) => Ok(value.to_string()),
+        (CursorSqlType::Numeric, CursorValue::Decimal(value)) => {
+            hubuum_computed_fields::compare_decimal_strings(value, value).ok_or_else(|| {
+                ApiError::BadRequest("cursor contains an invalid decimal value".to_string())
+            })?;
+            Ok(format!("{value}::numeric"))
+        }
+        (CursorSqlType::Boolean, CursorValue::Boolean(value)) => Ok(value.to_string()),
         (CursorSqlType::String, CursorValue::String(value)) => {
             Ok(format!("'{}'", value.replace('\'', "''")))
         }
@@ -486,23 +591,28 @@ fn cursor_literal_sql(field: &CursorSqlField, value: &CursorValue) -> Result<Str
                 ))
             }
         }
+        (CursorSqlType::Json, CursorValue::Json(value)) => Ok(format!(
+            "'{}'::jsonb",
+            serde_json::to_string(value)
+                .map_err(ApiError::from)?
+                .replace('\'', "''")
+        )),
         _ => Err(ApiError::BadRequest(format!(
             "cursor value does not match expected type for '{}'",
-            field.column
+            field.expression()
         ))),
     }
 }
 
 #[macro_export]
-macro_rules! apply_cursor_ordering {
-    ($query:ident, $sorts:expr, $ty:ty) => {{
+macro_rules! apply_cursor_ordering_fields {
+    ($query:ident, $sorts:expr, $sql_fields:expr) => {{
         use diesel::dsl::sql;
-        use diesel::sql_types::{Array, Integer, Nullable, Text, Timestamp};
+        use diesel::sql_types::{Array, Bool, Integer, Jsonb, Nullable, Numeric, Text, Timestamp};
 
         let mut is_first_order = true;
-        for sort in $sorts.iter() {
-            let sql_field = $crate::pagination::cursor_sql_field::<$ty>(&sort.field)?;
-            let order_sql = $crate::pagination::order_sql_clause::<$ty>(sort)?;
+        for (sort, sql_field) in $sorts.iter().zip($sql_fields.iter()) {
+            let order_sql = $crate::pagination::order_sql_clause_for_field(sort, sql_field);
 
             $query = match (is_first_order, sql_field.sql_type, sql_field.nullable) {
                 (true, $crate::pagination::CursorSqlType::Integer, false) => {
@@ -516,6 +626,30 @@ macro_rules! apply_cursor_ordering {
                 }
                 (false, $crate::pagination::CursorSqlType::Integer, true) => {
                     $query.then_order_by(sql::<Nullable<Integer>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Numeric, false) => {
+                    $query.order_by(sql::<Numeric>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Numeric, false) => {
+                    $query.then_order_by(sql::<Numeric>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Numeric, true) => {
+                    $query.order_by(sql::<Nullable<Numeric>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Numeric, true) => {
+                    $query.then_order_by(sql::<Nullable<Numeric>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Boolean, false) => {
+                    $query.order_by(sql::<Bool>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Boolean, false) => {
+                    $query.then_order_by(sql::<Bool>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Boolean, true) => {
+                    $query.order_by(sql::<Nullable<Bool>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Boolean, true) => {
+                    $query.then_order_by(sql::<Nullable<Bool>>(&order_sql))
                 }
                 (true, $crate::pagination::CursorSqlType::String, false) => {
                     $query.order_by(sql::<Text>(&order_sql))
@@ -553,9 +687,145 @@ macro_rules! apply_cursor_ordering {
                 (false, $crate::pagination::CursorSqlType::IntegerArray, true) => {
                     $query.then_order_by(sql::<Array<Nullable<Integer>>>(&order_sql))
                 }
+                (true, $crate::pagination::CursorSqlType::Json, false) => {
+                    $query.order_by(sql::<Jsonb>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Json, false) => {
+                    $query.then_order_by(sql::<Jsonb>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Json, true) => {
+                    $query.order_by(sql::<Nullable<Jsonb>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Json, true) => {
+                    $query.then_order_by(sql::<Nullable<Jsonb>>(&order_sql))
+                }
             };
 
             is_first_order = false;
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! apply_cursor_ordering {
+    ($query:ident, $sorts:expr, $ty:ty) => {{
+        use diesel::dsl::sql;
+        use diesel::sql_types::{Array, Bool, Integer, Jsonb, Nullable, Numeric, Text, Timestamp};
+
+        let mut is_first_order = true;
+        for sort in $sorts.iter() {
+            let sql_field = $crate::pagination::cursor_sql_field::<$ty>(&sort.field)?;
+            let order_sql = $crate::pagination::order_sql_clause::<$ty>(sort)?;
+
+            $query = match (is_first_order, sql_field.sql_type, sql_field.nullable) {
+                (true, $crate::pagination::CursorSqlType::Integer, false) => {
+                    $query.order_by(sql::<Integer>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Integer, false) => {
+                    $query.then_order_by(sql::<Integer>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Integer, true) => {
+                    $query.order_by(sql::<Nullable<Integer>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Integer, true) => {
+                    $query.then_order_by(sql::<Nullable<Integer>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Numeric, false) => {
+                    $query.order_by(sql::<Numeric>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Numeric, false) => {
+                    $query.then_order_by(sql::<Numeric>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Numeric, true) => {
+                    $query.order_by(sql::<Nullable<Numeric>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Numeric, true) => {
+                    $query.then_order_by(sql::<Nullable<Numeric>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Boolean, false) => {
+                    $query.order_by(sql::<Bool>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Boolean, false) => {
+                    $query.then_order_by(sql::<Bool>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Boolean, true) => {
+                    $query.order_by(sql::<Nullable<Bool>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Boolean, true) => {
+                    $query.then_order_by(sql::<Nullable<Bool>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::String, false) => {
+                    $query.order_by(sql::<Text>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::String, false) => {
+                    $query.then_order_by(sql::<Text>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::String, true) => {
+                    $query.order_by(sql::<Nullable<Text>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::String, true) => {
+                    $query.then_order_by(sql::<Nullable<Text>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::DateTime, false) => {
+                    $query.order_by(sql::<Timestamp>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::DateTime, false) => {
+                    $query.then_order_by(sql::<Timestamp>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::DateTime, true) => {
+                    $query.order_by(sql::<Nullable<Timestamp>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::DateTime, true) => {
+                    $query.then_order_by(sql::<Nullable<Timestamp>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::IntegerArray, false) => {
+                    $query.order_by(sql::<Array<Integer>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::IntegerArray, false) => {
+                    $query.then_order_by(sql::<Array<Integer>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::IntegerArray, true) => {
+                    $query.order_by(sql::<Array<Nullable<Integer>>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::IntegerArray, true) => {
+                    $query.then_order_by(sql::<Array<Nullable<Integer>>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Json, false) => {
+                    $query.order_by(sql::<Jsonb>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Json, false) => {
+                    $query.then_order_by(sql::<Jsonb>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Json, true) => {
+                    $query.order_by(sql::<Nullable<Jsonb>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Json, true) => {
+                    $query.then_order_by(sql::<Nullable<Jsonb>>(&order_sql))
+                }
+            };
+
+            is_first_order = false;
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! apply_query_options_with_fields {
+    ($query:ident, $query_options:expr, $sql_fields:expr) => {{
+        let query_options = &$query_options;
+
+        if let Some(cursor_sql) = $crate::pagination::cursor_filter_sql_for_fields(
+            &query_options.sort,
+            &$sql_fields,
+            query_options.cursor.as_deref(),
+        )? {
+            $query = $query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&cursor_sql));
+        }
+
+        $crate::apply_cursor_ordering_fields!($query, query_options.sort, $sql_fields);
+
+        if let Some(limit) = query_options.limit {
+            $query = $query.limit(limit as i64);
         }
     }};
 }

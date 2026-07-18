@@ -1426,6 +1426,15 @@
             }
           },
           {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort by object fields or computed.shared.<key>/computed.personal.<key>",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
@@ -1435,15 +1444,6 @@
               "default": 100,
               "maximum": 250,
               "minimum": 1
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
-            "required": false,
-            "schema": {
-              "type": "string"
             }
           },
           {

@@ -22,6 +22,33 @@ pub struct AuthorizedPage<T> {
     pub total_count: i64,
 }
 
+pub async fn authorize_all_candidates<T, F>(
+    backend: &dyn PermissionBackend,
+    principal: &PrincipalRef,
+    candidates: Vec<T>,
+    permissions: Vec<Permissions>,
+    to_resource: F,
+) -> Result<Vec<T>, ApiError>
+where
+    F: Fn(&T) -> ResourceRef,
+{
+    let requests = candidates
+        .iter()
+        .map(|candidate| PermissionRequest {
+            resource: to_resource(candidate),
+            permissions: permissions.clone(),
+        })
+        .collect();
+    let decisions = backend.authorize_many(principal, requests).await?;
+    Ok(candidates
+        .into_iter()
+        .zip(decisions)
+        .filter_map(|(candidate, decision)| {
+            (decision == PermissionDecision::Allow).then_some(candidate)
+        })
+        .collect())
+}
+
 pub async fn authorize_cursor_page<T, F>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,

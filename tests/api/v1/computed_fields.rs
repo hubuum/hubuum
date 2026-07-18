@@ -8,7 +8,7 @@ mod tests {
         execute_computed_reindex_task, request_class_rebuild,
     };
     use crate::db::traits::task::recover_expired_task_leases;
-    use crate::db::with_connection;
+    use crate::db::{capture_queries, with_connection};
     use crate::events::EventContext;
     use crate::models::{
         ComputedFieldDefinitionRequest, HubuumClassID, NewHubuumClass, NewHubuumObject,
@@ -22,6 +22,12 @@ mod tests {
         test_context,
     };
     use crate::traits::{CanDelete, CanSave, PermissionController, SelfAccessors};
+
+    #[derive(QueryableByName)]
+    struct ComputedSortSqlValue {
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Jsonb>)]
+        value: Option<serde_json::Value>,
+    }
 
     fn definition(key: &str) -> serde_json::Value {
         serde_json::json!({
@@ -116,6 +122,131 @@ mod tests {
             tokio::task::yield_now().await;
         }
         panic!("computed-field rebuild did not reach ready state");
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn database_sort_evaluator_matches_the_domain_operation_catalog(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let cases = [
+            (
+                serde_json::json!({"type": "first_non_null", "paths": ["/missing", "/value"]}),
+                "string",
+                serde_json::json!({"value": "chosen"}),
+            ),
+            (
+                serde_json::json!({"type": "sum", "paths": ["/left", "/right"]}),
+                "number",
+                serde_json::json!({"left": 2.25, "right": 3.75}),
+            ),
+            (
+                serde_json::json!({"type": "sum", "paths": ["/left", "/right"]}),
+                "number",
+                serde_json::from_str(r#"{"left": 9999999999999999999999999999999999, "right": 6}"#)
+                    .unwrap(),
+            ),
+            (
+                serde_json::json!({"type": "average", "paths": ["/left", "/right"]}),
+                "number",
+                serde_json::json!({"left": 2, "right": 5}),
+            ),
+            (
+                serde_json::json!({"type": "average", "paths": ["/left", "/right", "/third"]}),
+                "number",
+                serde_json::json!({"left": 1, "right": 0, "third": 0}),
+            ),
+            (
+                serde_json::json!({"type": "min", "paths": ["/left", "/right"]}),
+                "integer",
+                serde_json::json!({"left": -4, "right": 9}),
+            ),
+            (
+                serde_json::json!({"type": "max", "paths": ["/left", "/right"]}),
+                "integer",
+                serde_json::json!({"left": -4, "right": 9}),
+            ),
+            (
+                serde_json::json!({"type": "all_present", "paths": ["/false", "/zero"]}),
+                "boolean",
+                serde_json::json!({"false": false, "zero": 0}),
+            ),
+            (
+                serde_json::json!({"type": "any_present", "paths": ["/missing", "/empty"]}),
+                "boolean",
+                serde_json::json!({"empty": ""}),
+            ),
+            (
+                serde_json::json!({"type": "count_present", "paths": ["/missing", "/null", "/array"]}),
+                "integer",
+                serde_json::json!({"null": null, "array": []}),
+            ),
+            (
+                serde_json::json!({"type": "all_present_and_equal", "paths": ["/left", "/right"]}),
+                "boolean",
+                serde_json::json!({"left": {"a": 1, "b": [2]}, "right": {"b": [2], "a": 1.0}}),
+            ),
+            (
+                serde_json::json!({"type": "first_non_null", "paths": ["/value"]}),
+                "object",
+                serde_json::json!({"value": {"nested": true}}),
+            ),
+            (
+                serde_json::json!({"type": "first_non_null", "paths": ["/value"]}),
+                "array",
+                serde_json::json!({"value": [3, 2, 1]}),
+            ),
+            (
+                serde_json::json!({"type": "sum", "paths": ["/left", "/right"]}),
+                "number",
+                serde_json::json!({"left": 2, "right": "invalid"}),
+            ),
+        ];
+
+        for (operation, result_type, data) in cases {
+            let definition: hubuum_computed_fields::Definition =
+                serde_json::from_value(serde_json::json!({
+                    "key": "sort_value",
+                    "label": "Sort value",
+                    "operation": operation.clone(),
+                    "result_type": result_type,
+                    "enabled": true
+                }))
+                .unwrap();
+            let expected = hubuum_computed_fields::evaluate(
+                &data,
+                &[definition],
+                1,
+                hubuum_computed_fields::EvaluationLimits::standard(),
+            )
+            .unwrap()
+            .values
+            .remove("sort_value")
+            .unwrap();
+            let actual = with_connection(&test_context.pool, async |conn| {
+                diesel::sql_query("SELECT hubuum_computed_sort_value($1, $2, $3) AS value")
+                    .bind::<diesel::sql_types::Jsonb, _>(&data)
+                    .bind::<diesel::sql_types::Jsonb, _>(&operation)
+                    .bind::<diesel::sql_types::Text, _>(result_type)
+                    .get_result::<ComputedSortSqlValue>(conn)
+                    .await
+            })
+            .await
+            .unwrap()
+            .value
+            .unwrap_or(serde_json::Value::Null);
+            match (actual.as_number(), expected.as_number()) {
+                (Some(actual), Some(expected)) => assert_eq!(
+                    hubuum_computed_fields::compare_decimal_strings(
+                        &actual.to_string(),
+                        &expected.to_string()
+                    ),
+                    Some(std::cmp::Ordering::Equal),
+                    "operation: {operation}, data: {data}, actual: {actual}, expected: {expected}"
+                ),
+                _ => assert_eq!(actual, expected, "operation: {operation}, data: {data}"),
+            }
+        }
     }
 
     async fn grant_normal_user(
@@ -531,6 +662,17 @@ mod tests {
         let object: serde_json::Value = test::read_body_json(response).await;
         assert!(object["computed"].get("personal").is_none());
 
+        let response = get_request(
+            &test_context.pool,
+            &token,
+            &format!(
+                "/api/v1/classes/{}/?sort=computed.personal.not_allowed",
+                fixture.class.id
+            ),
+        )
+        .await;
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+
         fixture.cleanup().await.unwrap();
         crate::models::ServiceAccountID::new(account.id)
             .unwrap()
@@ -607,6 +749,356 @@ mod tests {
         assert_ne!(first_page[0]["id"], second_page[0]["id"]);
 
         finish_active_rebuild(&test_context, fixture.class.id).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn shared_computed_sort_is_stable_across_cursor_pages(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let mut fixture = fixture(&test_context, "shared computed sorting").await;
+        for hostname in ["aardvark.example", "zulu.example"] {
+            fixture.objects.push(
+                NewHubuumObject {
+                    collection_id: fixture.class.collection_id,
+                    hubuum_class_id: fixture.class.id,
+                    name: test_context.scoped_name(hostname),
+                    description: "Computed sorting object".to_string(),
+                    data: serde_json::json!({"manual": {"hostname": hostname}}),
+                }
+                .save_without_events(&test_context.pool)
+                .await
+                .unwrap(),
+            );
+        }
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            definition("display_name"),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+
+        let expected = [
+            fixture.objects[1].id,
+            fixture.objects[0].id,
+            fixture.objects[2].id,
+        ];
+        let mut cursor = None;
+        for (index, expected_id) in expected.into_iter().enumerate() {
+            let cursor_query = cursor
+                .as_ref()
+                .map_or_else(String::new, |cursor| format!("&cursor={cursor}"));
+            let response = get_request(
+                &test_context.pool,
+                &test_context.admin_token,
+                &format!(
+                    "/api/v1/classes/{}/?include=computed&sort=computed.shared.display_name&limit=1{cursor_query}",
+                    fixture.class.id
+                ),
+            )
+            .await;
+            let response = assert_response_status(response, StatusCode::OK).await;
+            assert_eq!(
+                header_value(&response, TOTAL_COUNT_HEADER).as_deref(),
+                Some("3")
+            );
+            cursor = header_value(&response, NEXT_CURSOR_HEADER);
+            let page: Vec<serde_json::Value> = test::read_body_json(response).await;
+            assert_eq!(page.len(), 1);
+            assert_eq!(page[0]["id"], expected_id);
+            assert!(page[0]["computed"]["shared"]["values"]["display_name"].is_string());
+            assert_eq!(cursor.is_some(), index < 2);
+        }
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?sort=computed.shared.display_name.desc&limit=3",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert_eq!(
+            objects
+                .iter()
+                .map(|object| object["id"].as_i64().unwrap() as i32)
+                .collect::<Vec<_>>(),
+            vec![
+                fixture.objects[2].id,
+                fixture.objects[0].id,
+                fixture.objects[1].id
+            ]
+        );
+        assert!(
+            objects
+                .iter()
+                .all(|object| object.get("computed").is_none())
+        );
+
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn numeric_computed_sort_cursor_matches_domain_precision(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let mut fixture = fixture(&test_context, "numeric computed sorting").await;
+        for (index, numerator) in [1, 1, 2].into_iter().enumerate() {
+            fixture.objects.push(
+                NewHubuumObject {
+                    collection_id: fixture.class.collection_id,
+                    hubuum_class_id: fixture.class.id,
+                    name: test_context.scoped_name(&format!("numeric sort {index} {numerator}")),
+                    description: "Numeric computed sorting object".to_string(),
+                    data: serde_json::json!({"left": numerator, "middle": 0, "right": 0}),
+                }
+                .save_without_events(&test_context.pool)
+                .await
+                .unwrap(),
+            );
+        }
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            serde_json::json!({
+                "key": "average_value",
+                "label": "Average value",
+                "operation": {
+                    "type": "average",
+                    "paths": ["/left", "/middle", "/right"]
+                },
+                "result_type": "number"
+            }),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+
+        let expected = [
+            fixture.objects[3].id,
+            fixture.objects[1].id,
+            fixture.objects[2].id,
+            fixture.objects[0].id,
+        ];
+        let mut cursor = None;
+        for expected_id in expected {
+            let cursor_query = cursor
+                .as_ref()
+                .map_or_else(String::new, |cursor| format!("&cursor={cursor}"));
+            let response = get_request(
+                &test_context.pool,
+                &test_context.admin_token,
+                &format!(
+                    "/api/v1/classes/{}/?include=computed&sort=computed.shared.average_value.desc&limit=1{cursor_query}",
+                    fixture.class.id
+                ),
+            )
+            .await;
+            let response = assert_response_status(response, StatusCode::OK).await;
+            cursor = header_value(&response, NEXT_CURSOR_HEADER);
+            let page: Vec<serde_json::Value> = test::read_body_json(response).await;
+            assert_eq!(page[0]["id"], expected_id);
+        }
+        assert!(cursor.is_none());
+
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn personal_computed_sort_is_owner_scoped_and_numeric(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let mut fixture = fixture(&test_context, "personal computed sorting").await;
+        fixture.objects.push(
+            NewHubuumObject {
+                collection_id: fixture.class.collection_id,
+                hubuum_class_id: fixture.class.id,
+                name: test_context.scoped_name("one present"),
+                description: "One present value".to_string(),
+                data: serde_json::json!({"manual": {"hostname": "one.example"}}),
+            }
+            .save_without_events(&test_context.pool)
+            .await
+            .unwrap(),
+        );
+        fixture.objects.push(
+            NewHubuumObject {
+                collection_id: fixture.class.collection_id,
+                hubuum_class_id: fixture.class.id,
+                name: test_context.scoped_name("none present"),
+                description: "No present values".to_string(),
+                data: serde_json::json!({}),
+            }
+            .save_without_events(&test_context.pool)
+            .await
+            .unwrap(),
+        );
+        let group = grant_normal_user(
+            &test_context,
+            &fixture,
+            &[
+                Permissions::ReadClass,
+                Permissions::ReadCollection,
+                Permissions::ReadObject,
+            ],
+        )
+        .await;
+        let response = post_request(
+            &test_context.pool,
+            &test_context.normal_token,
+            "/api/v1/iam/me/computed-fields",
+            serde_json::json!({
+                "class_id": fixture.class.id,
+                "key": "my_present_count",
+                "label": "My present count",
+                "operation": {
+                    "type": "count_present",
+                    "paths": ["/inventory/hostname", "/manual/hostname"]
+                },
+                "result_type": "integer"
+            }),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.normal_token,
+            &format!(
+                "/api/v1/classes/{}/?include=computed&sort=computed.personal.my_present_count&limit=3",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert_eq!(
+            objects
+                .iter()
+                .map(|object| object["id"].as_i64().unwrap() as i32)
+                .collect::<Vec<_>>(),
+            vec![
+                fixture.objects[2].id,
+                fixture.objects[1].id,
+                fixture.objects[0].id
+            ]
+        );
+        assert_eq!(
+            objects
+                .iter()
+                .map(|object| {
+                    object["computed"]["personal"]["values"]["my_present_count"]
+                        .as_i64()
+                        .unwrap()
+                })
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?sort=computed.personal.my_present_count",
+                fixture.class.id
+            ),
+        )
+        .await;
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+
+        fixture.cleanup().await.unwrap();
+        group
+            .delete_without_events(&test_context.pool)
+            .await
+            .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn computed_sort_query_count_is_constant_with_page_size(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let mut fixture = fixture(&test_context, "computed sort query count").await;
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            definition("display_name"),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+
+        for index in 1..8 {
+            fixture.objects.push(
+                NewHubuumObject {
+                    collection_id: fixture.class.collection_id,
+                    hubuum_class_id: fixture.class.id,
+                    name: test_context.scoped_name(&format!("computed query count {index}")),
+                    description: "Computed sorting query-count object".to_string(),
+                    data: serde_json::json!({
+                        "manual": {"hostname": format!("host-{index:02}.example")}
+                    }),
+                }
+                .save_without_events(&test_context.pool)
+                .await
+                .unwrap(),
+            );
+        }
+
+        let small_endpoint = format!(
+            "/api/v1/classes/{}/?include=computed&include_total=false&sort=computed.shared.display_name&limit=1",
+            fixture.class.id
+        );
+        let (small_response, small_queries) = capture_queries(get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &small_endpoint,
+        ))
+        .await;
+        let small_response = assert_response_status(small_response, StatusCode::OK).await;
+        let small_page: Vec<serde_json::Value> = test::read_body_json(small_response).await;
+        assert_eq!(small_page.len(), 1);
+
+        let large_endpoint = format!(
+            "/api/v1/classes/{}/?include=computed&include_total=false&sort=computed.shared.display_name&limit=8",
+            fixture.class.id
+        );
+        let (large_response, large_queries) = capture_queries(get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &large_endpoint,
+        ))
+        .await;
+        let large_response = assert_response_status(large_response, StatusCode::OK).await;
+        let large_page: Vec<serde_json::Value> = test::read_body_json(large_response).await;
+        assert_eq!(large_page.len(), 8);
+
+        assert_eq!(large_queries.total_queries(), small_queries.total_queries());
+        assert_eq!(
+            large_queries.domain_queries(),
+            small_queries.domain_queries()
+        );
+        assert_eq!(
+            large_queries.connection_checkouts(),
+            small_queries.connection_checkouts()
+        );
+        assert_eq!(large_queries.query_counts(), small_queries.query_counts());
+        assert_eq!(
+            large_queries.queries_matching("hubuum_computed_sort_value"),
+            1
+        );
+
         fixture.cleanup().await.unwrap();
     }
 

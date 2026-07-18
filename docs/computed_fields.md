@@ -179,9 +179,36 @@ the `personal` member. Requests without `include=computed` retain the original
 object response shape and cache behavior.
 
 The `computed` member is response-only. Supplying it in object create or update
-JSON is a `400 Bad Request`, including when its value is `null`. Computed
-filtering, sorting, and indexing are not supported. Unsupported query fields
-fail validation; Hubuum never filters computed data after pagination.
+JSON is a `400 Bad Request`, including when its value is `null`.
+
+The class object-list endpoint supports ordering by enabled computed fields:
+
+```text
+GET /api/v1/classes/{class_id}/?sort=computed.shared.display_name
+GET /api/v1/classes/{class_id}/?sort=computed.personal.my_priority.desc
+```
+
+`shared` and `personal` match the response namespaces. `public` and `private`
+are accepted as aliases. Computed sorts support the normal ascending,
+descending, multi-field, deterministic tie-breaker, and cursor-pagination
+behavior. Null or failed results sort first in ascending order and last in
+descending order. Object and array results use PostgreSQL JSONB ordering.
+
+A personal sort is available only to the owning human user and still requires
+class access. Service accounts cannot sort on personal definitions. The
+`include=computed` parameter controls the response shape, not sort
+availability; sorting without it still returns the raw object shape. Responses
+whose order depends on computed state use `Cache-Control: private, no-store`.
+
+With the default SQL authorization backend, sorting happens in PostgreSQL
+before pagination. Current shared materialization is used directly, with live
+evaluation only for missing or stale cache rows. Personal sorting evaluates
+only the requested definitions from raw object data without write-time user
+fan-out. Computed-sort query counts are independent of page size, and requests
+without computed sorting retain the existing query path. Computed filtering
+and declarative indexing are not yet supported. Unsupported query fields fail
+validation; Hubuum never filters or sorts computed data after database
+pagination on the SQL path.
 
 ## Materialization freshness
 

@@ -12,6 +12,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Added unauthenticated `GET /api/v1/config` client capability discovery with
   the effective default and maximum pagination limits, including values
   overridden by server configuration.
+- Added database-backed cursor sorting for shared and personal computed object
+  fields, including public/private query aliases, typed null-safe ordering,
+  stale shared-cache fallback, owner-only personal evaluation, and fixed
+  query counts across page sizes.
 
 ### Changed
 

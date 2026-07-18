@@ -96,6 +96,11 @@ Notes:
 - Cursor pagination requires a stable sort, so Hubuum appends a deterministic tie-breaker automatically.
 - If you omit `sort`, each endpoint uses its own default stable sort.
 - Some relation endpoints support sorting on contextual fields like `from_*`, `to_*`, `depth`, and `path`.
+- Class object lists can sort enabled computed fields with
+  `computed.shared.<key>` or the owning user's `computed.personal.<key>`.
+  `computed.public.<key>` and `computed.private.<key>` are aliases. See
+  [Computed fields](computed_fields.md#reading-computed-values) for visibility,
+  null, and pagination semantics.
 
 ## Cursor pagination
 

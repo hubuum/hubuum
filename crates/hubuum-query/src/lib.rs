@@ -210,6 +210,93 @@ pub struct SortParam {
     pub descending: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ComputedFieldScope {
+    Shared,
+    Personal,
+}
+
+impl ComputedFieldScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Shared => "shared",
+            Self::Personal => "personal",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComputedSortValueType {
+    String,
+    Number,
+    Integer,
+    Boolean,
+    Object,
+    Array,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComputedSortField {
+    scope: ComputedFieldScope,
+    key: String,
+    sql_expression: Option<String>,
+    value_type: Option<ComputedSortValueType>,
+}
+
+impl ComputedSortField {
+    fn unresolved(scope: ComputedFieldScope, key: &str) -> Result<Self, QueryError> {
+        let valid_key = !key.is_empty()
+            && key.len() <= 64
+            && key
+                .bytes()
+                .enumerate()
+                .all(|(index, byte)| match (index, byte) {
+                    (0, b'a'..=b'z') => true,
+                    (0, _) => false,
+                    (_, b'a'..=b'z' | b'0'..=b'9' | b'_') => true,
+                    (_, _) => false,
+                });
+        if !valid_key {
+            return Err(QueryError::BadRequest(format!(
+                "Invalid computed field sort key: '{key}'"
+            )));
+        }
+        Ok(Self {
+            scope,
+            key: key.to_string(),
+            sql_expression: None,
+            value_type: None,
+        })
+    }
+
+    pub const fn scope(&self) -> ComputedFieldScope {
+        self.scope
+    }
+
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn resolve(&mut self, sql_expression: String, value_type: ComputedSortValueType) {
+        self.sql_expression = Some(sql_expression);
+        self.value_type = Some(value_type);
+    }
+
+    pub fn sql_expression(&self) -> Option<&str> {
+        self.sql_expression.as_deref()
+    }
+
+    pub const fn value_type(&self) -> Option<ComputedSortValueType> {
+        self.value_type
+    }
+}
+
+impl PartialEq for ComputedSortField {
+    fn eq(&self, other: &Self) -> bool {
+        self.scope == other.scope && self.key == other.key
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedQueryParam {
     pub field: FilterField,
@@ -688,13 +775,28 @@ macro_rules! filter_fields {
     ($(($variant:ident, $str_rep:expr)),* $(,)?) => {
         #[derive(Debug, PartialEq, Clone)]
         pub enum FilterField {
-            $($variant),*
+            $($variant),*,
+            Computed(ComputedSortField),
         }
 
         impl FromStr for FilterField {
             type Err = QueryError;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
+                if let Some(key) = s
+                    .strip_prefix("computed.shared.")
+                    .or_else(|| s.strip_prefix("computed.public."))
+                {
+                    return ComputedSortField::unresolved(ComputedFieldScope::Shared, key)
+                        .map(FilterField::Computed);
+                }
+                if let Some(key) = s
+                    .strip_prefix("computed.personal.")
+                    .or_else(|| s.strip_prefix("computed.private."))
+                {
+                    return ComputedSortField::unresolved(ComputedFieldScope::Personal, key)
+                        .map(FilterField::Computed);
+                }
                 match s {
                     $($str_rep => Ok(FilterField::$variant),)*
                     _ => Err(QueryError::BadRequest(format!(
@@ -709,6 +811,9 @@ macro_rules! filter_fields {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self {
                     $(FilterField::$variant => f.write_str($str_rep),)*
+                    FilterField::Computed(field) => {
+                        write!(f, "computed.{}.{}", field.scope().as_str(), field.key())
+                    }
                 }
             }
         }
@@ -720,7 +825,24 @@ macro_rules! filter_fields {
                     FilterField::JsonData
                     | FilterField::JsonDataFrom
                     | FilterField::JsonDataTo => "data",
+                    FilterField::Computed(_) => {
+                        panic!("computed sort fields should not be used as table fields")
+                    }
                     _ => panic!("{:?} should not be used as a table field", self),
+                }
+            }
+
+            pub const fn computed_sort(&self) -> Option<&ComputedSortField> {
+                match self {
+                    FilterField::Computed(field) => Some(field),
+                    _ => None,
+                }
+            }
+
+            pub fn computed_sort_mut(&mut self) -> Option<&mut ComputedSortField> {
+                match self {
+                    FilterField::Computed(field) => Some(field),
+                    _ => None,
                 }
             }
         }
@@ -854,6 +976,49 @@ mod tests {
         assert_eq!(parsed.sort.len(), 2);
         assert!(parsed.sort[0].descending);
         assert!(!parsed.sort[1].descending);
+    }
+
+    #[test]
+    fn parses_shared_and_personal_computed_sorts() {
+        let parsed = parse_query_parameter(
+            "sort=computed.shared.display_name.asc,computed.personal.my_rank.desc",
+        )
+        .unwrap();
+
+        let shared = parsed.sort[0].field.computed_sort().unwrap();
+        assert_eq!(shared.scope(), ComputedFieldScope::Shared);
+        assert_eq!(shared.key(), "display_name");
+        assert!(!parsed.sort[0].descending);
+        let personal = parsed.sort[1].field.computed_sort().unwrap();
+        assert_eq!(personal.scope(), ComputedFieldScope::Personal);
+        assert_eq!(personal.key(), "my_rank");
+        assert!(parsed.sort[1].descending);
+    }
+
+    #[test]
+    fn accepts_public_and_private_computed_sort_aliases() {
+        let parsed = parse_query_parameter(
+            "sort=computed.public.display_name,computed.private.my_rank.desc",
+        )
+        .unwrap();
+
+        assert_eq!(
+            parsed.sort[0].field.computed_sort().unwrap().scope(),
+            ComputedFieldScope::Shared
+        );
+        assert_eq!(
+            parsed.sort[1].field.computed_sort().unwrap().scope(),
+            ComputedFieldScope::Personal
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_computed_sort_keys() {
+        let error = parse_query_parameter("sort=computed.shared.Invalid-Key").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Invalid computed field sort key: 'Invalid-Key'"
+        );
     }
 
     #[test]

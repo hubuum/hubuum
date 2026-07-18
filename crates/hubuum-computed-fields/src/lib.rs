@@ -1,5 +1,6 @@
 //! Deterministic evaluation of typed computed fields over one JSON document.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
@@ -23,6 +24,12 @@ pub const MIN_DECIMAL_EXPONENT: i64 = -308;
 pub const MAX_DECIMAL_EXPONENT: i64 = 308;
 const MAX_DECIMAL_SOURCE_BYTES: usize = 512;
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
+
+pub fn compare_decimal_strings(left: &str, right: &str) -> Option<Ordering> {
+    let left = BigDecimal::from_str(left).ok()?;
+    let right = BigDecimal::from_str(right).ok()?;
+    Some(left.cmp(&right))
+}
 
 /// Release-owned safety limits applied to one evaluation scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -10,7 +10,9 @@ use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
 use crate::db::traits::authz::scope_allows;
-use crate::db::traits::computed_field::enrich_objects_with_computed;
+use crate::db::traits::computed_field::{
+    enrich_objects_with_computed, resolve_computed_sort_fields,
+};
 use crate::db::traits::history::{
     class_as_of, class_history_paginated_with_total_count, object_as_of,
     object_history_paginated_with_total_count,
@@ -25,10 +27,10 @@ use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection as collection_model;
 use crate::models::traits::{ExpandCollection, ToHubuumObjects, check_if_object_in_class};
 use crate::pagination::{
-    SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, page_limits,
-    prepare_db_pagination, validate_page_limit,
+    SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, known_count_or_skipped,
+    page_limits, paginate_in_memory, prepare_db_pagination, validate_page_limit,
 };
-use crate::permissions::visibility::authorize_cursor_page;
+use crate::permissions::visibility::{authorize_all_candidates, authorize_cursor_page};
 use crate::permissions::{
     AppContext, AuthzTarget, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
     authorize_resources,
@@ -37,11 +39,11 @@ use crate::permissions::{
 use crate::models::{
     ClassGraphRow, CollectionID, GroupPermission, HubuumClass, HubuumClassExpanded,
     HubuumClassHistory, HubuumClassID, HubuumClassRelation, HubuumClassRelationID,
-    HubuumClassWithPath, HubuumObject, HubuumObjectHistory, HubuumObjectID, HubuumObjectRelation,
-    HubuumObjectWithPath, NewHubuumClass, NewHubuumClassRelationFromClass, NewHubuumObject,
-    NewHubuumObjectRelation, NewHubuumObjectRequest, Permissions, RelatedClassGraph,
-    RelatedObjectGraph, RelatedObjectGraphRow, UpdateHubuumClass, UpdateHubuumObject,
-    UpdateHubuumObjectRequest,
+    HubuumClassWithPath, HubuumObject, HubuumObjectComputedResponse, HubuumObjectHistory,
+    HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass,
+    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
+    NewHubuumObjectRequest, Permissions, RelatedClassGraph, RelatedObjectGraph,
+    RelatedObjectGraphRow, UpdateHubuumClass, UpdateHubuumObject, UpdateHubuumObjectRequest,
 };
 use crate::traits::{BackendContext, CanDelete, CanSave, CanUpdate, Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
@@ -977,7 +979,8 @@ async fn get_related_class_graph(
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Class ID"),
-        ("include" = Option<String>, Query, description = "Set to computed to enrich each object")
+        ("include" = Option<String>, Query, description = "Set to computed to enrich each object"),
+        ("sort" = Option<String>, Query, description = "Sort by object fields or computed.shared.<key>/computed.personal.<key>")
     ),
     responses(
         (status = 200, description = "Objects in class, optionally enriched with computed fields", body = [crate::models::HubuumObjectReadResponse]),
@@ -1009,6 +1012,102 @@ async fn get_objects_in_class(
         class_id = class.id(),
         query = query_string
     );
+
+    let computed_sorting = params
+        .sort
+        .iter()
+        .any(|sort| sort.field.computed_sort().is_some());
+    if computed_sorting {
+        if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
+            return serialized_object_page(
+                Page::<HubuumObjectComputedResponse> {
+                    items: Vec::new(),
+                    next_cursor: None,
+                },
+                0,
+                effective_page_limit(&params)?,
+                true,
+            );
+        }
+        let class_instance = class.instance(&pool).await?;
+        let personal_owner = computed_personal_owner(&pool, &requestor, &class_instance).await?;
+        resolve_computed_sort_fields(
+            pool.db_pool(),
+            class_instance.id,
+            personal_owner,
+            &mut params.sort,
+        )
+        .await?;
+
+        let total_count;
+        let enriched = if pool.permission_backend().supports_sql_visibility_pushdown() {
+            total_count = if params.include_total {
+                user.count_objects(&pool, count_query_options(&params), requestor.scopes())
+                    .await?
+            } else {
+                SKIPPED_TOTAL_COUNT
+            };
+            let search_params = prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?;
+            let objects = user
+                .search_objects(&pool, search_params, requestor.scopes())
+                .await?;
+            enrich_objects_with_computed(pool.db_pool(), objects, personal_owner).await?
+        } else {
+            let candidates = user
+                .search_objects_from_backend_with_admin_status(
+                    &pool,
+                    count_query_options(&params),
+                    true,
+                    None,
+                )
+                .await?;
+            let principal = PrincipalRef::load(&pool, user).await?;
+            let authorized = authorize_all_candidates(
+                pool.permission_backend(),
+                &principal,
+                candidates,
+                vec![Permissions::ReadObject],
+                |object| ResourceRef {
+                    kind: ResourceKind::Object,
+                    id: object.id,
+                    attrs: ResourceAttrs {
+                        collection_id: Some(object.collection_id),
+                        class_id: Some(object.hubuum_class_id),
+                        name: Some(object.name.clone()),
+                        ..Default::default()
+                    },
+                },
+            )
+            .await?;
+            total_count = known_count_or_skipped(&params, authorized.len() as i64);
+            let enriched =
+                enrich_objects_with_computed(pool.db_pool(), authorized, personal_owner).await?;
+            let search_params = prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?;
+            paginate_in_memory(enriched, &search_params)?
+        };
+        let page = finalize_page(enriched, &params)?;
+        if include_computed {
+            return serialized_object_page(
+                page,
+                total_count,
+                effective_page_limit(&params)?,
+                true,
+            );
+        }
+        return serialized_object_page(
+            Page {
+                items: page
+                    .items
+                    .into_iter()
+                    .map(|response| response.object)
+                    .collect(),
+                next_cursor: page.next_cursor,
+            },
+            total_count,
+            effective_page_limit(&params)?,
+            true,
+        );
+    }
 
     let (objects, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {
         let total_count = if params.include_total {

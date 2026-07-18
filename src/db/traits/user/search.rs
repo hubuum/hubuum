@@ -4,6 +4,7 @@ use crate::db::traits::search::JsonPredicateExt;
 use crate::models::RelatedObjectForRootRow;
 use crate::models::permissions::PermissionFilter;
 use crate::models::search::{ParsedQueryParamExt, SQLValue};
+use crate::models::traits::object::object_cursor_sql_fields;
 use crate::traits::PrincipalIdAccessor;
 use crate::traits::{CursorPaginated, CursorSqlMapping};
 use crate::utilities::extensions::CustomStringExtensions;
@@ -616,18 +617,37 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, HubuumObject);
+        let computed_sorting = query_options
+            .sort
+            .iter()
+            .any(|sort| sort.field.computed_sort().is_some());
+        if computed_sorting {
+            let sql_fields = object_cursor_sql_fields(&query_options.sort)?;
+            crate::apply_query_options_with_fields!(base_query, query_options, sql_fields);
+        } else {
+            crate::apply_query_options!(base_query, query_options, HubuumObject);
+        }
 
         trace_query!(base_query, "Searching objects");
 
-        with_connection(pool, async |conn| {
-            base_query
-                .select(hubuumobject::all_columns())
-                .distinct()
-                .load::<HubuumObject>(conn)
-                .await
-        })
-        .await
+        if computed_sorting {
+            with_connection(pool, async |conn| {
+                base_query
+                    .select(hubuumobject::all_columns())
+                    .load::<HubuumObject>(conn)
+                    .await
+            })
+            .await
+        } else {
+            with_connection(pool, async |conn| {
+                base_query
+                    .select(hubuumobject::all_columns())
+                    .distinct()
+                    .load::<HubuumObject>(conn)
+                    .await
+            })
+            .await
+        }
     }
 
     async fn count_objects_from_backend_with_admin_status(
