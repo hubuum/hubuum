@@ -27,12 +27,13 @@ fn test_directory(prefix: &str) -> PathBuf {
 fn write_criterion_estimates(
     criterion_directory: &std::path::Path,
     benchmark: &str,
+    baseline_name: &str,
     change: (f64, f64, f64),
     base_median_ns: f64,
     new_median_ns: f64,
 ) {
     let benchmark_directory = criterion_directory.join(benchmark);
-    for estimate_kind in ["change", "base", "new"] {
+    for estimate_kind in ["change", baseline_name, "new"] {
         fs::create_dir_all(benchmark_directory.join(estimate_kind))
             .expect("Criterion estimate directory should be created");
     }
@@ -50,7 +51,7 @@ fn write_criterion_estimates(
         .to_string(),
     )
     .expect("Criterion change estimate should be written");
-    for (estimate_kind, median_ns) in [("base", base_median_ns), ("new", new_median_ns)] {
+    for (estimate_kind, median_ns) in [(baseline_name, base_median_ns), ("new", new_median_ns)] {
         fs::write(
             benchmark_directory.join(format!("{estimate_kind}/estimates.json")),
             serde_json::json!({"median": {"point_estimate": median_ns}}).to_string(),
@@ -283,6 +284,17 @@ fn postgres_benchmark_workflow_confirms_regressions_on_stable_base_runs() {
     assert!(workflow.contains("check-criterion-stability.sh"));
     assert!(workflow.contains("ALTER SYSTEM SET autovacuum = 'off'"));
     assert!(workflow.contains("POSTGRES_BENCH_FAILURE_ABSOLUTE_NS"));
+    let stability_invocation = workflow
+        .rsplit_once("scripts/check-criterion-stability.sh")
+        .expect("workflow should invoke the stability checker")
+        .1
+        .lines()
+        .take(6)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(stability_invocation.contains("$CONFIRMED_FAILURES"));
+    assert!(!stability_invocation.contains("$POSTGRES_BENCH_INITIAL_FAILURES"));
+    assert!(stability_invocation.contains("pr-base"));
 }
 
 #[cfg(unix)]
@@ -302,6 +314,7 @@ fn criterion_regression_requires_confident_relative_and_absolute_changes(
     write_criterion_estimates(
         &criterion_directory,
         "point_read",
+        "pr-base",
         (0.40, relative_lower_bound, 0.50),
         100_000.0,
         100_000.0 + absolute_change_ns,
@@ -311,6 +324,8 @@ fn criterion_regression_requires_confident_relative_and_absolute_changes(
         .arg(&criterion_directory)
         .args(["10", "20", "25000", "forward", "none"])
         .arg(&failures)
+        .arg("")
+        .arg("pr-base")
         .output()
         .expect("Criterion regression checker should run");
     let diagnostics = format!(
@@ -340,6 +355,7 @@ fn criterion_reverse_comparison_reports_the_same_head_regression() {
     write_criterion_estimates(
         &criterion_directory,
         "point_read",
+        "pr-head-confirmation",
         (-0.285_714, -0.35, -0.25),
         140_000.0,
         100_000.0,
@@ -350,6 +366,7 @@ fn criterion_reverse_comparison_reports_the_same_head_regression() {
         .args(["10", "20", "25000", "reverse", "none"])
         .arg(&failures)
         .arg(&filter)
+        .arg("pr-head-confirmation")
         .output()
         .expect("Criterion reverse regression checker should run");
     let diagnostics = format!(
@@ -380,6 +397,7 @@ fn criterion_stability_rejects_excessive_base_to_base_drift(
     write_criterion_estimates(
         &initial_directory,
         "point_read",
+        "pr-base",
         (0.0, 0.0, 0.0),
         100_000.0,
         100_000.0,
@@ -387,6 +405,7 @@ fn criterion_stability_rejects_excessive_base_to_base_drift(
     write_criterion_estimates(
         &confirmation_directory,
         "point_read",
+        "pr-head-confirmation",
         (0.0, 0.0, 0.0),
         140_000.0,
         confirmation_base_median_ns,
@@ -398,6 +417,7 @@ fn criterion_stability_rejects_excessive_base_to_base_drift(
             &confirmation_directory,
             std::path::Path::new("10"),
             &filter,
+            std::path::Path::new("pr-base"),
         ])
         .output()
         .expect("Criterion stability checker should run");

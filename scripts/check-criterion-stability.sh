@@ -6,6 +6,7 @@ initial_dir="${1:?initial Criterion directory is required}"
 confirmation_dir="${2:?confirmation Criterion directory is required}"
 stability_threshold_pct="${3:-10}"
 benchmark_filter="${4:?benchmark filter is required}"
+initial_baseline_name="${5:-base}"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required to evaluate Criterion estimates" >&2
@@ -17,12 +18,17 @@ if [[ ! -s "$benchmark_filter" ]]; then
     exit 2
 fi
 
+if [[ -z "$initial_baseline_name" || "$initial_baseline_name" == */* ]]; then
+    echo "Criterion baseline name must be a non-empty directory name, got '$initial_baseline_name'" >&2
+    exit 2
+fi
+
 result_count=0
 unstable_count=0
 
 while IFS= read -r benchmark; do
     [[ -n "$benchmark" ]] || continue
-    initial_estimate="$initial_dir/$benchmark/base/estimates.json"
+    initial_estimate="$initial_dir/$benchmark/$initial_baseline_name/estimates.json"
     confirmation_estimate="$confirmation_dir/$benchmark/new/estimates.json"
     if [[ ! -f "$initial_estimate" || ! -f "$confirmation_estimate" ]]; then
         echo "Missing base-run stability estimates for $benchmark" >&2

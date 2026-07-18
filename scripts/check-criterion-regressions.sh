@@ -10,6 +10,7 @@ direction="${5:-forward}"
 annotation_level="${6:-error}"
 failure_output="${7:-}"
 failure_filter="${8:-}"
+baseline_name="${9:-base}"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "jq is required to evaluate Criterion comparison results" >&2
@@ -31,6 +32,11 @@ case "$annotation_level" in
         exit 2
         ;;
 esac
+
+if [[ -z "$baseline_name" || "$baseline_name" == */* ]]; then
+    echo "Criterion baseline name must be a non-empty directory name, got '$baseline_name'" >&2
+    exit 2
+fi
 
 if [[ -n "$failure_output" ]]; then
     : > "$failure_output"
@@ -64,10 +70,10 @@ while IFS= read -r estimate_file; do
     benchmark="${benchmark_dir#"$criterion_dir"/}"
     benchmark_is_selected "$benchmark" || continue
 
-    base_estimate_file="$benchmark_dir/base/estimates.json"
+    base_estimate_file="$benchmark_dir/$baseline_name/estimates.json"
     new_estimate_file="$benchmark_dir/new/estimates.json"
     if [[ ! -f "$base_estimate_file" || ! -f "$new_estimate_file" ]]; then
-        echo "Missing Criterion base/new estimates for $benchmark" >&2
+        echo "Missing Criterion '$baseline_name'/new estimates for $benchmark" >&2
         exit 2
     fi
 

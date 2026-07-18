@@ -166,7 +166,7 @@ jobs:
             "$POSTGRES_BENCH_WARNING_PCT" \
             "$POSTGRES_BENCH_FAILURE_PCT" \
             "$POSTGRES_BENCH_FAILURE_ABSOLUTE_NS" \
-            forward warning "$POSTGRES_BENCH_INITIAL_FAILURES"
+            forward warning "$POSTGRES_BENCH_INITIAL_FAILURES" "" pr-base
           assessment_status=$?
           set -e
 
@@ -223,7 +223,8 @@ jobs:
             "$POSTGRES_BENCH_WARNING_PCT" \
             "$POSTGRES_BENCH_FAILURE_PCT" \
             "$POSTGRES_BENCH_FAILURE_ABSOLUTE_NS" \
-            reverse warning "$CONFIRMED_FAILURES" "$POSTGRES_BENCH_INITIAL_FAILURES"
+            reverse warning "$CONFIRMED_FAILURES" \
+            "$POSTGRES_BENCH_INITIAL_FAILURES" pr-head-confirmation
           confirmation_status=$?
           set -e
 
@@ -242,7 +243,7 @@ jobs:
             "$POSTGRES_BENCH_INITIAL_RESULTS" \
             target/criterion/storage_postgres \
             "$POSTGRES_BENCH_STABILITY_PCT" \
-            "$POSTGRES_BENCH_INITIAL_FAILURES"
+            "$CONFIRMED_FAILURES" pr-base
           stability_status=$?
           set -e
 
@@ -260,4 +261,4 @@ jobs:
             "$POSTGRES_BENCH_WARNING_PCT" \
             "$POSTGRES_BENCH_FAILURE_PCT" \
             "$POSTGRES_BENCH_FAILURE_ABSOLUTE_NS" \
-            reverse error "$CONFIRMED_FAILURES" "$POSTGRES_BENCH_INITIAL_FAILURES"
+            reverse error "" "$CONFIRMED_FAILURES" pr-head-confirmation
