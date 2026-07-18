@@ -15,6 +15,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking:** LDAP `group_filters` now match group names produced by
+  `group_rules` instead of raw LDAP attribute values. Replace filters containing
+  raw directory structure, such as distinguished-name components, with patterns
+  matching the configured `name` template.
 - Pagination now clamps positive client limits above the configured maximum
   instead of returning `400 Bad Request`, and paginated responses expose the
   effective value in `X-Page-Limit`.
