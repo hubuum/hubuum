@@ -165,6 +165,27 @@ alternative for selective transfers.
 | `HUBUUM_MAX_PAGE_LIMIT` | `250` | Maximum number of items per page |
 | `HUBUUM_MAX_TRANSITIVE_DEPTH` | `100` | Maximum recursion depth for transitive relation graph walks |
 
+Clients can discover the effective pagination values, including deployment
+overrides, without authentication:
+
+```text
+GET /api/v1/config
+```
+
+The response exposes only settings deliberately classified as client-safe:
+
+```json
+{
+  "pagination": {
+    "default_page_limit": 100,
+    "max_page_limit": 250
+  }
+}
+```
+
+Positive request limits above `max_page_limit` are clamped rather than rejected.
+Paginated responses include `X-Page-Limit` with the effective page size.
+
 ### Authentication & Authorization
 
 | Variable | Default | Description |

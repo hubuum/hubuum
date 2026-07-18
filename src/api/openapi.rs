@@ -1,15 +1,16 @@
 use crate::api::handlers::{auth, meta, probes};
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::api::v1::handlers::{
-    backups, classes, collections, computed_fields, event_deliveries, event_sinks,
+    backups, classes, client_config, collections, computed_fields, event_deliveries, event_sinks,
     event_subscriptions, events, export_templates, exports, groups, imports, me, principals,
     relations, remote_targets, restores, runtime_config, search, service_accounts, tasks, users,
 };
 use crate::config::running::{
-    AuthenticationConfig, BackupConfig, ClientAllowlistStatus, DatabaseConfig, EventConfig,
-    ExportConfig, LoginRateLimitConfig as RunningLoginRateLimitConfig, NetworkConfig,
-    PaginationConfig, RemoteCallConfig, RestoreConfig, RunningConfig, SecretStatus, ServerConfig,
-    TaskConfig, TlsConfig,
+    AuthenticationConfig, BackupConfig, ClientAllowlistStatus, ClientConfig,
+    ClientPaginationConfig, DatabaseConfig, EventConfig, ExportConfig,
+    LoginRateLimitConfig as RunningLoginRateLimitConfig, NetworkConfig, PaginationConfig,
+    RemoteCallConfig, RestoreConfig, RunningConfig, SecretStatus, ServerConfig, TaskConfig,
+    TlsConfig,
 };
 use crate::events::EventResponse;
 use crate::models::{
@@ -53,13 +54,16 @@ use crate::models::{
     UpdateHubuumClass, UpdateHubuumObject, UpdateHubuumObjectRequest, UpdateRemoteTarget,
     UpdateServiceAccount, UpdateUser, UserResponse,
 };
-use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults};
+use crate::pagination::{
+    NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults,
+};
 use actix_web::{HttpResponse, Responder};
 use hubuum_events_core::EventSubscriptionFilter;
 use serde::Serialize;
 use utoipa::openapi::OpenApi as OpenApiDoc;
 use utoipa::openapi::header::Header;
 use utoipa::openapi::path::{Operation, Parameter, ParameterBuilder, ParameterIn, PathItem};
+use utoipa::openapi::schema::{ObjectBuilder, Schema};
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityScheme};
 use utoipa::openapi::{Object, RefOr, Required, Type};
 use utoipa::{Modify, OpenApi, ToSchema};
@@ -75,6 +79,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
     paths(
         probes::healthz,
         probes::readyz,
+        client_config::get_client_config,
         runtime_config::get_running_config,
         meta::get_db_state,
         meta::get_object_and_class_count,
@@ -265,6 +270,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
             meta::ReleaseRateLimitResponse,
             meta::ClearRateLimitResponse,
             RunningConfig,
+            ClientConfig,
+            ClientPaginationConfig,
             SecretStatus,
             ServerConfig,
             TlsConfig,
@@ -461,6 +468,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
     ),
     modifiers(&SecurityAddon, &OperationDefaults),
     tags(
+        (name = "config", description = "Public client configuration and capability discovery"),
         (name = "admin", description = "Administrative process inspection endpoints"),
         (name = "meta", description = "Meta and database state endpoints"),
         (name = "auth", description = "Authentication and token lifecycle"),
@@ -608,8 +616,14 @@ impl Modify for OperationDefaults {
                     ));
                 }
 
-                if is_cursor_paginated_get(path, method) {
+                if is_cursor_paginated_get(path, method)
+                    || operation_has_cursor_pagination(operation)
+                {
                     add_cursor_pagination_docs(operation);
+                }
+
+                if is_unified_search_get(path, method) {
+                    add_unified_search_pagination_docs(operation);
                 }
             });
         }
@@ -651,16 +665,34 @@ fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
         )
 }
 
+fn is_unified_search_get(path: &str, method: &str) -> bool {
+    method.eq_ignore_ascii_case("get") && matches!(path, "/api/v1/search" | "/api/v1/search/stream")
+}
+
+fn operation_has_cursor_pagination(operation: &Operation) -> bool {
+    let Some(parameters) = operation.parameters.as_ref() else {
+        return false;
+    };
+    let has_query_parameter = |name: &str| {
+        parameters.iter().any(|parameter| {
+            parameter.name == name && matches!(parameter.parameter_in, ParameterIn::Query)
+        })
+    };
+
+    has_query_parameter("limit") && has_query_parameter("cursor")
+}
+
 fn add_cursor_pagination_docs(operation: &mut Operation) {
     let (default_page_limit, max_page_limit) = page_limits_or_defaults();
     let parameters = operation.parameters.get_or_insert_with(Vec::new);
-    ensure_query_parameter(
+    upsert_page_limit_parameter(
         parameters,
         "limit",
         &format!(
-            "Maximum number of items to return. Defaults to {default_page_limit}. Maximum is {max_page_limit}."
+            "Maximum number of items to return. Defaults to {default_page_limit}. The server clamps values above {max_page_limit}."
         ),
-        Type::Integer,
+        default_page_limit,
+        max_page_limit,
     );
     ensure_query_parameter(
         parameters,
@@ -693,7 +725,59 @@ fn add_cursor_pagination_docs(operation: &mut Operation) {
     if let Some(response) = operation.responses.responses.get_mut("200") {
         add_total_count_header(response);
         add_next_cursor_header(response);
+        add_page_limit_header(response);
     }
+}
+
+fn add_unified_search_pagination_docs(operation: &mut Operation) {
+    let (default_page_limit, max_page_limit) = page_limits_or_defaults();
+    upsert_page_limit_parameter(
+        operation.parameters.get_or_insert_with(Vec::new),
+        "limit_per_kind",
+        &format!(
+            "Maximum results per kind. Defaults to {default_page_limit}. The server clamps values above {max_page_limit}."
+        ),
+        default_page_limit,
+        max_page_limit,
+    );
+
+    if let Some(response) = operation.responses.responses.get_mut("200") {
+        add_page_limit_header(response);
+    }
+}
+
+fn upsert_page_limit_parameter(
+    parameters: &mut Vec<Parameter>,
+    name: &str,
+    description: &str,
+    default_page_limit: usize,
+    max_page_limit: usize,
+) {
+    let schema = ObjectBuilder::new()
+        .schema_type(Type::Integer)
+        .minimum(Some(1usize))
+        .maximum(Some(max_page_limit))
+        .default(Some(serde_json::json!(default_page_limit)))
+        .build();
+
+    if let Some(parameter) = parameters.iter_mut().find(|parameter| {
+        parameter.name == name && matches!(parameter.parameter_in, ParameterIn::Query)
+    }) {
+        parameter.description = Some(description.to_string());
+        parameter.required = Required::False;
+        parameter.schema = Some(RefOr::T(Schema::Object(schema)));
+        return;
+    }
+
+    parameters.push(
+        ParameterBuilder::new()
+            .name(name)
+            .parameter_in(ParameterIn::Query)
+            .required(Required::False)
+            .description(Some(description))
+            .schema(Some(schema))
+            .build(),
+    );
 }
 
 fn ensure_query_parameter(
@@ -755,6 +839,24 @@ fn add_total_count_header(response: &mut RefOr<utoipa::openapi::response::Respon
             let mut header = Header::default();
             header.description = Some(
             "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+                    .to_string(),
+            );
+            header
+        });
+}
+
+fn add_page_limit_header(response: &mut RefOr<utoipa::openapi::response::Response>) {
+    let RefOr::T(response) = response else {
+        return;
+    };
+
+    response
+        .headers
+        .entry(PAGE_LIMIT_HEADER.to_string())
+        .or_insert_with(|| {
+            let mut header = Header::default();
+            header.description = Some(
+                "Effective page size used by the server after applying the configured default and maximum."
                     .to_string(),
             );
             header
@@ -945,6 +1047,7 @@ mod tests {
             "/api/v0/meta/tasks",
             "/api/v0/meta/login-rate-limit",
             "/api/v0/meta/login-rate-limit/{id}",
+            "/api/v1/config",
             "/api/v1/admin/config",
             "/api/v1/iam/users",
             "/api/v1/iam/users/{user_id}",
@@ -1145,6 +1248,31 @@ mod tests {
         assert!(parameter_names.contains("sort"));
         assert!(parameter_names.contains("cursor"));
 
+        let limit = parameters
+            .iter()
+            .find(|parameter| parameter["name"] == "limit")
+            .expect("limit parameter must be present");
+        let (default_page_limit, max_page_limit) = page_limits_or_defaults();
+        assert_eq!(limit["schema"]["minimum"], 1);
+        assert_eq!(limit["schema"]["default"], default_page_limit);
+        assert_eq!(limit["schema"]["maximum"], max_page_limit);
+
+        let unified_search_limit = json
+            .pointer("/paths/~1api~1v1~1search/get/parameters")
+            .and_then(Value::as_array)
+            .and_then(|parameters| {
+                parameters
+                    .iter()
+                    .find(|parameter| parameter["name"] == "limit_per_kind")
+            })
+            .expect("unified search limit_per_kind parameter must be present");
+        assert_eq!(unified_search_limit["schema"]["minimum"], 1);
+        assert_eq!(
+            unified_search_limit["schema"]["default"],
+            default_page_limit
+        );
+        assert_eq!(unified_search_limit["schema"]["maximum"], max_page_limit);
+
         let header_description = json
             .pointer(
                 "/paths/~1api~1v1~1classes/get/responses/200/headers/X-Next-Cursor/description",
@@ -1155,6 +1283,9 @@ mod tests {
                 "/paths/~1api~1v1~1classes/get/responses/200/headers/X-Total-Count/description",
             )
             .and_then(Value::as_str);
+        let page_limit_description = json
+            .pointer("/paths/~1api~1v1~1classes/get/responses/200/headers/X-Page-Limit/description")
+            .and_then(Value::as_str);
 
         assert!(
             header_description.is_some(),
@@ -1163,6 +1294,28 @@ mod tests {
         assert!(
             total_count_description.is_some(),
             "X-Total-Count header must be documented for paginated list responses"
+        );
+        assert!(
+            page_limit_description.is_some(),
+            "X-Page-Limit header must be documented for paginated list responses"
+        );
+
+        let unified_page_limit_description = json
+            .pointer("/paths/~1api~1v1~1search/get/responses/200/headers/X-Page-Limit/description")
+            .and_then(Value::as_str);
+        assert!(
+            unified_page_limit_description.is_some(),
+            "X-Page-Limit header must be documented for unified search"
+        );
+
+        let event_delivery_page_limit_description = json
+            .pointer(
+                "/paths/~1api~1v1~1event-deliveries/get/responses/200/headers/X-Page-Limit/description",
+            )
+            .and_then(Value::as_str);
+        assert!(
+            event_delivery_page_limit_description.is_some(),
+            "X-Page-Limit header must be documented for annotated cursor pagination"
         );
     }
 
@@ -1223,6 +1376,7 @@ mod tests {
                     matches!(path.as_str(), "/healthz" | "/readyz") && method == "get";
                 let is_login = path == "/api/v0/auth/login" && method == "post";
                 let is_provider_discovery = path == "/api/v0/auth/providers" && method == "get";
+                let is_client_config = path == "/api/v1/config" && method == "get";
                 let is_restore_status =
                     path == "/api/v1/restores/{restore_id}/status" && method == "get";
                 if is_restore_status {
@@ -1240,7 +1394,11 @@ mod tests {
                         has_capability,
                         "missing restore_capability security for {method} {path}"
                     );
-                } else if !is_login && !is_provider_discovery && !is_public_probe {
+                } else if !is_login
+                    && !is_provider_discovery
+                    && !is_client_config
+                    && !is_public_probe
+                {
                     let security = operation
                         .get("security")
                         .and_then(Value::as_array)

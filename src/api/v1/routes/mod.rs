@@ -1,4 +1,6 @@
-use crate::api::v1::handlers::{event_deliveries, event_sinks, event_subscriptions, events, me};
+use crate::api::v1::handlers::{
+    client_config, event_deliveries, event_sinks, event_subscriptions, events, me,
+};
 use actix_web::web;
 
 pub mod backups;
@@ -16,7 +18,8 @@ pub mod tasks;
 pub mod users;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::scope("/iam/users").configure(users::config))
+    cfg.service(client_config::get_client_config)
+        .service(web::scope("/iam/users").configure(users::config))
         .service(web::scope("/iam/groups").configure(groups::config))
         .service(
             web::scope("/iam/service-accounts")

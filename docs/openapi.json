@@ -1047,10 +1047,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -1090,6 +1093,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -1419,10 +1428,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -1462,6 +1474,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -2001,7 +2019,7 @@
           "events"
         ],
         "summary": "Get Api V1 Classes By Class Id Events",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/events.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/events. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdEvents",
         "parameters": [
           {
@@ -2073,11 +2091,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Cursor page size",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -2097,11 +2117,40 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Visible class audit events",
+            "description": "Visible class audit events The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2163,10 +2212,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -2206,6 +2258,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -2480,10 +2538,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -2523,6 +2584,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -2612,10 +2679,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -2655,6 +2725,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -2734,10 +2810,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -2777,6 +2856,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -2846,10 +2931,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -2889,6 +2977,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -3037,10 +3131,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -3080,6 +3177,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -3795,7 +3898,7 @@
           "events"
         ],
         "summary": "Get Api V1 Classes By Class Id By Object Id Events",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/{object_id}/events.",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/{object_id}/events. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdByObjectIdEvents",
         "parameters": [
           {
@@ -3877,11 +3980,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Cursor page size",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -3901,11 +4006,40 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Visible object audit events",
+            "description": "Visible object audit events The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3987,10 +4121,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -4030,6 +4167,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -4197,10 +4340,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -4240,6 +4386,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -5093,7 +5245,7 @@
           "events"
         ],
         "summary": "Get Api V1 Collections By Collection Id Events",
-        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/events.",
+        "description": "Auto-generated documentation for GET /api/v1/collections/{collection_id}/events. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1CollectionsByCollectionIdEvents",
         "parameters": [
           {
@@ -5155,11 +5307,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Cursor page size",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -5179,11 +5333,40 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Visible collection audit events",
+            "description": "Visible collection audit events The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5254,10 +5437,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -5297,6 +5483,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -5366,10 +5558,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -5409,6 +5604,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -5675,10 +5876,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -5718,6 +5922,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -6435,10 +6645,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -6478,6 +6691,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -6525,23 +6744,57 @@
         ]
       }
     },
+    "/api/v1/config": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Get Api V1 Config",
+        "description": "Auto-generated documentation for GET /api/v1/config.",
+        "operationId": "getApiV1Config",
+        "responses": {
+          "200": {
+            "description": "Effective client-safe configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientConfig"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/event-deliveries": {
       "get": {
         "tags": [
           "event-deliveries"
         ],
         "summary": "Get Api V1 Event Deliveries",
-        "description": "Auto-generated documentation for GET /api/v1/event-deliveries.",
+        "description": "Auto-generated documentation for GET /api/v1/event-deliveries. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1EventDeliveries",
         "parameters": [
           {
             "name": "limit",
             "in": "query",
-            "description": "Cursor page size",
-            "required": true,
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
+            "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -6561,11 +6814,40 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Event deliveries",
+            "description": "Event deliveries The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7246,7 +7528,7 @@
           "events"
         ],
         "summary": "Get Api V1 Events",
-        "description": "Auto-generated documentation for GET /api/v1/events.",
+        "description": "Auto-generated documentation for GET /api/v1/events. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1Events",
         "parameters": [
           {
@@ -7327,11 +7609,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Cursor page size",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -7351,11 +7635,40 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Visible audit events",
+            "description": "Visible audit events The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7407,10 +7720,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -7450,6 +7766,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -7804,7 +8126,7 @@
           "events"
         ],
         "summary": "Get Api V1 Export Templates By Template Id Events",
-        "description": "Auto-generated documentation for GET /api/v1/export-templates/{template_id}/events.",
+        "description": "Auto-generated documentation for GET /api/v1/export-templates/{template_id}/events. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ExportTemplatesByTemplateIdEvents",
         "parameters": [
           {
@@ -7876,11 +8198,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Cursor page size",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -7900,11 +8224,40 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Visible export template audit events",
+            "description": "Visible export template audit events The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8075,10 +8428,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -8118,6 +8474,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -8505,10 +8867,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -8548,6 +8913,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -8882,7 +9253,7 @@
           "events"
         ],
         "summary": "Get Api V1 Iam Groups By Group Id Events",
-        "description": "Auto-generated documentation for GET /api/v1/iam/groups/{group_id}/events.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/groups/{group_id}/events. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamGroupsByGroupIdEvents",
         "parameters": [
           {
@@ -8954,11 +9325,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Cursor page size",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -8978,11 +9351,40 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Visible group audit events",
+            "description": "Visible group audit events The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9044,10 +9446,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -9087,6 +9492,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -9557,10 +9968,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -9600,6 +10014,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -9879,10 +10299,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -9922,6 +10345,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -9991,10 +10420,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -10034,6 +10466,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -10443,10 +10881,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -10486,6 +10927,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -10704,10 +11151,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -10747,6 +11197,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -11146,10 +11602,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -11189,6 +11648,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -11595,7 +12060,7 @@
           "events"
         ],
         "summary": "Get Api V1 Iam Users By User Id Events",
-        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}/events.",
+        "description": "Auto-generated documentation for GET /api/v1/iam/users/{user_id}/events. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1IamUsersByUserIdEvents",
         "parameters": [
           {
@@ -11667,11 +12132,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Cursor page size",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -11691,11 +12158,40 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Visible user audit events",
+            "description": "Visible user audit events The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -11975,10 +12471,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -12018,6 +12517,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -12251,10 +12756,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -12294,6 +12802,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -12662,10 +13176,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum number of items to return. Defaults to 100. Maximum is 250.",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -12705,6 +13222,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -13082,7 +13605,7 @@
           "events"
         ],
         "summary": "Get Api V1 Remote Targets By Target Id Events",
-        "description": "Auto-generated documentation for GET /api/v1/remote-targets/{target_id}/events.",
+        "description": "Auto-generated documentation for GET /api/v1/remote-targets/{target_id}/events. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1RemoteTargetsByTargetIdEvents",
         "parameters": [
           {
@@ -13154,11 +13677,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Cursor page size",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -13178,11 +13703,40 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Visible remote target audit events",
+            "description": "Visible remote target audit events The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -13621,11 +14175,13 @@
           {
             "name": "limit_per_kind",
             "in": "query",
-            "description": "Maximum results per kind",
+            "description": "Maximum results per kind. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -13677,6 +14233,14 @@
         "responses": {
           "200": {
             "description": "Grouped unified search results",
+            "headers": {
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -13743,11 +14307,13 @@
           {
             "name": "limit_per_kind",
             "in": "query",
-            "description": "Maximum results per kind",
+            "description": "Maximum results per kind. Defaults to 100. The server clamps values above 250.",
             "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -13798,7 +14364,15 @@
         ],
         "responses": {
           "200": {
-            "description": "Server-sent event stream for unified search"
+            "description": "Server-sent event stream for unified search",
+            "headers": {
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              }
+            }
           },
           "400": {
             "description": "Bad request",
@@ -13868,11 +14442,13 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Cursor page size",
-            "required": true,
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
+            "required": false,
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
             }
           },
           {
@@ -13912,6 +14488,12 @@
                   "type": "string"
                 },
                 "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
               },
               "X-Total-Count": {
                 "schema": {
@@ -14473,6 +15055,37 @@
           "network_count": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "ClientConfig": {
+        "type": "object",
+        "description": "Public configuration values that API consumers need to use the service correctly.\n\nKeep this projection deliberately small. Adding a value here makes it available without\nauthentication through the client configuration endpoint.",
+        "required": [
+          "pagination"
+        ],
+        "properties": {
+          "pagination": {
+            "$ref": "#/components/schemas/ClientPaginationConfig"
+          }
+        }
+      },
+      "ClientPaginationConfig": {
+        "type": "object",
+        "required": [
+          "default_page_limit",
+          "max_page_limit"
+        ],
+        "properties": {
+          "default_page_limit": {
+            "type": "integer",
+            "description": "Number of items returned when a paginated request omits its limit.",
+            "minimum": 1
+          },
+          "max_page_limit": {
+            "type": "integer",
+            "description": "Largest effective page size used for a client request.",
+            "minimum": 1
           }
         }
       },
@@ -22713,6 +23326,10 @@
     }
   },
   "tags": [
+    {
+      "name": "config",
+      "description": "Public client configuration and capability discovery"
+    },
     {
       "name": "admin",
       "description": "Administrative process inspection endpoints"

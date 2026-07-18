@@ -242,6 +242,20 @@ fn development_compose_limits_container_privileges() {
 }
 
 #[test]
+fn compose_deployments_forward_page_limit_configuration() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let compose = fs::read_to_string(repository.join("docker-compose.yml"))
+        .expect("repository docker-compose.yml should be readable");
+    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
+        .expect("single-host installer should be readable");
+
+    for variable in ["HUBUUM_DEFAULT_PAGE_LIMIT", "HUBUUM_MAX_PAGE_LIMIT"] {
+        assert!(compose.contains(variable));
+        assert!(installer.contains(&format!("{variable}: ${{{variable}}}")));
+    }
+}
+
+#[test]
 fn single_host_installer_limits_api_container_privileges() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))

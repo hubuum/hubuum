@@ -15,6 +15,7 @@ enum TestDataForEndpoint {
 #[actix_web::test]
 async fn test_endpoint_access() {
     use crate::config::get_config;
+    use crate::config::running::RunningConfig;
     use crate::db::init_pool;
     use crate::models::user::LoginUser;
     use actix_web::{App, http::Method, test, web::Data};
@@ -27,6 +28,7 @@ async fn test_endpoint_access() {
             .wrap(actix_web::middleware::from_fn(
                 crate::middlewares::actor_context,
             ))
+            .app_data(Data::new(RunningConfig::from(&config)))
             .app_data(Data::new(pool.clone()))
             .configure(crate::api::config),
     )
@@ -38,6 +40,7 @@ async fn test_endpoint_access() {
     let admin_user_endpoint = &format!("/api/v1/iam/users/{}", admin_user.id);
 
     let endpoints = vec![
+        ("/api/v1/config", Method::GET, AccessLevel::Open, None),
         (
             "/api/v0/auth/providers",
             Method::GET,

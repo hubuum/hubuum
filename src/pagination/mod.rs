@@ -12,6 +12,7 @@ pub use crate::traits::pagination::{
 };
 
 pub const NEXT_CURSOR_HEADER: &str = "X-Next-Cursor";
+pub const PAGE_LIMIT_HEADER: &str = "X-Page-Limit";
 pub const TOTAL_COUNT_HEADER: &str = "X-Total-Count";
 pub const SKIPPED_TOTAL_COUNT: i64 = -1;
 
@@ -86,13 +87,11 @@ pub fn validate_page_limit_with_max(
         ));
     }
 
-    if limit > max_page_limit {
-        return Err(ApiError::BadRequest(format!(
-            "limit must be at most {max_page_limit}"
-        )));
-    }
+    Ok(limit.min(max_page_limit))
+}
 
-    Ok(limit)
+pub fn effective_page_limit(query_options: &QueryOptions) -> Result<usize, ApiError> {
+    validate_page_limit(query_options.limit.unwrap_or(page_limits()?.0))
 }
 
 pub fn prepare_db_pagination<T>(query_options: &QueryOptions) -> Result<QueryOptions, ApiError>
@@ -109,7 +108,7 @@ where
 
     let mut prepared = query_options.clone();
     prepared.sort = sorts;
-    prepared.limit = Some(limit + 1);
+    prepared.limit = Some(limit.saturating_add(1));
     Ok(prepared)
 }
 
@@ -224,8 +223,9 @@ where
 pub fn pagination_headers(
     next_cursor: &Option<String>,
     total_count: i64,
+    effective_limit: usize,
 ) -> HashMap<String, String> {
-    let mut headers = HashMap::new();
+    let mut headers = HashMap::from([(PAGE_LIMIT_HEADER.to_string(), effective_limit.to_string())]);
     if total_count != SKIPPED_TOTAL_COUNT {
         headers.insert(TOTAL_COUNT_HEADER.to_string(), total_count.to_string());
     }
@@ -240,7 +240,7 @@ where
     T: CursorPaginated,
 {
     Ok(CursorPageRequest {
-        limit: validate_page_limit(query_options.limit.unwrap_or(page_limits()?.0))?,
+        limit: effective_page_limit(query_options)?,
         sorts: normalized_sorts::<T>(&query_options.sort)?,
     })
 }
@@ -736,8 +736,9 @@ mod tests {
         .unwrap();
         assert_eq!(count, SKIPPED_TOTAL_COUNT);
 
-        let headers = pagination_headers(&None, count);
+        let headers = pagination_headers(&None, count, 25);
         assert!(!headers.contains_key(TOTAL_COUNT_HEADER));
+        assert_eq!(headers.get(PAGE_LIMIT_HEADER), Some(&"25".to_string()));
     }
 
     #[test]
@@ -781,8 +782,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_page_limit_with_max_rejects_above_maximum() {
-        let error = validate_page_limit_with_max(101, 100).unwrap_err();
-        assert_eq!(error.to_string(), "limit must be at most 100");
+    fn validate_page_limit_with_max_clamps_above_maximum() {
+        assert_eq!(validate_page_limit_with_max(101, 100).unwrap(), 100);
     }
 }
