@@ -178,6 +178,11 @@ mod tests {
                     .unwrap(),
             ),
             (
+                serde_json::json!({"type": "sum", "paths": ["/value"]}),
+                "number",
+                serde_json::from_str(r#"{"value": 9.999999999999999999999999999999999}"#).unwrap(),
+            ),
+            (
                 serde_json::json!({"type": "average", "paths": ["/left", "/right"]}),
                 "number",
                 serde_json::json!({"left": 2, "right": 5}),
@@ -1194,6 +1199,74 @@ mod tests {
             assert_eq!(page[0]["id"], expected_id);
         }
         assert!(cursor.is_none());
+
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn numeric_computed_sort_cursor_preserves_a_power_boundary_aggregate(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let mut fixture = fixture(&test_context, "numeric computed power boundary").await;
+        for (index, source) in ["9", "9.999999999999999999999999999999999", "11"]
+            .into_iter()
+            .enumerate()
+        {
+            fixture.objects.push(
+                NewHubuumObject {
+                    collection_id: fixture.class.collection_id,
+                    hubuum_class_id: fixture.class.id,
+                    name: test_context.scoped_name(&format!("boundary sort {index}")),
+                    description: "Numeric boundary sorting object".to_string(),
+                    data: serde_json::from_str(&format!(r#"{{"value":{source}}}"#)).unwrap(),
+                }
+                .save_without_events(&test_context.pool)
+                .await
+                .unwrap(),
+            );
+        }
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            serde_json::json!({
+                "key": "boundary_value",
+                "label": "Boundary value",
+                "operation": {"type": "sum", "paths": ["/value"]},
+                "result_type": "number"
+            }),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+
+        let expected = [
+            fixture.objects[0].id,
+            fixture.objects[1].id,
+            fixture.objects[2].id,
+            fixture.objects[3].id,
+        ];
+        let mut cursor = None;
+        for (index, expected_id) in expected.into_iter().enumerate() {
+            let cursor_query = cursor
+                .as_ref()
+                .map_or_else(String::new, |cursor| format!("&cursor={cursor}"));
+            let response = get_request(
+                &test_context.pool,
+                &test_context.admin_token,
+                &format!(
+                    "/api/v1/classes/{}/?include=computed&sort=computed.shared.boundary_value&limit=1{cursor_query}",
+                    fixture.class.id
+                ),
+            )
+            .await;
+            let response = assert_response_status(response, StatusCode::OK).await;
+            cursor = header_value(&response, NEXT_CURSOR_HEADER);
+            let page: Vec<serde_json::Value> = test::read_body_json(response).await;
+            assert_eq!(page[0]["id"], expected_id);
+            assert_eq!(cursor.is_some(), index < expected.len() - 1);
+        }
 
         finish_active_rebuild(&test_context, fixture.class.id).await;
         fixture.cleanup().await.unwrap();

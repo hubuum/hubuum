@@ -88,10 +88,11 @@ fn compare_jsonb(left: &serde_json::Value, right: &serde_json::Value) -> Orderin
         (Value::Object(left), Value::Object(right)) => {
             let mut left = left.iter().collect::<Vec<_>>();
             let mut right = right.iter().collect::<Vec<_>>();
-            // PostgreSQL compares object cardinality first, then key/value
-            // pairs with keys in C-collation lexical order.
-            let key_order =
-                |(left, _): &(&String, &Value), (right, _): &(&String, &Value)| left.cmp(right);
+            // PostgreSQL stores each object's keys by length and then bytes,
+            // but compares the corresponding key tokens lexically below.
+            let key_order = |(left, _): &(&String, &Value), (right, _): &(&String, &Value)| {
+                left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+            };
             left.sort_by(key_order);
             right.sort_by(key_order);
             left.len().cmp(&right.len()).then_with(|| {
@@ -152,12 +153,24 @@ pub trait CursorSqlMapping: CursorPaginated {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
+    use serde_json::json;
 
-    #[test]
-    fn jsonb_object_comparison_uses_lexical_key_order() {
-        let left = CursorValue::Json(serde_json::json!({"aa": 0}));
-        let right = CursorValue::Json(serde_json::json!({"b": 0}));
+    #[rstest]
+    #[case(json!({"aa": 0}), json!({"b": 0}), Ordering::Less)]
+    #[case(
+        json!({"aa": 0, "z": 0}),
+        json!({"b": 0, "zz": 0}),
+        Ordering::Greater
+    )]
+    fn jsonb_object_comparison_matches_stored_key_iteration(
+        #[case] left: serde_json::Value,
+        #[case] right: serde_json::Value,
+        #[case] expected: Ordering,
+    ) {
+        let left = CursorValue::Json(left);
+        let right = CursorValue::Json(right);
 
-        assert_eq!(left.cmp(&right), Ordering::Less);
+        assert_eq!(left.cmp(&right), expected);
     }
 }

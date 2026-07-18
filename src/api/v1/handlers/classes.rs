@@ -1099,12 +1099,7 @@ async fn get_objects_in_class(
         };
         let page = finalize_page(enriched, &params)?;
         if include_computed {
-            return serialized_object_page(
-                page,
-                total_count,
-                effective_page_limit(&params)?,
-                true,
-            );
+            return serialized_object_page(page, total_count, effective_page_limit(&params)?, true);
         }
         return serialized_object_page(
             Page {

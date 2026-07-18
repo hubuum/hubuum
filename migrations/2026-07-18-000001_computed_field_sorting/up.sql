@@ -337,6 +337,10 @@ DECLARE
     aggregate_value NUMERIC;
     value_count INTEGER := 0;
     present_count INTEGER := 0;
+    aggregate_source TEXT;
+    aggregate_integer_part TEXT;
+    aggregate_fractional_part TEXT;
+    aggregate_first_nonzero INTEGER;
     decimal_exponent INTEGER;
     decimal_scale INTEGER;
     field_work_units INTEGER := 0;
@@ -470,7 +474,25 @@ BEGIN
             END IF;
 
             IF aggregate_value <> 0 THEN
-                decimal_exponent := floor(log(10, abs(aggregate_value)))::INTEGER;
+                aggregate_source := abs(aggregate_value)::TEXT;
+                aggregate_integer_part := split_part(aggregate_source, '.', 1);
+                aggregate_fractional_part := CASE
+                    WHEN position('.' IN aggregate_source) > 0
+                        THEN split_part(aggregate_source, '.', 2)
+                    ELSE ''
+                END;
+                IF aggregate_integer_part <> '0' THEN
+                    decimal_exponent := length(aggregate_integer_part) - 1;
+                ELSE
+                    aggregate_first_nonzero := NULLIF(position(
+                        '1' IN translate(
+                            aggregate_fractional_part,
+                            '23456789',
+                            '11111111'
+                        )
+                    ), 0);
+                    decimal_exponent := -aggregate_first_nonzero;
+                END IF;
                 decimal_scale := 33 - decimal_exponent;
                 aggregate_value := hubuum_round_half_even(aggregate_value, decimal_scale);
                 IF decimal_exponent NOT BETWEEN -308 AND 308 THEN
