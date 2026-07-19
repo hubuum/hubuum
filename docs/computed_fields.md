@@ -196,7 +196,9 @@ computed sort. Null or failed results sort first in ascending order and last
 in descending order. Object and array results use PostgreSQL JSONB ordering.
 The encoded cursor is limited to 64 KiB, so sorting large results can return
 `400 Bad Request` when another page would require an oversized cursor; use
-fewer sort fields or definitions with smaller outputs.
+fewer sort fields or definitions with smaller outputs. JSON cursor values are
+limited to 64 nested array or object levels; deeper values return
+`400 Bad Request`.
 
 A personal sort is available only to the owning human user and still requires
 class access. Service accounts cannot sort on personal definitions. The

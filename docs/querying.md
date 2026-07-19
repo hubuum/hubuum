@@ -119,6 +119,7 @@ Limits:
 - default page size: `100`
 - maximum page size: `250`
 - maximum encoded cursor size: `64 KiB`
+- maximum JSON cursor nesting depth: `64`
 - a positive `limit` above the configured maximum is clamped to the maximum
 - `limit=0` remains a `400 Bad Request`
 
@@ -135,8 +136,8 @@ Behavior:
 - encoded cursors are limited to 64 KiB; a page whose sort values would exceed
   that limit returns `400 Bad Request`, so clients must select fewer sort fields
   or smaller sortable values
-- malformed cursors, including JSON sort values PostgreSQL cannot represent,
-  return `400 Bad Request`
+- malformed cursors, including JSON sort values PostgreSQL cannot represent or
+  values deeper than 64 nested array or object levels, return `400 Bad Request`
 
 Clients should read the effective default and maximum limits from the public
 client configuration endpoint rather than assuming the built-in values shown

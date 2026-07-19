@@ -716,32 +716,44 @@ where
 const POSTGRES_NUMERIC_MAX_INTEGRAL_DIGITS: i64 = 131_072;
 const POSTGRES_NUMERIC_MAX_FRACTIONAL_DIGITS: i64 = 16_383;
 const POSTGRES_NUMERIC_MAX_EXPONENT_ABS: i64 = i32::MAX as i64 / 2;
+const MAX_JSON_CURSOR_NESTING_DEPTH: usize = 64;
 
 fn validate_postgres_jsonb_cursor_value(value: &serde_json::Value) -> Result<(), ApiError> {
-    match value {
-        serde_json::Value::String(value) if value.contains('\0') => {
-            Err(invalid_postgres_jsonb_cursor())
-        }
-        serde_json::Value::Number(value) if !postgres_numeric_can_represent(value) => {
-            Err(invalid_postgres_jsonb_cursor())
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                validate_postgres_jsonb_cursor_value(value)?;
+    let mut pending = vec![(value, 0_usize)];
+    while let Some((value, depth)) = pending.pop() {
+        match value {
+            serde_json::Value::String(value) if value.contains('\0') => {
+                return Err(invalid_postgres_jsonb_cursor());
             }
-            Ok(())
-        }
-        serde_json::Value::Object(values) => {
-            for (key, value) in values {
-                if key.contains('\0') {
-                    return Err(invalid_postgres_jsonb_cursor());
+            serde_json::Value::Number(value) if !postgres_numeric_can_represent(value) => {
+                return Err(invalid_postgres_jsonb_cursor());
+            }
+            serde_json::Value::Array(values) => {
+                ensure_json_cursor_container_depth(depth)?;
+                pending.extend(values.iter().map(|value| (value, depth + 1)));
+            }
+            serde_json::Value::Object(values) => {
+                ensure_json_cursor_container_depth(depth)?;
+                for (key, value) in values {
+                    if key.contains('\0') {
+                        return Err(invalid_postgres_jsonb_cursor());
+                    }
+                    pending.push((value, depth + 1));
                 }
-                validate_postgres_jsonb_cursor_value(value)?;
             }
-            Ok(())
+            _ => {}
         }
-        _ => Ok(()),
     }
+    Ok(())
+}
+
+fn ensure_json_cursor_container_depth(depth: usize) -> Result<(), ApiError> {
+    if depth >= MAX_JSON_CURSOR_NESTING_DEPTH {
+        return Err(ApiError::BadRequest(format!(
+            "cursor JSON exceeds the maximum nesting depth of {MAX_JSON_CURSOR_NESTING_DEPTH}"
+        )));
+    }
+    Ok(())
 }
 
 fn invalid_postgres_jsonb_cursor() -> ApiError {
@@ -1481,6 +1493,33 @@ mod tests {
         let sql = cursor_filter_sql_for_fields(&[sort], &fields, Some(&cursor)).unwrap();
 
         assert!(sql.is_some());
+    }
+
+    fn nested_json_arrays(depth: usize) -> serde_json::Value {
+        (0..depth).fold(serde_json::Value::Null, |value, _| {
+            serde_json::Value::Array(vec![value])
+        })
+    }
+
+    #[test]
+    fn json_cursor_accepts_the_maximum_nesting_depth() {
+        let value = nested_json_arrays(MAX_JSON_CURSOR_NESTING_DEPTH);
+
+        validate_postgres_jsonb_cursor_value(&value).unwrap();
+    }
+
+    #[test]
+    fn json_cursor_rejects_nesting_above_the_maximum() {
+        let value = nested_json_arrays(MAX_JSON_CURSOR_NESTING_DEPTH + 1);
+
+        let error = validate_postgres_jsonb_cursor_value(&value).unwrap_err();
+
+        assert_eq!(
+            error,
+            ApiError::BadRequest(format!(
+                "cursor JSON exceeds the maximum nesting depth of {MAX_JSON_CURSOR_NESTING_DEPTH}"
+            ))
+        );
     }
 
     #[test]
