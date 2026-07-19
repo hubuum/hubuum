@@ -33,6 +33,7 @@ use crate::models::{
 
 const COMPUTED_CLASS_LOCK_NAMESPACE: i32 = 1_133_113;
 const REINDEX_PAYLOAD_TYPE: &str = "computed_fields";
+pub const MAX_FILTERS_WITH_COMPUTED: usize = 2;
 pub const MAX_SORT_FIELDS_WITH_COMPUTED: usize = 2;
 
 fn reindex_batch_size() -> i64 {
@@ -187,6 +188,12 @@ pub async fn resolve_computed_query_fields(
     filters: &mut [ParsedQueryParam],
     sorts: &mut [SortParam],
 ) -> Result<ComputedSortSnapshot, ApiError> {
+    validate_computed_filter_count(
+        filters
+            .iter()
+            .filter(|filter| filter.field.computed_sort().is_some())
+            .count(),
+    )?;
     let requested = filters
         .iter()
         .filter_map(|filter| filter.field.computed_sort())
@@ -306,6 +313,15 @@ pub async fn resolve_computed_query_fields(
         definitions,
         state,
     })
+}
+
+fn validate_computed_filter_count(filter_count: usize) -> Result<(), ApiError> {
+    if filter_count > MAX_FILTERS_WITH_COMPUTED {
+        return Err(ApiError::BadRequest(format!(
+            "Computed filtering supports at most {MAX_FILTERS_WITH_COMPUTED} computed filter parameters per request"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_computed_sort_count(sort_count: usize) -> Result<(), ApiError> {
@@ -464,7 +480,7 @@ fn computed_string_filter(
         Operator::Like => (format!("{expression} LIKE ?"), vec![param.value.clone()]),
         Operator::Regex => (format!("{expression} ~ ?"), vec![param.value.clone()]),
         Operator::In => {
-            let values = comma_separated_values(param, 50)?;
+            let values = exact_comma_separated_values(param, 50)?;
             let placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
             (format!("{expression} IN ({placeholders})"), values)
         }
@@ -482,7 +498,7 @@ fn computed_numeric_filter(
     operator: Operator,
     negated: bool,
 ) -> Result<SQLComponent, ApiError> {
-    let raw_values = comma_separated_values(param, 50)?;
+    let raw_values = trimmed_comma_separated_values(param, 50)?;
     let values = raw_values
         .iter()
         .map(|value| {
@@ -623,7 +639,20 @@ fn validate_computed_filter_json(value: &serde_json::Value) -> Result<(), ApiErr
     }
 }
 
-fn comma_separated_values(
+fn exact_comma_separated_values(
+    param: &ParsedQueryParam,
+    maximum: usize,
+) -> Result<Vec<String>, ApiError> {
+    let values = param
+        .value
+        .split(',')
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    validate_comma_separated_values(param, maximum, &values)?;
+    Ok(values)
+}
+
+fn trimmed_comma_separated_values(
     param: &ParsedQueryParam,
     maximum: usize,
 ) -> Result<Vec<String>, ApiError> {
@@ -633,6 +662,15 @@ fn comma_separated_values(
         .map(str::trim)
         .map(str::to_string)
         .collect::<Vec<_>>();
+    validate_comma_separated_values(param, maximum, &values)?;
+    Ok(values)
+}
+
+fn validate_comma_separated_values(
+    param: &ParsedQueryParam,
+    maximum: usize,
+    values: &[String],
+) -> Result<(), ApiError> {
     if values.is_empty() || values.iter().any(String::is_empty) {
         return Err(ApiError::BadRequest(format!(
             "Filtering computed field '{}' requires a value",
@@ -645,7 +683,7 @@ fn comma_separated_values(
             param.field
         )));
     }
-    Ok(values)
+    Ok(())
 }
 
 fn require_computed_value_count(
@@ -2010,7 +2048,9 @@ pub(crate) async fn mark_recovered_computed_reindex_failed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::search::parse_query_parameter;
+    use crate::models::search::{
+        parse_query_parameter, parse_query_parameter_with_computed_filters_and_passthrough,
+    };
 
     #[test]
     fn canonical_hash_ignores_object_key_order() {
@@ -2042,6 +2082,27 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "Computed sorting supports at most 2 explicit sort fields per request"
+        );
+    }
+
+    #[test]
+    fn computed_filter_count_is_bounded_before_sql_resolution() {
+        let (query, _) = parse_query_parameter_with_computed_filters_and_passthrough(
+            "computed.shared.first=1&computed.shared.first__gte=0&computed.personal.second=2",
+            &[],
+        )
+        .unwrap();
+        let computed_filter_count = query
+            .filters
+            .iter()
+            .filter(|filter| filter.field.computed_sort().is_some())
+            .count();
+
+        let error = validate_computed_filter_count(computed_filter_count).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Computed filtering supports at most 2 computed filter parameters per request"
         );
     }
 }

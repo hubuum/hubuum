@@ -116,7 +116,8 @@ GET /api/v1/classes/12/?computed.personal.my_priority__between=10,20
 Computed filtering is intentionally endpoint-specific. Other list endpoints
 reject computed filter parameters instead of silently ignoring them. The
 definition's declared result type determines which operators and values are
-valid. String, numeric, boolean, object, and array definitions are supported;
+valid. At most two computed filter parameters may appear in one request.
+String, numeric, boolean, object, and array definitions are supported;
 see [Computed fields](computed_fields.md#reading-computed-values) for the full
 operator table, visibility rules, null behavior, and JSON value syntax.
 Computed keys may contain `__`; only a recognized operator at the final

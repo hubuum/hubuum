@@ -927,6 +927,7 @@ mod tests {
 
     #[rstest::rstest]
     #[case::string("string", serde_json::json!("Edge.EXAMPLE"), "__icontains", "edge.example")]
+    #[case::string_in_whitespace("string", serde_json::json!(" edge "), "__in", " edge ")]
     #[case::number("number", serde_json::json!(12.5), "__between", "12,13")]
     #[case::boolean("boolean", serde_json::json!(true), "", "true")]
     #[case::object(
@@ -1333,6 +1334,32 @@ mod tests {
         assert_eq!(
             body["message"],
             "Computed sorting supports at most 2 explicit sort fields per request"
+        );
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn computed_filter_rejects_more_than_two_predicates_before_definition_resolution(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let fixture = fixture(&test_context, "computed filter count limit").await;
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?computed.shared.first=1&computed.shared.first__gte=0&computed.personal.second=2",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::BAD_REQUEST).await;
+        let body: serde_json::Value = test::read_body_json(response).await;
+
+        assert_eq!(
+            body["message"],
+            "Computed filtering supports at most 2 computed filter parameters per request"
         );
 
         fixture.cleanup().await.unwrap();

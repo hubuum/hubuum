@@ -194,7 +194,8 @@ GET /api/v1/classes/{class_id}/?sort=computed.personal.my_priority.desc
 `shared` and `personal` match the response namespaces. `public` and `private`
 are accepted as aliases. Filters use the normal `field__operator=value` syntax,
 combine with other filters using `AND`, and support `not_` operator prefixes.
-Available operators depend on the definition's declared result type:
+Requests may contain at most two computed filter parameters. Available
+operators depend on the definition's declared result type:
 
 | Result type | Operators |
 | --- | --- |
