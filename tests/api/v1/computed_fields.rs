@@ -1002,6 +1002,56 @@ mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
+    async fn computed_filter_preserves_double_underscores_in_definition_keys(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let mut fixture = fixture(&test_context, "computed double underscore filter").await;
+        let matching = NewHubuumObject {
+            collection_id: fixture.class.collection_id,
+            hubuum_class_id: fixture.class.id,
+            name: test_context.scoped_name("computed double underscore match"),
+            description: "Computed double underscore filtering match".to_string(),
+            data: serde_json::json!({"filter_value": "edge"}),
+        }
+        .save_without_events(&test_context.pool)
+        .await
+        .unwrap();
+        fixture.objects.push(matching.clone());
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            serde_json::json!({
+                "key": "filter__value",
+                "label": "Filter value",
+                "operation": {"type": "first_non_null", "paths": ["/filter_value"]},
+                "result_type": "string"
+            }),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?computed.shared.filter__value=edge",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0]["id"], matching.id);
+
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
     async fn computed_query_replaces_conflicting_class_filters_with_path_class(
         #[future(awt)] test_context: TestContext,
     ) {

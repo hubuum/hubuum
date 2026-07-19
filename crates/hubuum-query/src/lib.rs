@@ -182,21 +182,33 @@ fn parse_single_filter(
     value: &str,
     allow_computed_filters: bool,
 ) -> Result<ParsedQueryParam, QueryError> {
-    let field_and_op: Vec<&str> = key.splitn(2, "__").collect();
-
     if value.is_empty() {
         return Err(QueryError::BadRequest(format!(
             "Invalid query parameter: '{key}', no value",
         )));
     }
 
-    let operator = if field_and_op.len() == 1 {
-        SearchOperator::new_from_string("equals")?
+    let (field_name, operator) = if is_computed_field_name(key) {
+        // Computed keys may themselves contain double underscores. Only a
+        // recognized terminal operator suffix is syntax; every other double
+        // underscore remains part of the key.
+        match key.rsplit_once("__") {
+            Some((field_name, suffix)) => match SearchOperator::new_from_string(suffix) {
+                Ok(operator) => (field_name, operator),
+                Err(_) => (key, SearchOperator::new_from_string("equals")?),
+            },
+            None => (key, SearchOperator::new_from_string("equals")?),
+        }
     } else {
-        SearchOperator::new_from_string(field_and_op[1])?
+        match key.split_once("__") {
+            Some((field_name, operator)) => {
+                (field_name, SearchOperator::new_from_string(operator)?)
+            }
+            None => (key, SearchOperator::new_from_string("equals")?),
+        }
     };
 
-    let field = FilterField::from_str(field_and_op[0])?;
+    let field = FilterField::from_str(field_name)?;
     if field.computed_sort().is_some() && !allow_computed_filters {
         return Err(QueryError::BadRequest(
             "Computed fields are not supported in this filter context".to_string(),
@@ -208,6 +220,17 @@ fn parse_single_filter(
         operator,
         value: value.to_string(),
     })
+}
+
+fn is_computed_field_name(key: &str) -> bool {
+    [
+        "computed.shared.",
+        "computed.public.",
+        "computed.personal.",
+        "computed.private.",
+    ]
+    .iter()
+    .any(|prefix| key.starts_with(prefix))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1102,6 +1125,45 @@ mod tests {
             parsed.filters[1].operator,
             SearchOperator::Gte { is_negated: false }
         );
+    }
+
+    #[test]
+    fn computed_filter_preserves_double_underscores_in_the_key() {
+        let (parsed, _) = parse_query_parameter_with_computed_filters_and_passthrough(
+            "computed.shared.display__name=router",
+            &[],
+        )
+        .unwrap();
+
+        let computed = parsed.filters[0].field.computed_sort().unwrap();
+        assert_eq!(computed.key(), "display__name");
+        assert_eq!(
+            parsed.filters[0].operator,
+            SearchOperator::Equals { is_negated: false }
+        );
+    }
+
+    #[test]
+    fn computed_filter_recognizes_only_a_terminal_operator_suffix() {
+        let (parsed, _) = parse_query_parameter_with_computed_filters_and_passthrough(
+            "computed.shared.display__name__icontains=edge",
+            &[],
+        )
+        .unwrap();
+
+        let computed = parsed.filters[0].field.computed_sort().unwrap();
+        assert_eq!(computed.key(), "display__name");
+        assert_eq!(
+            parsed.filters[0].operator,
+            SearchOperator::IContains { is_negated: false }
+        );
+    }
+
+    #[test]
+    fn ordinary_filter_still_rejects_an_unknown_operator() {
+        let error = parse_query_parameter("name__unknown=router").unwrap_err();
+
+        assert_eq!(error.to_string(), "Invalid search operator: 'unknown'");
     }
 
     #[test]

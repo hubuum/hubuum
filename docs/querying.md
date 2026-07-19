@@ -119,6 +119,8 @@ definition's declared result type determines which operators and values are
 valid. String, numeric, boolean, object, and array definitions are supported;
 see [Computed fields](computed_fields.md#reading-computed-values) for the full
 operator table, visibility rules, null behavior, and JSON value syntax.
+Computed keys may contain `__`; only a recognized operator at the final
+`__<operator>` suffix is parsed as filter syntax.
 
 ## Cursor pagination
 

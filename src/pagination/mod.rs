@@ -520,6 +520,11 @@ where
         .iter()
         .map(|sort| item.cursor_value(&sort.field))
         .collect::<Result<_, _>>()?;
+    for value in &values {
+        if let CursorValue::Json(value) = value {
+            validate_postgres_jsonb_cursor_value(value)?;
+        }
+    }
 
     let token = CursorToken {
         sorts: sorts_for_cursor,
@@ -989,6 +994,39 @@ mod tests {
     use super::*;
     use crate::models::{Collection, UserWithName};
 
+    #[derive(Clone, Debug)]
+    struct JsonCursorItem {
+        id: i64,
+        value: serde_json::Value,
+    }
+
+    impl CursorPaginated for JsonCursorItem {
+        fn supports_sort(field: &FilterField) -> bool {
+            matches!(field, FilterField::Id | FilterField::JsonData)
+        }
+
+        fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+            match field {
+                FilterField::Id => Ok(CursorValue::Integer(self.id)),
+                FilterField::JsonData => Ok(CursorValue::Json(self.value.clone())),
+                _ => Err(ApiError::InternalServerError(
+                    "unsupported test cursor field".to_string(),
+                )),
+            }
+        }
+
+        fn default_sort() -> Vec<SortParam> {
+            vec![SortParam {
+                field: FilterField::Id,
+                descending: false,
+            }]
+        }
+
+        fn tie_breaker_sort() -> Vec<SortParam> {
+            Self::default_sort()
+        }
+    }
+
     fn collection(id: i32, name: &str) -> Collection {
         Collection {
             id,
@@ -1132,6 +1170,40 @@ mod tests {
             format!(
                 "pagination cursor exceeds the maximum encoded size of {MAX_ENCODED_CURSOR_BYTES} bytes; use smaller sort values"
             )
+        );
+    }
+
+    #[test]
+    fn cursor_encoding_rejects_json_that_decoding_would_reject() {
+        let error = finalize_page(
+            vec![
+                JsonCursorItem {
+                    id: 1,
+                    value: nested_json_arrays(MAX_JSON_CURSOR_NESTING_DEPTH + 1),
+                },
+                JsonCursorItem {
+                    id: 2,
+                    value: serde_json::json!([]),
+                },
+            ],
+            &QueryOptions {
+                filters: vec![],
+                sort: vec![SortParam {
+                    field: FilterField::JsonData,
+                    descending: false,
+                }],
+                limit: Some(1),
+                cursor: None,
+                include_total: true,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            ApiError::BadRequest(format!(
+                "cursor JSON exceeds the maximum nesting depth of {MAX_JSON_CURSOR_NESTING_DEPTH}"
+            ))
         );
     }
 

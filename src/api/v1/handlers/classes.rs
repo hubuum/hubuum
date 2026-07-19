@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 
@@ -26,12 +26,10 @@ use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermission
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection as collection_model;
-use crate::models::traits::{
-    ExpandCollection, ToHubuumObjects, check_if_object_in_class, object_cursor_sql_fields,
-};
+use crate::models::traits::{ExpandCollection, ToHubuumObjects, check_if_object_in_class};
 use crate::pagination::{
     SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, known_count_or_skipped,
-    page_limits, paginate_in_memory_with_fields, prepare_db_pagination, validate_page_limit,
+    page_limits, prepare_db_pagination, validate_page_limit,
 };
 use crate::permissions::visibility::{authorize_all_candidates, authorize_cursor_page};
 use crate::permissions::{
@@ -1133,10 +1131,19 @@ async fn get_objects_in_class(
             )
             .await?
         } else {
+            // PostgreSQL remains the source of truth for computed ordering,
+            // including its database collation for strings nested in JSONB.
+            // The policy backend filters that ordered candidate stream but
+            // never re-sorts it in memory.
+            let search_params = prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?;
+            let mut candidate_options = search_params.clone();
+            candidate_options.limit = None;
+            candidate_options.cursor = None;
+            candidate_options.include_total = false;
             let candidates = user
                 .search_objects_from_backend_with_admin_status(
                     &pool,
-                    count_query_options(&params),
+                    candidate_options.clone(),
                     true,
                     None,
                 )
@@ -1160,16 +1167,38 @@ async fn get_objects_in_class(
             )
             .await?;
             total_count = known_count_or_skipped(&params, authorized.len() as i64);
-            let enriched = enrich_objects_with_computed_sort_snapshot(
+
+            let mut authorized = if search_params.cursor.is_some() {
+                candidate_options.cursor = search_params.cursor.clone();
+                let after_cursor = user
+                    .search_objects_from_backend_with_admin_status(
+                        &pool,
+                        candidate_options,
+                        true,
+                        None,
+                    )
+                    .await?;
+                let after_cursor_ids = after_cursor
+                    .into_iter()
+                    .map(|object| object.id)
+                    .collect::<HashSet<_>>();
+                authorized
+                    .into_iter()
+                    .filter(|object| after_cursor_ids.contains(&object.id))
+                    .collect()
+            } else {
+                authorized
+            };
+            if let Some(limit) = search_params.limit {
+                authorized.truncate(limit);
+            }
+            enrich_objects_with_computed_sort_snapshot(
                 pool.db_pool(),
                 authorized,
                 personal_owner,
                 &computed_sort_snapshot,
             )
-            .await?;
-            let search_params = prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?;
-            let cursor_fields = object_cursor_sql_fields(&search_params.sort)?;
-            paginate_in_memory_with_fields(enriched, &search_params, &cursor_fields)?
+            .await?
         };
         let page = finalize_page(enriched, &params)?;
         if include_computed {
