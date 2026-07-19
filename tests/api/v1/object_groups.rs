@@ -19,7 +19,7 @@ mod tests {
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
-        ObjectFixture, TestContext, create_test_group, create_test_service_account,
+        ObjectFixture, TestContext, create_test_group, create_test_service_account, scoped_token,
         service_account_token, test_context,
     };
     use crate::traits::{CanDelete, PermissionController, SelfAccessors};
@@ -37,7 +37,7 @@ mod tests {
                 label,
                 NewHubuumClass {
                     collection_id: 0,
-                    name: context.scoped_name("object group class"),
+                    name: context.scoped_name(&format!("object group class {label}")),
                     description: "Object group test class".to_string(),
                     json_schema: None,
                     validate_schema: Some(false),
@@ -586,6 +586,7 @@ mod tests {
 
     async fn get_with_permission_backend(
         context: &TestContext,
+        token: &str,
         backend: Arc<dyn PermissionBackend>,
         endpoint: &str,
     ) -> actix_web::dev::ServiceResponse {
@@ -602,7 +603,7 @@ mod tests {
         test::TestRequest::get()
             .insert_header((
                 actix_web::http::header::AUTHORIZATION,
-                format!("Bearer {}", context.normal_token),
+                format!("Bearer {token}"),
             ))
             .uri(endpoint)
             .send_request(&app)
@@ -634,6 +635,7 @@ mod tests {
 
         let response = get_with_permission_backend(
             &test_context,
+            &test_context.normal_token,
             backend,
             &format!(
                 "/api/v1/classes/{}/object-groups?group_by=description",
@@ -656,6 +658,142 @@ mod tests {
             .delete_without_events(&test_context.pool)
             .await
             .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn non_pushdown_authorization_honors_permission_filters(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let fixture = fixture(&test_context, "external filtered permissions").await;
+        let group = create_test_group(&test_context.pool).await;
+        group
+            .add_member_without_events(&test_context.pool, &test_context.normal_user)
+            .await
+            .unwrap();
+        let backend = Arc::new(MockTreetopBackend::new());
+        for object in fixture.objects.iter().take(2) {
+            backend.add_rule(MockAllowRule {
+                group_id: group.id,
+                action: Permissions::ReadObject,
+                resource_kind: ResourceKind::Object,
+                resource_id: Some(object.id),
+                attrs: ResourceAttrs::default(),
+            });
+        }
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::UpdateObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(fixture.objects[0].id),
+            attrs: ResourceAttrs::default(),
+        });
+
+        let response = get_with_permission_backend(
+            &test_context,
+            &test_context.normal_token,
+            backend,
+            &format!(
+                "/api/v1/classes/{}/object-groups?permissions=UpdateObject&group_by=description",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            header_value(&response, TOTAL_COUNT_HEADER).as_deref(),
+            Some("1")
+        );
+        let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["object_count"], 1);
+
+        fixture.cleanup().await.unwrap();
+        group
+            .delete_without_events(&test_context.pool)
+            .await
+            .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn non_pushdown_permission_filters_respect_token_scopes(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let fixture = fixture(&test_context, "external permission scopes").await;
+        let group = create_test_group(&test_context.pool).await;
+        group
+            .add_member_without_events(&test_context.pool, &test_context.normal_user)
+            .await
+            .unwrap();
+        let backend = Arc::new(MockTreetopBackend::new());
+        for action in [Permissions::ReadObject, Permissions::UpdateObject] {
+            backend.add_rule(MockAllowRule {
+                group_id: group.id,
+                action,
+                resource_kind: ResourceKind::Object,
+                resource_id: Some(fixture.objects[0].id),
+                attrs: ResourceAttrs::default(),
+            });
+        }
+        let token = scoped_token(
+            &test_context.pool,
+            test_context.normal_user.id,
+            &[Permissions::ReadObject],
+        )
+        .await;
+
+        let response = get_with_permission_backend(
+            &test_context,
+            &token,
+            backend,
+            &format!(
+                "/api/v1/classes/{}/object-groups?permissions=UpdateObject&group_by=description",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            header_value(&response, TOTAL_COUNT_HEADER).as_deref(),
+            Some("0")
+        );
+        let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert!(rows.is_empty());
+
+        fixture.cleanup().await.unwrap();
+        group
+            .delete_without_events(&test_context.pool)
+            .await
+            .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn route_class_constraint_overrides_a_conflicting_filter(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let route_fixture = fixture(&test_context, "route class constraint").await;
+        let other_fixture = fixture(&test_context, "conflicting class filter").await;
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/object-groups?class_id={}&group_by=name",
+                route_fixture.class.id, other_fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            header_value(&response, TOTAL_COUNT_HEADER).as_deref(),
+            Some("0")
+        );
+        let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert!(rows.is_empty());
+
+        route_fixture.cleanup().await.unwrap();
+        other_fixture.cleanup().await.unwrap();
     }
 
     #[rstest::rstest]

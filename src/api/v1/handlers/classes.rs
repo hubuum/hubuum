@@ -816,7 +816,11 @@ async fn get_object_groups(
     let class_id = class_id.into_inner();
     let class = class_id.instance(&pool).await?;
     let (mut params, spec) = parse_object_group_query(req.query_string())?.into_parts();
-    params.ensure_filter_exact(FilterField::ClassId, &class_id);
+    params.filters.add_filter(
+        FilterField::ClassId,
+        SearchOperator::Equals { is_negated: false },
+        &class_id.id().to_string(),
+    );
 
     let personal_owner_id = if spec.has_personal_computed_dimension() {
         if !requestor.principal.is_human() {
@@ -845,11 +849,14 @@ async fn get_object_groups(
         query = req.query_string()
     );
 
+    let mut required = params.filters.permissions()?;
+    required.ensure_contains(&[Permissions::ReadObject]);
+    let required = required.iter().copied().collect::<Vec<_>>();
     let candidate_options = count_query_options(&params);
     let candidates = if pool.permission_backend().supports_sql_visibility_pushdown() {
         user.search_objects(&pool, candidate_options, requestor.scopes())
             .await?
-    } else if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
+    } else if !scope_allows(requestor.scopes(), &required) {
         Vec::new()
     } else {
         let candidates = user
@@ -865,7 +872,7 @@ async fn get_object_groups(
             pool.permission_backend(),
             &principal,
             candidates,
-            vec![Permissions::ReadObject],
+            required,
             &candidate_options,
             |object| ResourceRef {
                 kind: ResourceKind::Object,
