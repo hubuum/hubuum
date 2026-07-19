@@ -156,22 +156,62 @@ where
 /// applied last; callers should pass the prepared `limit + 1` value so
 /// [`finalize_page`] can produce the next cursor normally.
 pub fn paginate_in_memory<T>(
-    mut items: Vec<T>,
+    items: Vec<T>,
     query_options: &QueryOptions,
 ) -> Result<Vec<T>, ApiError>
 where
     T: CursorPaginated,
 {
     let sorts = normalized_sorts::<T>(&query_options.sort)?;
+    let cursor_values = query_options
+        .cursor
+        .as_deref()
+        .map(|cursor| decode_cursor_values(cursor, &sorts))
+        .transpose()?;
+    paginate_in_memory_with_values(items, query_options, &sorts, cursor_values.as_deref())
+}
+
+/// Apply in-memory pagination after validating cursor values against the
+/// resolved SQL field types used by the equivalent database-backed query.
+pub fn paginate_in_memory_with_fields<T>(
+    items: Vec<T>,
+    query_options: &QueryOptions,
+    fields: &[OwnedCursorSqlField],
+) -> Result<Vec<T>, ApiError>
+where
+    T: CursorPaginated,
+{
+    let sorts = normalized_sorts::<T>(&query_options.sort)?;
+    if fields.len() != sorts.len() {
+        return Err(ApiError::InternalServerError(
+            "cursor SQL field count does not match sort count".to_string(),
+        ));
+    }
+    let cursor_values = query_options
+        .cursor
+        .as_deref()
+        .map(|cursor| decode_and_validate_cursor_values(cursor, &sorts, fields))
+        .transpose()?;
+    paginate_in_memory_with_values(items, query_options, &sorts, cursor_values.as_deref())
+}
+
+fn paginate_in_memory_with_values<T>(
+    mut items: Vec<T>,
+    query_options: &QueryOptions,
+    sorts: &[SortParam],
+    cursor_values: Option<&[CursorValue]>,
+) -> Result<Vec<T>, ApiError>
+where
+    T: CursorPaginated,
+{
     items.sort_by(|left, right| {
-        compare_cursor_values(left, right, &sorts).unwrap_or(Ordering::Equal)
+        compare_cursor_values(left, right, sorts).unwrap_or(Ordering::Equal)
     });
 
-    if let Some(cursor) = query_options.cursor.as_deref() {
-        let cursor_values = decode_cursor_values(cursor, &sorts)?;
+    if let Some(cursor_values) = cursor_values {
         let mut filtered = Vec::with_capacity(items.len());
         for item in items {
-            if compare_item_to_values(&item, &cursor_values, &sorts)? == Ordering::Greater {
+            if compare_item_to_values(&item, cursor_values, sorts)? == Ordering::Greater {
                 filtered.push(item);
             }
         }
@@ -383,7 +423,7 @@ where
             "cursor SQL field count does not match sort count".to_string(),
         ));
     }
-    let cursor_values = decode_cursor_values(cursor, sorts)?;
+    let cursor_values = decode_and_validate_cursor_values(cursor, sorts, fields)?;
 
     let mut clauses = Vec::with_capacity(sorts.len());
     for current_index in 0..sorts.len() {
@@ -405,6 +445,35 @@ where
     }
 
     Ok(Some(format!("({})", clauses.join(" OR "))))
+}
+
+fn decode_and_validate_cursor_values<F>(
+    cursor: &str,
+    sorts: &[SortParam],
+    fields: &[F],
+) -> Result<Vec<CursorValue>, ApiError>
+where
+    F: CursorSqlFieldView,
+{
+    let cursor_values = decode_cursor_values(cursor, sorts)?;
+    for (field, value) in fields.iter().zip(&cursor_values) {
+        validate_cursor_value(field, value)?;
+    }
+    Ok(cursor_values)
+}
+
+fn validate_cursor_value<F>(field: &F, value: &CursorValue) -> Result<(), ApiError>
+where
+    F: CursorSqlFieldView,
+{
+    match value {
+        CursorValue::Null if field.nullable() => Ok(()),
+        CursorValue::Null => Err(ApiError::BadRequest(format!(
+            "cursor contains null for non-nullable field '{}'",
+            field.expression()
+        ))),
+        _ => cursor_literal_sql(field, value).map(|_| ()),
+    }
 }
 
 pub fn normalized_sorts<T>(requested: &[SortParam]) -> Result<Vec<SortParam>, ApiError>
@@ -490,6 +559,12 @@ fn decode_cursor(cursor: &str, sorts: &[SortParam]) -> Result<CursorToken, ApiEr
     if token.sorts != expected_sorts {
         return Err(ApiError::BadRequest(
             "cursor does not match current sort order".to_string(),
+        ));
+    }
+
+    if token.values.len() != sorts.len() {
+        return Err(ApiError::BadRequest(
+            "cursor value count does not match current sort order".to_string(),
         ));
     }
 
@@ -1221,6 +1296,102 @@ mod tests {
             })
             .unwrap(),
         )
+    }
+
+    #[test]
+    fn in_memory_cursor_rejects_a_value_with_the_wrong_resolved_type() {
+        let sort = SortParam {
+            field: FilterField::Id,
+            descending: false,
+        };
+        let fields = [OwnedCursorSqlField {
+            expression: "computed_value".to_string(),
+            sql_type: CursorSqlType::Boolean,
+            nullable: false,
+        }];
+        let cursor = encoded_cursor(&sort, CursorValue::String("true".to_string()));
+        let query_options = QueryOptions {
+            filters: vec![],
+            sort: vec![sort],
+            limit: Some(2),
+            cursor: Some(cursor),
+            include_total: true,
+        };
+
+        let error =
+            paginate_in_memory_with_fields(Vec::<Collection>::new(), &query_options, &fields)
+                .unwrap_err();
+
+        assert_eq!(
+            error,
+            ApiError::BadRequest(
+                "cursor value does not match expected type for 'computed_value'".to_string()
+            )
+        );
+    }
+
+    #[rstest]
+    #[case::nul_string(r#"{"value":"\u0000"}"#)]
+    #[case::nul_key(r#"{"\u0000":true}"#)]
+    #[case::integral_overflow(r#"{"value":1e131072}"#)]
+    #[case::fractional_overflow(r#"{"value":1e-16384}"#)]
+    fn in_memory_json_cursor_rejects_values_postgres_jsonb_cannot_represent(#[case] json: &str) {
+        let sort = SortParam {
+            field: FilterField::Id,
+            descending: false,
+        };
+        let fields = [OwnedCursorSqlField {
+            expression: "computed_value".to_string(),
+            sql_type: CursorSqlType::Json,
+            nullable: false,
+        }];
+        let value = serde_json::from_str(json).unwrap();
+        let cursor = encoded_cursor(&sort, CursorValue::Json(value));
+        let query_options = QueryOptions {
+            filters: vec![],
+            sort: vec![sort],
+            limit: Some(2),
+            cursor: Some(cursor),
+            include_total: true,
+        };
+
+        let error =
+            paginate_in_memory_with_fields(Vec::<Collection>::new(), &query_options, &fields)
+                .unwrap_err();
+
+        assert_eq!(
+            error,
+            ApiError::BadRequest(
+                "cursor contains JSON that PostgreSQL JSONB cannot represent".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn cursor_decoding_rejects_a_mismatched_value_count() {
+        let sort = SortParam {
+            field: FilterField::Id,
+            descending: false,
+        };
+        let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&CursorToken {
+                sorts: vec![CursorSort {
+                    field: sort.field.to_string(),
+                    descending: sort.descending,
+                }],
+                values: vec![],
+            })
+            .unwrap(),
+        );
+
+        let error = decode_cursor_values(&cursor, &[sort]).unwrap_err();
+
+        assert_eq!(
+            error,
+            ApiError::BadRequest(
+                "cursor value count does not match current sort order".to_string()
+            )
+        );
     }
 
     #[test]

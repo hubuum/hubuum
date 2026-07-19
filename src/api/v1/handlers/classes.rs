@@ -26,10 +26,12 @@ use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermission
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection as collection_model;
-use crate::models::traits::{ExpandCollection, ToHubuumObjects, check_if_object_in_class};
+use crate::models::traits::{
+    ExpandCollection, ToHubuumObjects, check_if_object_in_class, object_cursor_sql_fields,
+};
 use crate::pagination::{
     SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, known_count_or_skipped,
-    page_limits, paginate_in_memory, prepare_db_pagination, validate_page_limit,
+    page_limits, paginate_in_memory_with_fields, prepare_db_pagination, validate_page_limit,
 };
 use crate::permissions::visibility::{authorize_all_candidates, authorize_cursor_page};
 use crate::permissions::{
@@ -1133,7 +1135,8 @@ async fn get_objects_in_class(
             )
             .await?;
             let search_params = prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?;
-            paginate_in_memory(enriched, &search_params)?
+            let cursor_fields = object_cursor_sql_fields(&search_params.sort)?;
+            paginate_in_memory_with_fields(enriched, &search_params, &cursor_fields)?
         };
         let page = finalize_page(enriched, &params)?;
         if include_computed {
