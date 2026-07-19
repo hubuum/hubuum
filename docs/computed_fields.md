@@ -181,15 +181,37 @@ object response shape and cache behavior.
 The `computed` member is response-only. Supplying it in object create or update
 JSON is a `400 Bad Request`, including when its value is `null`.
 
-The class object-list endpoint supports ordering by enabled computed fields:
+The class object-list endpoint supports filtering and ordering by enabled
+computed fields:
 
 ```text
+GET /api/v1/classes/{class_id}/?computed.shared.display_name__icontains=server
+GET /api/v1/classes/{class_id}/?computed.personal.my_priority__gte=10
 GET /api/v1/classes/{class_id}/?sort=computed.shared.display_name
 GET /api/v1/classes/{class_id}/?sort=computed.personal.my_priority.desc
 ```
 
 `shared` and `personal` match the response namespaces. `public` and `private`
-are accepted as aliases. Computed sorts support the normal ascending,
+are accepted as aliases. Filters use the normal `field__operator=value` syntax,
+combine with other filters using `AND`, and support `not_` operator prefixes.
+Available operators depend on the definition's declared result type:
+
+| Result type | Operators |
+| --- | --- |
+| `string` | `equals`, `iequals`, `contains`, `icontains`, `startswith`, `istartswith`, `endswith`, `iendswith`, `like`, `regex`, `in`, `is_null` |
+| `number`, `integer` | `equals`, `in`, `gt`, `gte`, `lt`, `lte`, `between`, `is_null` |
+| `boolean` | `equals`, `is_null` |
+| `object` | `equals`, `contains`, `has_key`, `is_null` |
+| `array` | `equals`, `contains`, `has_key`, `array_length`, `is_null` |
+
+Object and array filter values for `equals` and `contains` are JSON values of
+the definition's declared type. `contains` uses JSON containment. `has_key`
+tests an object key or string array element, and `array_length` accepts a
+non-negative integer. `is_null=true` matches missing, null, failed, or
+type-mismatched computed results; `is_null=false` matches successful non-null
+results.
+
+Computed sorts support the normal ascending,
 descending, multi-field, deterministic tie-breaker, and cursor-pagination
 behavior, with at most two explicit sort fields in any request that uses a
 computed sort. Null or failed results sort first in ascending order and last
@@ -200,26 +222,27 @@ fewer sort fields or definitions with smaller outputs. JSON cursor values are
 limited to 64 nested array or object levels; deeper values return
 `400 Bad Request`.
 
-A personal sort is available only to the owning human user and still requires
-class access. Service accounts cannot sort on personal definitions. The
-`include=computed` parameter controls the response shape, not sort
-availability; sorting without it still returns the raw object shape. Responses
-whose order depends on computed state use `Cache-Control: private, no-store`.
+A personal filter or sort is available only to the owning human user and still
+requires class access. Service accounts cannot query personal definitions. The
+`include=computed` parameter controls the response shape, not computed-query
+availability; filtering or sorting without it still returns the raw object
+shape. Responses whose result set or order depends on computed state use
+`Cache-Control: private, no-store`.
 
-With the default SQL authorization backend, sorting happens in PostgreSQL
-before pagination. Current shared materialization is used directly, with live
-evaluation only for missing or stale cache rows. Personal sorting evaluates
-the owner's entire enabled scope from raw object data without write-time user
-fan-out, so scope work and output limits remain identical to response
-enrichment. Live evaluation cost grows with the candidate count, object JSON
-size, and enabled-scope complexity; materialized shared fields are preferable
-for high-volume sorting. Computed-sort query counts are independent of page
-size, and requests without computed sorting retain the existing query path.
-Computed-sort reads use live values for missing or stale materializations but
-defer cache repair to the rebuild path, keeping list requests read-only.
-Computed filtering and declarative indexing are not yet supported. Unsupported
-query fields fail validation; Hubuum never filters or sorts computed data after
-database pagination on the SQL path.
+With the default SQL authorization backend, computed filtering and sorting
+happen in PostgreSQL before pagination. Current shared materialization is used
+directly, with live evaluation only for missing or stale cache rows. Personal
+querying evaluates the owner's entire enabled scope from raw object data
+without write-time user fan-out, so scope work and output limits remain
+identical to response enrichment. Live evaluation cost grows with the
+candidate count, object JSON size, and enabled-scope complexity; materialized
+shared fields are preferable for high-volume queries. Computed-query database
+query counts are independent of page size, and requests without computed
+filtering or sorting retain the existing query path. Computed-query reads use
+live values for missing or stale materializations but defer cache repair to the
+rebuild path, keeping list requests read-only. Declarative indexing is not yet
+supported. Unsupported computed operators and mismatched filter value types
+fail with `400 Bad Request`.
 
 ## Materialization freshness
 

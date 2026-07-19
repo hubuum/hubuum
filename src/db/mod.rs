@@ -1,3 +1,4 @@
+pub(crate) mod json;
 pub mod traits;
 
 #[cfg(any(test, feature = "query-capture", feature = "integration-test-support"))]

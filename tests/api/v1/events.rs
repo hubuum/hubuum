@@ -71,6 +71,20 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn events_endpoint_rejects_computed_filters() {
+        let context = TestContext::new().await;
+
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{EVENTS_ENDPOINT}?computed.shared.rank=1"),
+        )
+        .await;
+
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+    }
+
+    #[actix_web::test]
     async fn test_events_endpoint_filters_and_hides_collection_less_for_non_admin() {
         let context = TestContext::new().await;
         let collection = context.collection_fixture("audit_filters").await;

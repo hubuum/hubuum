@@ -45,6 +45,19 @@ pub fn parse_query_parameter_with_passthrough(
     Ok((query_options, passthrough))
 }
 
+pub fn parse_query_parameter_with_computed_filters_and_passthrough(
+    qs: &str,
+    passthrough_keys: &[&str],
+) -> Result<(QueryOptions, HashMap<String, Vec<String>>), ApiError> {
+    let (mut query_options, passthrough) =
+        hubuum_query::parse_query_parameter_with_computed_filters_and_passthrough(
+            qs,
+            passthrough_keys,
+        )?;
+    query_options.limit = query_options.limit.map(validate_page_limit).transpose()?;
+    Ok((query_options, passthrough))
+}
+
 impl From<hubuum_query::QueryError> for ApiError {
     fn from(error: hubuum_query::QueryError) -> Self {
         match error {

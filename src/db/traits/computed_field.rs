@@ -10,13 +10,18 @@ use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::db::prelude::*;
+use crate::db::traits::search::{JsonSqlPredicate, dynamic_sql_predicate};
 use crate::db::traits::task::{
     TaskBackend, TaskStateUpdate, emit_internal_task_event, insert_internal_queued_task,
 };
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
-use crate::models::search::{ComputedFieldScope, QueryOptions, SortParam};
+use crate::models::search::{
+    ComputedFieldScope, ComputedSortValueType, Operator, ParsedQueryParam, ParsedQueryParamExt,
+    QueryOptions, SQLComponent, SQLValue, SortParam,
+};
+use crate::models::traits::object::object_computed_sql_field;
 use crate::models::{
     COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ClassComputationState,
     ComputedFieldDefinition, ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest,
@@ -172,24 +177,41 @@ pub async fn resolve_computed_sort_fields(
     personal_owner_id: Option<i32>,
     sorts: &mut [SortParam],
 ) -> Result<ComputedSortSnapshot, ApiError> {
-    let requested = sorts
+    resolve_computed_query_fields(pool, target_class_id, personal_owner_id, &mut [], sorts).await
+}
+
+pub async fn resolve_computed_query_fields(
+    pool: &DbPool,
+    target_class_id: i32,
+    personal_owner_id: Option<i32>,
+    filters: &mut [ParsedQueryParam],
+    sorts: &mut [SortParam],
+) -> Result<ComputedSortSnapshot, ApiError> {
+    let requested = filters
         .iter()
-        .filter_map(|sort| sort.field.computed_sort())
+        .filter_map(|filter| filter.field.computed_sort())
+        .chain(sorts.iter().filter_map(|sort| sort.field.computed_sort()))
         .map(|field| (field.scope(), field.key().to_string()))
         .collect::<BTreeSet<_>>();
     if requested.is_empty() {
         return Err(ApiError::InternalServerError(
-            "Computed sort resolution requires at least one computed field".to_string(),
+            "Computed query resolution requires at least one computed field".to_string(),
         ));
     }
-    validate_computed_sort_count(sorts.len())?;
+    if sorts
+        .iter()
+        .any(|sort| sort.field.computed_sort().is_some())
+    {
+        validate_computed_sort_count(sorts.len())?;
+    }
     if personal_owner_id.is_none()
         && requested
             .iter()
             .any(|(scope, _)| *scope == ComputedFieldScope::Personal)
     {
         return Err(ApiError::BadRequest(
-            "Personal computed fields can only be sorted by their owning human user".to_string(),
+            "Personal computed fields can only be filtered or sorted by their owning human user"
+                .to_string(),
         ));
     }
 
@@ -250,10 +272,15 @@ pub async fn resolve_computed_sort_fields(
             && personal_owner_id.is_some_and(|owner_id| definition.is_personal_for(owner_id))
     }))?;
 
-    for sort in sorts {
-        let Some(field) = sort.field.computed_sort_mut() else {
-            continue;
-        };
+    for field in filters
+        .iter_mut()
+        .filter_map(|filter| filter.field.computed_sort_mut())
+        .chain(
+            sorts
+                .iter_mut()
+                .filter_map(|sort| sort.field.computed_sort_mut()),
+        )
+    {
         let definition = definitions_by_key
             .get(&(field.scope(), field.key().to_string()))
             .ok_or_else(|| {
@@ -345,10 +372,305 @@ fn computed_sort_value_sql(
               AND sort_values.evaluation_revision = {evaluation_revision} \
               AND sort_values.source_data_sha256 = \
                   hubuum_computed_source_sha256(hubuumobject.data) \
-              AND sort_values.values ? '{key}' \
+              AND jsonb_exists(sort_values.values, '{key}') \
           ) AS sort_cache ON TRUE)",
         definition.class_id
     )
+}
+
+pub(crate) fn computed_filter_predicate(
+    param: &ParsedQueryParam,
+) -> Result<JsonSqlPredicate, ApiError> {
+    if param.value.contains('\0') {
+        return Err(ApiError::BadRequest(format!(
+            "Filter value for computed field '{}' contains a null character",
+            param.field
+        )));
+    }
+    let computed = param.field.computed_sort().ok_or_else(|| {
+        ApiError::InternalServerError(format!("Field '{}' is not computed", param.field))
+    })?;
+    let value_type = computed.value_type().ok_or_else(|| {
+        ApiError::InternalServerError(format!(
+            "Computed field '{}' has no resolved result type",
+            computed.key()
+        ))
+    })?;
+    let field = object_computed_sql_field(&param.field)?;
+    let (operator, negated) = param.operator.op_and_neg();
+
+    let component = if operator == Operator::IsNull {
+        let should_be_null = param.value_as_boolean()? != negated;
+        SQLComponent {
+            sql: format!(
+                "{} IS {}NULL",
+                field.expression,
+                if should_be_null { "" } else { "NOT " }
+            ),
+            bind_variables: Vec::new(),
+        }
+    } else {
+        match value_type {
+            ComputedSortValueType::String => {
+                computed_string_filter(&field.expression, param, operator, negated)?
+            }
+            ComputedSortValueType::Number | ComputedSortValueType::Integer => {
+                computed_numeric_filter(&field.expression, param, operator, negated)?
+            }
+            ComputedSortValueType::Boolean => {
+                computed_boolean_filter(&field.expression, param, operator, negated)?
+            }
+            ComputedSortValueType::Object | ComputedSortValueType::Array => {
+                computed_json_filter(&field.expression, param, value_type, operator, negated)?
+            }
+        }
+    };
+    dynamic_sql_predicate(component)
+}
+
+fn computed_string_filter(
+    expression: &str,
+    param: &ParsedQueryParam,
+    operator: Operator,
+    negated: bool,
+) -> Result<SQLComponent, ApiError> {
+    let (sql, values) = match operator {
+        Operator::Equals => (format!("{expression} = ?"), vec![param.value.clone()]),
+        Operator::IEquals => (format!("{expression} ILIKE ?"), vec![param.value.clone()]),
+        Operator::Contains => (
+            format!("{expression} LIKE ?"),
+            vec![format!("%{}%", param.value)],
+        ),
+        Operator::IContains => (
+            format!("{expression} ILIKE ?"),
+            vec![format!("%{}%", param.value)],
+        ),
+        Operator::StartsWith => (
+            format!("{expression} LIKE ?"),
+            vec![format!("{}%", param.value)],
+        ),
+        Operator::IStartsWith => (
+            format!("{expression} ILIKE ?"),
+            vec![format!("{}%", param.value)],
+        ),
+        Operator::EndsWith => (
+            format!("{expression} LIKE ?"),
+            vec![format!("%{}", param.value)],
+        ),
+        Operator::IEndsWith => (
+            format!("{expression} ILIKE ?"),
+            vec![format!("%{}", param.value)],
+        ),
+        Operator::Like => (format!("{expression} LIKE ?"), vec![param.value.clone()]),
+        Operator::Regex => (format!("{expression} ~ ?"), vec![param.value.clone()]),
+        Operator::In => {
+            let values = comma_separated_values(param, 50)?;
+            let placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+            (format!("{expression} IN ({placeholders})"), values)
+        }
+        _ => return Err(computed_operator_mismatch(param, "string")),
+    };
+    Ok(SQLComponent {
+        sql: maybe_negate(sql, negated),
+        bind_variables: values.into_iter().map(SQLValue::String).collect(),
+    })
+}
+
+fn computed_numeric_filter(
+    expression: &str,
+    param: &ParsedQueryParam,
+    operator: Operator,
+    negated: bool,
+) -> Result<SQLComponent, ApiError> {
+    let raw_values = comma_separated_values(param, 50)?;
+    let values = raw_values
+        .iter()
+        .map(|value| {
+            hubuum_computed_fields::canonical_decimal_string(value).ok_or_else(|| {
+                ApiError::BadRequest(format!(
+                    "Invalid numeric value '{}' for computed field '{}'",
+                    value, param.field
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let sql = match operator {
+        Operator::Equals | Operator::In => {
+            let placeholders = values
+                .iter()
+                .map(|_| "?::numeric")
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{expression} IN ({placeholders})")
+        }
+        Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte => {
+            require_computed_value_count(param, values.len(), 1)?;
+            let sql_operator = match operator {
+                Operator::Gt => ">",
+                Operator::Gte => ">=",
+                Operator::Lt => "<",
+                Operator::Lte => "<=",
+                _ => unreachable!(),
+            };
+            format!("{expression} {sql_operator} ?::numeric")
+        }
+        Operator::Between => {
+            require_computed_value_count(param, values.len(), 2)?;
+            format!("{expression} BETWEEN ?::numeric AND ?::numeric")
+        }
+        _ => return Err(computed_operator_mismatch(param, "numeric")),
+    };
+    Ok(SQLComponent {
+        sql: maybe_negate(sql, negated),
+        bind_variables: values.into_iter().map(SQLValue::String).collect(),
+    })
+}
+
+fn computed_boolean_filter(
+    expression: &str,
+    param: &ParsedQueryParam,
+    operator: Operator,
+    negated: bool,
+) -> Result<SQLComponent, ApiError> {
+    if operator != Operator::Equals {
+        return Err(computed_operator_mismatch(param, "boolean"));
+    }
+    Ok(SQLComponent {
+        sql: maybe_negate(format!("{expression} = ?"), negated),
+        bind_variables: vec![SQLValue::Boolean(param.value_as_boolean()?)],
+    })
+}
+
+fn computed_json_filter(
+    expression: &str,
+    param: &ParsedQueryParam,
+    value_type: ComputedSortValueType,
+    operator: Operator,
+    negated: bool,
+) -> Result<SQLComponent, ApiError> {
+    if operator == Operator::HasKey {
+        return Ok(SQLComponent {
+            sql: maybe_negate(format!("jsonb_exists({expression}, ?)"), negated),
+            bind_variables: vec![SQLValue::String(param.value.clone())],
+        });
+    }
+    if operator == Operator::ArrayLength && value_type == ComputedSortValueType::Array {
+        let length = param.value.parse::<i32>().map_err(|_| {
+            ApiError::BadRequest(format!(
+                "array_length requires an integer, got '{}'",
+                param.value
+            ))
+        })?;
+        if length < 0 {
+            return Err(ApiError::BadRequest(
+                "array_length requires a non-negative integer".to_string(),
+            ));
+        }
+        return Ok(SQLComponent {
+            sql: maybe_negate(format!("jsonb_array_length({expression}) = ?"), negated),
+            bind_variables: vec![SQLValue::Integer(length)],
+        });
+    }
+    if !matches!(operator, Operator::Equals | Operator::Contains) {
+        return Err(computed_operator_mismatch(param, value_type.as_str()));
+    }
+
+    let value: serde_json::Value = serde_json::from_str(&param.value).map_err(|error| {
+        ApiError::BadRequest(format!(
+            "Invalid JSON value for computed field '{}': {error}",
+            param.field
+        ))
+    })?;
+    let type_matches = matches!(
+        (value_type, &value),
+        (ComputedSortValueType::Object, serde_json::Value::Object(_))
+            | (ComputedSortValueType::Array, serde_json::Value::Array(_))
+    );
+    if !type_matches {
+        return Err(ApiError::BadRequest(format!(
+            "Filter value for computed field '{}' must be a JSON {}",
+            param.field,
+            value_type.as_str()
+        )));
+    }
+    validate_computed_filter_json(&value)?;
+    let json = serde_json::to_string(&value)?;
+    let sql_operator = if operator == Operator::Equals {
+        "="
+    } else {
+        "@>"
+    };
+    Ok(SQLComponent {
+        sql: maybe_negate(format!("{expression} {sql_operator} ?::jsonb"), negated),
+        bind_variables: vec![SQLValue::String(json)],
+    })
+}
+
+fn validate_computed_filter_json(value: &serde_json::Value) -> Result<(), ApiError> {
+    match crate::db::json::validate_postgres_jsonb_value(value) {
+        Ok(()) => Ok(()),
+        Err(crate::db::json::PostgresJsonbValidationError::UnsupportedValue) => {
+            Err(ApiError::BadRequest(
+                "Computed filter contains JSON that PostgreSQL JSONB cannot represent".to_string(),
+            ))
+        }
+        Err(crate::db::json::PostgresJsonbValidationError::NestingTooDeep) => {
+            Err(ApiError::BadRequest(format!(
+                "Computed filter JSON exceeds the maximum nesting depth of {}",
+                crate::db::json::MAX_POSTGRES_JSONB_NESTING_DEPTH
+            )))
+        }
+    }
+}
+
+fn comma_separated_values(
+    param: &ParsedQueryParam,
+    maximum: usize,
+) -> Result<Vec<String>, ApiError> {
+    let values = param
+        .value
+        .split(',')
+        .map(str::trim)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if values.is_empty() || values.iter().any(String::is_empty) {
+        return Err(ApiError::BadRequest(format!(
+            "Filtering computed field '{}' requires a value",
+            param.field
+        )));
+    }
+    if values.len() > maximum {
+        return Err(ApiError::BadRequest(format!(
+            "Filtering computed field '{}' accepts at most {maximum} values",
+            param.field
+        )));
+    }
+    Ok(values)
+}
+
+fn require_computed_value_count(
+    param: &ParsedQueryParam,
+    actual: usize,
+    expected: usize,
+) -> Result<(), ApiError> {
+    if actual != expected {
+        return Err(ApiError::OperatorMismatch(format!(
+            "Operator '{}' requires {expected} value(s) for field '{}'",
+            param.operator, param.field
+        )));
+    }
+    Ok(())
+}
+
+fn maybe_negate(sql: String, negated: bool) -> String {
+    if negated { format!("NOT ({sql})") } else { sql }
+}
+
+fn computed_operator_mismatch(param: &ParsedQueryParam, value_type: &str) -> ApiError {
+    ApiError::OperatorMismatch(format!(
+        "Operator '{}' is not applicable to computed field '{}' (type: {value_type})",
+        param.operator, param.field
+    ))
 }
 
 pub async fn list_shared_definitions(

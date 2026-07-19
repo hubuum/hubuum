@@ -36,7 +36,7 @@ Notes:
 | Endpoints | Filter fields | Sort fields | Default sort | Notes |
 | --- | --- | --- | --- | --- |
 | `/api/v1/classes` | `id`, `collections`, `name`, `description`, `validate_schema`, `json_schema`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `collections`, `collection_id`, `created_at`, `updated_at` | `id.asc` | `json_schema` is only filterable, not sortable |
-| `/api/v1/classes/{class_id}/` | `id`, `name`, `description`, `collections`, `collection_id`, `classes`, `class_id`, `json_data`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `collections`, `collection_id`, `classes`, `class_id`, `created_at`, `updated_at` | `id.asc` | path constrains the result to a single class |
+| `/api/v1/classes/{class_id}/` | `id`, `name`, `description`, `collections`, `collection_id`, `classes`, `class_id`, `json_data`, `created_at`, `updated_at`, `permissions`, `computed.shared.<key>`, `computed.personal.<key>` | `id`, `name`, `description`, `collections`, `collection_id`, `classes`, `class_id`, `created_at`, `updated_at`, `computed.shared.<key>`, `computed.personal.<key>` | `id.asc` | path constrains the result to a single class; `computed.public.<key>` and `computed.private.<key>` are aliases |
 | `/api/v1/classes/{class_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | collection permission rows for the class's collection |
 
 ## Relations

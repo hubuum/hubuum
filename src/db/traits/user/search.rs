@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::traits::authz::scope_allows;
+use crate::db::traits::computed_field::computed_filter_predicate;
 use crate::db::traits::search::JsonPredicateExt;
 use crate::models::RelatedObjectForRootRow;
 use crate::models::permissions::PermissionFilter;
@@ -584,6 +585,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
+            if param.field.computed_sort().is_some() {
+                base_query = base_query.filter(computed_filter_predicate(&param)?);
+                continue;
+            }
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, object_id),
@@ -693,6 +698,10 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
+            if param.field.computed_sort().is_some() {
+                base_query = base_query.filter(computed_filter_predicate(&param)?);
+                continue;
+            }
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, object_id),

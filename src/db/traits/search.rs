@@ -26,14 +26,17 @@ impl QueryId for JsonSqlPredicate {
 impl QueryFragment<Pg> for JsonSqlPredicate {
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, Pg>) -> QueryResult<()> {
         out.unsafe_to_cache_prepared();
-        let mut sql_parts = self.sql.split('?');
-        if let Some(first_part) = sql_parts.next() {
-            out.push_sql(first_part);
-        }
-        for (bind_variable, sql_part) in self.bind_variables.iter().zip(sql_parts) {
+        let mut start = 0;
+        for (bind_variable, offset) in self
+            .bind_variables
+            .iter()
+            .zip(bind_placeholder_offsets(&self.sql))
+        {
+            out.push_sql(&self.sql[start..offset]);
             bind_sql_value(&mut out, bind_variable)?;
-            out.push_sql(sql_part);
+            start = offset + 1;
         }
+        out.push_sql(&self.sql[start..]);
         Ok(())
     }
 }
@@ -54,15 +57,11 @@ fn bind_sql_value<'b>(out: &mut AstPass<'_, 'b, Pg>, value: &'b SQLValue) -> Que
     }
 }
 
-fn into_predicate(component: SQLComponent) -> Result<JsonSqlPredicate, ApiError> {
-    let placeholder_count = component
-        .sql
-        .chars()
-        .filter(|character| *character == '?')
-        .count();
+pub(crate) fn dynamic_sql_predicate(component: SQLComponent) -> Result<JsonSqlPredicate, ApiError> {
+    let placeholder_count = bind_placeholder_offsets(&component.sql).len();
     if placeholder_count != component.bind_variables.len() {
         return Err(ApiError::InternalServerError(format!(
-            "JSON SQL predicate has {placeholder_count} placeholders but {} bind values",
+            "Dynamic SQL predicate has {placeholder_count} placeholders but {} bind values",
             component.bind_variables.len()
         )));
     }
@@ -72,12 +71,46 @@ fn into_predicate(component: SQLComponent) -> Result<JsonSqlPredicate, ApiError>
     })
 }
 
+fn bind_placeholder_offsets(sql: &str) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    let mut characters = sql.char_indices().peekable();
+    let mut in_single_quoted_string = false;
+    while let Some((offset, character)) = characters.next() {
+        if character == '\'' {
+            if in_single_quoted_string
+                && characters
+                    .peek()
+                    .is_some_and(|(_, next_character)| *next_character == '\'')
+            {
+                let _ = characters.next();
+            } else {
+                in_single_quoted_string = !in_single_quoted_string;
+            }
+        } else if character == '?' && !in_single_quoted_string {
+            offsets.push(offset);
+        }
+    }
+    offsets
+}
+
 pub trait JsonPredicateExt {
     fn as_json_predicate(&self) -> Result<JsonSqlPredicate, ApiError>;
 }
 
 impl JsonPredicateExt for ParsedQueryParam {
     fn as_json_predicate(&self) -> Result<JsonSqlPredicate, ApiError> {
-        into_predicate(self.as_json_sql()?)
+        dynamic_sql_predicate(self.as_json_sql()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bind_placeholder_offsets;
+
+    #[test]
+    fn bind_placeholders_ignore_question_marks_in_sql_strings() {
+        let sql = "scope = '[{\"path\":\"/answer?\"}]' AND escaped = 'it''s?' AND value = ?";
+
+        assert_eq!(bind_placeholder_offsets(sql), vec![sql.len() - 1]);
     }
 }

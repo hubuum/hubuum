@@ -103,6 +103,23 @@ Notes:
   null, and pagination semantics. Requests that use computed sorting support at
   most two explicit sort fields.
 
+## Computed filtering
+
+Class object lists can filter enabled computed fields with the same scope and
+alias names used for computed sorting:
+
+```text
+GET /api/v1/classes/12/?computed.shared.display_name__icontains=edge
+GET /api/v1/classes/12/?computed.personal.my_priority__between=10,20
+```
+
+Computed filtering is intentionally endpoint-specific. Other list endpoints
+reject computed filter parameters instead of silently ignoring them. The
+definition's declared result type determines which operators and values are
+valid. String, numeric, boolean, object, and array definitions are supported;
+see [Computed fields](computed_fields.md#reading-computed-values) for the full
+operator table, visibility rules, null behavior, and JSON value syntax.
+
 ## Cursor pagination
 
 List endpoints use cursor pagination.

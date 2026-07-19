@@ -12,7 +12,7 @@ use crate::can;
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::computed_field::{
     enrich_objects_with_computed, enrich_objects_with_computed_sort_snapshot,
-    resolve_computed_sort_fields,
+    resolve_computed_query_fields,
 };
 use crate::db::traits::history::{
     class_as_of, class_history_paginated_with_total_count, object_as_of,
@@ -52,8 +52,9 @@ use crate::traits::{BackendContext, CanDelete, CanSave, CanUpdate, Search, SelfA
 use crate::utilities::extensions::CustomStringExtensions;
 
 use crate::models::search::{
-    FilterField, QueryOptions, QueryOptionsExt, QueryParamsExt, SearchOperator,
-    parse_query_parameter, parse_query_parameter_with_passthrough,
+    FilterField, QueryOptions, QueryParamsExt, SearchOperator, parse_query_parameter,
+    parse_query_parameter_with_computed_filters_and_passthrough,
+    parse_query_parameter_with_passthrough,
 };
 use crate::models::traits::class_relation::ToHubuumClasses;
 use crate::pagination::{Page, finalize_page};
@@ -71,6 +72,32 @@ fn parse_computed_include(query_string: &str) -> Result<(QueryOptions, bool), Ap
         }
     };
     Ok((params, include_computed))
+}
+
+fn parse_computed_object_list_query(query_string: &str) -> Result<(QueryOptions, bool), ApiError> {
+    let (params, mut passthrough) =
+        parse_query_parameter_with_computed_filters_and_passthrough(query_string, &["include"])?;
+    let include_computed = match passthrough.remove("include") {
+        None => false,
+        Some(values) if values.as_slice() == ["computed"] => true,
+        Some(_) => {
+            return Err(ApiError::BadRequest(
+                "include accepts exactly one value: computed".to_string(),
+            ));
+        }
+    };
+    Ok((params, include_computed))
+}
+
+fn scope_object_query_to_class(params: &mut QueryOptions, class: &HubuumClassID) {
+    params
+        .filters
+        .retain(|param| !matches!(param.field, FilterField::ClassId | FilterField::Classes));
+    params.filters.add_filter(
+        FilterField::ClassId,
+        SearchOperator::Equals { is_negated: false },
+        &class.id().to_string(),
+    );
 }
 
 async fn computed_personal_owner(
@@ -1006,6 +1033,7 @@ async fn get_related_class_graph(
     get,
     path = "/api/v1/classes/{class_id}/",
     tag = "classes",
+    description = "Lists objects in the path class. Enabled computed fields can be filtered with computed.shared.<key> or computed.personal.<key> using the normal __operator suffix, and sorted with the same names.",
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Class ID"),
@@ -1030,11 +1058,11 @@ async fn get_objects_in_class(
     let class = class_id.into_inner();
     let query_string = req.query_string();
 
-    let (mut params, include_computed) = parse_computed_include(query_string)?;
+    let (mut params, include_computed) = parse_computed_object_list_query(query_string)?;
 
-    // Manually add a filter for the class itself to restrict the search
-    // in order to restrict the search to the class.
-    params.ensure_filter_exact(FilterField::ClassId, &class);
+    // The path is authoritative even if the caller supplied a conflicting
+    // class_id/classes filter.
+    scope_object_query_to_class(&mut params, &class);
 
     debug!(
         message = "Getting objects in class",
@@ -1043,11 +1071,15 @@ async fn get_objects_in_class(
         query = query_string
     );
 
-    let computed_sorting = params
-        .sort
+    let computed_querying = params
+        .filters
         .iter()
-        .any(|sort| sort.field.computed_sort().is_some());
-    if computed_sorting {
+        .any(|filter| filter.field.computed_sort().is_some())
+        || params
+            .sort
+            .iter()
+            .any(|sort| sort.field.computed_sort().is_some());
+    if computed_querying {
         if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
             return serialized_object_page(
                 Page::<HubuumObjectComputedResponse> {
@@ -1072,10 +1104,11 @@ async fn get_objects_in_class(
             );
         }
         let personal_owner = computed_personal_owner(&pool, &requestor, &class_instance).await?;
-        let computed_sort_snapshot = resolve_computed_sort_fields(
+        let computed_sort_snapshot = resolve_computed_query_fields(
             pool.db_pool(),
             class_instance.id,
             personal_owner,
+            &mut params.filters,
             &mut params.sort,
         )
         .await?;

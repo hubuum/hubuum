@@ -926,6 +926,129 @@ mod tests {
     }
 
     #[rstest::rstest]
+    #[case::string("string", serde_json::json!("Edge.EXAMPLE"), "__icontains", "edge.example")]
+    #[case::number("number", serde_json::json!(12.5), "__between", "12,13")]
+    #[case::boolean("boolean", serde_json::json!(true), "", "true")]
+    #[case::object(
+        "object",
+        serde_json::json!({"role": "edge", "priority": 2}),
+        "__contains",
+        r#"{"role":"edge"}"#
+    )]
+    #[case::array(
+        "array",
+        serde_json::json!(["edge", "core"]),
+        "__array_length",
+        "2"
+    )]
+    #[tokio::test]
+    async fn class_object_list_filters_by_computed_result_type(
+        #[future(awt)] test_context: TestContext,
+        #[case] result_type: &str,
+        #[case] filter_value: serde_json::Value,
+        #[case] operator: &str,
+        #[case] expected: &str,
+    ) {
+        let mut fixture = fixture(&test_context, "computed filtering").await;
+        let matching = NewHubuumObject {
+            collection_id: fixture.class.collection_id,
+            hubuum_class_id: fixture.class.id,
+            name: test_context.scoped_name("computed filter match"),
+            description: "Computed filtering match".to_string(),
+            data: serde_json::json!({"filter_value": filter_value}),
+        }
+        .save_without_events(&test_context.pool)
+        .await
+        .unwrap();
+        fixture.objects.push(matching.clone());
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            serde_json::json!({
+                "key": "filter_value",
+                "label": "Filter value",
+                "operation": {"type": "first_non_null", "paths": ["/filter_value"]},
+                "result_type": result_type
+            }),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+
+        let encoded =
+            percent_encoding::utf8_percent_encode(expected, percent_encoding::NON_ALPHANUMERIC);
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?computed.shared.filter_value{operator}={encoded}",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert_eq!(
+            header_value(&response, TOTAL_COUNT_HEADER).as_deref(),
+            Some("1")
+        );
+        let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0]["id"], matching.id);
+        assert!(objects[0].get("computed").is_none());
+
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn computed_query_replaces_conflicting_class_filters_with_path_class(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let path_fixture = fixture(&test_context, "computed path class").await;
+        let other_class = NewHubuumClass {
+            collection_id: path_fixture.class.collection_id,
+            name: test_context.scoped_name("computed conflicting class"),
+            description: "Conflicting computed query class".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save_without_events(&test_context.pool)
+        .await
+        .unwrap();
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", path_fixture.class.id),
+            definition("display_name"),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?class_id={}&sort=computed.shared.display_name",
+                path_fixture.class.id, other_class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0]["id"], path_fixture.objects[0].id);
+
+        finish_active_rebuild(&test_context, path_fixture.class.id).await;
+        other_class
+            .delete_without_events(&test_context.pool)
+            .await
+            .unwrap();
+        path_fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
     #[tokio::test]
     async fn shared_computed_sort_is_stable_across_cursor_pages(
         #[future(awt)] test_context: TestContext,
@@ -1547,6 +1670,25 @@ mod tests {
                 })
                 .collect::<Vec<_>>(),
             vec![0, 1, 2]
+        );
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.normal_token,
+            &format!(
+                "/api/v1/classes/{}/?computed.personal.my_present_count__gte=1&sort=id",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let filtered: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|object| object["id"].as_i64().unwrap() as i32)
+                .collect::<Vec<_>>(),
+            vec![fixture.objects[0].id, fixture.objects[1].id]
         );
 
         let response = get_request(

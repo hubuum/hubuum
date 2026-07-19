@@ -36,6 +36,23 @@ pub fn parse_query_parameter_with_passthrough(
     qs: &str,
     passthrough_keys: &[&str],
 ) -> Result<(QueryOptions, HashMap<String, Vec<String>>), QueryError> {
+    parse_query_parameter_with_options(qs, passthrough_keys, false)
+}
+
+/// Parse query parameters for a resource that explicitly supports filtering
+/// on computed fields.
+pub fn parse_query_parameter_with_computed_filters_and_passthrough(
+    qs: &str,
+    passthrough_keys: &[&str],
+) -> Result<(QueryOptions, HashMap<String, Vec<String>>), QueryError> {
+    parse_query_parameter_with_options(qs, passthrough_keys, true)
+}
+
+fn parse_query_parameter_with_options(
+    qs: &str,
+    passthrough_keys: &[&str],
+    allow_computed_filters: bool,
+) -> Result<(QueryOptions, HashMap<String, Vec<String>>), QueryError> {
     let mut filters = Vec::new();
     let mut sort = Vec::new();
     let mut limit = None;
@@ -96,7 +113,7 @@ pub fn parse_query_parameter_with_passthrough(
                     sort.push(SortParam { field, descending });
                 }
             }
-            _ => filters.push(parse_single_filter(&key, &value)?),
+            _ => filters.push(parse_single_filter(&key, &value, allow_computed_filters)?),
         }
     }
 
@@ -160,7 +177,11 @@ fn parse_boolean(value: &str) -> Result<bool, QueryError> {
     }
 }
 
-fn parse_single_filter(key: &str, value: &str) -> Result<ParsedQueryParam, QueryError> {
+fn parse_single_filter(
+    key: &str,
+    value: &str,
+    allow_computed_filters: bool,
+) -> Result<ParsedQueryParam, QueryError> {
     let field_and_op: Vec<&str> = key.splitn(2, "__").collect();
 
     if value.is_empty() {
@@ -175,8 +196,15 @@ fn parse_single_filter(key: &str, value: &str) -> Result<ParsedQueryParam, Query
         SearchOperator::new_from_string(field_and_op[1])?
     };
 
+    let field = FilterField::from_str(field_and_op[0])?;
+    if field.computed_sort().is_some() && !allow_computed_filters {
+        return Err(QueryError::BadRequest(
+            "Computed fields are not supported in this filter context".to_string(),
+        ));
+    }
+
     Ok(ParsedQueryParam {
-        field: FilterField::from_str(field_and_op[0])?,
+        field,
         operator,
         value: value.to_string(),
     })
@@ -235,6 +263,19 @@ pub enum ComputedSortValueType {
     Array,
 }
 
+impl ComputedSortValueType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Number => "number",
+            Self::Integer => "integer",
+            Self::Boolean => "boolean",
+            Self::Object => "object",
+            Self::Array => "array",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ComputedSortField {
     scope: ComputedFieldScope,
@@ -258,7 +299,7 @@ impl ComputedSortField {
                 });
         if !valid_key {
             return Err(QueryError::BadRequest(format!(
-                "Invalid computed field sort key: '{key}'"
+                "Invalid computed field key: '{key}'"
             )));
         }
         Ok(Self {
@@ -1028,11 +1069,47 @@ mod tests {
     }
 
     #[test]
+    fn rejects_computed_filters_without_resource_opt_in() {
+        let error = parse_query_parameter("computed.shared.display_name=router").unwrap_err();
+
+        assert_eq!(
+            error,
+            QueryError::BadRequest(
+                "Computed fields are not supported in this filter context".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resource_opt_in_accepts_computed_filters_and_aliases() {
+        let (parsed, _) = parse_query_parameter_with_computed_filters_and_passthrough(
+            "computed.public.display_name__icontains=edge&computed.private.rank__gte=2",
+            &[],
+        )
+        .unwrap();
+
+        let shared = parsed.filters[0].field.computed_sort().unwrap();
+        assert_eq!(shared.scope(), ComputedFieldScope::Shared);
+        assert_eq!(shared.key(), "display_name");
+        assert_eq!(
+            parsed.filters[0].operator,
+            SearchOperator::IContains { is_negated: false }
+        );
+        let personal = parsed.filters[1].field.computed_sort().unwrap();
+        assert_eq!(personal.scope(), ComputedFieldScope::Personal);
+        assert_eq!(personal.key(), "rank");
+        assert_eq!(
+            parsed.filters[1].operator,
+            SearchOperator::Gte { is_negated: false }
+        );
+    }
+
+    #[test]
     fn rejects_invalid_computed_sort_keys() {
         let error = parse_query_parameter("sort=computed.shared.Invalid-Key").unwrap_err();
         assert_eq!(
             error.to_string(),
-            "Invalid computed field sort key: 'Invalid-Key'"
+            "Invalid computed field key: 'Invalid-Key'"
         );
     }
 
