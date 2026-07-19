@@ -326,7 +326,6 @@ impl ComputedSortValueType {
 pub struct ComputedSortField {
     scope: ComputedFieldScope,
     key: String,
-    sql_expression: Option<String>,
     value_type: Option<ComputedSortValueType>,
 }
 
@@ -351,7 +350,6 @@ impl ComputedSortField {
         Ok(Self {
             scope,
             key: key.to_string(),
-            sql_expression: None,
             value_type: None,
         })
     }
@@ -364,13 +362,8 @@ impl ComputedSortField {
         &self.key
     }
 
-    pub fn resolve(&mut self, sql_expression: String, value_type: ComputedSortValueType) {
-        self.sql_expression = Some(sql_expression);
+    pub fn resolve(&mut self, value_type: ComputedSortValueType) {
         self.value_type = Some(value_type);
-    }
-
-    pub fn sql_expression(&self) -> Option<&str> {
-        self.sql_expression.as_deref()
     }
 
     pub const fn value_type(&self) -> Option<ComputedSortValueType> {

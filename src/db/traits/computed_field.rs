@@ -18,10 +18,9 @@ use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::search::{
-    ComputedFieldScope, ComputedSortValueType, Operator, ParsedQueryParam, ParsedQueryParamExt,
-    QueryOptions, SQLComponent, SQLValue, SortParam,
+    ComputedFieldScope, ComputedSortValueType, FilterField, Operator, ParsedQueryParam,
+    ParsedQueryParamExt, QueryOptions, SQLComponent, SQLValue, SortParam,
 };
-use crate::models::traits::object::object_computed_sql_field;
 use crate::models::{
     COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ClassComputationState,
     ComputedFieldDefinition, ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest,
@@ -30,6 +29,7 @@ use crate::models::{
     NewObjectComputedData, NewTaskEventRecord, ObjectComputedData, SharedComputedScopeResponse,
     TaskKind, TaskRecord, TaskStatus, ValidatedComputedFieldPatch,
 };
+use crate::pagination::{CursorSqlMapping, CursorSqlType, OwnedCursorSqlField};
 
 const COMPUTED_CLASS_LOCK_NAMESPACE: i32 = 1_133_113;
 const REINDEX_PAYLOAD_TYPE: &str = "computed_fields";
@@ -172,15 +172,6 @@ pub async fn class_computation_state_for(
     .unwrap_or_else(|| ClassComputationState::ready_without_definitions(target_class_id)))
 }
 
-pub async fn resolve_computed_sort_fields(
-    pool: &DbPool,
-    target_class_id: i32,
-    personal_owner_id: Option<i32>,
-    sorts: &mut [SortParam],
-) -> Result<ComputedSortSnapshot, ApiError> {
-    resolve_computed_query_fields(pool, target_class_id, personal_owner_id, &mut [], sorts).await
-}
-
 pub async fn resolve_computed_query_fields(
     pool: &DbPool,
     target_class_id: i32,
@@ -279,6 +270,7 @@ pub async fn resolve_computed_query_fields(
             && personal_owner_id.is_some_and(|owner_id| definition.is_personal_for(owner_id))
     }))?;
 
+    let mut query_fields = HashMap::new();
     for field in filters
         .iter_mut()
         .filter_map(|filter| filter.field.computed_sort_mut())
@@ -303,15 +295,24 @@ pub async fn resolve_computed_query_fields(
             ComputedFieldScope::Shared => &shared_scope_sql,
             ComputedFieldScope::Personal => &personal_scope_sql,
         };
-        field.resolve(
-            computed_sort_value_sql(definition, scope_sql, state.evaluation_revision),
-            value_type,
+        query_fields.insert(
+            (field.scope(), field.key().to_string()),
+            ResolvedComputedQueryField {
+                sql_expression: computed_sort_value_sql(
+                    definition,
+                    scope_sql,
+                    state.evaluation_revision,
+                ),
+                value_type,
+            },
         );
+        field.resolve(value_type);
     }
     Ok(ComputedSortSnapshot {
         class_id: target_class_id,
         definitions,
         state,
+        query_fields,
     })
 }
 
@@ -338,6 +339,73 @@ pub struct ComputedSortSnapshot {
     class_id: i32,
     definitions: Vec<ComputedFieldDefinition>,
     state: ClassComputationState,
+    query_fields: HashMap<(ComputedFieldScope, String), ResolvedComputedQueryField>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedComputedQueryField {
+    sql_expression: String,
+    value_type: ComputedSortValueType,
+}
+
+impl ComputedSortSnapshot {
+    fn query_field(&self, field: &FilterField) -> Result<&ResolvedComputedQueryField, ApiError> {
+        let computed = field.computed_sort().ok_or_else(|| {
+            ApiError::InternalServerError(format!("Field '{field}' is not a computed field"))
+        })?;
+        self.query_fields
+            .get(&(computed.scope(), computed.key().to_string()))
+            .ok_or_else(|| {
+                ApiError::InternalServerError(format!(
+                    "Computed field '{}' was not resolved",
+                    computed.key()
+                ))
+            })
+    }
+}
+
+pub(crate) fn object_cursor_sql_fields(
+    sorts: &[SortParam],
+    snapshot: &ComputedSortSnapshot,
+) -> Result<Vec<OwnedCursorSqlField>, ApiError> {
+    sorts
+        .iter()
+        .map(|sort| {
+            if sort.field.computed_sort().is_none() {
+                return <HubuumObject as CursorSqlMapping>::sql_field(&sort.field).map(Into::into);
+            }
+            object_computed_sql_field(&sort.field, snapshot)
+        })
+        .collect()
+}
+
+fn object_computed_sql_field(
+    field: &FilterField,
+    snapshot: &ComputedSortSnapshot,
+) -> Result<OwnedCursorSqlField, ApiError> {
+    let resolved = snapshot.query_field(field)?;
+    let expression = &resolved.sql_expression;
+    let (expression, sql_type) = match resolved.value_type {
+        ComputedSortValueType::String => {
+            (format!("({expression} #>> '{{}}')"), CursorSqlType::String)
+        }
+        ComputedSortValueType::Number | ComputedSortValueType::Integer => (
+            format!("try_numeric({expression} #>> '{{}}')"),
+            CursorSqlType::Numeric,
+        ),
+        ComputedSortValueType::Boolean => (
+            format!("try_boolean({expression} #>> '{{}}')"),
+            CursorSqlType::Boolean,
+        ),
+        ComputedSortValueType::Object | ComputedSortValueType::Array => {
+            (expression.clone(), CursorSqlType::Json)
+        }
+    };
+    Ok(OwnedCursorSqlField {
+        expression,
+        sql_type,
+        nullable: true,
+    })
 }
 
 fn computed_scope_sql<'a>(
@@ -396,6 +464,7 @@ fn computed_sort_value_sql(
 
 pub(crate) fn computed_filter_predicate(
     param: &ParsedQueryParam,
+    snapshot: &ComputedSortSnapshot,
 ) -> Result<JsonSqlPredicate, ApiError> {
     if param.value.contains('\0') {
         return Err(ApiError::BadRequest(format!(
@@ -412,7 +481,7 @@ pub(crate) fn computed_filter_predicate(
             computed.key()
         ))
     })?;
-    let field = object_computed_sql_field(&param.field)?;
+    let field = object_computed_sql_field(&param.field, snapshot)?;
     let (operator, negated) = param.operator.op_and_neg();
 
     let component = if operator == Operator::IsNull {

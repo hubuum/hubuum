@@ -1069,14 +1069,15 @@ async fn get_objects_in_class(
         query = query_string
     );
 
-    let computed_querying = params
+    let computed_filtering = params
         .filters
         .iter()
-        .any(|filter| filter.field.computed_sort().is_some())
-        || params
-            .sort
-            .iter()
-            .any(|sort| sort.field.computed_sort().is_some());
+        .any(|filter| filter.field.computed_sort().is_some());
+    let computed_sorting = params
+        .sort
+        .iter()
+        .any(|sort| sort.field.computed_sort().is_some());
+    let computed_querying = computed_filtering || computed_sorting;
     if computed_querying {
         if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
             return serialized_object_page(
@@ -1111,41 +1112,54 @@ async fn get_objects_in_class(
         )
         .await?;
 
-        let total_count;
-        let enriched = if pool.permission_backend().supports_sql_visibility_pushdown() {
-            total_count = if params.include_total {
-                user.count_objects(&pool, count_query_options(&params), requestor.scopes())
-                    .await?
+        let (objects, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown()
+        {
+            let total_count = if params.include_total {
+                user.count_objects_with_computed_query_from_backend(
+                    pool.db_pool(),
+                    count_query_options(&params),
+                    requestor.scopes(),
+                    &computed_sort_snapshot,
+                )
+                .await?
             } else {
                 SKIPPED_TOTAL_COUNT
             };
-            let search_params = prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?;
+            let search_params = if computed_sorting {
+                prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?
+            } else {
+                prepare_db_pagination::<HubuumObject>(&params)?
+            };
             let objects = user
-                .search_objects(&pool, search_params, requestor.scopes())
+                .search_objects_with_computed_query_from_backend(
+                    pool.db_pool(),
+                    search_params,
+                    requestor.scopes(),
+                    &computed_sort_snapshot,
+                )
                 .await?;
-            enrich_objects_with_computed_sort_snapshot(
-                pool.db_pool(),
-                objects,
-                personal_owner,
-                &computed_sort_snapshot,
-            )
-            .await?
+            (objects, total_count)
         } else {
             // PostgreSQL remains the source of truth for computed ordering,
             // including its database collation for strings nested in JSONB.
             // The policy backend filters that ordered candidate stream but
             // never re-sorts it in memory.
-            let search_params = prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?;
+            let search_params = if computed_sorting {
+                prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?
+            } else {
+                prepare_db_pagination::<HubuumObject>(&params)?
+            };
             let mut candidate_options = search_params.clone();
             candidate_options.limit = None;
             candidate_options.cursor = None;
             candidate_options.include_total = false;
             let candidates = user
-                .search_objects_from_backend_with_admin_status(
-                    &pool,
+                .search_objects_with_computed_query_from_backend_with_admin_status(
+                    pool.db_pool(),
                     candidate_options.clone(),
                     true,
                     None,
+                    &computed_sort_snapshot,
                 )
                 .await?;
             let principal = PrincipalRef::load(&pool, user).await?;
@@ -1166,16 +1180,17 @@ async fn get_objects_in_class(
                 },
             )
             .await?;
-            total_count = known_count_or_skipped(&params, authorized.len() as i64);
+            let total_count = known_count_or_skipped(&params, authorized.len() as i64);
 
             let mut authorized = if search_params.cursor.is_some() {
                 candidate_options.cursor = search_params.cursor.clone();
                 let after_cursor = user
-                    .search_objects_from_backend_with_admin_status(
-                        &pool,
+                    .search_objects_with_computed_query_from_backend_with_admin_status(
+                        pool.db_pool(),
                         candidate_options,
                         true,
                         None,
+                        &computed_sort_snapshot,
                     )
                     .await?;
                 let after_cursor_ids = after_cursor
@@ -1192,31 +1207,41 @@ async fn get_objects_in_class(
             if let Some(limit) = search_params.limit {
                 authorized.truncate(limit);
             }
-            enrich_objects_with_computed_sort_snapshot(
+            (authorized, total_count)
+        };
+        if include_computed || computed_sorting {
+            let enriched = enrich_objects_with_computed_sort_snapshot(
                 pool.db_pool(),
-                authorized,
+                objects,
                 personal_owner,
                 &computed_sort_snapshot,
             )
-            .await?
-        };
-        let page = finalize_page(enriched, &params)?;
-        if include_computed {
-            return serialized_object_page(page, total_count, effective_page_limit(&params)?, true);
+            .await?;
+            let page = finalize_page(enriched, &params)?;
+            if include_computed {
+                return serialized_object_page(
+                    page,
+                    total_count,
+                    effective_page_limit(&params)?,
+                    true,
+                );
+            }
+            return serialized_object_page(
+                Page {
+                    items: page
+                        .items
+                        .into_iter()
+                        .map(|response| response.object)
+                        .collect(),
+                    next_cursor: page.next_cursor,
+                },
+                total_count,
+                effective_page_limit(&params)?,
+                true,
+            );
         }
-        return serialized_object_page(
-            Page {
-                items: page
-                    .items
-                    .into_iter()
-                    .map(|response| response.object)
-                    .collect(),
-                next_cursor: page.next_cursor,
-            },
-            total_count,
-            effective_page_limit(&params)?,
-            true,
-        );
+        let page = finalize_page(objects, &params)?;
+        return serialized_object_page(page, total_count, effective_page_limit(&params)?, true);
     }
 
     let (objects, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {

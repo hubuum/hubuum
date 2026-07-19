@@ -11,8 +11,7 @@ use crate::models::collection::{Collection, CollectionID};
 use crate::models::object::{
     HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, UpdateHubuumObject,
 };
-use crate::models::search::{ComputedSortValueType, FilterField, SortParam};
-use crate::pagination::OwnedCursorSqlField;
+use crate::models::search::{FilterField, SortParam};
 use crate::traits::accessors::{ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{
@@ -21,61 +20,6 @@ use crate::traits::{
     ValidateAgainstSchema,
 };
 use tracing::debug;
-
-pub(crate) fn object_cursor_sql_fields(
-    sorts: &[SortParam],
-) -> Result<Vec<OwnedCursorSqlField>, ApiError> {
-    sorts
-        .iter()
-        .map(|sort| {
-            if sort.field.computed_sort().is_none() {
-                return <HubuumObject as CursorSqlMapping>::sql_field(&sort.field).map(Into::into);
-            }
-            object_computed_sql_field(&sort.field)
-        })
-        .collect()
-}
-
-pub(crate) fn object_computed_sql_field(
-    field: &FilterField,
-) -> Result<OwnedCursorSqlField, ApiError> {
-    let computed = field.computed_sort().ok_or_else(|| {
-        ApiError::InternalServerError(format!("Field '{field}' is not a computed field"))
-    })?;
-    let expression = computed.sql_expression().ok_or_else(|| {
-        ApiError::InternalServerError(format!(
-            "Computed field '{}' was not resolved",
-            computed.key()
-        ))
-    })?;
-    let value_type = computed.value_type().ok_or_else(|| {
-        ApiError::InternalServerError(format!(
-            "Computed field '{}' has no resolved result type",
-            computed.key()
-        ))
-    })?;
-    let (expression, sql_type) = match value_type {
-        ComputedSortValueType::String => {
-            (format!("({expression} #>> '{{}}')"), CursorSqlType::String)
-        }
-        ComputedSortValueType::Number | ComputedSortValueType::Integer => (
-            format!("try_numeric({expression} #>> '{{}}')"),
-            CursorSqlType::Numeric,
-        ),
-        ComputedSortValueType::Boolean => (
-            format!("try_boolean({expression} #>> '{{}}')"),
-            CursorSqlType::Boolean,
-        ),
-        ComputedSortValueType::Object | ComputedSortValueType::Array => {
-            (expression.to_string(), CursorSqlType::Json)
-        }
-    };
-    Ok(OwnedCursorSqlField {
-        expression,
-        sql_type,
-        nullable: true,
-    })
-}
 
 pub async fn check_if_object_in_class<C, O>(
     pool: &DbPool,

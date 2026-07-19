@@ -171,30 +171,6 @@ where
     paginate_in_memory_with_values(items, query_options, &sorts, cursor_values.as_deref())
 }
 
-/// Apply in-memory pagination after validating cursor values against the
-/// resolved SQL field types used by the equivalent database-backed query.
-pub fn paginate_in_memory_with_fields<T>(
-    items: Vec<T>,
-    query_options: &QueryOptions,
-    fields: &[OwnedCursorSqlField],
-) -> Result<Vec<T>, ApiError>
-where
-    T: CursorPaginated,
-{
-    let sorts = normalized_sorts::<T>(&query_options.sort)?;
-    if fields.len() != sorts.len() {
-        return Err(ApiError::InternalServerError(
-            "cursor SQL field count does not match sort count".to_string(),
-        ));
-    }
-    let cursor_values = query_options
-        .cursor
-        .as_deref()
-        .map(|cursor| decode_and_validate_cursor_values(cursor, &sorts, fields))
-        .transpose()?;
-    paginate_in_memory_with_values(items, query_options, &sorts, cursor_values.as_deref())
-}
-
 fn paginate_in_memory_with_values<T>(
     mut items: Vec<T>,
     query_options: &QueryOptions,
@@ -1308,7 +1284,7 @@ mod tests {
     }
 
     #[test]
-    fn in_memory_cursor_rejects_a_value_with_the_wrong_resolved_type() {
+    fn sql_cursor_filter_rejects_a_value_with_the_wrong_resolved_type() {
         let sort = SortParam {
             field: FilterField::Id,
             descending: false,
@@ -1327,9 +1303,12 @@ mod tests {
             include_total: true,
         };
 
-        let error =
-            paginate_in_memory_with_fields(Vec::<Collection>::new(), &query_options, &fields)
-                .unwrap_err();
+        let error = cursor_filter_sql_for_fields(
+            &query_options.sort,
+            &fields,
+            query_options.cursor.as_deref(),
+        )
+        .unwrap_err();
 
         assert_eq!(
             error,
@@ -1344,7 +1323,7 @@ mod tests {
     #[case::nul_key(r#"{"\u0000":true}"#)]
     #[case::integral_overflow(r#"{"value":1e131072}"#)]
     #[case::fractional_overflow(r#"{"value":1e-16384}"#)]
-    fn in_memory_json_cursor_rejects_values_postgres_jsonb_cannot_represent(#[case] json: &str) {
+    fn sql_json_cursor_rejects_values_postgres_jsonb_cannot_represent(#[case] json: &str) {
         let sort = SortParam {
             field: FilterField::Id,
             descending: false,
@@ -1364,9 +1343,12 @@ mod tests {
             include_total: true,
         };
 
-        let error =
-            paginate_in_memory_with_fields(Vec::<Collection>::new(), &query_options, &fields)
-                .unwrap_err();
+        let error = cursor_filter_sql_for_fields(
+            &query_options.sort,
+            &fields,
+            query_options.cursor.as_deref(),
+        )
+        .unwrap_err();
 
         assert_eq!(
             error,

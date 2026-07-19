@@ -6,7 +6,7 @@ mod tests {
     use crate::db::traits::computed_field::{
         class_computation_state_for, create_personal_definition, create_shared_definition,
         enrich_objects_with_computed_sort_snapshot, execute_computed_reindex_task,
-        request_class_rebuild, resolve_computed_sort_fields, source_data_sha256,
+        request_class_rebuild, resolve_computed_query_fields, source_data_sha256,
     };
     use crate::db::traits::task::recover_expired_task_leases;
     use crate::db::{capture_queries, with_connection};
@@ -20,7 +20,7 @@ mod tests {
     use crate::tests::api_operations::{get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
-        TestContext, create_test_group, create_test_service_account, scoped_token,
+        TestContext, create_test_group, create_test_service_account, get_test_pool, scoped_token,
         service_account_token, test_context,
     };
     use crate::traits::{CanDelete, CanSave, PermissionController, SelfAccessors};
@@ -156,132 +156,132 @@ mod tests {
     }
 
     #[rstest::rstest]
+    #[case::first_non_null(
+        serde_json::json!({"type": "first_non_null", "paths": ["/missing", "/value"]}),
+        "string",
+        serde_json::json!({"value": "chosen"})
+    )]
+    #[case::sum(
+        serde_json::json!({"type": "sum", "paths": ["/left", "/right"]}),
+        "number",
+        serde_json::json!({"left": 2.25, "right": 3.75})
+    )]
+    #[case::sum_rounds_a_power_boundary(
+        serde_json::json!({"type": "sum", "paths": ["/left", "/right"]}),
+        "number",
+        serde_json::from_str(
+            r#"{"left": 9999999999999999999999999999999999, "right": 6}"#
+        )
+        .unwrap()
+    )]
+    #[case::sum_preserves_precision(
+        serde_json::json!({"type": "sum", "paths": ["/value"]}),
+        "number",
+        serde_json::from_str(r#"{"value": 9.999999999999999999999999999999999}"#).unwrap()
+    )]
+    #[case::average(
+        serde_json::json!({"type": "average", "paths": ["/left", "/right"]}),
+        "number",
+        serde_json::json!({"left": 2, "right": 5})
+    )]
+    #[case::repeating_average(
+        serde_json::json!({"type": "average", "paths": ["/left", "/right", "/third"]}),
+        "number",
+        serde_json::json!({"left": 1, "right": 0, "third": 0})
+    )]
+    #[case::minimum(
+        serde_json::json!({"type": "min", "paths": ["/left", "/right"]}),
+        "integer",
+        serde_json::json!({"left": -4, "right": 9})
+    )]
+    #[case::maximum(
+        serde_json::json!({"type": "max", "paths": ["/left", "/right"]}),
+        "integer",
+        serde_json::json!({"left": -4, "right": 9})
+    )]
+    #[case::all_present(
+        serde_json::json!({"type": "all_present", "paths": ["/false", "/zero"]}),
+        "boolean",
+        serde_json::json!({"false": false, "zero": 0})
+    )]
+    #[case::any_present(
+        serde_json::json!({"type": "any_present", "paths": ["/missing", "/empty"]}),
+        "boolean",
+        serde_json::json!({"empty": ""})
+    )]
+    #[case::count_present(
+        serde_json::json!({"type": "count_present", "paths": ["/missing", "/null", "/array"]}),
+        "integer",
+        serde_json::json!({"null": null, "array": []})
+    )]
+    #[case::all_present_and_equal(
+        serde_json::json!({"type": "all_present_and_equal", "paths": ["/left", "/right"]}),
+        "boolean",
+        serde_json::json!({"left": {"a": 1, "b": [2]}, "right": {"b": [2], "a": 1.0}})
+    )]
+    #[case::object_result(
+        serde_json::json!({"type": "first_non_null", "paths": ["/value"]}),
+        "object",
+        serde_json::json!({"value": {"nested": true}})
+    )]
+    #[case::array_result(
+        serde_json::json!({"type": "first_non_null", "paths": ["/value"]}),
+        "array",
+        serde_json::json!({"value": [3, 2, 1]})
+    )]
+    #[case::non_numeric_operand(
+        serde_json::json!({"type": "sum", "paths": ["/left", "/right"]}),
+        "number",
+        serde_json::json!({"left": 2, "right": "invalid"})
+    )]
     #[tokio::test]
     async fn database_sort_evaluator_matches_the_domain_operation_catalog(
-        #[future(awt)] test_context: TestContext,
+        #[case] operation: serde_json::Value,
+        #[case] result_type: &str,
+        #[case] data: serde_json::Value,
     ) {
-        let cases = [
-            (
-                serde_json::json!({"type": "first_non_null", "paths": ["/missing", "/value"]}),
-                "string",
-                serde_json::json!({"value": "chosen"}),
-            ),
-            (
-                serde_json::json!({"type": "sum", "paths": ["/left", "/right"]}),
-                "number",
-                serde_json::json!({"left": 2.25, "right": 3.75}),
-            ),
-            (
-                serde_json::json!({"type": "sum", "paths": ["/left", "/right"]}),
-                "number",
-                serde_json::from_str(r#"{"left": 9999999999999999999999999999999999, "right": 6}"#)
-                    .unwrap(),
-            ),
-            (
-                serde_json::json!({"type": "sum", "paths": ["/value"]}),
-                "number",
-                serde_json::from_str(r#"{"value": 9.999999999999999999999999999999999}"#).unwrap(),
-            ),
-            (
-                serde_json::json!({"type": "average", "paths": ["/left", "/right"]}),
-                "number",
-                serde_json::json!({"left": 2, "right": 5}),
-            ),
-            (
-                serde_json::json!({"type": "average", "paths": ["/left", "/right", "/third"]}),
-                "number",
-                serde_json::json!({"left": 1, "right": 0, "third": 0}),
-            ),
-            (
-                serde_json::json!({"type": "min", "paths": ["/left", "/right"]}),
-                "integer",
-                serde_json::json!({"left": -4, "right": 9}),
-            ),
-            (
-                serde_json::json!({"type": "max", "paths": ["/left", "/right"]}),
-                "integer",
-                serde_json::json!({"left": -4, "right": 9}),
-            ),
-            (
-                serde_json::json!({"type": "all_present", "paths": ["/false", "/zero"]}),
-                "boolean",
-                serde_json::json!({"false": false, "zero": 0}),
-            ),
-            (
-                serde_json::json!({"type": "any_present", "paths": ["/missing", "/empty"]}),
-                "boolean",
-                serde_json::json!({"empty": ""}),
-            ),
-            (
-                serde_json::json!({"type": "count_present", "paths": ["/missing", "/null", "/array"]}),
-                "integer",
-                serde_json::json!({"null": null, "array": []}),
-            ),
-            (
-                serde_json::json!({"type": "all_present_and_equal", "paths": ["/left", "/right"]}),
-                "boolean",
-                serde_json::json!({"left": {"a": 1, "b": [2]}, "right": {"b": [2], "a": 1.0}}),
-            ),
-            (
-                serde_json::json!({"type": "first_non_null", "paths": ["/value"]}),
-                "object",
-                serde_json::json!({"value": {"nested": true}}),
-            ),
-            (
-                serde_json::json!({"type": "first_non_null", "paths": ["/value"]}),
-                "array",
-                serde_json::json!({"value": [3, 2, 1]}),
-            ),
-            (
-                serde_json::json!({"type": "sum", "paths": ["/left", "/right"]}),
-                "number",
-                serde_json::json!({"left": 2, "right": "invalid"}),
-            ),
-        ];
-
-        for (operation, result_type, data) in cases {
-            let definition: hubuum_computed_fields::Definition =
-                serde_json::from_value(serde_json::json!({
-                    "key": "sort_value",
-                    "label": "Sort value",
-                    "operation": operation.clone(),
-                    "result_type": result_type,
-                    "enabled": true
-                }))
-                .unwrap();
-            let expected = hubuum_computed_fields::evaluate(
-                &data,
-                &[definition],
-                1,
-                hubuum_computed_fields::EvaluationLimits::standard(),
-            )
-            .unwrap()
-            .values
-            .remove("sort_value")
+        let definition: hubuum_computed_fields::Definition =
+            serde_json::from_value(serde_json::json!({
+                "key": "sort_value",
+                "label": "Sort value",
+                "operation": operation.clone(),
+                "result_type": result_type,
+                "enabled": true
+            }))
             .unwrap();
-            let actual = with_connection(&test_context.pool, async |conn| {
-                diesel::sql_query("SELECT hubuum_computed_sort_value($1, $2, $3) AS value")
-                    .bind::<diesel::sql_types::Jsonb, _>(&data)
-                    .bind::<diesel::sql_types::Jsonb, _>(&operation)
-                    .bind::<diesel::sql_types::Text, _>(result_type)
-                    .get_result::<ComputedSortSqlValue>(conn)
-                    .await
-            })
-            .await
-            .unwrap()
-            .value
-            .unwrap_or(serde_json::Value::Null);
-            match (actual.as_number(), expected.as_number()) {
-                (Some(actual), Some(expected)) => assert_eq!(
-                    hubuum_computed_fields::compare_decimal_strings(
-                        &actual.to_string(),
-                        &expected.to_string()
-                    ),
-                    Some(std::cmp::Ordering::Equal),
-                    "operation: {operation}, data: {data}, actual: {actual}, expected: {expected}"
+        let expected = hubuum_computed_fields::evaluate(
+            &data,
+            &[definition],
+            1,
+            hubuum_computed_fields::EvaluationLimits::standard(),
+        )
+        .unwrap()
+        .values
+        .remove("sort_value")
+        .unwrap();
+        let pool = get_test_pool();
+        let actual = with_connection(pool.get_ref(), async |conn| {
+            diesel::sql_query("SELECT hubuum_computed_sort_value($1, $2, $3) AS value")
+                .bind::<diesel::sql_types::Jsonb, _>(&data)
+                .bind::<diesel::sql_types::Jsonb, _>(&operation)
+                .bind::<diesel::sql_types::Text, _>(result_type)
+                .get_result::<ComputedSortSqlValue>(conn)
+                .await
+        })
+        .await
+        .unwrap()
+        .value
+        .unwrap_or(serde_json::Value::Null);
+        match (actual.as_number(), expected.as_number()) {
+            (Some(actual), Some(expected)) => assert_eq!(
+                hubuum_computed_fields::compare_decimal_strings(
+                    &actual.to_string(),
+                    &expected.to_string()
                 ),
-                _ => assert_eq!(actual, expected, "operation: {operation}, data: {data}"),
-            }
+                Some(std::cmp::Ordering::Equal),
+                "operation: {operation}, data: {data}, actual: {actual}, expected: {expected}"
+            ),
+            _ => assert_eq!(actual, expected, "operation: {operation}, data: {data}"),
         }
     }
 
@@ -1003,6 +1003,56 @@ mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
+    async fn computed_filter_without_computed_response_skips_page_enrichment(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let fixture = fixture(&test_context, "computed filter raw response").await;
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            definition("display_name"),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+
+        let endpoint = format!(
+            "/api/v1/classes/{}/?computed.shared.display_name__icontains=inventory&sort=id&include_total=false",
+            fixture.class.id
+        );
+        let (raw_response, raw_queries) = capture_queries(get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &endpoint,
+        ))
+        .await;
+        let raw_response = assert_response_status(raw_response, StatusCode::OK).await;
+        let raw_objects: Vec<serde_json::Value> = test::read_body_json(raw_response).await;
+        assert_eq!(raw_objects.len(), 1);
+        assert!(raw_objects[0].get("computed").is_none());
+
+        let (enriched_response, enriched_queries) = capture_queries(get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("{endpoint}&include=computed"),
+        ))
+        .await;
+        let enriched_response = assert_response_status(enriched_response, StatusCode::OK).await;
+        let enriched_objects: Vec<serde_json::Value> =
+            test::read_body_json(enriched_response).await;
+        assert_eq!(enriched_objects.len(), 1);
+        assert!(enriched_objects[0].get("computed").is_some());
+        assert_eq!(
+            enriched_queries.domain_queries(),
+            raw_queries.domain_queries() + 1
+        );
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
     async fn computed_filter_preserves_double_underscores_in_definition_keys(
         #[future(awt)] test_context: TestContext,
     ) {
@@ -1523,10 +1573,11 @@ mod tests {
         let mut params =
             parse_query_parameter("sort=computed.shared.display_name&limit=1&include_total=false")
                 .unwrap();
-        let snapshot = resolve_computed_sort_fields(
+        let snapshot = resolve_computed_query_fields(
             &test_context.pool,
             fixture.class.id,
             Some(test_context.admin_user.id),
+            &mut params.filters,
             &mut params.sort,
         )
         .await

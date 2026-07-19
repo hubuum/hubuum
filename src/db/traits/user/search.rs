@@ -1,11 +1,12 @@
 use super::*;
 use crate::db::traits::authz::scope_allows;
-use crate::db::traits::computed_field::computed_filter_predicate;
+use crate::db::traits::computed_field::{
+    ComputedSortSnapshot, computed_filter_predicate, object_cursor_sql_fields,
+};
 use crate::db::traits::search::JsonPredicateExt;
 use crate::models::RelatedObjectForRootRow;
 use crate::models::permissions::PermissionFilter;
 use crate::models::search::{ParsedQueryParamExt, SQLValue};
-use crate::models::traits::object::object_cursor_sql_fields;
 use crate::traits::PrincipalIdAccessor;
 use crate::traits::{CursorPaginated, CursorSqlMapping};
 use crate::utilities::extensions::CustomStringExtensions;
@@ -528,6 +529,60 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         is_admin: bool,
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
+        self.search_objects_from_backend_with_query_plan(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            None,
+        )
+        .await
+    }
+
+    async fn search_objects_with_computed_query_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
+        snapshot: &ComputedSortSnapshot,
+    ) -> Result<Vec<HubuumObject>, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.search_objects_from_backend_with_query_plan(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            Some(snapshot),
+        )
+        .await
+    }
+
+    async fn search_objects_with_computed_query_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+        scopes: Option<&[Permissions]>,
+        snapshot: &ComputedSortSnapshot,
+    ) -> Result<Vec<HubuumObject>, ApiError> {
+        self.search_objects_from_backend_with_query_plan(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            Some(snapshot),
+        )
+        .await
+    }
+
+    async fn search_objects_from_backend_with_query_plan(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+        scopes: Option<&[Permissions]>,
+        computed_snapshot: Option<&ComputedSortSnapshot>,
+    ) -> Result<Vec<HubuumObject>, ApiError> {
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
@@ -586,7 +641,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
             if param.field.computed_sort().is_some() {
-                base_query = base_query.filter(computed_filter_predicate(&param)?);
+                let snapshot = computed_snapshot.ok_or_else(|| {
+                    ApiError::InternalServerError(
+                        "Computed object filtering requires a resolved query plan".to_string(),
+                    )
+                })?;
+                base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
                 continue;
             }
             let operator = param.operator.clone();
@@ -627,7 +687,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             .iter()
             .any(|sort| sort.field.computed_sort().is_some());
         if computed_sorting {
-            let sql_fields = object_cursor_sql_fields(&query_options.sort)?;
+            let snapshot = computed_snapshot.ok_or_else(|| {
+                ApiError::InternalServerError(
+                    "Computed object sorting requires a resolved query plan".to_string(),
+                )
+            })?;
+            let sql_fields = object_cursor_sql_fields(&query_options.sort, snapshot)?;
             crate::apply_query_options_with_fields!(base_query, query_options, sql_fields);
         } else {
             crate::apply_query_options!(base_query, query_options, HubuumObject);
@@ -661,6 +726,36 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&[Permissions]>,
+    ) -> Result<i64, ApiError> {
+        self.count_objects_from_backend_with_query_plan(pool, query_options, is_admin, scopes, None)
+            .await
+    }
+
+    async fn count_objects_with_computed_query_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
+        snapshot: &ComputedSortSnapshot,
+    ) -> Result<i64, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.count_objects_from_backend_with_query_plan(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            Some(snapshot),
+        )
+        .await
+    }
+
+    async fn count_objects_from_backend_with_query_plan(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+        scopes: Option<&[Permissions]>,
+        computed_snapshot: Option<&ComputedSortSnapshot>,
     ) -> Result<i64, ApiError> {
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
@@ -699,7 +794,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
             if param.field.computed_sort().is_some() {
-                base_query = base_query.filter(computed_filter_predicate(&param)?);
+                let snapshot = computed_snapshot.ok_or_else(|| {
+                    ApiError::InternalServerError(
+                        "Computed object filtering requires a resolved query plan".to_string(),
+                    )
+                })?;
+                base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
                 continue;
             }
             let operator = param.operator.clone();
