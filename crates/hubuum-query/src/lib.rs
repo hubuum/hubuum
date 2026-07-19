@@ -104,13 +104,7 @@ fn parse_query_parameter_with_options(
             }
             "sort" | "order_by" => {
                 for piece in value.split(',') {
-                    let descending = piece.starts_with('-') || piece.ends_with(".desc");
-                    let field_name = piece
-                        .trim_start_matches('-')
-                        .trim_end_matches(".asc")
-                        .trim_end_matches(".desc");
-                    let field = FilterField::from_str(field_name)?;
-                    sort.push(SortParam { field, descending });
+                    sort.push(parse_sort_param(piece)?);
                 }
             }
             _ => filters.push(parse_single_filter(&key, &value, allow_computed_filters)?),
@@ -127,6 +121,35 @@ fn parse_query_parameter_with_options(
         },
         passthrough,
     ))
+}
+
+fn parse_sort_param(piece: &str) -> Result<SortParam, QueryError> {
+    let leading_descending = piece.starts_with('-');
+    let field_name = piece.trim_start_matches('-');
+
+    // A complete computed name takes precedence over direction suffix syntax.
+    // This keeps valid keys named `asc` or `desc` addressable. Callers can use
+    // the leading `-` form or append another suffix to set their direction.
+    match FilterField::from_str(field_name) {
+        Ok(field) => Ok(SortParam {
+            field,
+            descending: leading_descending,
+        }),
+        Err(original_error) => {
+            let (field_name, suffix_descending) =
+                if let Some(field_name) = field_name.strip_suffix(".asc") {
+                    (field_name, false)
+                } else if let Some(field_name) = field_name.strip_suffix(".desc") {
+                    (field_name, true)
+                } else {
+                    return Err(original_error);
+                };
+            Ok(SortParam {
+                field: FilterField::from_str(field_name)?,
+                descending: leading_descending || suffix_descending,
+            })
+        }
+    }
 }
 
 fn decode_query_parameter_pairs(qs: &str) -> Result<Vec<(String, String)>, QueryError> {
@@ -1072,6 +1095,39 @@ mod tests {
         assert_eq!(personal.scope(), ComputedFieldScope::Personal);
         assert_eq!(personal.key(), "my_rank");
         assert!(parsed.sort[1].descending);
+    }
+
+    #[test]
+    fn computed_sort_preserves_a_key_named_asc() {
+        let parsed = parse_query_parameter("sort=computed.shared.asc").unwrap();
+
+        let computed = parsed.sort[0].field.computed_sort().unwrap();
+        assert_eq!(computed.key(), "asc");
+        assert!(!parsed.sort[0].descending);
+    }
+
+    #[test]
+    fn computed_sort_preserves_a_key_named_desc() {
+        let parsed = parse_query_parameter("sort=computed.shared.desc").unwrap();
+
+        let computed = parsed.sort[0].field.computed_sort().unwrap();
+        assert_eq!(computed.key(), "desc");
+        assert!(!parsed.sort[0].descending);
+    }
+
+    #[test]
+    fn computed_sort_direction_can_be_set_for_direction_named_keys() {
+        let parsed = parse_query_parameter(
+            "sort=computed.shared.asc.desc,-computed.shared.desc,computed.personal.desc.asc",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.sort[0].field.computed_sort().unwrap().key(), "asc");
+        assert!(parsed.sort[0].descending);
+        assert_eq!(parsed.sort[1].field.computed_sort().unwrap().key(), "desc");
+        assert!(parsed.sort[1].descending);
+        assert_eq!(parsed.sort[2].field.computed_sort().unwrap().key(), "desc");
+        assert!(!parsed.sort[2].descending);
     }
 
     #[test]

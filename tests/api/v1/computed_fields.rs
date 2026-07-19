@@ -1192,6 +1192,44 @@ mod tests {
     }
 
     #[rstest::rstest]
+    #[case::ascending_key("asc", "computed.shared.asc")]
+    #[case::descending_key("desc", "-computed.shared.desc")]
+    #[tokio::test]
+    async fn computed_sort_accepts_keys_named_after_directions(
+        #[future(awt)] test_context: TestContext,
+        #[case] key: &str,
+        #[case] sort: &str,
+    ) {
+        let fixture = fixture(&test_context, "computed direction key sorting").await;
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            definition(key),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?include=computed&sort={sort}",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+        assert_eq!(objects.len(), 1);
+        assert!(objects[0]["computed"]["shared"]["values"][key].is_string());
+
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
     #[case::existing("display_name")]
     #[case::missing("hidden_definition")]
     #[tokio::test]
