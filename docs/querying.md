@@ -338,6 +338,102 @@ Examples:
 
 If the JSON path does not exist, or the stored value cannot be interpreted as the requested JSON type, the filter does not match, but it does not fail the request.
 
+## Grouped object queries
+
+Object grouping is a separate read-only collection resource, so the normal
+object-list response remains unchanged:
+
+```text
+GET /api/v1/classes/{class_id}/object-groups
+```
+
+Supply `group_by` once for each ordered dimension. Between one and three
+dimensions are required. Supported dimensions are:
+
+- `name`
+- `description`
+- `collection_id`
+- `created_at`
+- `updated_at`
+- `json_data.<path>`, using the existing comma-separated nested path grammar
+- `computed.shared.<key>`
+- `computed.personal.<key>`
+
+For example, this request first applies the normal object filter and then
+groups the remaining readable objects by country and shared lifecycle:
+
+```text
+GET /api/v1/classes/12/object-groups?json_data__equals=status=active&group_by=json_data.location,country&group_by=computed.shared.lifecycle&sort=object_count.desc&limit=50
+```
+
+Grouping by `created_at` or `updated_at` uses the exact timestamp. The endpoint
+does not accept date bucketing, arbitrary expressions, or object-list sort
+fields. Group ordering is selected with one of:
+
+- `sort=dimensions.asc`, the default;
+- `sort=dimensions.desc`;
+- `sort=object_count.asc`;
+- `sort=object_count.desc`.
+
+Count ordering always appends the complete dimension tuple in ascending order
+as a deterministic tie-breaker. Cursor tokens are bound to the selected
+dimensions and sort; changing either while following a cursor returns
+`400 Bad Request`.
+
+Each response row is self-describing:
+
+```json
+[
+  {
+    "dimensions": [
+      {
+        "field": "json_data.location,country",
+        "state": "value",
+        "value": "NO"
+      },
+      {
+        "field": "computed.shared.lifecycle",
+        "state": "value",
+        "value": "production"
+      }
+    ],
+    "object_count": 37
+  }
+]
+```
+
+Dimension states have explicit meanings:
+
+- `value`: the dimension has a value; `value` preserves its JSON type;
+- `null`: the JSON path or computed field produced JSON `null`;
+- `missing`: a `json_data` path does not exist;
+- `unavailable`: a computed field could not produce a value.
+
+JSON objects and arrays retain their structure and group by PostgreSQL JSONB
+equality. The `value` member is omitted for `null`, `missing`, and
+`unavailable` states.
+
+Authorization and all supplied object filters are applied before aggregation.
+This rule also applies when the permission backend cannot push visibility into
+SQL: candidate object IDs are authorized first, and only allowed IDs are sent
+to PostgreSQL for grouping. Hidden objects therefore cannot affect bucket
+counts or group cardinality.
+
+Shared computed dimensions use the current definition revision, stored values
+when fresh, and the same live fallback and repair behavior as computed object
+reads. Personal dimensions require a human owner with `ReadClass` access and
+can only use that owner's enabled definitions. Service accounts cannot group by
+personal fields. Unknown, disabled, inaccessible, and wrong-class selectors
+return `400 Bad Request`. Responses depending on computed state include
+`Cache-Control: private, no-store`.
+
+Pagination headers describe group rows, not source objects:
+
+- `X-Total-Count` is the total number of groups and is omitted when
+  `include_total=false`;
+- `X-Next-Cursor` is present when another group page exists;
+- `X-Page-Limit` is the effective group page size.
+
 ## Contextual endpoints
 
 Some list endpoints derive part of the query from the path.
@@ -347,6 +443,7 @@ Examples:
 - `/api/v1/classes/{class_id}/related/classes` always constrains the result to classes connected to the class in the path
 - `/api/v1/classes/{class_id}/related/relations` always constrains the result to direct relations touching the class in the path
 - `/api/v1/classes/{class_id}/` always constrains the result to objects in that class
+- `/api/v1/classes/{class_id}/object-groups` always constrains source objects to that class and returns aggregate rows
 - `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` always constrains the result to objects connected to the object in the path
 - `/api/v1/classes/{class_id}/objects/{object_id}/related/relations` always constrains the result to direct relations touching the object in the path
 
@@ -368,7 +465,7 @@ The shared query interface is currently used by:
 - user lists, user tokens, and user groups
 - group lists and group members
 - collection lists and collection permission listings
-- class lists, class permissions, connected-class listings, direct class-relation listings, and objects in class
+- class lists, class permissions, connected-class listings, direct class-relation listings, objects in class, and grouped objects in class
 - global class relation and object relation lists
 - connected-object listings
 - direct related-relation listings

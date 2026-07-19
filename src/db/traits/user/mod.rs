@@ -23,12 +23,14 @@ use crate::{date_search, numeric_search, string_search, trace_query};
 
 mod auth;
 mod membership;
+mod object_group;
 mod permissions;
 pub(crate) mod search;
 mod unified_search;
 
 pub use auth::*;
 pub use membership::*;
+pub use object_group::*;
 pub use permissions::*;
 pub use search::*;
 pub use unified_search::*;

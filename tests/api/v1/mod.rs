@@ -11,6 +11,7 @@ pub mod exports;
 pub mod groups;
 pub mod imports;
 pub mod objects;
+pub mod object_groups;
 pub mod principal_settings;
 pub mod querying;
 pub mod relations;

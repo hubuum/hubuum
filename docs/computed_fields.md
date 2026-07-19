@@ -249,6 +249,21 @@ defer cache repair to the rebuild path, keeping list requests read-only.
 Declarative indexing is not yet supported. Unsupported computed operators and
 mismatched filter value types fail with `400 Bad Request`.
 
+Computed fields can be dimensions of the separate grouped-object resource:
+
+```text
+GET /api/v1/classes/{class_id}/object-groups?group_by=computed.shared.lifecycle
+GET /api/v1/classes/{class_id}/object-groups?group_by=computed.personal.priority
+```
+
+Shared grouping uses current-revision materializations with the same live
+fallback and guarded repair as enriched reads. Personal grouping is limited to
+the requesting human owner's enabled definitions and still requires
+`ReadClass`; service accounts are rejected. Evaluation failures use one
+documented `unavailable` bucket. Computed grouping responses use
+`Cache-Control: private, no-store`. See [querying.md](querying.md#grouped-object-queries)
+for selectors, response states, sorting, and cursor semantics.
+
 ## Materialization freshness
 
 Shared values are written in the same database transaction as each canonical
