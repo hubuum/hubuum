@@ -2,6 +2,29 @@ use super::*;
 
 #[rstest::rstest]
 #[tokio::test]
+async fn class_name_route_matches_the_id_route(#[future(awt)] test_context: TestContext) {
+    let fixture = fixture(&test_context, "class name route").await;
+    let query = "group_by=json_data.status&sort=object_count.desc";
+    let by_id = aggregate_rows(&test_context, &fixture, &test_context.admin_token, query).await;
+    let encoded_name = percent_encoding::utf8_percent_encode(
+        &fixture.class.name,
+        percent_encoding::NON_ALPHANUMERIC,
+    );
+    let by_name = aggregate_rows_at_path(
+        &test_context,
+        &test_context.admin_token,
+        &format!("/api/v1/classes/by-name/{encoded_name}/object-aggregates"),
+        query,
+    )
+    .await;
+
+    assert_eq!(by_name, by_id);
+
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
 async fn route_class_constraint_prevents_a_conflicting_filter_from_escaping_the_route(
     #[future(awt)] test_context: TestContext,
 ) {

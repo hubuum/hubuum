@@ -100,6 +100,7 @@ async fn fixture(context: &TestContext, label: &str) -> ObjectFixture {
         .unwrap()
 }
 
+#[derive(Debug, PartialEq)]
 struct AggregatePage {
     rows: Vec<serde_json::Value>,
     total_count: Option<String>,
@@ -112,15 +113,22 @@ async fn aggregate_rows(
     token: &str,
     query: &str,
 ) -> AggregatePage {
-    let response = get_request(
-        &context.pool,
+    aggregate_rows_at_path(
+        context,
         token,
-        &format!(
-            "/api/v1/classes/{}/object-aggregates?{query}",
-            fixture.class.id
-        ),
+        &format!("/api/v1/classes/{}/object-aggregates", fixture.class.id),
+        query,
     )
-    .await;
+    .await
+}
+
+async fn aggregate_rows_at_path(
+    context: &TestContext,
+    token: &str,
+    path: &str,
+    query: &str,
+) -> AggregatePage {
+    let response = get_request(&context.pool, token, &format!("{path}?{query}")).await;
     let response = assert_response_status(response, StatusCode::OK).await;
     let total_count = header_value(&response, TOTAL_COUNT_HEADER);
     let cache_control = header_value(&response, "Cache-Control");

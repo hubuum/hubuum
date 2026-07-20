@@ -11,9 +11,11 @@ use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::object_aggregate::parse_object_aggregate_query;
 use crate::models::search::QueryParamsExt;
+use crate::models::traits::ResolveClassTarget;
 use crate::models::{
-    HubuumClassID, ObjectAggregateAuthorization, ObjectAggregateBackendRequest,
-    ObjectAggregateCursorBudget, ObjectAggregateRow, ObjectAggregateTarget, Permissions, UserID,
+    ClassSelector, HubuumClassID, ObjectAggregateAuthorization, ObjectAggregateBackendRequest,
+    ObjectAggregateCursorBudget, ObjectAggregateRow, ObjectAggregateTarget, Permissions,
+    ResolvedClassTarget, UserID,
 };
 use crate::pagination::effective_page_limit;
 use crate::permissions::AppContext;
@@ -46,10 +48,54 @@ pub(crate) async fn get_object_aggregates(
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
+    let target = ClassSelector::by_id(class_id.into_inner())
+        .resolve_class_target(&pool)
+        .await?;
+    read_object_aggregates(pool, requestor, target, req).await
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/by-name/{class_name}/object-aggregates",
+    tag = "classes",
+    summary = "Aggregate objects in a class by class name",
+    description = "Name-addressed alias for permission-scoped object aggregation. Numeric-looking class names remain names.",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_name" = String, Path, description = "Globally unique class name"),
+        ("group_by" = Vec<String>, Query, description = "One to three repeated ordered dimensions: name, description, collection_id, created_at, updated_at, json_data.<comma-separated-path>, computed.shared.<key>, or computed.personal.<key>"),
+        ("sort" = Option<String>, Query, description = "Aggregate ordering: dimensions.asc, dimensions.desc, object_count.asc, or object_count.desc")
+    ),
+    responses(
+        (status = 200, description = "Permission-scoped aggregated object counts. Value states distinguish value, JSON null, a missing JSON path, and an unavailable computed result.", body = [ObjectAggregateRow]),
+        (status = 400, description = "Invalid dimension, path, sort, cursor, or computed selector", body = ApiErrorResponse),
+        (status = 413, description = "An aggregate value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate aggregates exceed their memory bounds", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/by-name/{class_name}/object-aggregates")]
+pub(crate) async fn get_object_aggregates_by_name(
+    pool: AppContext,
+    requestor: Authenticated,
+    class_name: web::Path<String>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let target = ClassSelector::by_name(class_name.into_inner())
+        .resolve_class_target(&pool)
+        .await?;
+    read_object_aggregates(pool, requestor, target, req).await
+}
+
+async fn read_object_aggregates(
+    pool: AppContext,
+    requestor: Authenticated,
+    class_target: ResolvedClassTarget,
+    req: HttpRequest,
+) -> Result<ApiResponse<Vec<ObjectAggregateRow>>, ApiError> {
     let user = &requestor.principal;
-    let class_id = class_id.into_inner();
-    let class = class_id.instance(&pool).await?;
-    let target = ObjectAggregateTarget::from_class(&class)?;
+    let class = class_target.class();
+    let aggregate_target = ObjectAggregateTarget::from_class(class)?;
     let query = parse_object_aggregate_query(req.query_string())?;
     let cursor_budget =
         ObjectAggregateCursorBudget::for_request_target(req.path(), req.query_string())?;
@@ -61,7 +107,7 @@ pub(crate) async fn get_object_aggregates(
             ));
         }
         Some(UserID::new(
-            computed_personal_owner(&pool, &requestor, &class)
+            computed_personal_owner(&pool, &requestor, class)
                 .await?
                 .ok_or_else(|| {
                     ApiError::BadRequest(
@@ -91,7 +137,7 @@ pub(crate) async fn get_object_aggregates(
 
     let computed = query.spec().has_computed_dimension();
     let effective_limit = effective_page_limit(query.query_options())?;
-    let mut request = ObjectAggregateBackendRequest::builder(target, query)
+    let mut request = ObjectAggregateBackendRequest::builder(aggregate_target, query)
         .authorization(authorization)
         .cursor_budget(cursor_budget);
     if let Some(owner_id) = personal_owner_id {

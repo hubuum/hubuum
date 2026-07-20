@@ -795,5 +795,5 @@ mod object_related;
 pub use class_objects::*;
 pub use class_related::*;
 pub use history_endpoints::*;
-pub(crate) use object_aggregates::get_object_aggregates;
+pub(crate) use object_aggregates::{get_object_aggregates, get_object_aggregates_by_name};
 pub use object_related::*;

@@ -18,6 +18,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(classes::get_related_objects_by_name)
         .service(classes::get_related_object_relations_by_name)
         .service(classes::get_related_object_graph_by_name)
+        .service(classes::get_object_aggregates_by_name)
         .service(computed_fields::get_shared_computed_fields)
         .service(computed_fields::create_shared_computed_field)
         .service(computed_fields::patch_shared_computed_field)

@@ -345,7 +345,11 @@ object-list response remains unchanged:
 
 ```text
 GET /api/v1/classes/{class_id}/object-aggregates
+GET /api/v1/classes/by-name/{class_name}/object-aggregates
 ```
+
+The explicit `by-name` alias applies the same query behavior while treating
+numeric-looking class names as names.
 
 Supply `group_by` once for each ordered dimension. Between one and three
 dimensions are required. Supported dimensions are:
