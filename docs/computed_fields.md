@@ -259,18 +259,23 @@ A stored shared materialization is stale when any of these conditions holds:
 - its class evaluation revision differs from the current revision;
 - its recorded class differs from the object's current class;
 - its SHA-256 digest differs from the canonical, recursively key-sorted object
-  `data` digest.
+  `data` digest;
+- its value keys differ from the enabled shared definitions, a value does not
+  match its definition's declared result type, or its stored error map is
+  invalid.
 
 This can happen during a definition rebuild, after an interrupted or failed
 rebuild, while restoring a backup, or after data was changed through an older
 writer that did not maintain the cache.
 
 Stale storage never makes an enriched response stale. Hubuum evaluates the
-current definitions against the returned raw data immediately, sets
-`materialization_stale` to `true`, and attempts a guarded read repair. The next
-read normally uses the repaired row. Repair failure is recorded in metrics but
-does not replace the correct live value with stale data. A manual rebuild is
-available for failed or deliberately refreshed classes.
+current definitions against the returned raw data immediately and sets
+`materialization_stale` to `true`. Ordinary `include=computed` reads attempt a
+guarded read repair, so the next read normally uses the repaired row; repair
+failure is recorded in metrics but does not replace the correct live value with
+stale data. Computed filter and sort list reads remain read-only and defer
+repair to the rebuild path. A manual rebuild is available for failed or
+deliberately refreshed classes.
 
 ## Backup, events, and metrics
 

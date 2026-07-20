@@ -25,9 +25,9 @@ use crate::models::{
     COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ClassComputationState,
     ComputedFieldDefinition, ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest,
     ComputedFieldErrorResponse, ComputedFieldMutationResponse, ComputedObjectScopesResponse,
-    ComputedScopeResponse, HubuumClass, HubuumObject, HubuumObjectComputedResponse,
-    NewObjectComputedData, NewTaskEventRecord, ObjectComputedData, SharedComputedScopeResponse,
-    TaskKind, TaskRecord, TaskStatus, ValidatedComputedFieldPatch,
+    ComputedResultType, ComputedScopeResponse, HubuumClass, HubuumObject,
+    HubuumObjectComputedResponse, NewObjectComputedData, NewTaskEventRecord, ObjectComputedData,
+    SharedComputedScopeResponse, TaskKind, TaskRecord, TaskStatus, ValidatedComputedFieldPatch,
 };
 use crate::pagination::{CursorSqlMapping, CursorSqlType, OwnedCursorSqlField};
 
@@ -302,7 +302,7 @@ pub async fn resolve_computed_query_fields(
                     definition,
                     scope_sql,
                     state.evaluation_revision,
-                ),
+                )?,
                 value_type,
             },
         );
@@ -427,7 +427,7 @@ fn computed_sort_value_sql(
     definition: &ComputedFieldDefinition,
     scope_sql: &str,
     evaluation_revision: i64,
-) -> String {
+) -> Result<String, ApiError> {
     let key = definition.key.replace('\'', "''");
     let live_value = format!(
         "NULLIF(\
@@ -439,9 +439,26 @@ fn computed_sort_value_sql(
         )"
     );
     if !definition.is_shared() {
-        return live_value;
+        return Ok(live_value);
     }
-    format!(
+    let cached_value = format!("sort_values.values -> '{key}'");
+    let cached_value_matches_type = match ComputedResultType::from_db(&definition.result_type)? {
+        ComputedResultType::String => format!("jsonb_typeof({cached_value}) = 'string'"),
+        ComputedResultType::Number => format!(
+            "jsonb_typeof({cached_value}) = 'number' \
+             AND hubuum_computed_numeric({cached_value}) IS NOT NULL"
+        ),
+        ComputedResultType::Integer => format!(
+            "jsonb_typeof({cached_value}) = 'number' \
+             AND hubuum_computed_numeric({cached_value}) IS NOT NULL \
+             AND trunc(hubuum_computed_numeric({cached_value})) = \
+                 hubuum_computed_numeric({cached_value})"
+        ),
+        ComputedResultType::Boolean => format!("jsonb_typeof({cached_value}) = 'boolean'"),
+        ComputedResultType::Object => format!("jsonb_typeof({cached_value}) = 'object'"),
+        ComputedResultType::Array => format!("jsonb_typeof({cached_value}) = 'array'"),
+    };
+    Ok(format!(
         "(SELECT CASE \
             WHEN sort_cache.present THEN sort_cache.value \
             ELSE {live_value} \
@@ -457,9 +474,10 @@ fn computed_sort_value_sql(
               AND sort_values.source_data_sha256 = \
                   hubuum_computed_source_sha256(hubuumobject.data) \
               AND jsonb_exists(sort_values.values, '{key}') \
+              AND ({cached_value} = 'null'::jsonb OR ({cached_value_matches_type})) \
           ) AS sort_cache ON TRUE)",
         definition.class_id
-    )
+    ))
 }
 
 pub(crate) fn computed_filter_predicate(
@@ -1552,21 +1570,75 @@ fn evaluation_maps(result: EvaluationResult) -> ResponseEvaluationMaps {
     )
 }
 
-fn stored_evaluation_maps(row: &ObjectComputedData) -> Result<ResponseEvaluationMaps, ApiError> {
-    Ok((
-        serde_json::from_value(row.values.clone()).map_err(|error| {
-            ApiError::InternalServerError(format!("Stored computed values are invalid: {error}"))
-        })?,
-        serde_json::from_value::<BTreeMap<String, hubuum_computed_fields::FieldError>>(
-            row.errors.clone(),
-        )
-        .map_err(|error| {
-            ApiError::InternalServerError(format!("Stored computed errors are invalid: {error}"))
-        })?
-        .into_iter()
-        .map(|(key, error)| (key, error.into()))
-        .collect(),
-    ))
+fn valid_stored_evaluation_maps(
+    row: &ObjectComputedData,
+    definitions: &[ComputedFieldDefinition],
+) -> Result<Option<ResponseEvaluationMaps>, ApiError> {
+    let Ok(values) =
+        serde_json::from_value::<BTreeMap<String, serde_json::Value>>(row.values.clone())
+    else {
+        return Ok(None);
+    };
+    let Ok(errors) = serde_json::from_value::<BTreeMap<String, hubuum_computed_fields::FieldError>>(
+        row.errors.clone(),
+    ) else {
+        return Ok(None);
+    };
+    let enabled = definitions
+        .iter()
+        .filter(|definition| definition.enabled)
+        .collect::<Vec<_>>();
+    if values.len() != enabled.len() {
+        return Ok(None);
+    }
+    for definition in &enabled {
+        let Some(value) = values.get(&definition.key) else {
+            return Ok(None);
+        };
+        let result_type = ComputedResultType::from_db(&definition.result_type)?;
+        if !computed_value_matches_result_type(value, result_type) {
+            return Ok(None);
+        }
+    }
+    let enabled_keys = enabled
+        .iter()
+        .map(|definition| definition.key.as_str())
+        .collect::<BTreeSet<_>>();
+    if errors.iter().any(|(key, _)| {
+        !enabled_keys.contains(key.as_str())
+            || !values.get(key).is_some_and(serde_json::Value::is_null)
+    }) {
+        return Ok(None);
+    }
+
+    Ok(Some((
+        values,
+        errors
+            .into_iter()
+            .map(|(key, error)| (key, error.into()))
+            .collect(),
+    )))
+}
+
+fn computed_value_matches_result_type(
+    value: &serde_json::Value,
+    result_type: ComputedResultType,
+) -> bool {
+    if value.is_null() {
+        return true;
+    }
+    match result_type {
+        ComputedResultType::String => value.is_string(),
+        ComputedResultType::Number => value.as_number().is_some_and(|number| {
+            hubuum_computed_fields::canonical_decimal_string(&number.to_string()).is_some()
+        }),
+        ComputedResultType::Integer => value.as_number().is_some_and(|number| {
+            hubuum_computed_fields::canonical_integer_string(&number.to_string()).is_some()
+        }),
+        ComputedResultType::Boolean => value.is_boolean(),
+        ComputedResultType::Object => value.is_object(),
+        ComputedResultType::Array => value.is_array(),
+    }
 }
 
 pub async fn enrich_objects_with_computed(
@@ -1725,16 +1797,22 @@ async fn enrich_objects_from_snapshot(
             .unwrap_or(&[]);
         let hash = source_data_sha256(&object.data)?;
         let stored = materialized.get(&object.id);
-        let fresh = definitions.is_empty()
-            || stored.is_some_and(|row| {
-                row.class_id == object.hubuum_class_id
+        let has_enabled_definitions = definitions.iter().any(|definition| definition.enabled);
+        let stored_maps = match stored {
+            Some(row)
+                if row.class_id == object.hubuum_class_id
                     && row.evaluation_revision == state.evaluation_revision
-                    && row.source_data_sha256 == hash
-            });
-        let (shared_values, shared_errors) = if definitions.is_empty() {
+                    && row.source_data_sha256 == hash =>
+            {
+                valid_stored_evaluation_maps(row, definitions)?
+            }
+            _ => None,
+        };
+        let fresh = !has_enabled_definitions || stored_maps.is_some();
+        let (shared_values, shared_errors) = if !has_enabled_definitions {
             (BTreeMap::new(), BTreeMap::new())
-        } else if fresh {
-            stored_evaluation_maps(stored.expect("fresh materialization exists"))?
+        } else if let Some(maps) = stored_maps {
+            maps
         } else {
             if matches!(repair, MaterializationRepair::Apply) {
                 stale_objects.push(object.clone());

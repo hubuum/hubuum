@@ -40,6 +40,12 @@ pub fn canonical_decimal_string(source: &str) -> Option<String> {
     Some(value.normalized().to_string())
 }
 
+pub fn canonical_integer_string(source: &str) -> Option<String> {
+    let canonical = canonical_decimal_string(source)?;
+    let value = BigDecimal::from_str(&canonical).ok()?;
+    decimal_is_integer(&value).then_some(canonical)
+}
+
 /// Release-owned safety limits applied to one evaluation scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EvaluationLimits {
@@ -964,6 +970,23 @@ mod tests {
         #[case] expected: Option<&str>,
     ) {
         assert_eq!(canonical_decimal_string(source).as_deref(), expected);
+    }
+
+    #[rstest]
+    #[case("1.0", Some("1"))]
+    #[case("1e3", Some("1000"))]
+    #[case("1.5", None)]
+    #[case("1e-1", None)]
+    #[case(
+        "1234567890123456789012345678901234",
+        Some("1234567890123456789012345678901234")
+    )]
+    #[case("1e309", None)]
+    fn integer_cursor_canonicalization_respects_evaluator_bounds(
+        #[case] source: &str,
+        #[case] expected: Option<&str>,
+    ) {
+        assert_eq!(canonical_integer_string(source).as_deref(), expected);
     }
 
     #[rstest]

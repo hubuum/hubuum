@@ -1543,6 +1543,105 @@ mod tests {
     }
 
     #[rstest::rstest]
+    #[case::missing_key(serde_json::json!({}), serde_json::json!({}))]
+    #[case::wrong_type(
+        serde_json::json!({"display_name": 42}),
+        serde_json::json!({})
+    )]
+    #[case::extra_key(
+        serde_json::json!({"display_name": "alpha.example", "retired": "secret"}),
+        serde_json::json!({})
+    )]
+    #[case::malformed_error(
+        serde_json::json!({"display_name": "alpha.example"}),
+        serde_json::json!({"display_name": "invalid"})
+    )]
+    #[tokio::test]
+    async fn shared_computed_sort_falls_back_for_an_invalid_fresh_materialization(
+        #[future(awt)] test_context: TestContext,
+        #[case] cached_values: serde_json::Value,
+        #[case] cached_errors: serde_json::Value,
+    ) {
+        let mut fixture = fixture(&test_context, "computed sorting invalid materialization").await;
+        let boundary = NewHubuumObject {
+            collection_id: fixture.class.collection_id,
+            hubuum_class_id: fixture.class.id,
+            name: test_context.scoped_name("alpha computed sort"),
+            description: "Computed sorting cursor boundary".to_string(),
+            data: serde_json::json!({"inventory": {"hostname": "alpha.example"}}),
+        }
+        .save_without_events(&test_context.pool)
+        .await
+        .unwrap();
+        fixture.objects.push(boundary.clone());
+        let response = post_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("/api/v1/classes/{}/computed-fields", fixture.class.id),
+            definition("display_name"),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+        finish_active_rebuild(&test_context, fixture.class.id).await;
+
+        with_connection(&test_context.pool, async |conn| {
+            use crate::schema::object_computed_data::dsl::{
+                errors, object_computed_data, object_id, values,
+            };
+            diesel::update(object_computed_data.filter(object_id.eq(boundary.id)))
+                .set((values.eq(cached_values), errors.eq(cached_errors)))
+                .execute(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?include=computed&sort=computed.shared.display_name&limit=1",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let cursor = header_value(&response, NEXT_CURSOR_HEADER).expect("next cursor");
+        let page: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+        assert_eq!(page[0]["id"], boundary.id);
+        assert_eq!(
+            page[0]["computed"]["shared"]["values"]["display_name"],
+            "alpha.example"
+        );
+        assert_eq!(
+            page[0]["computed"]["shared"]["values"]
+                .as_object()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(page[0]["computed"]["shared"]["materialization_stale"], true);
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?sort=computed.shared.display_name&limit=1&cursor={cursor}",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let page: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0]["id"], fixture.objects[0].id);
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
     #[tokio::test]
     async fn computed_sort_cursor_uses_the_resolved_definition_snapshot(
         #[future(awt)] test_context: TestContext,
