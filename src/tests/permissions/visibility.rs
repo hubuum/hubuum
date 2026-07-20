@@ -19,11 +19,28 @@ use crate::permissions::local::LocalPermissionBackend;
 use crate::permissions::types::{
     AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef,
 };
-use crate::permissions::visibility::paginate_authorized;
+use crate::permissions::visibility::{AuthorizedObjectIds, paginate_authorized};
 use crate::tests::{
     create_collection_fixture, create_test_group, create_test_user, get_pool_and_config,
 };
 use crate::utilities::auth::generate_random_password;
+
+#[test]
+fn authorized_object_ids_are_sorted_and_deduplicated() {
+    let ids = AuthorizedObjectIds::new([3, 1, 3, 2]).unwrap();
+
+    assert_eq!(ids.as_slice(), &[1, 2, 3]);
+}
+
+#[test]
+fn authorized_object_ids_reject_non_positive_values() {
+    let error = AuthorizedObjectIds::new([1, 0]).unwrap_err();
+
+    assert_eq!(
+        error,
+        ApiError::InternalServerError("Authorized object ids must be positive".to_string())
+    );
+}
 
 /// Wrapper that forces the slow-path branch by returning false from
 /// `supports_sql_visibility_pushdown`.

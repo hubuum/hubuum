@@ -1,0 +1,14 @@
+DROP FUNCTION IF EXISTS hubuum_computed_evaluate_scope(JSONB, JSONB);
+DROP FUNCTION IF EXISTS hubuum_computed_limit_result(JSONB, TEXT, TEXT);
+DROP FUNCTION IF EXISTS hubuum_computed_evaluate_field(JSONB, JSONB, TEXT, INTEGER);
+DROP TYPE IF EXISTS hubuum_computed_field_result;
+DROP FUNCTION IF EXISTS hubuum_computed_error(TEXT, TEXT, TEXT);
+DROP FUNCTION IF EXISTS hubuum_computed_values_equal(JSONB, JSONB, INTEGER);
+DROP TYPE IF EXISTS hubuum_computed_equality_result;
+DROP FUNCTION IF EXISTS hubuum_round_half_even(NUMERIC, INTEGER);
+DROP FUNCTION IF EXISTS hubuum_computed_materialization_valid(JSONB, JSONB, JSONB);
+DROP FUNCTION IF EXISTS hubuum_computed_numeric(JSONB);
+DROP FUNCTION IF EXISTS hubuum_computed_resolve_pointer(JSONB, TEXT, INTEGER);
+DROP TYPE IF EXISTS hubuum_computed_pointer_result;
+DROP FUNCTION IF EXISTS hubuum_computed_source_sha256(JSONB);
+DROP FUNCTION IF EXISTS hubuum_computed_canonical_json(JSONB);

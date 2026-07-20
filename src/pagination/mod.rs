@@ -15,6 +15,7 @@ pub const NEXT_CURSOR_HEADER: &str = "X-Next-Cursor";
 pub const PAGE_LIMIT_HEADER: &str = "X-Page-Limit";
 pub const TOTAL_COUNT_HEADER: &str = "X-Total-Count";
 pub const SKIPPED_TOTAL_COUNT: i64 = -1;
+pub const MAX_ENCODED_CURSOR_BYTES: usize = 64 * 1024;
 
 pub async fn exact_count_or_skipped(
     query_options: &QueryOptions,
@@ -155,22 +156,38 @@ where
 /// applied last; callers should pass the prepared `limit + 1` value so
 /// [`finalize_page`] can produce the next cursor normally.
 pub fn paginate_in_memory<T>(
-    mut items: Vec<T>,
+    items: Vec<T>,
     query_options: &QueryOptions,
 ) -> Result<Vec<T>, ApiError>
 where
     T: CursorPaginated,
 {
     let sorts = normalized_sorts::<T>(&query_options.sort)?;
+    let cursor_values = query_options
+        .cursor
+        .as_deref()
+        .map(|cursor| decode_cursor_values(cursor, &sorts))
+        .transpose()?;
+    paginate_in_memory_with_values(items, query_options, &sorts, cursor_values.as_deref())
+}
+
+fn paginate_in_memory_with_values<T>(
+    mut items: Vec<T>,
+    query_options: &QueryOptions,
+    sorts: &[SortParam],
+    cursor_values: Option<&[CursorValue]>,
+) -> Result<Vec<T>, ApiError>
+where
+    T: CursorPaginated,
+{
     items.sort_by(|left, right| {
-        compare_cursor_values(left, right, &sorts).unwrap_or(Ordering::Equal)
+        compare_cursor_values(left, right, sorts).unwrap_or(Ordering::Equal)
     });
 
-    if let Some(cursor) = query_options.cursor.as_deref() {
-        let cursor_values = decode_cursor_values(cursor, &sorts)?;
+    if let Some(cursor_values) = cursor_values {
         let mut filtered = Vec::with_capacity(items.len());
         for item in items {
-            if compare_item_to_values(&item, &cursor_values, &sorts)? == Ordering::Greater {
+            if compare_item_to_values(&item, cursor_values, sorts)? == Ordering::Greater {
                 filtered.push(item);
             }
         }
@@ -257,13 +274,26 @@ where
     T::sql_field(field)
 }
 
-pub fn order_sql_clause<T>(sort: &SortParam) -> Result<String, ApiError>
+impl From<CursorSqlField> for CursorSqlField<String> {
+    fn from(field: CursorSqlField) -> Self {
+        Self {
+            column: field.column.to_string(),
+            sql_type: field.sql_type,
+            nullable: field.nullable,
+        }
+    }
+}
+
+pub fn order_sql_clause_for_field<T>(sort: &SortParam, field: &CursorSqlField<T>) -> String
 where
-    T: CursorSqlMapping,
+    T: AsRef<str>,
 {
-    let field = cursor_sql_field::<T>(&sort.field)?;
+    order_sql_clause_for_expression(sort, field.expression(), field.nullable)
+}
+
+fn order_sql_clause_for_expression(sort: &SortParam, expression: &str, nullable: bool) -> String {
     let direction = if sort.descending { "DESC" } else { "ASC" };
-    let nulls = if field.nullable {
+    let nulls = if nullable {
         if sort.descending {
             " NULLS LAST"
         } else {
@@ -273,7 +303,19 @@ where
         ""
     };
 
-    Ok(format!("{} {}{}", field.column, direction, nulls))
+    format!("{expression} {direction}{nulls}")
+}
+
+pub fn order_sql_clause<T>(sort: &SortParam) -> Result<String, ApiError>
+where
+    T: CursorSqlMapping,
+{
+    let field = cursor_sql_field::<T>(&sort.field)?;
+    Ok(order_sql_clause_for_expression(
+        sort,
+        field.expression(),
+        field.nullable,
+    ))
 }
 
 pub fn cursor_filter_sql<T>(
@@ -287,11 +329,42 @@ where
         return Ok(None);
     };
 
-    let cursor_values = decode_cursor_values(cursor, sorts)?;
     let fields = sorts
         .iter()
         .map(|sort| cursor_sql_field::<T>(&sort.field))
         .collect::<Result<Vec<_>, _>>()?;
+
+    cursor_filter_sql_from_fields(sorts, &fields, Some(cursor))
+}
+
+pub fn cursor_filter_sql_for_fields<T>(
+    sorts: &[SortParam],
+    fields: &[CursorSqlField<T>],
+    cursor: Option<&str>,
+) -> Result<Option<String>, ApiError>
+where
+    T: AsRef<str>,
+{
+    cursor_filter_sql_from_fields(sorts, fields, cursor)
+}
+
+fn cursor_filter_sql_from_fields<T>(
+    sorts: &[SortParam],
+    fields: &[CursorSqlField<T>],
+    cursor: Option<&str>,
+) -> Result<Option<String>, ApiError>
+where
+    T: AsRef<str>,
+{
+    let Some(cursor) = cursor else {
+        return Ok(None);
+    };
+    if fields.len() != sorts.len() {
+        return Err(ApiError::InternalServerError(
+            "cursor SQL field count does not match sort count".to_string(),
+        ));
+    }
+    let cursor_values = decode_and_validate_cursor_values(cursor, sorts, fields)?;
 
     let mut clauses = Vec::with_capacity(sorts.len());
     for current_index in 0..sorts.len() {
@@ -313,6 +386,35 @@ where
     }
 
     Ok(Some(format!("({})", clauses.join(" OR "))))
+}
+
+fn decode_and_validate_cursor_values<T>(
+    cursor: &str,
+    sorts: &[SortParam],
+    fields: &[CursorSqlField<T>],
+) -> Result<Vec<CursorValue>, ApiError>
+where
+    T: AsRef<str>,
+{
+    let cursor_values = decode_cursor_values(cursor, sorts)?;
+    for (field, value) in fields.iter().zip(&cursor_values) {
+        validate_cursor_value(field, value)?;
+    }
+    Ok(cursor_values)
+}
+
+fn validate_cursor_value<T>(field: &CursorSqlField<T>, value: &CursorValue) -> Result<(), ApiError>
+where
+    T: AsRef<str>,
+{
+    match value {
+        CursorValue::Null if field.nullable => Ok(()),
+        CursorValue::Null => Err(ApiError::BadRequest(format!(
+            "cursor contains null for non-nullable field '{}'",
+            field.expression()
+        ))),
+        _ => cursor_literal_sql(field, value).map(|_| ()),
+    }
 }
 
 pub fn normalized_sorts<T>(requested: &[SortParam]) -> Result<Vec<SortParam>, ApiError>
@@ -343,7 +445,7 @@ where
     Ok(sorts)
 }
 
-fn encode_cursor<T>(item: &T, sorts: &[SortParam]) -> Result<String, ApiError>
+pub(crate) fn encode_cursor<T>(item: &T, sorts: &[SortParam]) -> Result<String, ApiError>
 where
     T: CursorPaginated,
 {
@@ -359,6 +461,13 @@ where
         .iter()
         .map(|sort| item.cursor_value(&sort.field))
         .collect::<Result<_, _>>()?;
+    for value in &values {
+        match value {
+            CursorValue::String(value) => validate_cursor_string(value)?,
+            CursorValue::Json(value) => validate_postgres_jsonb_cursor_value(value)?,
+            _ => {}
+        }
+    }
 
     let token = CursorToken {
         sorts: sorts_for_cursor,
@@ -368,16 +477,23 @@ where
     let bytes = serde_json::to_vec(&token).map_err(|error| {
         ApiError::InternalServerError(format!("failed to serialize cursor: {error}"))
     })?;
+    let encoded_length = bytes.len().saturating_mul(4).saturating_add(2) / 3;
+    if encoded_length > MAX_ENCODED_CURSOR_BYTES {
+        return Err(cursor_too_large());
+    }
 
-    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+    let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    ensure_cursor_within_limit(&cursor)?;
+    Ok(cursor)
 }
 
 fn decode_cursor(cursor: &str, sorts: &[SortParam]) -> Result<CursorToken, ApiError> {
+    ensure_cursor_within_limit(cursor)?;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(cursor)
         .map_err(|error| ApiError::BadRequest(format!("invalid cursor: {error}")))?;
 
-    let token: CursorToken = serde_json::from_slice(&bytes)
+    let mut token: CursorToken = serde_json::from_slice(&bytes)
         .map_err(|error| ApiError::BadRequest(format!("invalid cursor: {error}")))?;
 
     let expected_sorts: Vec<CursorSort> = sorts
@@ -394,7 +510,47 @@ fn decode_cursor(cursor: &str, sorts: &[SortParam]) -> Result<CursorToken, ApiEr
         ));
     }
 
+    if token.values.len() != sorts.len() {
+        return Err(ApiError::BadRequest(
+            "cursor value count does not match current sort order".to_string(),
+        ));
+    }
+
+    for value in &mut token.values {
+        if let CursorValue::Decimal(source) = value {
+            *source =
+                hubuum_computed_fields::canonical_decimal_string(source).ok_or_else(|| {
+                    ApiError::BadRequest("cursor contains an invalid decimal value".to_string())
+                })?;
+        }
+        if let CursorValue::String(value) = value {
+            validate_cursor_string(value)?;
+        }
+    }
+
     Ok(token)
+}
+
+fn ensure_cursor_within_limit(cursor: &str) -> Result<(), ApiError> {
+    if cursor.len() > MAX_ENCODED_CURSOR_BYTES {
+        return Err(cursor_too_large());
+    }
+    Ok(())
+}
+
+fn validate_cursor_string(value: &str) -> Result<(), ApiError> {
+    if value.contains('\0') {
+        return Err(ApiError::BadRequest(
+            "cursor string values cannot contain an embedded NUL byte".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn cursor_too_large() -> ApiError {
+    ApiError::BadRequest(format!(
+        "pagination cursor exceeds the maximum encoded size of {MAX_ENCODED_CURSOR_BYTES} bytes; use smaller sort values"
+    ))
 }
 
 pub fn decode_cursor_values(
@@ -404,43 +560,52 @@ pub fn decode_cursor_values(
     Ok(decode_cursor(cursor, sorts)?.values)
 }
 
-fn cursor_equality_sql(field: &CursorSqlField, value: &CursorValue) -> Result<String, ApiError> {
+fn cursor_equality_sql<T>(
+    field: &CursorSqlField<T>,
+    value: &CursorValue,
+) -> Result<String, ApiError>
+where
+    T: AsRef<str>,
+{
     match value {
         CursorValue::Null => {
             if !field.nullable {
                 return Err(ApiError::BadRequest(format!(
                     "cursor contains null for non-nullable field '{}'",
-                    field.column
+                    field.expression()
                 )));
             }
-            Ok(format!("{} IS NULL", field.column))
+            Ok(format!("{} IS NULL", field.expression()))
         }
         _ => Ok(format!(
             "{} = {}",
-            field.column,
+            field.expression(),
             cursor_literal_sql(field, value)?
         )),
     }
 }
 
-fn cursor_after_sql(
-    field: &CursorSqlField,
+fn cursor_after_sql<T>(
+    field: &CursorSqlField<T>,
     sort: &SortParam,
     value: &CursorValue,
-) -> Result<String, ApiError> {
+) -> Result<String, ApiError>
+where
+    T: AsRef<str>,
+{
     match value {
         CursorValue::Null => {
             if !field.nullable {
                 return Err(ApiError::BadRequest(format!(
                     "cursor contains null for non-nullable field '{}'",
-                    field.column
+                    field.expression()
                 )));
             }
 
             if sort.descending {
                 Ok("FALSE".to_string())
             } else {
-                Ok(format!("{} IS NOT NULL", field.column))
+                Ok(format!("{} IS NOT NULL", field.expression()))
             }
         }
         _ => {
@@ -448,24 +613,38 @@ fn cursor_after_sql(
             if field.nullable && sort.descending {
                 Ok(format!(
                     "({} < {} OR {} IS NULL)",
-                    field.column, literal, field.column
+                    field.expression(),
+                    literal,
+                    field.expression()
                 ))
             } else {
                 let operator = if sort.descending { "<" } else { ">" };
-                Ok(format!("{} {} {}", field.column, operator, literal))
+                Ok(format!("{} {} {}", field.expression(), operator, literal))
             }
         }
     }
 }
 
-fn cursor_literal_sql(field: &CursorSqlField, value: &CursorValue) -> Result<String, ApiError> {
+fn cursor_literal_sql<T>(field: &CursorSqlField<T>, value: &CursorValue) -> Result<String, ApiError>
+where
+    T: AsRef<str>,
+{
     match (field.sql_type, value) {
         (_, CursorValue::Null) => Err(ApiError::BadRequest(format!(
             "cursor contains null for field '{}'",
-            field.column
+            field.expression()
         ))),
         (CursorSqlType::Integer, CursorValue::Integer(value)) => Ok(value.to_string()),
+        (CursorSqlType::Numeric, CursorValue::Decimal(value)) => {
+            let value =
+                hubuum_computed_fields::canonical_decimal_string(value).ok_or_else(|| {
+                    ApiError::BadRequest("cursor contains an invalid decimal value".to_string())
+                })?;
+            Ok(format!("{value}::numeric"))
+        }
+        (CursorSqlType::Boolean, CursorValue::Boolean(value)) => Ok(value.to_string()),
         (CursorSqlType::String, CursorValue::String(value)) => {
+            validate_cursor_string(value)?;
             Ok(format!("'{}'", value.replace('\'', "''")))
         }
         (CursorSqlType::DateTime, CursorValue::DateTime(value)) => Ok(format!(
@@ -486,23 +665,53 @@ fn cursor_literal_sql(field: &CursorSqlField, value: &CursorValue) -> Result<Str
                 ))
             }
         }
+        (CursorSqlType::Json, CursorValue::Json(value)) => {
+            validate_postgres_jsonb_cursor_value(value)?;
+            Ok(format!(
+                "'{}'::jsonb",
+                serde_json::to_string(value)
+                    .map_err(ApiError::from)?
+                    .replace('\'', "''")
+            ))
+        }
         _ => Err(ApiError::BadRequest(format!(
             "cursor value does not match expected type for '{}'",
-            field.column
+            field.expression()
         ))),
     }
 }
 
+fn validate_postgres_jsonb_cursor_value(value: &serde_json::Value) -> Result<(), ApiError> {
+    match crate::db::json::validate_postgres_jsonb_value(value) {
+        Ok(()) => Ok(()),
+        Err(crate::db::json::PostgresJsonbValidationError::UnsupportedValue) => {
+            Err(invalid_postgres_jsonb_cursor())
+        }
+        Err(crate::db::json::PostgresJsonbValidationError::NestingTooDeep) => {
+            Err(ApiError::BadRequest(format!(
+                "cursor JSON exceeds the maximum nesting depth of {}",
+                crate::db::json::MAX_POSTGRES_JSONB_NESTING_DEPTH
+            )))
+        }
+    }
+}
+
+fn invalid_postgres_jsonb_cursor() -> ApiError {
+    ApiError::BadRequest("cursor contains JSON that PostgreSQL JSONB cannot represent".to_string())
+}
+
+#[cfg(test)]
+const MAX_JSON_CURSOR_NESTING_DEPTH: usize = crate::db::json::MAX_POSTGRES_JSONB_NESTING_DEPTH;
+
 #[macro_export]
-macro_rules! apply_cursor_ordering {
-    ($query:ident, $sorts:expr, $ty:ty) => {{
+macro_rules! apply_cursor_ordering_fields {
+    ($query:ident, $sorts:expr, $sql_fields:expr) => {{
         use diesel::dsl::sql;
-        use diesel::sql_types::{Array, Integer, Nullable, Text, Timestamp};
+        use diesel::sql_types::{Array, Bool, Integer, Jsonb, Nullable, Numeric, Text, Timestamp};
 
         let mut is_first_order = true;
-        for sort in $sorts.iter() {
-            let sql_field = $crate::pagination::cursor_sql_field::<$ty>(&sort.field)?;
-            let order_sql = $crate::pagination::order_sql_clause::<$ty>(sort)?;
+        for (sort, sql_field) in $sorts.iter().zip($sql_fields.iter()) {
+            let order_sql = $crate::pagination::order_sql_clause_for_field(sort, sql_field);
 
             $query = match (is_first_order, sql_field.sql_type, sql_field.nullable) {
                 (true, $crate::pagination::CursorSqlType::Integer, false) => {
@@ -516,6 +725,30 @@ macro_rules! apply_cursor_ordering {
                 }
                 (false, $crate::pagination::CursorSqlType::Integer, true) => {
                     $query.then_order_by(sql::<Nullable<Integer>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Numeric, false) => {
+                    $query.order_by(sql::<Numeric>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Numeric, false) => {
+                    $query.then_order_by(sql::<Numeric>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Numeric, true) => {
+                    $query.order_by(sql::<Nullable<Numeric>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Numeric, true) => {
+                    $query.then_order_by(sql::<Nullable<Numeric>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Boolean, false) => {
+                    $query.order_by(sql::<Bool>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Boolean, false) => {
+                    $query.then_order_by(sql::<Bool>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Boolean, true) => {
+                    $query.order_by(sql::<Nullable<Bool>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Boolean, true) => {
+                    $query.then_order_by(sql::<Nullable<Bool>>(&order_sql))
                 }
                 (true, $crate::pagination::CursorSqlType::String, false) => {
                     $query.order_by(sql::<Text>(&order_sql))
@@ -553,6 +786,18 @@ macro_rules! apply_cursor_ordering {
                 (false, $crate::pagination::CursorSqlType::IntegerArray, true) => {
                     $query.then_order_by(sql::<Array<Nullable<Integer>>>(&order_sql))
                 }
+                (true, $crate::pagination::CursorSqlType::Json, false) => {
+                    $query.order_by(sql::<Jsonb>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Json, false) => {
+                    $query.then_order_by(sql::<Jsonb>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::Json, true) => {
+                    $query.order_by(sql::<Nullable<Jsonb>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::Json, true) => {
+                    $query.then_order_by(sql::<Nullable<Jsonb>>(&order_sql))
+                }
             };
 
             is_first_order = false;
@@ -561,18 +806,19 @@ macro_rules! apply_cursor_ordering {
 }
 
 #[macro_export]
-macro_rules! apply_query_options {
-    ($query:ident, $query_options:expr, $ty:ty) => {{
+macro_rules! apply_query_options_with_fields {
+    ($query:ident, $query_options:expr, $sql_fields:expr) => {{
         let query_options = &$query_options;
 
-        if let Some(cursor_sql) = $crate::pagination::cursor_filter_sql::<$ty>(
+        if let Some(cursor_sql) = $crate::pagination::cursor_filter_sql_for_fields(
             &query_options.sort,
+            &$sql_fields,
             query_options.cursor.as_deref(),
         )? {
             $query = $query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&cursor_sql));
         }
 
-        $crate::apply_cursor_ordering!($query, query_options.sort, $ty);
+        $crate::apply_cursor_ordering_fields!($query, query_options.sort, $sql_fields);
 
         if let Some(limit) = query_options.limit {
             $query = $query.limit(limit as i64);
@@ -580,220 +826,18 @@ macro_rules! apply_query_options {
     }};
 }
 
-#[cfg(test)]
-mod tests {
-    use chrono::NaiveDate;
-
-    use super::*;
-    use crate::models::{Collection, UserWithName};
-
-    fn collection(id: i32, name: &str) -> Collection {
-        Collection {
-            id,
-            name: name.to_string(),
-            description: format!("collection {id}"),
-            created_at: NaiveDate::from_ymd_opt(2024, 1, id as u32)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap(),
-            updated_at: NaiveDate::from_ymd_opt(2024, 1, id as u32)
-                .unwrap()
-                .and_hms_opt(1, 0, 0)
-                .unwrap(),
-            parent_collection_id: None,
-        }
-    }
-
-    #[test]
-    fn test_paginate_collections_with_cursor() {
-        let collections = vec![
-            collection(1, "alpha"),
-            collection(2, "beta"),
-            collection(3, "gamma"),
-        ];
-
-        let first_page = finalize_page(
-            collections.clone(),
-            &QueryOptions {
-                filters: vec![],
-                sort: vec![],
-                limit: Some(2),
-                cursor: None,
-                include_total: true,
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            first_page
-                .items
-                .iter()
-                .map(|item| item.id)
-                .collect::<Vec<_>>(),
-            vec![1, 2]
-        );
-        assert!(first_page.next_cursor.is_some());
-
-        let prepared_query = prepare_db_pagination::<Collection>(&QueryOptions {
-            filters: vec![],
-            sort: vec![],
-            limit: Some(2),
-            cursor: first_page.next_cursor.clone(),
-            include_total: true,
-        })
-        .unwrap();
-
-        let cursor_sql =
-            cursor_filter_sql::<Collection>(&prepared_query.sort, prepared_query.cursor.as_deref())
-                .unwrap();
-
-        assert_eq!(cursor_sql, Some("((collections.id > 2))".to_string()));
-
-        let second_page = finalize_page(
-            vec![collection(3, "gamma")],
-            &QueryOptions {
-                filters: vec![],
-                sort: vec![],
-                limit: Some(2),
-                cursor: first_page.next_cursor,
-                include_total: true,
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            second_page
-                .items
-                .iter()
-                .map(|item| item.id)
-                .collect::<Vec<_>>(),
-            vec![3]
-        );
-        assert!(second_page.next_cursor.is_none());
-    }
-
-    #[test]
-    fn test_paginate_collections_descending() {
-        let collections = vec![
-            collection(3, "gamma"),
-            collection(2, "beta"),
-            collection(1, "alpha"),
-        ];
-
-        let page = finalize_page(
-            collections,
-            &QueryOptions {
-                filters: vec![],
-                sort: vec![SortParam {
-                    field: FilterField::Name,
-                    descending: true,
-                }],
-                limit: Some(2),
-                cursor: None,
-                include_total: true,
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            page.items
-                .iter()
-                .map(|item| item.name.clone())
-                .collect::<Vec<_>>(),
-            vec!["gamma".to_string(), "beta".to_string()]
-        );
-        assert!(page.next_cursor.is_some());
-    }
-
-    #[test]
-    fn test_prepare_db_pagination_adds_limit_and_tie_breaker() {
-        let prepared = prepare_db_pagination::<UserWithName>(&QueryOptions {
-            filters: vec![],
-            sort: vec![SortParam {
-                field: FilterField::Username,
-                descending: false,
-            }],
-            limit: None,
-            cursor: None,
-            include_total: true,
-        })
-        .unwrap();
-
-        assert_eq!(prepared.limit, Some(DEFAULT_PAGE_LIMIT + 1));
-        assert_eq!(prepared.sort.len(), 2);
-        assert_eq!(prepared.sort[0].field, FilterField::Username);
-        assert_eq!(prepared.sort[1].field, FilterField::Id);
-    }
-
-    #[tokio::test]
-    async fn exact_total_count_can_be_skipped() {
-        let options = QueryOptions {
-            filters: vec![],
-            sort: vec![],
-            limit: None,
-            cursor: None,
-            include_total: false,
-        };
-        let count = exact_count_or_skipped(&options, async || {
-            panic!("count query must not execute when include_total is false")
-        })
-        .await
-        .unwrap();
-        assert_eq!(count, SKIPPED_TOTAL_COUNT);
-
-        let headers = pagination_headers(&None, count, 25);
-        assert!(!headers.contains_key(TOTAL_COUNT_HEADER));
-        assert_eq!(headers.get(PAGE_LIMIT_HEADER), Some(&"25".to_string()));
-    }
-
-    #[test]
-    fn test_cursor_filter_sql_handles_nullable_descending_strings() {
-        let sql = cursor_filter_sql::<UserWithName>(
-            &[SortParam {
-                field: FilterField::Email,
-                descending: true,
-            }],
-            Some(
-                &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-                    serde_json::to_vec(&CursorToken {
-                        sorts: vec![CursorSort {
-                            field: "email".to_string(),
-                            descending: true,
-                        }],
-                        values: vec![CursorValue::String("b@example.com".to_string())],
-                    })
-                    .unwrap(),
-                ),
-            ),
-        )
-        .unwrap();
-
-        assert_eq!(
-            sql,
-            Some("(((users.email < 'b@example.com' OR users.email IS NULL)))".to_string())
-        );
-    }
-
-    #[test]
-    fn validate_page_limit_with_max_accepts_within_range() {
-        assert_eq!(validate_page_limit_with_max(10, 100).unwrap(), 10);
-        assert_eq!(validate_page_limit_with_max(100, 100).unwrap(), 100);
-    }
-
-    #[test]
-    fn validate_page_limit_with_max_rejects_zero() {
-        let error = validate_page_limit_with_max(0, 100).unwrap_err();
-        assert_eq!(error.to_string(), "limit must be greater than 0");
-    }
-
-    #[test]
-    fn validate_page_limit_with_max_rejects_zero_maximum() {
-        let error = validate_page_limit_with_max(1, 0).unwrap_err();
-        assert_eq!(error.to_string(), "max_page_limit must be greater than 0");
-    }
-
-    #[test]
-    fn validate_page_limit_with_max_clamps_above_maximum() {
-        assert_eq!(validate_page_limit_with_max(101, 100).unwrap(), 100);
-    }
+#[macro_export]
+macro_rules! apply_query_options {
+    ($query:ident, $query_options:expr, $ty:ty) => {{
+        let query_options = &$query_options;
+        let sql_fields = query_options
+            .sort
+            .iter()
+            .map(|sort| $crate::pagination::cursor_sql_field::<$ty>(&sort.field))
+            .collect::<Result<Vec<_>, $crate::errors::ApiError>>()?;
+        $crate::apply_query_options_with_fields!($query, query_options, sql_fields);
+    }};
 }
+
+#[cfg(test)]
+mod tests;

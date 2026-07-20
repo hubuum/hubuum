@@ -96,6 +96,32 @@ Notes:
 - Cursor pagination requires a stable sort, so Hubuum appends a deterministic tie-breaker automatically.
 - If you omit `sort`, each endpoint uses its own default stable sort.
 - Some relation endpoints support sorting on contextual fields like `from_*`, `to_*`, `depth`, and `path`.
+- Class object lists can sort enabled computed fields with
+  `computed.shared.<key>` or the owning user's `computed.personal.<key>`.
+  `computed.public.<key>` and `computed.private.<key>` are aliases. See
+  [Computed fields](computed_fields.md#reading-computed-values) for visibility,
+  null, and pagination semantics. Requests that use computed sorting support at
+  most two explicit sort fields.
+
+## Computed filtering
+
+Class object lists can filter enabled computed fields with the same scope and
+alias names used for computed sorting:
+
+```text
+GET /api/v1/classes/12/?computed.shared.display_name__icontains=edge
+GET /api/v1/classes/12/?computed.personal.my_priority__between=10,20
+```
+
+Computed filtering is intentionally endpoint-specific. Other list endpoints
+reject computed filter parameters instead of silently ignoring them. The
+definition's declared result type determines which operators and values are
+valid. At most two computed filter parameters may appear in one request.
+String, numeric, boolean, object, and array definitions are supported;
+see [Computed fields](computed_fields.md#reading-computed-values) for the full
+operator table, visibility rules, null behavior, and JSON value syntax.
+Computed keys may contain `__`; only a recognized operator at the final
+`__<operator>` suffix is parsed as filter syntax.
 
 ## Cursor pagination
 
@@ -112,6 +138,8 @@ Limits:
 
 - default page size: `100`
 - maximum page size: `250`
+- maximum encoded cursor size: `64 KiB`
+- maximum JSON cursor nesting depth: `64`
 - a positive `limit` above the configured maximum is clamped to the maximum
 - `limit=0` remains a `400 Bad Request`
 
@@ -125,6 +153,11 @@ Behavior:
 - send that cursor back unchanged to fetch the next page
 - if `X-Next-Cursor` is absent, there is no next page
 - total pages can be derived client-side as `ceil(X-Total-Count / X-Page-Limit)`
+- encoded cursors are limited to 64 KiB; a page whose sort values would exceed
+  that limit returns `400 Bad Request`, so clients must select fewer sort fields
+  or smaller sortable values
+- malformed cursors, including JSON sort values PostgreSQL cannot represent or
+  values deeper than 64 nested array or object levels, return `400 Bad Request`
 
 Clients should read the effective default and maximum limits from the public
 client configuration endpoint rather than assuming the built-in values shown

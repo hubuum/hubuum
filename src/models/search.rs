@@ -7,8 +7,9 @@ use std::str::FromStr;
 use tracing::debug;
 
 pub use hubuum_query::{
-    DataType, FilterField, Operator, ParsedQueryParam, QueryOptions, SQLMappedType, SearchOperator,
-    SortParam, StatementTimeoutMs, get_jsonb_field_type_from_value_and_operator,
+    ComputedFieldScope, ComputedQueryValueType, DataType, FilterField, Operator, ParsedQueryParam,
+    QueryOptions, SQLMappedType, SearchOperator, SortParam, StatementTimeoutMs,
+    get_jsonb_field_type_from_value_and_operator,
 };
 #[cfg(test)]
 use hubuum_query::{get_jsonb_field_type_from_json_schema, get_sql_mapped_type_from_value};
@@ -40,6 +41,19 @@ pub fn parse_query_parameter_with_passthrough(
 ) -> Result<(QueryOptions, HashMap<String, Vec<String>>), ApiError> {
     let (mut query_options, passthrough) =
         hubuum_query::parse_query_parameter_with_passthrough(qs, passthrough_keys)?;
+    query_options.limit = query_options.limit.map(validate_page_limit).transpose()?;
+    Ok((query_options, passthrough))
+}
+
+pub fn parse_query_parameter_with_computed_filters_and_passthrough(
+    qs: &str,
+    passthrough_keys: &[&str],
+) -> Result<(QueryOptions, HashMap<String, Vec<String>>), ApiError> {
+    let (mut query_options, passthrough) =
+        hubuum_query::parse_query_parameter_with_computed_filters_and_passthrough(
+            qs,
+            passthrough_keys,
+        )?;
     query_options.limit = query_options.limit.map(validate_page_limit).transpose()?;
     Ok((query_options, passthrough))
 }
@@ -308,8 +322,7 @@ impl ParsedQueryParamExt for ParsedQueryParam {
     }
 
     fn as_json_sql(&self) -> Result<SQLComponent, ApiError> {
-        let field = self.field.clone();
-        self.as_json_sql_for_field_expr(field.table_field())
+        self.as_json_sql_for_field_expr(self.field.table_field())
     }
 
     fn as_json_sql_for_field_expr(&self, jsonb_field_expr: &str) -> Result<SQLComponent, ApiError> {

@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 use crate::db::prelude::*;
 use crate::errors::ApiError;
 use crate::models::HubuumObject;
-use crate::models::search::{FilterField, SortParam};
+use crate::models::search::{ComputedQueryValueType, FilterField, SortParam};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -64,6 +64,19 @@ impl ComputedResultType {
 }
 
 impl From<ComputedResultType> for ResultType {
+    fn from(value: ComputedResultType) -> Self {
+        match value {
+            ComputedResultType::String => Self::String,
+            ComputedResultType::Number => Self::Number,
+            ComputedResultType::Integer => Self::Integer,
+            ComputedResultType::Boolean => Self::Boolean,
+            ComputedResultType::Object => Self::Object,
+            ComputedResultType::Array => Self::Array,
+        }
+    }
+}
+
+impl From<ComputedResultType> for ComputedQueryValueType {
     fn from(value: ComputedResultType) -> Self {
         match value {
             ComputedResultType::String => Self::String,
@@ -518,6 +531,79 @@ pub struct HubuumObjectComputedResponse {
     #[serde(flatten)]
     pub object: HubuumObject,
     pub computed: ComputedObjectScopesResponse,
+}
+
+impl CursorPaginated for HubuumObjectComputedResponse {
+    fn supports_sort(field: &FilterField) -> bool {
+        field.computed_query().is_some() || HubuumObject::supports_sort(field)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        let Some(computed_query) = field.computed_query() else {
+            return self.object.cursor_value(field);
+        };
+        let values = match computed_query.scope() {
+            crate::models::search::ComputedFieldScope::Shared => &self.computed.shared.values,
+            crate::models::search::ComputedFieldScope::Personal => {
+                &self
+                    .computed
+                    .personal
+                    .as_ref()
+                    .ok_or_else(|| {
+                        ApiError::BadRequest(
+                            "Personal computed fields are unavailable for this principal"
+                                .to_string(),
+                        )
+                    })?
+                    .values
+            }
+        };
+        let value = values.get(computed_query.key()).ok_or_else(|| {
+            ApiError::InternalServerError(format!(
+                "Computed sort field '{}' is missing from the enriched object",
+                computed_query.key()
+            ))
+        })?;
+        if value.is_null() {
+            return Ok(CursorValue::Null);
+        }
+        let value_type = computed_query.value_type().ok_or_else(|| {
+            ApiError::InternalServerError(format!(
+                "Computed sort field '{}' was not resolved",
+                computed_query.key()
+            ))
+        })?;
+        match value_type {
+            ComputedQueryValueType::String => value
+                .as_str()
+                .map(|value| CursorValue::String(value.to_string())),
+            ComputedQueryValueType::Number | ComputedQueryValueType::Integer => value
+                .is_number()
+                .then(|| CursorValue::Decimal(value.to_string())),
+            ComputedQueryValueType::Boolean => value.as_bool().map(CursorValue::Boolean),
+            ComputedQueryValueType::Object if value.is_object() => {
+                Some(CursorValue::Json(value.clone()))
+            }
+            ComputedQueryValueType::Array if value.is_array() => {
+                Some(CursorValue::Json(value.clone()))
+            }
+            ComputedQueryValueType::Object | ComputedQueryValueType::Array => None,
+        }
+        .ok_or_else(|| {
+            ApiError::InternalServerError(format!(
+                "Computed sort field '{}' does not match its declared result type",
+                computed_query.key()
+            ))
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        HubuumObject::default_sort()
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        HubuumObject::tie_breaker_sort()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]

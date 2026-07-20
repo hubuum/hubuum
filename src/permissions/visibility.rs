@@ -22,6 +22,59 @@ pub struct AuthorizedPage<T> {
     pub total_count: i64,
 }
 
+/// Sorted, deduplicated object ids that have already passed policy authorization.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AuthorizedObjectIds(Vec<i32>);
+
+impl AuthorizedObjectIds {
+    pub(crate) fn new(ids: impl IntoIterator<Item = i32>) -> Result<Self, ApiError> {
+        let mut ids = ids.into_iter().collect::<Vec<_>>();
+        if ids.iter().any(|id| *id <= 0) {
+            return Err(ApiError::InternalServerError(
+                "Authorized object ids must be positive".to_string(),
+            ));
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(Self(ids))
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub(crate) fn as_slice(&self) -> &[i32] {
+        &self.0
+    }
+}
+
+pub async fn authorize_all_candidates<T, F>(
+    backend: &dyn PermissionBackend,
+    principal: &PrincipalRef,
+    candidates: Vec<T>,
+    permissions: Vec<Permissions>,
+    to_resource: F,
+) -> Result<Vec<T>, ApiError>
+where
+    F: Fn(&T) -> ResourceRef,
+{
+    let requests = candidates
+        .iter()
+        .map(|candidate| PermissionRequest {
+            resource: to_resource(candidate),
+            permissions: permissions.clone(),
+        })
+        .collect();
+    let decisions = backend.authorize_many(principal, requests).await?;
+    Ok(candidates
+        .into_iter()
+        .zip(decisions)
+        .filter_map(|(candidate, decision)| {
+            (decision == PermissionDecision::Allow).then_some(candidate)
+        })
+        .collect())
+}
+
 pub async fn authorize_cursor_page<T, F>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,

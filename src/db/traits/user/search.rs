@@ -1,9 +1,13 @@
 use super::*;
 use crate::db::traits::authz::scope_allows;
+use crate::db::traits::computed_field::{
+    ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
+};
 use crate::db::traits::search::JsonPredicateExt;
 use crate::models::RelatedObjectForRootRow;
 use crate::models::permissions::PermissionFilter;
 use crate::models::search::{ParsedQueryParamExt, SQLValue};
+use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::traits::PrincipalIdAccessor;
 use crate::traits::{CursorPaginated, CursorSqlMapping};
 use crate::utilities::extensions::CustomStringExtensions;
@@ -35,6 +39,141 @@ impl RawSqlQuerySpec {
             bind_variables: self.bind_variables,
         }
     }
+}
+
+pub struct ObjectQueryPlan<'a>(ObjectQueryPlanKind<'a>);
+
+enum ObjectQueryPlanKind<'a> {
+    Ordinary(QueryOptions),
+    Computed {
+        options: QueryOptions,
+        snapshot: &'a ComputedQuerySnapshot,
+        authorized_object_ids: Option<&'a AuthorizedObjectIds>,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum ObjectQueryMode<'a> {
+    Ordinary,
+    Computed {
+        snapshot: &'a ComputedQuerySnapshot,
+        authorized_object_ids: Option<&'a AuthorizedObjectIds>,
+    },
+}
+
+impl<'a> ObjectQueryMode<'a> {
+    fn snapshot(self) -> Result<&'a ComputedQuerySnapshot, ApiError> {
+        match self {
+            Self::Computed { snapshot, .. } => Ok(snapshot),
+            Self::Ordinary => Err(ApiError::BadRequest(
+                "Computed object queries require a resolved query plan".to_string(),
+            )),
+        }
+    }
+
+    fn authorized_object_ids(self) -> Option<&'a AuthorizedObjectIds> {
+        match self {
+            Self::Computed {
+                authorized_object_ids,
+                ..
+            } => authorized_object_ids,
+            Self::Ordinary => None,
+        }
+    }
+}
+
+impl<'a> ObjectQueryPlan<'a> {
+    fn ordinary(options: QueryOptions) -> Result<Self, ApiError> {
+        let has_computed_fields = options
+            .filters
+            .iter()
+            .any(|filter| filter.field.computed_query().is_some())
+            || options
+                .sort
+                .iter()
+                .any(|sort| sort.field.computed_query().is_some());
+        if has_computed_fields {
+            return Err(ApiError::BadRequest(
+                "Computed object queries require a resolved query plan".to_string(),
+            ));
+        }
+        Ok(Self(ObjectQueryPlanKind::Ordinary(options)))
+    }
+
+    fn computed(options: QueryOptions, snapshot: &'a ComputedQuerySnapshot) -> Self {
+        Self(ObjectQueryPlanKind::Computed {
+            options,
+            snapshot,
+            authorized_object_ids: None,
+        })
+    }
+
+    fn computed_for_authorized_objects(
+        options: QueryOptions,
+        snapshot: &'a ComputedQuerySnapshot,
+        authorized_object_ids: &'a AuthorizedObjectIds,
+    ) -> Self {
+        Self(ObjectQueryPlanKind::Computed {
+            options,
+            snapshot,
+            authorized_object_ids: Some(authorized_object_ids),
+        })
+    }
+
+    fn into_parts(self) -> (QueryOptions, ObjectQueryMode<'a>) {
+        match self.0 {
+            ObjectQueryPlanKind::Ordinary(options) => (options, ObjectQueryMode::Ordinary),
+            ObjectQueryPlanKind::Computed {
+                options,
+                snapshot,
+                authorized_object_ids,
+            } => (
+                options,
+                ObjectQueryMode::Computed {
+                    snapshot,
+                    authorized_object_ids,
+                },
+            ),
+        }
+    }
+}
+
+pub(crate) async fn search_computed_objects_with_authorized_ids<U>(
+    user: &U,
+    pool: &DbPool,
+    query_options: QueryOptions,
+    snapshot: &ComputedQuerySnapshot,
+    authorized_object_ids: &AuthorizedObjectIds,
+) -> Result<Vec<HubuumObject>, ApiError>
+where
+    U: UserSearchBackend + ?Sized,
+{
+    let plan = ObjectQueryPlan::computed_for_authorized_objects(
+        query_options,
+        snapshot,
+        authorized_object_ids,
+    );
+    user.search_objects_from_backend_with_query_plan(pool, plan, true, None)
+        .await
+}
+
+pub(crate) async fn count_computed_objects_with_authorized_ids<U>(
+    user: &U,
+    pool: &DbPool,
+    query_options: QueryOptions,
+    snapshot: &ComputedQuerySnapshot,
+    authorized_object_ids: &AuthorizedObjectIds,
+) -> Result<i64, ApiError>
+where
+    U: UserSearchBackend + ?Sized,
+{
+    let plan = ObjectQueryPlan::computed_for_authorized_objects(
+        query_options,
+        snapshot,
+        authorized_object_ids,
+    );
+    user.count_objects_from_backend_with_query_plan(pool, plan, true, None)
+        .await
 }
 
 macro_rules! bind_raw_sql_query {
@@ -526,12 +665,38 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         is_admin: bool,
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
+        let plan = ObjectQueryPlan::ordinary(query_options)?;
+        self.search_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
+            .await
+    }
+
+    async fn search_objects_with_computed_query_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
+        snapshot: &ComputedQuerySnapshot,
+    ) -> Result<Vec<HubuumObject>, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        let plan = ObjectQueryPlan::computed(query_options, snapshot);
+        self.search_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
+            .await
+    }
+
+    async fn search_objects_from_backend_with_query_plan(
+        &self,
+        pool: &DbPool,
+        query_plan: ObjectQueryPlan<'_>,
+        is_admin: bool,
+        scopes: Option<&[Permissions]>,
+    ) -> Result<Vec<HubuumObject>, ApiError> {
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
             name as object_name, updated_at as object_updated_at,
         };
 
+        let (query_options, query_mode) = query_plan.into_parts();
         let query_params = query_options.filters.clone();
 
         debug!(
@@ -566,6 +731,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let mut base_query = hubuumobject
             .filter(object_collection_id.eq_any(collection_ids))
             .into_boxed();
+        if let Some(authorized_object_ids) = query_mode.authorized_object_ids() {
+            base_query = base_query.filter(object_id.eq_any(authorized_object_ids.as_slice()));
+        }
 
         let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
         if !json_data_queries.is_empty() {
@@ -583,6 +751,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
+            if param.field.computed_query().is_some() {
+                let snapshot = query_mode.snapshot()?;
+                base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
+                continue;
+            }
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, object_id),
@@ -616,18 +789,38 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, HubuumObject);
+        let computed_sorting = query_options
+            .sort
+            .iter()
+            .any(|sort| sort.field.computed_query().is_some());
+        if computed_sorting {
+            let snapshot = query_mode.snapshot()?;
+            let sql_fields = object_cursor_sql_fields(&query_options.sort, snapshot)?;
+            crate::apply_query_options_with_fields!(base_query, query_options, sql_fields);
+        } else {
+            crate::apply_query_options!(base_query, query_options, HubuumObject);
+        }
 
         trace_query!(base_query, "Searching objects");
 
-        with_connection(pool, async |conn| {
-            base_query
-                .select(hubuumobject::all_columns())
-                .distinct()
-                .load::<HubuumObject>(conn)
-                .await
-        })
-        .await
+        if computed_sorting {
+            with_connection(pool, async |conn| {
+                base_query
+                    .select(hubuumobject::all_columns())
+                    .load::<HubuumObject>(conn)
+                    .await
+            })
+            .await
+        } else {
+            with_connection(pool, async |conn| {
+                base_query
+                    .select(hubuumobject::all_columns())
+                    .distinct()
+                    .load::<HubuumObject>(conn)
+                    .await
+            })
+            .await
+        }
     }
 
     async fn count_objects_from_backend_with_admin_status(
@@ -637,12 +830,38 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         is_admin: bool,
         scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
+        let plan = ObjectQueryPlan::ordinary(query_options)?;
+        self.count_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
+            .await
+    }
+
+    async fn count_objects_with_computed_query_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        scopes: Option<&[Permissions]>,
+        snapshot: &ComputedQuerySnapshot,
+    ) -> Result<i64, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        let plan = ObjectQueryPlan::computed(query_options, snapshot);
+        self.count_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
+            .await
+    }
+
+    async fn count_objects_from_backend_with_query_plan(
+        &self,
+        pool: &DbPool,
+        query_plan: ObjectQueryPlan<'_>,
+        is_admin: bool,
+        scopes: Option<&[Permissions]>,
+    ) -> Result<i64, ApiError> {
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
             name as object_name, updated_at as object_updated_at,
         };
 
+        let (query_options, query_mode) = query_plan.into_parts();
         let query_params = query_options.filters.clone();
 
         let mut permission_list = query_params.permissions()?;
@@ -663,6 +882,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let mut base_query = hubuumobject
             .filter(object_collection_id.eq_any(collection_ids))
             .into_boxed();
+        if let Some(authorized_object_ids) = query_mode.authorized_object_ids() {
+            base_query = base_query.filter(object_id.eq_any(authorized_object_ids.as_slice()));
+        }
 
         let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
         if !json_data_queries.is_empty() {
@@ -673,6 +895,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
+            if param.field.computed_query().is_some() {
+                let snapshot = query_mode.snapshot()?;
+                base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
+                continue;
+            }
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, object_id),

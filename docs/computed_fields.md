@@ -179,9 +179,75 @@ the `personal` member. Requests without `include=computed` retain the original
 object response shape and cache behavior.
 
 The `computed` member is response-only. Supplying it in object create or update
-JSON is a `400 Bad Request`, including when its value is `null`. Computed
-filtering, sorting, and indexing are not supported. Unsupported query fields
-fail validation; Hubuum never filters computed data after pagination.
+JSON is a `400 Bad Request`, including when its value is `null`.
+
+The class object-list endpoint supports filtering and ordering by enabled
+computed fields:
+
+```text
+GET /api/v1/classes/{class_id}/?computed.shared.display_name__icontains=server
+GET /api/v1/classes/{class_id}/?computed.personal.my_priority__gte=10
+GET /api/v1/classes/{class_id}/?sort=computed.shared.display_name
+GET /api/v1/classes/{class_id}/?sort=computed.personal.my_priority.desc
+```
+
+`shared` and `personal` match the response namespaces. `public` and `private`
+are accepted as aliases. Filters use the normal `field__operator=value` syntax,
+combine with other filters using `AND`, and support `not_` operator prefixes.
+Requests may contain at most two computed filter parameters. Available
+operators depend on the definition's declared result type:
+
+| Result type | Operators |
+| --- | --- |
+| `string` | `equals`, `iequals`, `contains`, `icontains`, `startswith`, `istartswith`, `endswith`, `iendswith`, `like`, `regex`, `in`, `is_null` |
+| `number`, `integer` | `equals`, `in`, `gt`, `gte`, `lt`, `lte`, `between`, `is_null` |
+| `boolean` | `equals`, `is_null` |
+| `object` | `equals`, `contains`, `has_key`, `is_null` |
+| `array` | `equals`, `contains`, `has_key`, `array_length`, `is_null` |
+
+Object and array filter values for `equals` and `contains` are JSON values of
+the definition's declared type. `contains` uses JSON containment. `has_key`
+tests an object key or string array element, and `array_length` accepts a
+non-negative integer. `is_null=true` matches missing, null, failed, or
+type-mismatched computed results; `is_null=false` matches successful non-null
+results.
+
+Computed sorts support the normal ascending,
+descending, multi-field, deterministic tie-breaker, and cursor-pagination
+behavior, with at most two explicit sort fields in any request that uses a
+computed sort. Null or failed results sort first in ascending order and last
+in descending order. Object and array results use PostgreSQL JSONB ordering.
+The encoded cursor is limited to 64 KiB, so sorting large results can return
+`400 Bad Request` when another page would require an oversized cursor; use
+fewer sort fields or definitions with smaller outputs. JSON cursor values are
+limited to 64 nested array or object levels; deeper values return
+`400 Bad Request`.
+
+A personal filter or sort is available only to the owning human user and still
+requires class access. Service accounts cannot query personal definitions. The
+`include=computed` parameter controls the response shape, not computed-query
+availability; filtering or sorting without it still returns the raw object
+shape. Responses whose result set or order depends on computed state use
+`Cache-Control: private, no-store`.
+
+With the default SQL authorization backend, computed filtering and sorting
+happen in PostgreSQL before pagination. Current shared materialization is used
+directly, with live evaluation only for missing or stale cache rows. Personal
+querying evaluates the owner's entire enabled scope from raw object data
+without write-time user fan-out, so scope work and output limits remain
+identical to response enrichment. A policy backend first authorizes the real
+objects in the class, then supplies that normalized ID set to PostgreSQL as a
+bound array for computed counting, filtering, ordering, cursor comparison, and
+page limiting. Live evaluation cost grows with the authorized candidate count,
+object JSON size, and enabled-scope complexity; materialized shared fields are
+preferable for high-volume queries. Computed-query database query counts do not
+grow with page size. A raw nonterminal sorted page enriches only its
+cursor-boundary object, while a terminal raw page skips enrichment; requests
+without computed filtering or sorting retain the existing query path.
+Computed-query reads use live values for missing or stale materializations but
+defer cache repair to the rebuild path, keeping list requests read-only.
+Declarative indexing is not yet supported. Unsupported computed operators and
+mismatched filter value types fail with `400 Bad Request`.
 
 ## Materialization freshness
 
@@ -197,18 +263,23 @@ A stored shared materialization is stale when any of these conditions holds:
 - its class evaluation revision differs from the current revision;
 - its recorded class differs from the object's current class;
 - its SHA-256 digest differs from the canonical, recursively key-sorted object
-  `data` digest.
+  `data` digest;
+- its value keys differ from the enabled shared definitions, a value does not
+  match its definition's declared result type, or its stored error map is
+  invalid.
 
 This can happen during a definition rebuild, after an interrupted or failed
 rebuild, while restoring a backup, or after data was changed through an older
 writer that did not maintain the cache.
 
 Stale storage never makes an enriched response stale. Hubuum evaluates the
-current definitions against the returned raw data immediately, sets
-`materialization_stale` to `true`, and attempts a guarded read repair. The next
-read normally uses the repaired row. Repair failure is recorded in metrics but
-does not replace the correct live value with stale data. A manual rebuild is
-available for failed or deliberately refreshed classes.
+current definitions against the returned raw data immediately and sets
+`materialization_stale` to `true`. Ordinary `include=computed` reads attempt a
+guarded read repair, so the next read normally uses the repaired row; repair
+failure is recorded in metrics but does not replace the correct live value with
+stale data. Computed filter and sort list reads remain read-only and defer
+repair to the rebuild path. A manual rebuild is available for failed or
+deliberately refreshed classes.
 
 ## Backup, events, and metrics
 

@@ -47,11 +47,14 @@ use crate::traits::{BackendContext, CanDelete, CanSave, CanUpdate, Search, SelfA
 use crate::utilities::extensions::CustomStringExtensions;
 
 use crate::models::search::{
-    FilterField, QueryOptions, QueryOptionsExt, QueryParamsExt, SearchOperator,
-    parse_query_parameter, parse_query_parameter_with_passthrough,
+    FilterField, QueryOptions, QueryParamsExt, SearchOperator, parse_query_parameter,
+    parse_query_parameter_with_computed_filters_and_passthrough,
+    parse_query_parameter_with_passthrough,
 };
 use crate::models::traits::class_relation::ToHubuumClasses;
 use crate::pagination::{Page, finalize_page};
+
+mod computed_objects;
 
 fn parse_computed_include(query_string: &str) -> Result<(QueryOptions, bool), ApiError> {
     let (params, mut passthrough) =
@@ -68,7 +71,33 @@ fn parse_computed_include(query_string: &str) -> Result<(QueryOptions, bool), Ap
     Ok((params, include_computed))
 }
 
-async fn computed_personal_owner(
+fn parse_computed_object_list_query(query_string: &str) -> Result<(QueryOptions, bool), ApiError> {
+    let (params, mut passthrough) =
+        parse_query_parameter_with_computed_filters_and_passthrough(query_string, &["include"])?;
+    let include_computed = match passthrough.remove("include") {
+        None => false,
+        Some(values) if values.as_slice() == ["computed"] => true,
+        Some(_) => {
+            return Err(ApiError::BadRequest(
+                "include accepts exactly one value: computed".to_string(),
+            ));
+        }
+    };
+    Ok((params, include_computed))
+}
+
+pub(super) fn scope_object_query_to_class(params: &mut QueryOptions, class: &HubuumClassID) {
+    params
+        .filters
+        .retain(|param| !matches!(param.field, FilterField::ClassId | FilterField::Classes));
+    params.filters.add_filter(
+        FilterField::ClassId,
+        SearchOperator::Equals { is_negated: false },
+        &class.id().to_string(),
+    );
+}
+
+pub(super) async fn computed_personal_owner(
     pool: &AppContext,
     requestor: &Authenticated,
     class: &HubuumClass,
@@ -93,7 +122,7 @@ async fn computed_personal_owner(
     }
 }
 
-fn serialized_object_page<T: serde::Serialize>(
+pub(super) fn serialized_object_page<T: serde::Serialize>(
     page: Page<T>,
     total_count: i64,
     effective_limit: usize,
@@ -974,10 +1003,12 @@ async fn get_related_class_graph(
     get,
     path = "/api/v1/classes/{class_id}/",
     tag = "classes",
+    description = "Lists objects in the path class. Enabled computed fields can be filtered with computed.shared.<key> or computed.personal.<key> using the normal __operator suffix, and sorted with the same names. Computed querying supports at most two computed filter parameters and two explicit sort fields per request.",
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Class ID"),
-        ("include" = Option<String>, Query, description = "Set to computed to enrich each object")
+        ("include" = Option<String>, Query, description = "Set to computed to enrich each object"),
+        ("sort" = Option<String>, Query, description = "Sort by object fields or computed.shared.<key>/computed.personal.<key>; computed sorting supports at most two explicit sort fields")
     ),
     responses(
         (status = 200, description = "Objects in class, optionally enriched with computed fields", body = [crate::models::HubuumObjectReadResponse]),
@@ -997,11 +1028,11 @@ async fn get_objects_in_class(
     let class = class_id.into_inner();
     let query_string = req.query_string();
 
-    let (mut params, include_computed) = parse_computed_include(query_string)?;
+    let (mut params, include_computed) = parse_computed_object_list_query(query_string)?;
 
-    // Manually add a filter for the class itself to restrict the search
-    // in order to restrict the search to the class.
-    params.ensure_filter_exact(FilterField::ClassId, &class);
+    // The path is authoritative even if the caller supplied a conflicting
+    // class_id/classes filter.
+    scope_object_query_to_class(&mut params, &class);
 
     debug!(
         message = "Getting objects in class",
@@ -1009,6 +1040,20 @@ async fn get_objects_in_class(
         class_id = class.id(),
         query = query_string
     );
+
+    let computed_filtering = params
+        .filters
+        .iter()
+        .any(|filter| filter.field.computed_query().is_some());
+    let computed_sorting = params
+        .sort
+        .iter()
+        .any(|sort| sort.field.computed_query().is_some());
+    let computed_querying = computed_filtering || computed_sorting;
+    if computed_querying {
+        return computed_objects::list_objects(&pool, &requestor, &class, params, include_computed)
+            .await;
+    }
 
     let (objects, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {
         let total_count = if params.include_total {

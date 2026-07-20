@@ -1,8 +1,9 @@
+pub(crate) mod json;
 pub mod traits;
 
-#[cfg(any(test, feature = "query-capture"))]
+#[cfg(any(test, feature = "query-capture", feature = "integration-test-support"))]
 mod query_capture;
-#[cfg(any(test, feature = "query-capture"))]
+#[cfg(any(test, feature = "query-capture", feature = "integration-test-support"))]
 pub use query_capture::{QueryCaptureSnapshot, capture_queries};
 
 /// Diesel query-building traits paired with diesel-async's I/O traits.
@@ -57,7 +58,7 @@ pub type DbPool = Pool<DbConnection>;
 /// Latest migration required by this binary. The test below keeps this value
 /// synchronized with the migration directory so readiness cannot silently lag
 /// behind a newly added schema change.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260715000003";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260718000001";
 
 #[derive(diesel::QueryableByName)]
 struct DatabaseSchemaReadiness {
@@ -292,9 +293,9 @@ async fn acquire_connection(pool: &DbPool) -> Result<PooledConnection<'_, DbConn
     let start = std::time::Instant::now();
     match pool.get().await {
         Ok(conn) => {
-            #[cfg(any(test, feature = "query-capture"))]
+            #[cfg(any(test, feature = "query-capture", feature = "integration-test-support"))]
             let mut conn = conn;
-            #[cfg(any(test, feature = "query-capture"))]
+            #[cfg(any(test, feature = "query-capture", feature = "integration-test-support"))]
             query_capture::configure_connection(&mut conn);
             metrics::db_connection_acquired(start.elapsed());
             Ok(conn)

@@ -1,5 +1,6 @@
 //! Deterministic evaluation of typed computed fields over one JSON document.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
@@ -23,6 +24,27 @@ pub const MIN_DECIMAL_EXPONENT: i64 = -308;
 pub const MAX_DECIMAL_EXPONENT: i64 = 308;
 const MAX_DECIMAL_SOURCE_BYTES: usize = 512;
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
+
+pub fn compare_decimal_strings(left: &str, right: &str) -> Option<Ordering> {
+    let left = BigDecimal::from_str(left).ok()?;
+    let right = BigDecimal::from_str(right).ok()?;
+    Some(left.cmp(&right))
+}
+
+pub fn canonical_decimal_string(source: &str) -> Option<String> {
+    if source.len() > MAX_DECIMAL_SOURCE_BYTES {
+        return None;
+    }
+    let value = BigDecimal::from_str(source).ok()?;
+    validate_decimal(&value, None).ok()?;
+    Some(value.normalized().to_string())
+}
+
+pub fn canonical_integer_string(source: &str) -> Option<String> {
+    let canonical = canonical_decimal_string(source)?;
+    let value = BigDecimal::from_str(&canonical).ok()?;
+    decimal_is_integer(&value).then_some(canonical)
+}
 
 /// Release-owned safety limits applied to one evaluation scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -933,6 +955,38 @@ mod tests {
             EvaluationLimits::standard(),
         )
         .unwrap()
+    }
+
+    #[rstest]
+    #[case("1_", Some("1"))]
+    #[case("+1.2300", Some("1.23"))]
+    #[case("1e308", Some("1e+308"))]
+    #[case("1e309", None)]
+    #[case("1e-309", None)]
+    #[case("12345678901234567890123456789012345", None)]
+    #[case("1e200000", None)]
+    fn decimal_cursor_canonicalization_respects_evaluator_bounds(
+        #[case] source: &str,
+        #[case] expected: Option<&str>,
+    ) {
+        assert_eq!(canonical_decimal_string(source).as_deref(), expected);
+    }
+
+    #[rstest]
+    #[case("1.0", Some("1"))]
+    #[case("1e3", Some("1000"))]
+    #[case("1.5", None)]
+    #[case("1e-1", None)]
+    #[case(
+        "1234567890123456789012345678901234",
+        Some("1234567890123456789012345678901234")
+    )]
+    #[case("1e309", None)]
+    fn integer_cursor_canonicalization_respects_evaluator_bounds(
+        #[case] source: &str,
+        #[case] expected: Option<&str>,
+    ) {
+        assert_eq!(canonical_integer_string(source).as_deref(), expected);
     }
 
     #[rstest]
