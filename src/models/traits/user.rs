@@ -30,8 +30,7 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.group_objects_from_backend(backend.db_pool(), request)
-            .await
+        self.group_objects_from_backend(backend, request).await
     }
 
     async fn search_collections<C>(

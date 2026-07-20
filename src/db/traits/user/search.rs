@@ -759,7 +759,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, object_id),
-                FilterField::Collections => {
+                FilterField::Collections | FilterField::CollectionId => {
                     numeric_search!(base_query, param, operator, object_collection_id)
                 }
                 FilterField::CreatedAt => {
@@ -903,7 +903,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, object_id),
-                FilterField::Collections => {
+                FilterField::Collections | FilterField::CollectionId => {
                     numeric_search!(base_query, param, operator, object_collection_id)
                 }
                 FilterField::CreatedAt => {

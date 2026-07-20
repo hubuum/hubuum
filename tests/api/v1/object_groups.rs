@@ -3,6 +3,7 @@ mod tests {
     use std::sync::Arc;
 
     use actix_web::{App, http::StatusCode, test, web::Data};
+    use base64::Engine;
 
     use crate::db::traits::computed_field::{
         class_computation_state_for, create_personal_definition, create_shared_definition,
@@ -11,7 +12,7 @@ mod tests {
     use crate::events::EventContext;
     use crate::models::{
         ComputedFieldDefinitionRequest, HubuumObject, NewHubuumClass, NewHubuumObject, Permissions,
-        ServiceAccountID, TaskID,
+        ServiceAccountID, TaskID, UpdateHubuumObject,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
@@ -22,7 +23,7 @@ mod tests {
         ObjectFixture, TestContext, create_test_group, create_test_service_account, scoped_token,
         service_account_token, test_context,
     };
-    use crate::traits::{CanDelete, PermissionController, SelfAccessors};
+    use crate::traits::{CanDelete, CanUpdate, PermissionController, SelfAccessors};
 
     async fn fixture(context: &TestContext, label: &str) -> ObjectFixture {
         let object = |name: &str, description: &str, data: serde_json::Value| NewHubuumObject {
@@ -134,6 +135,17 @@ mod tests {
             .sum()
     }
 
+    fn encoded_group_cursor(sort_key: serde_json::Value, object_count: i64) -> String {
+        let token = serde_json::json!({
+            "version": 1,
+            "dimensions": ["name"],
+            "sort": "dimensions_ascending",
+            "sort_key": sort_key,
+            "object_count": object_count,
+        });
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&token).unwrap())
+    }
+
     fn computed_definition(key: &str, path: &str, enabled: bool) -> ComputedFieldDefinitionRequest {
         serde_json::from_value(serde_json::json!({
             "key": key,
@@ -221,6 +233,29 @@ mod tests {
             page.total_count.unwrap().parse::<usize>().unwrap(),
             page.rows.len()
         );
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case("collections")]
+    #[case("collection_id")]
+    #[tokio::test]
+    async fn collection_filter_aliases_apply_before_grouping(
+        #[future(awt)] test_context: TestContext,
+        #[case] filter: &str,
+    ) {
+        let fixture = fixture(&test_context, &format!("{filter} filter alias")).await;
+        let page = group_rows(
+            &test_context,
+            &fixture,
+            &test_context.admin_token,
+            &format!("{filter}=2147483647&group_by=name"),
+        )
+        .await;
+
+        assert!(page.rows.is_empty());
+        assert_eq!(page.total_count.as_deref(), Some("0"));
 
         fixture.cleanup().await.unwrap();
     }
@@ -414,7 +449,93 @@ mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
-    async fn shared_computed_groups_use_live_fallback_and_unavailable_bucket(
+    async fn empty_group_page_rejects_a_malformed_cursor(#[future(awt)] test_context: TestContext) {
+        let fixture = test_context
+            .object_fixture(
+                "empty malformed group cursor",
+                NewHubuumClass {
+                    collection_id: 0,
+                    name: test_context.scoped_name("empty malformed group cursor class"),
+                    description: "Empty".to_string(),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/object-groups?group_by=name&cursor=not-a-cursor",
+                fixture.class.id
+            ),
+        )
+        .await;
+
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn empty_group_page_rejects_structurally_invalid_cursor(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let fixture = fixture(&test_context, "invalid cursor ordering values").await;
+        let cursor = encoded_group_cursor(serde_json::json!([null]), 1);
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/object-groups?name__equals=no-such-object&group_by=name&cursor={cursor}",
+                fixture.class.id
+            ),
+        )
+        .await;
+
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn empty_group_page_rejects_a_cursor_for_different_dimensions(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let fixture = fixture(&test_context, "mismatched empty group cursor").await;
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/object-groups?group_by=description&limit=1",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let cursor = header_value(&response, NEXT_CURSOR_HEADER).unwrap();
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/object-groups?name__equals=no-such-object&group_by=name&cursor={cursor}",
+                fixture.class.id
+            ),
+        )
+        .await;
+
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn shared_computed_groups_evaluate_snapshots_and_use_unavailable_bucket(
         #[future(awt)] test_context: TestContext,
     ) {
         let fixture = fixture(&test_context, "shared computed groups").await;
@@ -636,7 +757,7 @@ mod tests {
         let response = get_with_permission_backend(
             &test_context,
             &test_context.normal_token,
-            backend,
+            backend.clone(),
             &format!(
                 "/api/v1/classes/{}/object-groups?group_by=description",
                 fixture.class.id
@@ -652,6 +773,138 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["object_count"], 2);
         assert_eq!(rows[0]["dimensions"][0]["value"], "alpha");
+        assert_eq!(backend.authorization_batch_sizes(), vec![2, 2, 1]);
+
+        fixture.cleanup().await.unwrap();
+        group
+            .delete_without_events(&test_context.pool)
+            .await
+            .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn non_pushdown_high_cardinality_groups_paginate_from_bounded_accumulator(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let fixture = fixture(&test_context, "external accumulator pagination").await;
+        let group = create_test_group(&test_context.pool).await;
+        group
+            .add_member_without_events(&test_context.pool, &test_context.normal_user)
+            .await
+            .unwrap();
+        let backend = Arc::new(MockTreetopBackend::new());
+        for object in &fixture.objects {
+            backend.add_rule(MockAllowRule {
+                group_id: group.id,
+                action: Permissions::ReadObject,
+                resource_kind: ResourceKind::Object,
+                resource_id: Some(object.id),
+                attrs: ResourceAttrs::default(),
+            });
+        }
+
+        let endpoint = format!(
+            "/api/v1/classes/{}/object-groups?collection_id={}&group_by=name&limit=2",
+            fixture.class.id, fixture.collection.collection.id
+        );
+        let mut cursor = None;
+        let mut values = Vec::new();
+        for _ in 0..3 {
+            let response = get_with_permission_backend(
+                &test_context,
+                &test_context.normal_token,
+                backend.clone(),
+                &cursor
+                    .as_ref()
+                    .map(|cursor| format!("{endpoint}&cursor={cursor}"))
+                    .unwrap_or_else(|| endpoint.clone()),
+            )
+            .await;
+            let response = assert_response_status(response, StatusCode::OK).await;
+            assert_eq!(
+                header_value(&response, TOTAL_COUNT_HEADER).as_deref(),
+                Some("5")
+            );
+            cursor = header_value(&response, NEXT_CURSOR_HEADER);
+            let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+            values.extend(
+                rows.into_iter()
+                    .map(|row| row["dimensions"][0]["value"].as_str().unwrap().to_string()),
+            );
+        }
+
+        let mut expected = fixture
+            .objects
+            .iter()
+            .map(|object| object.name.clone())
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(values, expected);
+        assert!(cursor.is_none());
+
+        fixture.cleanup().await.unwrap();
+        group
+            .delete_without_events(&test_context.pool)
+            .await
+            .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn non_pushdown_grouping_uses_the_authorized_object_snapshot(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let fixture = fixture(&test_context, "external authorization snapshot").await;
+        let group = create_test_group(&test_context.pool).await;
+        group
+            .add_member_without_events(&test_context.pool, &test_context.normal_user)
+            .await
+            .unwrap();
+        let authorized_object = fixture.objects[0].clone();
+        let renamed = test_context.scoped_name("renamed after authorization input");
+        let backend = Arc::new(MockTreetopBackend::new());
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(authorized_object.id),
+            attrs: ResourceAttrs {
+                name: Some(authorized_object.name.clone()),
+                ..Default::default()
+            },
+        });
+        let pool = test_context.pool.clone();
+        let renamed_for_hook = renamed.clone();
+        backend.set_authorization_hook(move || async move {
+            UpdateHubuumObject {
+                name: Some(renamed_for_hook),
+                collection_id: None,
+                hubuum_class_id: None,
+                data: None,
+                description: None,
+            }
+            .update_without_events(&pool, authorized_object.id)
+            .await
+            .unwrap();
+        });
+
+        let response = get_with_permission_backend(
+            &test_context,
+            &test_context.normal_token,
+            backend,
+            &format!(
+                "/api/v1/classes/{}/object-groups?group_by=name",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["dimensions"][0]["value"], fixture.objects[0].name);
+        assert_ne!(rows[0]["dimensions"][0]["value"], renamed);
 
         fixture.cleanup().await.unwrap();
         group

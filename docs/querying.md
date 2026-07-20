@@ -415,16 +415,18 @@ equality. The `value` member is omitted for `null`, `missing`, and
 
 Authorization and all supplied object filters are applied before aggregation.
 This rule also applies when the permission backend cannot push visibility into
-SQL: candidate object IDs are authorized first, and only allowed IDs are sent
-to PostgreSQL for grouping. Hidden objects therefore cannot affect bucket
-counts or group cardinality.
+SQL: candidate object snapshots are authorized in bounded batches, and only
+the immutable authorized snapshots are grouped. Hidden objects therefore
+cannot affect bucket counts or group cardinality, and rows are not reloaded
+after authorization.
 
-Shared computed dimensions use the current definition revision, stored values
-when fresh, and the same live fallback and repair behavior as computed object
-reads. Personal dimensions require a human owner with `ReadClass` access and
-can only use that owner's enabled definitions. Service accounts cannot group by
-personal fields. Unknown, disabled, inaccessible, and wrong-class selectors
-return `400 Bad Request`. Responses depending on computed state include
+Shared computed dimensions evaluate the selected current definitions from the
+authorized snapshots while holding the class definition lock. Personal
+dimensions require a human owner with `ReadClass` access and can only use that
+owner's enabled definitions. Grouping does not reload source objects or perform
+computed read repair. Service accounts cannot group by personal fields.
+Unknown, disabled, inaccessible, and wrong-class selectors return
+`400 Bad Request`. Responses depending on computed state include
 `Cache-Control: private, no-store`.
 
 Pagination headers describe group rows, not source objects:

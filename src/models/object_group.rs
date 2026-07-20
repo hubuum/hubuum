@@ -7,7 +7,11 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
-use crate::models::search::{QueryOptions, parse_query_parameter_with_passthrough};
+use crate::models::search::{
+    FilterField, QueryOptions, QueryParamsExt, SearchOperator,
+    parse_query_parameter_with_passthrough,
+};
+use crate::models::{HubuumClassID, Permissions, UserID};
 
 pub const MIN_OBJECT_GROUP_DIMENSIONS: usize = 1;
 pub const MAX_OBJECT_GROUP_DIMENSIONS: usize = 3;
@@ -267,12 +271,14 @@ impl ObjectGroupSpec {
                 "group cursor does not match the current dimensions and sort".to_string(),
             ));
         }
-        if token
-            .sort_key
-            .as_array()
-            .is_none_or(|values| values.len() != self.dimensions.len())
-            || token.object_count < 0
-        {
+        let sort_key_is_valid = token.sort_key.as_array().is_some_and(|values| {
+            values.len() == self.dimensions.len()
+                && values
+                    .iter()
+                    .zip(&self.dimensions)
+                    .all(|(value, dimension)| valid_cursor_dimension_value(value, dimension))
+        });
+        if !sort_key_is_valid || token.object_count <= 0 {
             return Err(ApiError::BadRequest(
                 "group cursor contains invalid ordering values".to_string(),
             ));
@@ -295,6 +301,42 @@ impl ObjectGroupSpec {
             ApiError::InternalServerError(format!("failed to serialize group cursor: {error}"))
         })?;
         Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+    }
+}
+
+fn valid_cursor_dimension_value(
+    value: &serde_json::Value,
+    dimension: &ObjectGroupDimension,
+) -> bool {
+    let Some(pair) = value.as_array().filter(|pair| pair.len() == 2) else {
+        return false;
+    };
+    let Some(state) = pair[0].as_u64() else {
+        return false;
+    };
+    match state {
+        0 => valid_cursor_present_value(&pair[1], dimension),
+        1 => !matches!(dimension, ObjectGroupDimension::Scalar(_)) && pair[1].is_null(),
+        2 => matches!(dimension, ObjectGroupDimension::JsonData(_)) && pair[1].is_null(),
+        3 => matches!(dimension, ObjectGroupDimension::Computed(_)) && pair[1].is_null(),
+        _ => false,
+    }
+}
+
+fn valid_cursor_present_value(value: &serde_json::Value, dimension: &ObjectGroupDimension) -> bool {
+    match dimension {
+        ObjectGroupDimension::Scalar(ObjectGroupScalarField::Name)
+        | ObjectGroupDimension::Scalar(ObjectGroupScalarField::Description) => value.is_string(),
+        ObjectGroupDimension::Scalar(ObjectGroupScalarField::CollectionId) => value
+            .as_i64()
+            .and_then(|value| i32::try_from(value).ok())
+            .is_some_and(|value| value > 0),
+        ObjectGroupDimension::Scalar(
+            ObjectGroupScalarField::CreatedAt | ObjectGroupScalarField::UpdatedAt,
+        ) => value
+            .as_str()
+            .is_some_and(|value| value.parse::<chrono::NaiveDateTime>().is_ok()),
+        ObjectGroupDimension::JsonData(_) | ObjectGroupDimension::Computed(_) => !value.is_null(),
     }
 }
 
@@ -421,54 +463,124 @@ impl ObjectGroupQuery {
     pub fn into_parts(self) -> (QueryOptions, ObjectGroupSpec) {
         (self.query_options, self.spec)
     }
+
+    pub fn query_options(&self) -> &QueryOptions {
+        &self.query_options
+    }
+
+    pub const fn spec(&self) -> &ObjectGroupSpec {
+        &self.spec
+    }
 }
 
 pub struct ObjectGroupBackendRequest {
-    class_id: i32,
-    candidates: Vec<crate::models::HubuumObject>,
+    class_id: HubuumClassID,
     query_options: QueryOptions,
     spec: ObjectGroupSpec,
-    personal_owner_id: Option<i32>,
+    personal_owner_id: Option<UserID>,
+    authorization: ObjectGroupAuthorization,
 }
 
-impl ObjectGroupBackendRequest {
+pub struct ObjectGroupBackendRequestBuilder {
+    class_id: HubuumClassID,
+    query: ObjectGroupQuery,
+    personal_owner_id: Option<UserID>,
+    authorization: Option<ObjectGroupAuthorization>,
+}
+
+pub(crate) struct ObjectGroupBackendParts {
+    pub class_id: HubuumClassID,
+    pub query_options: QueryOptions,
+    pub spec: ObjectGroupSpec,
+    pub personal_owner_id: Option<UserID>,
+    pub authorization: ObjectGroupAuthorization,
+}
+
+pub struct ObjectGroupAuthorization {
+    required_permissions: Vec<Permissions>,
+    token_scopes: Option<Vec<Permissions>>,
+}
+
+impl ObjectGroupAuthorization {
     pub fn new(
-        class_id: i32,
-        candidates: Vec<crate::models::HubuumObject>,
-        query_options: QueryOptions,
-        spec: ObjectGroupSpec,
-        personal_owner_id: Option<i32>,
+        required_permissions: Vec<Permissions>,
+        token_scopes: Option<Vec<Permissions>>,
     ) -> Result<Self, ApiError> {
-        if class_id <= 0 {
+        if !required_permissions.contains(&Permissions::ReadObject) {
             return Err(ApiError::BadRequest(
-                "Object group class id must be positive".to_string(),
+                "Object grouping authorization must require ReadObject".to_string(),
             ));
         }
         Ok(Self {
-            class_id,
-            candidates,
-            query_options,
-            spec,
-            personal_owner_id,
+            required_permissions,
+            token_scopes,
         })
     }
 
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        i32,
-        Vec<crate::models::HubuumObject>,
-        QueryOptions,
-        ObjectGroupSpec,
-        Option<i32>,
-    ) {
-        (
-            self.class_id,
-            self.candidates,
-            self.query_options,
-            self.spec,
-            self.personal_owner_id,
-        )
+    pub(crate) fn into_parts(self) -> (Vec<Permissions>, Option<Vec<Permissions>>) {
+        (self.required_permissions, self.token_scopes)
+    }
+}
+
+impl ObjectGroupBackendRequest {
+    pub fn builder(
+        class_id: HubuumClassID,
+        query: ObjectGroupQuery,
+    ) -> ObjectGroupBackendRequestBuilder {
+        ObjectGroupBackendRequestBuilder {
+            class_id,
+            query,
+            personal_owner_id: None,
+            authorization: None,
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> ObjectGroupBackendParts {
+        ObjectGroupBackendParts {
+            class_id: self.class_id,
+            query_options: self.query_options,
+            spec: self.spec,
+            personal_owner_id: self.personal_owner_id,
+            authorization: self.authorization,
+        }
+    }
+}
+
+impl ObjectGroupBackendRequestBuilder {
+    pub fn personal_owner(mut self, owner_id: UserID) -> Self {
+        self.personal_owner_id = Some(owner_id);
+        self
+    }
+
+    pub fn authorization(mut self, authorization: ObjectGroupAuthorization) -> Self {
+        self.authorization = Some(authorization);
+        self
+    }
+
+    pub fn build(mut self) -> Result<ObjectGroupBackendRequest, ApiError> {
+        let authorization = self.authorization.ok_or_else(|| {
+            ApiError::InternalServerError(
+                "Object group backend request is missing authorization".to_string(),
+            )
+        })?;
+        self.query.query_options.filters.add_filter(
+            FilterField::ClassId,
+            SearchOperator::Equals { is_negated: false },
+            &self.class_id.id().to_string(),
+        );
+        let (query_options, spec) = self.query.into_parts();
+        if spec.has_personal_computed_dimension() != self.personal_owner_id.is_some() {
+            return Err(ApiError::InternalServerError(
+                "Personal computed grouping requires exactly one typed owner".to_string(),
+            ));
+        }
+        Ok(ObjectGroupBackendRequest {
+            class_id: self.class_id,
+            query_options,
+            spec,
+            personal_owner_id: self.personal_owner_id,
+            authorization,
+        })
     }
 }
 
@@ -514,6 +626,17 @@ pub fn parse_object_group_query(query_string: &str) -> Result<ObjectGroupQuery, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn encoded_cursor(dimension: &str, sort_key: serde_json::Value, object_count: i64) -> String {
+        let token = ObjectGroupCursorToken {
+            version: 1,
+            dimensions: vec![dimension.to_string()],
+            sort: ObjectGroupSort::DimensionsAscending,
+            sort_key,
+            object_count,
+        };
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&token).unwrap())
+    }
 
     #[test]
     fn parses_ordered_multidimensional_group_query() {
@@ -588,5 +711,81 @@ mod tests {
         let cursor = first.encode_cursor(&row).unwrap();
         let error = second.decode_cursor(&cursor).unwrap_err();
         assert!(error.to_string().contains("does not match"));
+    }
+
+    #[rstest::rstest]
+    #[case(serde_json::json!([null]), 1)]
+    #[case(serde_json::json!([[0]]), 1)]
+    #[case(serde_json::json!([[0, null]]), 1)]
+    #[case(serde_json::json!([[1, null]]), 1)]
+    #[case(serde_json::json!([[4, "value"]]), 1)]
+    #[case(serde_json::json!([[0, "value"]]), 0)]
+    fn rejects_cursor_with_invalid_ordering_values(
+        #[case] sort_key: serde_json::Value,
+        #[case] object_count: i64,
+    ) {
+        let spec = ObjectGroupSpec::new(
+            vec![ObjectGroupDimension::from_str("name").unwrap()],
+            ObjectGroupSort::DimensionsAscending,
+        )
+        .unwrap();
+
+        let error = spec
+            .decode_cursor(&encoded_cursor("name", sort_key, object_count))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("invalid ordering values"));
+    }
+
+    #[rstest::rstest]
+    #[case("name", serde_json::json!(42))]
+    #[case("description", serde_json::json!(false))]
+    #[case("collection_id", serde_json::json!("42"))]
+    #[case("collection_id", serde_json::json!(0))]
+    #[case("created_at", serde_json::json!(true))]
+    #[case("updated_at", serde_json::json!("not-a-timestamp"))]
+    fn rejects_cursor_with_wrong_scalar_value_type(
+        #[case] dimension: &str,
+        #[case] value: serde_json::Value,
+    ) {
+        let spec = ObjectGroupSpec::new(
+            vec![ObjectGroupDimension::from_str(dimension).unwrap()],
+            ObjectGroupSort::DimensionsAscending,
+        )
+        .unwrap();
+
+        let error = spec
+            .decode_cursor(&encoded_cursor(
+                dimension,
+                serde_json::json!([[0, value]]),
+                1,
+            ))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("invalid ordering values"));
+    }
+
+    #[rstest::rstest]
+    #[case("name", serde_json::json!("router"))]
+    #[case("description", serde_json::json!("edge device"))]
+    #[case("collection_id", serde_json::json!(42))]
+    #[case("created_at", serde_json::json!("2026-07-20T12:34:56.123456"))]
+    #[case("updated_at", serde_json::json!("2026-07-20T12:34:56"))]
+    fn accepts_cursor_with_correct_scalar_value_type(
+        #[case] dimension: &str,
+        #[case] value: serde_json::Value,
+    ) {
+        let spec = ObjectGroupSpec::new(
+            vec![ObjectGroupDimension::from_str(dimension).unwrap()],
+            ObjectGroupSort::DimensionsAscending,
+        )
+        .unwrap();
+
+        spec.decode_cursor(&encoded_cursor(
+            dimension,
+            serde_json::json!([[0, value]]),
+            1,
+        ))
+        .unwrap();
     }
 }

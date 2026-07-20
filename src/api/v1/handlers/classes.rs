@@ -44,9 +44,10 @@ use crate::models::{
     HubuumClassWithPath, HubuumObject, HubuumObjectHistory, HubuumObjectID,
     HubuumObjectReadResponse, HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass,
     NewHubuumClassRelationFromClass, NewHubuumObjectRelation, NewHubuumObjectRequest,
-    ObjectDataPatchDocument, ObjectGroupBackendRequest, ObjectGroupRow, ObjectSelector,
-    Permissions, RelatedClassGraph, RelatedObjectGraph, RelatedObjectGraphRow, ResolvedClassTarget,
-    ResolvedObjectTarget, UpdateHubuumClass, UpdateHubuumObject, UpdateHubuumObjectRequest,
+    ObjectDataPatchDocument, ObjectGroupAuthorization, ObjectGroupBackendRequest, ObjectGroupRow,
+    ObjectSelector, Permissions, RelatedClassGraph, RelatedObjectGraph, RelatedObjectGraphRow,
+    ResolvedClassTarget, ResolvedObjectTarget, UpdateHubuumClass, UpdateHubuumObject,
+    UpdateHubuumObjectRequest, UserID,
 };
 use crate::traits::{BackendContext, CanDelete, CanSave, Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
@@ -815,20 +816,15 @@ async fn get_object_groups(
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
     let class = class_id.instance(&pool).await?;
-    let (mut params, spec) = parse_object_group_query(req.query_string())?.into_parts();
-    params.filters.add_filter(
-        FilterField::ClassId,
-        SearchOperator::Equals { is_negated: false },
-        &class_id.id().to_string(),
-    );
+    let query = parse_object_group_query(req.query_string())?;
 
-    let personal_owner_id = if spec.has_personal_computed_dimension() {
+    let personal_owner_id = if query.spec().has_personal_computed_dimension() {
         if !requestor.principal.is_human() {
             return Err(ApiError::BadRequest(
                 "Service accounts cannot group by personal computed fields".to_string(),
             ));
         }
-        Some(
+        Some(UserID::new(
             computed_personal_owner(&pool, &requestor, &class)
                 .await?
                 .ok_or_else(|| {
@@ -837,7 +833,7 @@ async fn get_object_groups(
                             .to_string(),
                     )
                 })?,
-        )
+        )?)
     } else {
         None
     };
@@ -849,65 +845,26 @@ async fn get_object_groups(
         query = req.query_string()
     );
 
-    let mut required = params.filters.permissions()?;
+    let mut required = query.query_options().filters.permissions()?;
     required.ensure_contains(&[Permissions::ReadObject]);
     let required = required.iter().copied().collect::<Vec<_>>();
-    let candidate_options = count_query_options(&params);
-    let candidates = if pool.permission_backend().supports_sql_visibility_pushdown() {
-        user.search_objects(&pool, candidate_options, requestor.scopes())
-            .await?
-    } else if !scope_allows(requestor.scopes(), &required) {
-        Vec::new()
-    } else {
-        let candidates = user
-            .search_objects_from_backend_with_admin_status(
-                &pool,
-                candidate_options.clone(),
-                true,
-                None,
-            )
-            .await?;
-        let principal = PrincipalRef::load(&pool, user).await?;
-        authorize_cursor_page(
-            pool.permission_backend(),
-            &principal,
-            candidates,
-            required,
-            &candidate_options,
-            |object| ResourceRef {
-                kind: ResourceKind::Object,
-                id: object.id,
-                attrs: ResourceAttrs {
-                    collection_id: Some(object.collection_id),
-                    class_id: Some(object.hubuum_class_id),
-                    name: Some(object.name.clone()),
-                    ..Default::default()
-                },
-            },
-        )
-        .await?
-        .rows
-    };
+    let authorization =
+        ObjectGroupAuthorization::new(required, requestor.scopes().map(<[Permissions]>::to_vec))?;
 
-    let computed = spec.has_computed_dimension();
-    let page = user
-        .group_objects(
-            &pool,
-            ObjectGroupBackendRequest::new(
-                class.id,
-                candidates,
-                params.clone(),
-                spec,
-                personal_owner_id,
-            )?,
-        )
-        .await?;
+    let computed = query.spec().has_computed_dimension();
+    let effective_limit = effective_page_limit(query.query_options())?;
+    let mut request =
+        ObjectGroupBackendRequest::builder(class_id, query).authorization(authorization);
+    if let Some(owner_id) = personal_owner_id {
+        request = request.personal_owner(owner_id);
+    }
+    let page = user.group_objects(&pool, request.build()?).await?;
     let (rows, total_count, next_cursor) = page.into_parts();
     Ok(ApiResponse::paginated_items(
         rows,
         &next_cursor,
         total_count,
-        effective_page_limit(&params)?,
+        effective_limit,
         computed,
     ))
 }
