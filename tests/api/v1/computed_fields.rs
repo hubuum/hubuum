@@ -1549,11 +1549,11 @@ mod tests {
         serde_json::json!({})
     )]
     #[case::extra_key(
-        serde_json::json!({"display_name": "alpha.example", "retired": "secret"}),
+        serde_json::json!({"display_name": "zulu-stale.example", "retired": "secret"}),
         serde_json::json!({})
     )]
     #[case::malformed_error(
-        serde_json::json!({"display_name": "alpha.example"}),
+        serde_json::json!({"display_name": "zulu-stale.example"}),
         serde_json::json!({"display_name": "invalid"})
     )]
     #[tokio::test]
@@ -1637,6 +1637,21 @@ mod tests {
 
         assert_eq!(page.len(), 1);
         assert_eq!(page[0]["id"], fixture.objects[0].id);
+
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/?computed.shared.display_name=alpha.example",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let filtered: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0]["id"], boundary.id);
 
         fixture.cleanup().await.unwrap();
     }

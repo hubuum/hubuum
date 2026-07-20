@@ -7,6 +7,7 @@ DROP FUNCTION IF EXISTS hubuum_computed_error(TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS hubuum_computed_values_equal(JSONB, JSONB, INTEGER);
 DROP TYPE IF EXISTS hubuum_computed_equality_result;
 DROP FUNCTION IF EXISTS hubuum_round_half_even(NUMERIC, INTEGER);
+DROP FUNCTION IF EXISTS hubuum_computed_materialization_valid(JSONB, JSONB, JSONB);
 DROP FUNCTION IF EXISTS hubuum_computed_numeric(JSONB);
 DROP FUNCTION IF EXISTS hubuum_computed_pointer_value(JSONB, TEXT);
 DROP FUNCTION IF EXISTS hubuum_computed_resolve_pointer(JSONB, TEXT, INTEGER);

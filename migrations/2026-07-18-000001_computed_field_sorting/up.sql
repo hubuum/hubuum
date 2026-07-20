@@ -165,6 +165,101 @@ EXCEPTION
 END;
 $$;
 
+CREATE FUNCTION hubuum_computed_materialization_valid(
+    values_document JSONB,
+    errors_document JSONB,
+    definitions JSONB
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+DECLARE
+    definition JSONB;
+    definition_key TEXT;
+    definition_type TEXT;
+    stored_value JSONB;
+    stored_numeric NUMERIC;
+    value_type_matches BOOLEAN;
+    error_entry RECORD;
+BEGIN
+    IF jsonb_typeof(values_document) <> 'object'
+        OR jsonb_typeof(errors_document) <> 'object'
+        OR jsonb_typeof(definitions) <> 'array'
+    THEN
+        RETURN FALSE;
+    END IF;
+    IF (SELECT count(*) FROM jsonb_object_keys(values_document))
+        <> jsonb_array_length(definitions)
+    THEN
+        RETURN FALSE;
+    END IF;
+
+    FOR definition IN SELECT value FROM jsonb_array_elements(definitions) LOOP
+        definition_key := definition ->> 'key';
+        definition_type := definition ->> 'result_type';
+        IF definition_key IS NULL
+            OR definition_type IS NULL
+            OR NOT values_document ? definition_key
+        THEN
+            RETURN FALSE;
+        END IF;
+        stored_value := values_document -> definition_key;
+        IF stored_value = 'null'::JSONB THEN
+            CONTINUE;
+        END IF;
+        value_type_matches := CASE definition_type
+            WHEN 'string' THEN jsonb_typeof(stored_value) = 'string'
+            WHEN 'number' THEN jsonb_typeof(stored_value) = 'number'
+            WHEN 'integer' THEN jsonb_typeof(stored_value) = 'number'
+            WHEN 'boolean' THEN jsonb_typeof(stored_value) = 'boolean'
+            WHEN 'object' THEN jsonb_typeof(stored_value) = 'object'
+            WHEN 'array' THEN jsonb_typeof(stored_value) = 'array'
+            ELSE FALSE
+        END;
+        IF NOT value_type_matches THEN
+            RETURN FALSE;
+        END IF;
+        IF definition_type IN ('number', 'integer') THEN
+            stored_numeric := hubuum_computed_numeric(stored_value);
+            IF stored_numeric IS NULL
+                OR (definition_type = 'integer' AND trunc(stored_numeric) <> stored_numeric)
+            THEN
+                RETURN FALSE;
+            END IF;
+        END IF;
+    END LOOP;
+
+    FOR error_entry IN SELECT key, value FROM jsonb_each(errors_document) LOOP
+        IF NOT values_document ? error_entry.key
+            OR values_document -> error_entry.key <> 'null'::JSONB
+            OR jsonb_typeof(error_entry.value) <> 'object'
+            OR jsonb_typeof(error_entry.value -> 'code') IS DISTINCT FROM 'string'
+            OR error_entry.value ->> 'code' NOT IN (
+                'input_too_large',
+                'non_numeric_operand',
+                'non_integer_result',
+                'result_type_mismatch',
+                'numeric_out_of_range',
+                'evaluation_limit_exceeded',
+                'result_too_large'
+            )
+            OR jsonb_typeof(error_entry.value -> 'message') IS DISTINCT FROM 'string'
+            OR (
+                error_entry.value ? 'path'
+                AND error_entry.value -> 'path' <> 'null'::JSONB
+                AND jsonb_typeof(error_entry.value -> 'path') <> 'string'
+            )
+        THEN
+            RETURN FALSE;
+        END IF;
+    END LOOP;
+    RETURN TRUE;
+END;
+$$;
+
 CREATE FUNCTION hubuum_round_half_even(value NUMERIC, scale INTEGER)
 RETURNS NUMERIC
 LANGUAGE plpgsql

@@ -473,6 +473,11 @@ fn computed_sort_value_sql(
               AND sort_values.evaluation_revision = {evaluation_revision} \
               AND sort_values.source_data_sha256 = \
                   hubuum_computed_source_sha256(hubuumobject.data) \
+              AND hubuum_computed_materialization_valid( \
+                  sort_values.values, \
+                  sort_values.errors, \
+                  '{scope_sql}'::jsonb \
+              ) \
               AND jsonb_exists(sort_values.values, '{key}') \
               AND ({cached_value} = 'null'::jsonb OR ({cached_value_matches_type})) \
           ) AS sort_cache ON TRUE)",
