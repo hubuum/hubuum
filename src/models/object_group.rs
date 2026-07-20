@@ -15,6 +15,9 @@ use crate::models::{HubuumClassID, Permissions, UserID};
 
 pub const MIN_OBJECT_GROUP_DIMENSIONS: usize = 1;
 pub const MAX_OBJECT_GROUP_DIMENSIONS: usize = 3;
+/// Keeps the cursor safe for replay in a request target and response header
+/// across common HTTP server and proxy limits.
+pub const MAX_OBJECT_GROUP_CURSOR_LENGTH: usize = 8 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectGroupScalarField {
@@ -258,6 +261,11 @@ impl ObjectGroupSpec {
     }
 
     pub(crate) fn decode_cursor(&self, cursor: &str) -> Result<DecodedObjectGroupCursor, ApiError> {
+        if cursor.len() > MAX_OBJECT_GROUP_CURSOR_LENGTH {
+            return Err(ApiError::PayloadTooLarge(format!(
+                "group cursor exceeds the replay-safe limit of {MAX_OBJECT_GROUP_CURSOR_LENGTH} bytes"
+            )));
+        }
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(cursor)
             .map_err(|error| ApiError::BadRequest(format!("invalid group cursor: {error}")))?;
@@ -300,7 +308,13 @@ impl ObjectGroupSpec {
         let bytes = serde_json::to_vec(&token).map_err(|error| {
             ApiError::InternalServerError(format!("failed to serialize group cursor: {error}"))
         })?;
-        Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+        let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+        if cursor.len() > MAX_OBJECT_GROUP_CURSOR_LENGTH {
+            return Err(ApiError::PayloadTooLarge(format!(
+                "group value at the page boundary produces a cursor larger than the replay-safe limit of {MAX_OBJECT_GROUP_CURSOR_LENGTH} bytes; narrow the grouping dimensions or use a page limit that does not end on this value"
+            )));
+        }
+        Ok(cursor)
     }
 }
 
@@ -711,6 +725,47 @@ mod tests {
         let cursor = first.encode_cursor(&row).unwrap();
         let error = second.decode_cursor(&cursor).unwrap_err();
         assert!(error.to_string().contains("does not match"));
+    }
+
+    #[test]
+    fn refuses_to_emit_an_unreplayable_group_cursor() {
+        let spec = ObjectGroupSpec::new(
+            vec![ObjectGroupDimension::from_str("json_data.large").unwrap()],
+            ObjectGroupSort::DimensionsAscending,
+        )
+        .unwrap();
+        let large_value = "x".repeat(MAX_OBJECT_GROUP_CURSOR_LENGTH);
+        let row = ObjectGroupRow::from_database(
+            serde_json::json!([{
+                "field": "json_data.large",
+                "state": "value",
+                "value": large_value.clone(),
+            }]),
+            1,
+            serde_json::json!([[0, large_value]]),
+        )
+        .unwrap();
+
+        let error = spec.encode_cursor(&row).unwrap_err();
+
+        assert!(matches!(error, ApiError::PayloadTooLarge(_)));
+        assert!(error.to_string().contains("replay-safe limit"));
+    }
+
+    #[test]
+    fn rejects_an_oversized_group_cursor_before_decoding() {
+        let spec = ObjectGroupSpec::new(
+            vec![ObjectGroupDimension::from_str("name").unwrap()],
+            ObjectGroupSort::DimensionsAscending,
+        )
+        .unwrap();
+
+        let error = spec
+            .decode_cursor(&"a".repeat(MAX_OBJECT_GROUP_CURSOR_LENGTH + 1))
+            .unwrap_err();
+
+        assert!(matches!(error, ApiError::PayloadTooLarge(_)));
+        assert!(error.to_string().contains("replay-safe limit"));
     }
 
     #[rstest::rstest]

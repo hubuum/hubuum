@@ -55,6 +55,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Grouped object queries now authorize permission filters against compatible
+  object, class, and collection resources on external permission backends,
+  reject group keys that cannot produce replay-safe cursors, and load only the
+  requested computed definitions.
 - Fixed single-host installs and updates with older `podman-compose` providers:
   service discovery no longer passes unsupported names to `compose ps`,
   migrations do not consume piped installer input, and Caddy no longer holds

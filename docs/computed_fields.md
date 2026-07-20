@@ -258,9 +258,11 @@ GET /api/v1/classes/{class_id}/object-groups?group_by=computed.personal.priority
 
 Shared grouping evaluates the selected current definitions from the authorized
 object snapshots while holding the class definition lock; it does not reload
-source objects or perform read repair. Personal grouping is limited to the
-requesting human owner's enabled definitions and still requires `ReadClass`;
-service accounts are rejected. Evaluation failures use one documented
+source objects or perform read repair. Definition loading is restricted to the
+requested shared keys and the requesting owner's requested personal keys.
+Personal grouping is limited to the requesting human owner's enabled
+definitions and still requires `ReadClass`; service accounts are rejected.
+Evaluation failures use one documented
 `unavailable` bucket. Computed grouping responses use
 `Cache-Control: private, no-store`. See [querying.md](querying.md#grouped-object-queries)
 for selectors, response states, sorting, and cursor semantics.

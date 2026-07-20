@@ -482,10 +482,16 @@ async fn authorize_object_snapshots(
     candidates: Vec<HubuumObject>,
     required_permissions: &[Permissions],
 ) -> Result<Vec<HubuumObject>, ApiError> {
+    let permissions_per_object = required_permissions.len();
+    if permissions_per_object == 0 {
+        return Err(ApiError::InternalServerError(
+            "Object group authorization requires at least one permission".to_string(),
+        ));
+    }
     let requests = candidates
         .iter()
-        .map(|object| PermissionRequest {
-            resource: ResourceRef {
+        .flat_map(|object| {
+            let object_resource = ResourceRef {
                 kind: ResourceKind::Object,
                 id: object.id,
                 attrs: ResourceAttrs {
@@ -494,20 +500,42 @@ async fn authorize_object_snapshots(
                     name: Some(object.name.clone()),
                     ..Default::default()
                 },
-            },
-            permissions: required_permissions.to_vec(),
+            };
+            required_permissions
+                .iter()
+                .copied()
+                .map(move |permission| PermissionRequest {
+                    resource: object_resource.normalized_for_permission(permission),
+                    permissions: vec![permission],
+                })
         })
         .collect::<Vec<_>>();
     let decisions = backend.authorize_many(principal, requests).await?;
-    if decisions.len() != candidates.len() {
+    let expected_decisions = candidates
+        .len()
+        .checked_mul(permissions_per_object)
+        .ok_or_else(|| {
+            ApiError::InternalServerError(
+                "Object group permission decision count overflowed".to_string(),
+            )
+        })?;
+    if decisions.len() != expected_decisions {
         return Err(ApiError::InternalServerError(
             "Permission backend returned an unexpected number of object decisions".to_string(),
         ));
     }
+    let allowed = decisions
+        .chunks_exact(permissions_per_object)
+        .map(|object_decisions| {
+            object_decisions
+                .iter()
+                .all(|decision| *decision == PermissionDecision::Allow)
+        })
+        .collect::<Vec<_>>();
     Ok(candidates
         .into_iter()
-        .zip(decisions)
-        .filter_map(|(object, decision)| (decision == PermissionDecision::Allow).then_some(object))
+        .zip(allowed)
+        .filter_map(|(object, allowed)| allowed.then_some(object))
         .collect())
 }
 
@@ -709,21 +737,54 @@ async fn load_computed_group_definitions(
         return Ok(ComputedGroupDefinitions::default());
     }
 
-    if selectors
+    let shared_keys = selectors
         .iter()
-        .any(|selector| selector.scope() == ComputedFieldScope::Shared)
-    {
+        .filter(|selector| selector.scope() == ComputedFieldScope::Shared)
+        .map(|selector| selector.key().to_string())
+        .collect::<Vec<_>>();
+    let personal_keys = selectors
+        .iter()
+        .filter(|selector| selector.scope() == ComputedFieldScope::Personal)
+        .map(|selector| selector.key().to_string())
+        .collect::<Vec<_>>();
+
+    if !shared_keys.is_empty() {
         acquire_computed_class_shared_lock(connection, class_id_value).await?;
     }
     use crate::schema::computed_field_definitions::dsl::{
-        class_id, computed_field_definitions, id,
+        class_id, computed_field_definitions, id, key, owner_user_id, visibility,
     };
-    let definitions = computed_field_definitions
-        .filter(class_id.eq(class_id_value))
-        .order(id.asc())
-        .select(ComputedFieldDefinition::as_select())
-        .load::<ComputedFieldDefinition>(connection)
-        .await?;
+    let mut definitions = Vec::with_capacity(selectors.len());
+    if !shared_keys.is_empty() {
+        definitions.extend(
+            computed_field_definitions
+                .filter(class_id.eq(class_id_value))
+                .filter(visibility.eq(COMPUTED_FIELD_VISIBILITY_SHARED))
+                .filter(key.eq_any(&shared_keys))
+                .order(id.asc())
+                .select(ComputedFieldDefinition::as_select())
+                .load::<ComputedFieldDefinition>(connection)
+                .await?,
+        );
+    }
+    if !personal_keys.is_empty() {
+        let personal_owner_id = personal_owner_id.ok_or_else(|| {
+            ApiError::InternalServerError(
+                "Personal computed grouping requires an owner".to_string(),
+            )
+        })?;
+        definitions.extend(
+            computed_field_definitions
+                .filter(class_id.eq(class_id_value))
+                .filter(visibility.eq(COMPUTED_FIELD_VISIBILITY_PERSONAL))
+                .filter(owner_user_id.eq(Some(personal_owner_id)))
+                .filter(key.eq_any(&personal_keys))
+                .order(id.asc())
+                .select(ComputedFieldDefinition::as_select())
+                .load::<ComputedFieldDefinition>(connection)
+                .await?,
+        );
+    }
 
     let mut selected = ComputedGroupDefinitions::default();
     for selector in selectors {

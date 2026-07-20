@@ -11,8 +11,8 @@ mod tests {
     };
     use crate::events::EventContext;
     use crate::models::{
-        ComputedFieldDefinitionRequest, HubuumObject, NewHubuumClass, NewHubuumObject, Permissions,
-        ServiceAccountID, TaskID, UpdateHubuumObject,
+        ComputedFieldDefinitionRequest, HubuumObject, MAX_OBJECT_GROUP_CURSOR_LENGTH,
+        NewHubuumClass, NewHubuumObject, Permissions, ServiceAccountID, TaskID, UpdateHubuumObject,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
@@ -384,6 +384,56 @@ mod tests {
             ]
         );
         assert!(cursor.is_none());
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn oversized_group_key_is_rejected_before_a_cursor_is_emitted(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let large_value = format!("a{}", "x".repeat(MAX_OBJECT_GROUP_CURSOR_LENGTH));
+        let fixture = test_context
+            .object_fixture(
+                "oversized group cursor",
+                NewHubuumClass {
+                    collection_id: 0,
+                    name: test_context.scoped_name("oversized group cursor class"),
+                    description: "Oversized group cursor".to_string(),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                },
+                vec![
+                    NewHubuumObject {
+                        collection_id: 0,
+                        hubuum_class_id: 0,
+                        name: test_context.scoped_name("oversized group cursor object"),
+                        description: "Oversized".to_string(),
+                        data: serde_json::json!({"group_key": large_value}),
+                    },
+                    NewHubuumObject {
+                        collection_id: 0,
+                        hubuum_class_id: 0,
+                        name: test_context.scoped_name("small group cursor object"),
+                        description: "Small".to_string(),
+                        data: serde_json::json!({"group_key": "z"}),
+                    },
+                ],
+            )
+            .await
+            .unwrap();
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!(
+                "/api/v1/classes/{}/object-groups?group_by=json_data.group_key&limit=1",
+                fixture.class.id
+            ),
+        )
+        .await;
+
+        assert_response_status(response, StatusCode::PAYLOAD_TOO_LARGE).await;
 
         fixture.cleanup().await.unwrap();
     }
@@ -960,6 +1010,68 @@ mod tests {
         let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["object_count"], 1);
+
+        fixture.cleanup().await.unwrap();
+        group
+            .delete_without_events(&test_context.pool)
+            .await
+            .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case(Permissions::ReadClass, ResourceKind::Class)]
+    #[case(Permissions::ReadCollection, ResourceKind::Collection)]
+    #[tokio::test]
+    async fn non_pushdown_permission_filters_use_compatible_resource_kinds(
+        #[future(awt)] test_context: TestContext,
+        #[case] filtered_permission: Permissions,
+        #[case] filtered_resource_kind: ResourceKind,
+    ) {
+        let fixture = fixture(&test_context, "external compatible permission resources").await;
+        let group = create_test_group(&test_context.pool).await;
+        group
+            .add_member_without_events(&test_context.pool, &test_context.normal_user)
+            .await
+            .unwrap();
+        let backend = Arc::new(MockTreetopBackend::new());
+        for object in fixture.objects.iter().take(2) {
+            backend.add_rule(MockAllowRule {
+                group_id: group.id,
+                action: Permissions::ReadObject,
+                resource_kind: ResourceKind::Object,
+                resource_id: Some(object.id),
+                attrs: ResourceAttrs::default(),
+            });
+        }
+        let filtered_resource_id = match filtered_permission {
+            Permissions::ReadClass => fixture.class.id,
+            Permissions::ReadCollection => fixture.collection.collection.id,
+            _ => unreachable!("test covers class and collection permissions"),
+        };
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: filtered_permission,
+            resource_kind: filtered_resource_kind,
+            resource_id: Some(filtered_resource_id),
+            attrs: ResourceAttrs::default(),
+        });
+
+        let response = get_with_permission_backend(
+            &test_context,
+            &test_context.normal_token,
+            backend.clone(),
+            &format!(
+                "/api/v1/classes/{}/object-groups?permissions={filtered_permission}&group_by=description",
+                fixture.class.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["object_count"], 2);
+        assert_eq!(backend.authorization_batch_sizes(), vec![4, 4, 2]);
 
         fixture.cleanup().await.unwrap();
         group

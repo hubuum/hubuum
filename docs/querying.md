@@ -378,7 +378,11 @@ fields. Group ordering is selected with one of:
 Count ordering always appends the complete dimension tuple in ascending order
 as a deterministic tie-breaker. Cursor tokens are bound to the selected
 dimensions and sort; changing either while following a cursor returns
-`400 Bad Request`.
+`400 Bad Request`. Group cursors are limited to 8 KiB so they remain safe to
+return in `X-Next-Cursor` and replay in the next request URI. If a JSON or
+computed value at a page boundary would exceed that limit, the request returns
+`413 Payload Too Large`; narrow the grouping dimensions or choose a page limit
+that does not end on that value.
 
 Each response row is self-describing:
 
@@ -421,7 +425,9 @@ cannot affect bucket counts or group cardinality, and rows are not reloaded
 after authorization.
 
 Shared computed dimensions evaluate the selected current definitions from the
-authorized snapshots while holding the class definition lock. Personal
+authorized snapshots while holding the class definition lock. Only the
+requested shared keys and the requesting owner's requested personal keys are
+loaded. Personal
 dimensions require a human owner with `ReadClass` access and can only use that
 owner's enabled definitions. Grouping does not reload source objects or perform
 computed read repair. Service accounts cannot group by personal fields.

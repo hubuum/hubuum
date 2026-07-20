@@ -203,6 +203,21 @@ impl ResourceRef {
             .or(self.attrs.from_collection_id)
             .or(self.attrs.to_collection_id)
             .unwrap_or(self.id);
+        if expected_kind == ResourceKind::Collection {
+            return Self::collection(collection_id);
+        }
+        if expected_kind == ResourceKind::Class
+            && let Some(class_id) = self.attrs.class_id
+        {
+            return Self {
+                kind: ResourceKind::Class,
+                id: class_id,
+                attrs: ResourceAttrs {
+                    collection_id: Some(collection_id),
+                    ..Default::default()
+                },
+            };
+        }
         let mut prospective = Self::for_permission_on_collection(permission, collection_id);
         if expected_kind == ResourceKind::Object && self.kind == ResourceKind::Class {
             prospective.attrs.class_id = Some(self.id);
@@ -321,6 +336,40 @@ mod tests {
             ResourceRef::collection(42).normalized_for_permission(Permissions::CreateTemplate);
 
         assert_eq!(resource.kind, ResourceKind::Template);
+        assert_eq!(resource.attrs.collection_id, Some(42));
+    }
+
+    #[test]
+    fn object_target_is_normalized_to_its_actual_collection() {
+        let resource = ResourceRef {
+            kind: ResourceKind::Object,
+            id: 99,
+            attrs: ResourceAttrs {
+                collection_id: Some(42),
+                class_id: Some(7),
+                ..Default::default()
+            },
+        }
+        .normalized_for_permission(Permissions::ReadCollection);
+
+        assert_eq!(resource, ResourceRef::collection(42));
+    }
+
+    #[test]
+    fn object_target_is_normalized_to_its_actual_class() {
+        let resource = ResourceRef {
+            kind: ResourceKind::Object,
+            id: 99,
+            attrs: ResourceAttrs {
+                collection_id: Some(42),
+                class_id: Some(7),
+                ..Default::default()
+            },
+        }
+        .normalized_for_permission(Permissions::ReadClass);
+
+        assert_eq!(resource.kind, ResourceKind::Class);
+        assert_eq!(resource.id, 7);
         assert_eq!(resource.attrs.collection_id, Some(42));
     }
 
