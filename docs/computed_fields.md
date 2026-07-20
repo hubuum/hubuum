@@ -256,10 +256,13 @@ GET /api/v1/classes/{class_id}/object-groups?group_by=computed.shared.lifecycle
 GET /api/v1/classes/{class_id}/object-groups?group_by=computed.personal.priority
 ```
 
-Shared grouping evaluates the selected current definitions from the authorized
-object snapshots while holding the class definition lock; it does not reload
-source objects or perform read repair. Definition loading is restricted to the
-requested shared keys and the requesting owner's requested personal keys.
+Shared grouping snapshots the selected current definitions after the first
+object is visible, then evaluates those definitions from the authorized object
+snapshots; it does not reload source objects or perform read repair. Definition
+loading is restricted to the requested shared keys and the requesting owner's
+requested personal keys. If no object is visible, the endpoint returns an empty
+page without resolving the selector, so inaccessible class definition metadata
+is not disclosed.
 Personal grouping is limited to the requesting human owner's enabled
 definitions and still requires `ReadClass`; service accounts are rejected.
 Evaluation failures use one documented

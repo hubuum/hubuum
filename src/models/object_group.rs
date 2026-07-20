@@ -11,7 +11,7 @@ use crate::models::search::{
     FilterField, QueryOptions, QueryParamsExt, SearchOperator,
     parse_query_parameter_with_passthrough,
 };
-use crate::models::{HubuumClassID, Permissions, UserID};
+use crate::models::{CollectionID, HubuumClass, HubuumClassID, Permissions, UserID};
 
 pub const MIN_OBJECT_GROUP_DIMENSIONS: usize = 1;
 pub const MAX_OBJECT_GROUP_DIMENSIONS: usize = 3;
@@ -449,6 +449,27 @@ pub struct ObjectGroupQuery {
     spec: ObjectGroupSpec,
 }
 
+#[derive(Debug, Clone)]
+pub struct ObjectGroupTarget {
+    class_id: HubuumClassID,
+    class_name: String,
+    collection_id: CollectionID,
+}
+
+impl ObjectGroupTarget {
+    pub fn from_class(class: &HubuumClass) -> Result<Self, ApiError> {
+        Ok(Self {
+            class_id: HubuumClassID::new(class.id)?,
+            class_name: class.name.clone(),
+            collection_id: CollectionID::new(class.collection_id)?,
+        })
+    }
+
+    pub(crate) fn into_parts(self) -> (HubuumClassID, String, CollectionID) {
+        (self.class_id, self.class_name, self.collection_id)
+    }
+}
+
 pub struct ObjectGroupPage {
     rows: Vec<ObjectGroupRow>,
     total_count: i64,
@@ -488,7 +509,7 @@ impl ObjectGroupQuery {
 }
 
 pub struct ObjectGroupBackendRequest {
-    class_id: HubuumClassID,
+    target: ObjectGroupTarget,
     query_options: QueryOptions,
     spec: ObjectGroupSpec,
     personal_owner_id: Option<UserID>,
@@ -496,14 +517,14 @@ pub struct ObjectGroupBackendRequest {
 }
 
 pub struct ObjectGroupBackendRequestBuilder {
-    class_id: HubuumClassID,
+    target: ObjectGroupTarget,
     query: ObjectGroupQuery,
     personal_owner_id: Option<UserID>,
     authorization: Option<ObjectGroupAuthorization>,
 }
 
 pub(crate) struct ObjectGroupBackendParts {
-    pub class_id: HubuumClassID,
+    pub target: ObjectGroupTarget,
     pub query_options: QueryOptions,
     pub spec: ObjectGroupSpec,
     pub personal_owner_id: Option<UserID>,
@@ -538,11 +559,11 @@ impl ObjectGroupAuthorization {
 
 impl ObjectGroupBackendRequest {
     pub fn builder(
-        class_id: HubuumClassID,
+        target: ObjectGroupTarget,
         query: ObjectGroupQuery,
     ) -> ObjectGroupBackendRequestBuilder {
         ObjectGroupBackendRequestBuilder {
-            class_id,
+            target,
             query,
             personal_owner_id: None,
             authorization: None,
@@ -551,7 +572,7 @@ impl ObjectGroupBackendRequest {
 
     pub(crate) fn into_parts(self) -> ObjectGroupBackendParts {
         ObjectGroupBackendParts {
-            class_id: self.class_id,
+            target: self.target,
             query_options: self.query_options,
             spec: self.spec,
             personal_owner_id: self.personal_owner_id,
@@ -580,7 +601,12 @@ impl ObjectGroupBackendRequestBuilder {
         self.query.query_options.filters.add_filter(
             FilterField::ClassId,
             SearchOperator::Equals { is_negated: false },
-            &self.class_id.id().to_string(),
+            &self.target.class_id.id().to_string(),
+        );
+        self.query.query_options.filters.add_filter(
+            FilterField::CollectionId,
+            SearchOperator::Equals { is_negated: false },
+            &self.target.collection_id.id().to_string(),
         );
         let (query_options, spec) = self.query.into_parts();
         if spec.has_personal_computed_dimension() != self.personal_owner_id.is_some() {
@@ -589,7 +615,7 @@ impl ObjectGroupBackendRequestBuilder {
             ));
         }
         Ok(ObjectGroupBackendRequest {
-            class_id: self.class_id,
+            target: self.target,
             query_options,
             spec,
             personal_owner_id: self.personal_owner_id,

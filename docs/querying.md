@@ -384,6 +384,12 @@ computed value at a page boundary would exceed that limit, the request returns
 `413 Payload Too Large`; narrow the grouping dimensions or choose a page limit
 that does not end on that value.
 
+When an external permission backend must authorize source objects individually,
+Hubuum scans and groups bounded batches without retaining a database connection
+during the external calls. The compacted intermediate group rows are limited to
+8 MiB. A request that exceeds that bound returns `413 Payload Too Large`; narrow
+the source filters or grouping dimensions.
+
 Each response row is self-describing:
 
 ```json
@@ -424,15 +430,18 @@ the immutable authorized snapshots are grouped. Hidden objects therefore
 cannot affect bucket counts or group cardinality, and rows are not reloaded
 after authorization.
 
-Shared computed dimensions evaluate the selected current definitions from the
-authorized snapshots while holding the class definition lock. Only the
-requested shared keys and the requesting owner's requested personal keys are
-loaded. Personal
-dimensions require a human owner with `ReadClass` access and can only use that
-owner's enabled definitions. Grouping does not reload source objects or perform
-computed read repair. Service accounts cannot group by personal fields.
-Unknown, disabled, inaccessible, and wrong-class selectors return
-`400 Bad Request`. Responses depending on computed state include
+Computed grouping snapshots the selected current definitions after the first
+object is visible, then evaluates those definitions from the authorized object
+snapshots. Only the requested shared keys and the requesting owner's requested
+personal keys are loaded. If no object is visible, the endpoint returns an
+empty page without resolving the selector, so inaccessible definition metadata
+is not disclosed. Once an object is visible, unknown, disabled, inaccessible,
+and wrong-class selectors return `400 Bad Request`.
+
+Personal dimensions require a human owner with `ReadClass` access and can only
+use that owner's enabled definitions. Grouping does not reload source objects
+or perform computed read repair. Service accounts cannot group by personal
+fields. Responses depending on computed state include
 `Cache-Control: private, no-store`.
 
 Pagination headers describe group rows, not source objects:

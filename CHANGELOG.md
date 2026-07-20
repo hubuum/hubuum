@@ -13,7 +13,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `GET /api/v1/classes/{class_id}/object-groups`, with one to three scalar,
   nested JSON, shared computed, or owned personal computed dimensions,
   deterministic cursor pagination, explicit null/missing/unavailable states,
-  and group-cardinality totals.
+  group-cardinality totals, and bounded aggregation for external permission
+  backends.
 - Added explicit, numeric-safe `by-name` aliases for current class and object
   reads, updates, deletes, class-scoped object listing and creation,
   permissions, related-resource views, and object-data patching. Name-addressed
@@ -55,10 +56,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
-- Grouped object queries now authorize permission filters against compatible
-  object, class, and collection resources on external permission backends,
-  reject group keys that cannot produce replay-safe cursors, and load only the
-  requested computed definitions.
 - Fixed single-host installs and updates with older `podman-compose` providers:
   service discovery no longer passes unsupported names to `compose ps`,
   migrations do not consume piped installer input, and Caddy no longer holds

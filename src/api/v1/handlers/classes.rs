@@ -45,9 +45,9 @@ use crate::models::{
     HubuumObjectReadResponse, HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass,
     NewHubuumClassRelationFromClass, NewHubuumObjectRelation, NewHubuumObjectRequest,
     ObjectDataPatchDocument, ObjectGroupAuthorization, ObjectGroupBackendRequest, ObjectGroupRow,
-    ObjectSelector, Permissions, RelatedClassGraph, RelatedObjectGraph, RelatedObjectGraphRow,
-    ResolvedClassTarget, ResolvedObjectTarget, UpdateHubuumClass, UpdateHubuumObject,
-    UpdateHubuumObjectRequest, UserID,
+    ObjectGroupTarget, ObjectSelector, Permissions, RelatedClassGraph, RelatedObjectGraph,
+    RelatedObjectGraphRow, ResolvedClassTarget, ResolvedObjectTarget, UpdateHubuumClass,
+    UpdateHubuumObject, UpdateHubuumObjectRequest, UserID,
 };
 use crate::traits::{BackendContext, CanDelete, CanSave, Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
@@ -800,7 +800,7 @@ async fn read_resolved_class_permissions(
     responses(
         (status = 200, description = "Permission-scoped grouped object counts. Value states distinguish value, JSON null, a missing JSON path, and an unavailable computed result.", body = [ObjectGroupRow]),
         (status = 400, description = "Invalid dimension, path, sort, cursor, or computed selector", body = ApiErrorResponse),
-        (status = 413, description = "A group value at the page boundary is too large for a replay-safe cursor", body = ApiErrorResponse),
+        (status = 413, description = "A group value is too large for a replay-safe cursor, or externally authorized intermediate groups exceed the bounded accumulator", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse)
     )
@@ -817,6 +817,7 @@ async fn get_object_groups(
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
     let class = class_id.instance(&pool).await?;
+    let target = ObjectGroupTarget::from_class(&class)?;
     let query = parse_object_group_query(req.query_string())?;
 
     let personal_owner_id = if query.spec().has_personal_computed_dimension() {
@@ -855,7 +856,7 @@ async fn get_object_groups(
     let computed = query.spec().has_computed_dimension();
     let effective_limit = effective_page_limit(query.query_options())?;
     let mut request =
-        ObjectGroupBackendRequest::builder(class_id, query).authorization(authorization);
+        ObjectGroupBackendRequest::builder(target, query).authorization(authorization);
     if let Some(owner_id) = personal_owner_id {
         request = request.personal_owner(owner_id);
     }
