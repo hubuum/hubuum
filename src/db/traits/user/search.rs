@@ -1,7 +1,7 @@
 use super::*;
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::computed_field::{
-    ComputedSortSnapshot, computed_filter_predicate, object_cursor_sql_fields,
+    ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
 };
 use crate::db::traits::search::JsonPredicateExt;
 use crate::models::RelatedObjectForRootRow;
@@ -36,6 +36,65 @@ impl RawSqlQuerySpec {
         Self {
             sql: self.sql.replace_question_mark_with_indexed_n(),
             bind_variables: self.bind_variables,
+        }
+    }
+}
+
+pub struct ObjectQueryPlan<'a>(ObjectQueryPlanKind<'a>);
+
+enum ObjectQueryPlanKind<'a> {
+    Ordinary(QueryOptions),
+    Computed {
+        options: QueryOptions,
+        snapshot: &'a ComputedQuerySnapshot,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum ObjectQueryMode<'a> {
+    Ordinary,
+    Computed(&'a ComputedQuerySnapshot),
+}
+
+impl<'a> ObjectQueryMode<'a> {
+    fn snapshot(self) -> Result<&'a ComputedQuerySnapshot, ApiError> {
+        match self {
+            Self::Computed(snapshot) => Ok(snapshot),
+            Self::Ordinary => Err(ApiError::BadRequest(
+                "Computed object queries require a resolved query plan".to_string(),
+            )),
+        }
+    }
+}
+
+impl<'a> ObjectQueryPlan<'a> {
+    fn ordinary(options: QueryOptions) -> Result<Self, ApiError> {
+        let has_computed_fields = options
+            .filters
+            .iter()
+            .any(|filter| filter.field.computed_query().is_some())
+            || options
+                .sort
+                .iter()
+                .any(|sort| sort.field.computed_query().is_some());
+        if has_computed_fields {
+            return Err(ApiError::BadRequest(
+                "Computed object queries require a resolved query plan".to_string(),
+            ));
+        }
+        Ok(Self(ObjectQueryPlanKind::Ordinary(options)))
+    }
+
+    fn computed(options: QueryOptions, snapshot: &'a ComputedQuerySnapshot) -> Self {
+        Self(ObjectQueryPlanKind::Computed { options, snapshot })
+    }
+
+    fn into_parts(self) -> (QueryOptions, ObjectQueryMode<'a>) {
+        match self.0 {
+            ObjectQueryPlanKind::Ordinary(options) => (options, ObjectQueryMode::Ordinary),
+            ObjectQueryPlanKind::Computed { options, snapshot } => {
+                (options, ObjectQueryMode::Computed(snapshot))
+            }
         }
     }
 }
@@ -529,14 +588,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         is_admin: bool,
         scopes: Option<&[Permissions]>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
-        self.search_objects_from_backend_with_query_plan(
-            pool,
-            query_options,
-            is_admin,
-            scopes,
-            None,
-        )
-        .await
+        let plan = ObjectQueryPlan::ordinary(query_options)?;
+        self.search_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
+            .await
     }
 
     async fn search_objects_with_computed_query_from_backend(
@@ -544,17 +598,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         scopes: Option<&[Permissions]>,
-        snapshot: &ComputedSortSnapshot,
+        snapshot: &ComputedQuerySnapshot,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.search_objects_from_backend_with_query_plan(
-            pool,
-            query_options,
-            is_admin,
-            scopes,
-            Some(snapshot),
-        )
-        .await
+        let plan = ObjectQueryPlan::computed(query_options, snapshot);
+        self.search_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
+            .await
     }
 
     async fn search_objects_with_computed_query_from_backend_with_admin_status(
@@ -563,25 +612,19 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&[Permissions]>,
-        snapshot: &ComputedSortSnapshot,
+        snapshot: &ComputedQuerySnapshot,
     ) -> Result<Vec<HubuumObject>, ApiError> {
-        self.search_objects_from_backend_with_query_plan(
-            pool,
-            query_options,
-            is_admin,
-            scopes,
-            Some(snapshot),
-        )
-        .await
+        let plan = ObjectQueryPlan::computed(query_options, snapshot);
+        self.search_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
+            .await
     }
 
     async fn search_objects_from_backend_with_query_plan(
         &self,
         pool: &DbPool,
-        query_options: QueryOptions,
+        query_plan: ObjectQueryPlan<'_>,
         is_admin: bool,
         scopes: Option<&[Permissions]>,
-        computed_snapshot: Option<&ComputedSortSnapshot>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
@@ -589,6 +632,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             name as object_name, updated_at as object_updated_at,
         };
 
+        let (query_options, query_mode) = query_plan.into_parts();
         let query_params = query_options.filters.clone();
 
         debug!(
@@ -640,12 +684,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
-            if param.field.computed_sort().is_some() {
-                let snapshot = computed_snapshot.ok_or_else(|| {
-                    ApiError::InternalServerError(
-                        "Computed object filtering requires a resolved query plan".to_string(),
-                    )
-                })?;
+            if param.field.computed_query().is_some() {
+                let snapshot = query_mode.snapshot()?;
                 base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
                 continue;
             }
@@ -685,13 +725,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let computed_sorting = query_options
             .sort
             .iter()
-            .any(|sort| sort.field.computed_sort().is_some());
+            .any(|sort| sort.field.computed_query().is_some());
         if computed_sorting {
-            let snapshot = computed_snapshot.ok_or_else(|| {
-                ApiError::InternalServerError(
-                    "Computed object sorting requires a resolved query plan".to_string(),
-                )
-            })?;
+            let snapshot = query_mode.snapshot()?;
             let sql_fields = object_cursor_sql_fields(&query_options.sort, snapshot)?;
             crate::apply_query_options_with_fields!(base_query, query_options, sql_fields);
         } else {
@@ -727,7 +763,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         is_admin: bool,
         scopes: Option<&[Permissions]>,
     ) -> Result<i64, ApiError> {
-        self.count_objects_from_backend_with_query_plan(pool, query_options, is_admin, scopes, None)
+        let plan = ObjectQueryPlan::ordinary(query_options)?;
+        self.count_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
             .await
     }
 
@@ -736,26 +773,20 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         scopes: Option<&[Permissions]>,
-        snapshot: &ComputedSortSnapshot,
+        snapshot: &ComputedQuerySnapshot,
     ) -> Result<i64, ApiError> {
         let is_admin = self.is_admin(pool).await?;
-        self.count_objects_from_backend_with_query_plan(
-            pool,
-            query_options,
-            is_admin,
-            scopes,
-            Some(snapshot),
-        )
-        .await
+        let plan = ObjectQueryPlan::computed(query_options, snapshot);
+        self.count_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
+            .await
     }
 
     async fn count_objects_from_backend_with_query_plan(
         &self,
         pool: &DbPool,
-        query_options: QueryOptions,
+        query_plan: ObjectQueryPlan<'_>,
         is_admin: bool,
         scopes: Option<&[Permissions]>,
-        computed_snapshot: Option<&ComputedSortSnapshot>,
     ) -> Result<i64, ApiError> {
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
@@ -763,6 +794,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             name as object_name, updated_at as object_updated_at,
         };
 
+        let (query_options, query_mode) = query_plan.into_parts();
         let query_params = query_options.filters.clone();
 
         let mut permission_list = query_params.permissions()?;
@@ -793,12 +825,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
-            if param.field.computed_sort().is_some() {
-                let snapshot = computed_snapshot.ok_or_else(|| {
-                    ApiError::InternalServerError(
-                        "Computed object filtering requires a resolved query plan".to_string(),
-                    )
-                })?;
+            if param.field.computed_query().is_some() {
+                let snapshot = query_mode.snapshot()?;
                 base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
                 continue;
             }

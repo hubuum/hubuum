@@ -19,7 +19,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   personal evaluation, full-list-visibility-safe definition resolution,
   two-key computed-filter and sort bounds, depth-bounded and backend-consistent
   PostgreSQL-compatible 64 KiB cursor validation, read-only stale-cache
-  fallback, and fixed query counts across page sizes.
+  fallback, and at-most-one-row raw cursor enrichment independent of page size.
 
 ### Changed
 

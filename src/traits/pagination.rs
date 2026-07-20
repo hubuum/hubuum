@@ -140,10 +140,19 @@ pub enum CursorSqlType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CursorSqlField {
-    pub column: &'static str,
+pub struct CursorSqlField<T = &'static str> {
+    pub column: T,
     pub sql_type: CursorSqlType,
     pub nullable: bool,
+}
+
+impl<T> CursorSqlField<T>
+where
+    T: AsRef<str>,
+{
+    pub fn expression(&self) -> &str {
+        self.column.as_ref()
+    }
 }
 
 pub trait CursorSqlMapping: CursorPaginated {

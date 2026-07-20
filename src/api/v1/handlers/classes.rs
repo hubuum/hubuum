@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 
@@ -10,10 +10,7 @@ use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
 use crate::db::traits::authz::scope_allows;
-use crate::db::traits::computed_field::{
-    enrich_objects_with_computed, enrich_objects_with_computed_sort_snapshot,
-    resolve_computed_query_fields,
-};
+use crate::db::traits::computed_field::enrich_objects_with_computed;
 use crate::db::traits::history::{
     class_as_of, class_history_paginated_with_total_count, object_as_of,
     object_history_paginated_with_total_count,
@@ -28,10 +25,10 @@ use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection as collection_model;
 use crate::models::traits::{ExpandCollection, ToHubuumObjects, check_if_object_in_class};
 use crate::pagination::{
-    SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, known_count_or_skipped,
-    page_limits, prepare_db_pagination, validate_page_limit,
+    SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, page_limits,
+    prepare_db_pagination, validate_page_limit,
 };
-use crate::permissions::visibility::{authorize_all_candidates, authorize_cursor_page};
+use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{
     AppContext, AuthzTarget, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
     authorize_resources,
@@ -40,11 +37,11 @@ use crate::permissions::{
 use crate::models::{
     ClassGraphRow, CollectionID, GroupPermission, HubuumClass, HubuumClassExpanded,
     HubuumClassHistory, HubuumClassID, HubuumClassRelation, HubuumClassRelationID,
-    HubuumClassWithPath, HubuumObject, HubuumObjectComputedResponse, HubuumObjectHistory,
-    HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass,
-    NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
-    NewHubuumObjectRequest, Permissions, RelatedClassGraph, RelatedObjectGraph,
-    RelatedObjectGraphRow, UpdateHubuumClass, UpdateHubuumObject, UpdateHubuumObjectRequest,
+    HubuumClassWithPath, HubuumObject, HubuumObjectHistory, HubuumObjectID, HubuumObjectRelation,
+    HubuumObjectWithPath, NewHubuumClass, NewHubuumClassRelationFromClass, NewHubuumObject,
+    NewHubuumObjectRelation, NewHubuumObjectRequest, Permissions, RelatedClassGraph,
+    RelatedObjectGraph, RelatedObjectGraphRow, UpdateHubuumClass, UpdateHubuumObject,
+    UpdateHubuumObjectRequest,
 };
 use crate::traits::{BackendContext, CanDelete, CanSave, CanUpdate, Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
@@ -56,6 +53,8 @@ use crate::models::search::{
 };
 use crate::models::traits::class_relation::ToHubuumClasses;
 use crate::pagination::{Page, finalize_page};
+
+mod computed_objects;
 
 fn parse_computed_include(query_string: &str) -> Result<(QueryOptions, bool), ApiError> {
     let (params, mut passthrough) =
@@ -87,7 +86,7 @@ fn parse_computed_object_list_query(query_string: &str) -> Result<(QueryOptions,
     Ok((params, include_computed))
 }
 
-fn scope_object_query_to_class(params: &mut QueryOptions, class: &HubuumClassID) {
+pub(super) fn scope_object_query_to_class(params: &mut QueryOptions, class: &HubuumClassID) {
     params
         .filters
         .retain(|param| !matches!(param.field, FilterField::ClassId | FilterField::Classes));
@@ -98,7 +97,7 @@ fn scope_object_query_to_class(params: &mut QueryOptions, class: &HubuumClassID)
     );
 }
 
-async fn computed_personal_owner(
+pub(super) async fn computed_personal_owner(
     pool: &AppContext,
     requestor: &Authenticated,
     class: &HubuumClass,
@@ -123,34 +122,7 @@ async fn computed_personal_owner(
     }
 }
 
-async fn can_list_objects_in_class(
-    pool: &AppContext,
-    requestor: &Authenticated,
-    class: &HubuumClass,
-) -> Result<bool, ApiError> {
-    let resource = class.to_resource_ref(pool.db_pool()).await?;
-    let permissions = if pool.permission_backend().supports_sql_visibility_pushdown() {
-        vec![Permissions::ReadObject, Permissions::ReadCollection]
-    } else {
-        vec![Permissions::ReadObject]
-    };
-    match authorize_resources(
-        pool.permission_backend(),
-        pool,
-        &requestor.principal,
-        requestor.scopes(),
-        permissions,
-        vec![resource],
-    )
-    .await
-    {
-        Ok(()) => Ok(true),
-        Err(ApiError::Forbidden(_)) => Ok(false),
-        Err(error) => Err(error),
-    }
-}
-
-fn serialized_object_page<T: serde::Serialize>(
+pub(super) fn serialized_object_page<T: serde::Serialize>(
     page: Page<T>,
     total_count: i64,
     effective_limit: usize,
@@ -1072,176 +1044,15 @@ async fn get_objects_in_class(
     let computed_filtering = params
         .filters
         .iter()
-        .any(|filter| filter.field.computed_sort().is_some());
+        .any(|filter| filter.field.computed_query().is_some());
     let computed_sorting = params
         .sort
         .iter()
-        .any(|sort| sort.field.computed_sort().is_some());
+        .any(|sort| sort.field.computed_query().is_some());
     let computed_querying = computed_filtering || computed_sorting;
     if computed_querying {
-        if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
-            return serialized_object_page(
-                Page::<HubuumObjectComputedResponse> {
-                    items: Vec::new(),
-                    next_cursor: None,
-                },
-                known_count_or_skipped(&params, 0),
-                effective_page_limit(&params)?,
-                true,
-            );
-        }
-        let class_instance = class.instance(&pool).await?;
-        if !can_list_objects_in_class(&pool, &requestor, &class_instance).await? {
-            return serialized_object_page(
-                Page::<HubuumObjectComputedResponse> {
-                    items: Vec::new(),
-                    next_cursor: None,
-                },
-                known_count_or_skipped(&params, 0),
-                effective_page_limit(&params)?,
-                true,
-            );
-        }
-        let personal_owner = computed_personal_owner(&pool, &requestor, &class_instance).await?;
-        let computed_sort_snapshot = resolve_computed_query_fields(
-            pool.db_pool(),
-            class_instance.id,
-            personal_owner,
-            &mut params.filters,
-            &mut params.sort,
-        )
-        .await?;
-
-        let (objects, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown()
-        {
-            let total_count = if params.include_total {
-                user.count_objects_with_computed_query_from_backend(
-                    pool.db_pool(),
-                    count_query_options(&params),
-                    requestor.scopes(),
-                    &computed_sort_snapshot,
-                )
-                .await?
-            } else {
-                SKIPPED_TOTAL_COUNT
-            };
-            let search_params = if computed_sorting {
-                prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?
-            } else {
-                prepare_db_pagination::<HubuumObject>(&params)?
-            };
-            let objects = user
-                .search_objects_with_computed_query_from_backend(
-                    pool.db_pool(),
-                    search_params,
-                    requestor.scopes(),
-                    &computed_sort_snapshot,
-                )
-                .await?;
-            (objects, total_count)
-        } else {
-            // PostgreSQL remains the source of truth for computed ordering,
-            // including its database collation for strings nested in JSONB.
-            // The policy backend filters that ordered candidate stream but
-            // never re-sorts it in memory.
-            let search_params = if computed_sorting {
-                prepare_db_pagination::<HubuumObjectComputedResponse>(&params)?
-            } else {
-                prepare_db_pagination::<HubuumObject>(&params)?
-            };
-            let mut candidate_options = search_params.clone();
-            candidate_options.limit = None;
-            candidate_options.cursor = None;
-            candidate_options.include_total = false;
-            let candidates = user
-                .search_objects_with_computed_query_from_backend_with_admin_status(
-                    pool.db_pool(),
-                    candidate_options.clone(),
-                    true,
-                    None,
-                    &computed_sort_snapshot,
-                )
-                .await?;
-            let principal = PrincipalRef::load(&pool, user).await?;
-            let authorized = authorize_all_candidates(
-                pool.permission_backend(),
-                &principal,
-                candidates,
-                vec![Permissions::ReadObject],
-                |object| ResourceRef {
-                    kind: ResourceKind::Object,
-                    id: object.id,
-                    attrs: ResourceAttrs {
-                        collection_id: Some(object.collection_id),
-                        class_id: Some(object.hubuum_class_id),
-                        name: Some(object.name.clone()),
-                        ..Default::default()
-                    },
-                },
-            )
-            .await?;
-            let total_count = known_count_or_skipped(&params, authorized.len() as i64);
-
-            let mut authorized = if search_params.cursor.is_some() {
-                candidate_options.cursor = search_params.cursor.clone();
-                let after_cursor = user
-                    .search_objects_with_computed_query_from_backend_with_admin_status(
-                        pool.db_pool(),
-                        candidate_options,
-                        true,
-                        None,
-                        &computed_sort_snapshot,
-                    )
-                    .await?;
-                let after_cursor_ids = after_cursor
-                    .into_iter()
-                    .map(|object| object.id)
-                    .collect::<HashSet<_>>();
-                authorized
-                    .into_iter()
-                    .filter(|object| after_cursor_ids.contains(&object.id))
-                    .collect()
-            } else {
-                authorized
-            };
-            if let Some(limit) = search_params.limit {
-                authorized.truncate(limit);
-            }
-            (authorized, total_count)
-        };
-        if include_computed || computed_sorting {
-            let enriched = enrich_objects_with_computed_sort_snapshot(
-                pool.db_pool(),
-                objects,
-                personal_owner,
-                &computed_sort_snapshot,
-            )
-            .await?;
-            let page = finalize_page(enriched, &params)?;
-            if include_computed {
-                return serialized_object_page(
-                    page,
-                    total_count,
-                    effective_page_limit(&params)?,
-                    true,
-                );
-            }
-            return serialized_object_page(
-                Page {
-                    items: page
-                        .items
-                        .into_iter()
-                        .map(|response| response.object)
-                        .collect(),
-                    next_cursor: page.next_cursor,
-                },
-                total_count,
-                effective_page_limit(&params)?,
-                true,
-            );
-        }
-        let page = finalize_page(objects, &params)?;
-        return serialized_object_page(page, total_count, effective_page_limit(&params)?, true);
+        return computed_objects::list_objects(&pool, &requestor, &class, params, include_computed)
+            .await;
     }
 
     let (objects, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {

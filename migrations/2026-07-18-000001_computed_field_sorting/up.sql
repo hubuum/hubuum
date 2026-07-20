@@ -107,14 +107,6 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION hubuum_computed_pointer_value(input_data JSONB, pointer TEXT)
-RETURNS JSONB
-LANGUAGE sql
-IMMUTABLE
-STRICT
-PARALLEL SAFE
-RETURN (hubuum_computed_resolve_pointer(input_data, pointer, 2147483647)).value;
-
 CREATE FUNCTION hubuum_computed_numeric(value JSONB)
 RETURNS NUMERIC
 LANGUAGE plpgsql
@@ -730,25 +722,3 @@ BEGIN
     RETURN result;
 END;
 $$;
-
-CREATE FUNCTION hubuum_computed_sort_value(
-    input_data JSONB,
-    operation JSONB,
-    result_type TEXT
-)
-RETURNS JSONB
-LANGUAGE sql
-IMMUTABLE
-STRICT
-PARALLEL SAFE
-RETURN NULLIF(
-    hubuum_computed_evaluate_scope(
-        input_data,
-        jsonb_build_array(jsonb_build_object(
-            'key', 'sort_value',
-            'operation', operation,
-            'result_type', result_type
-        ))
-    ) -> 'values' -> 'sort_value',
-    'null'::JSONB
-);

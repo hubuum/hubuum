@@ -7,7 +7,7 @@ use std::str::FromStr;
 use tracing::debug;
 
 pub use hubuum_query::{
-    ComputedFieldScope, ComputedSortValueType, DataType, FilterField, Operator, ParsedQueryParam,
+    ComputedFieldScope, ComputedQueryValueType, DataType, FilterField, Operator, ParsedQueryParam,
     QueryOptions, SQLMappedType, SearchOperator, SortParam, StatementTimeoutMs,
     get_jsonb_field_type_from_value_and_operator,
 };

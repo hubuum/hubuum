@@ -7,7 +7,7 @@ use crate::config::{
 };
 use crate::db::DbPool;
 use crate::middlewares::tracing::TracingMiddleware;
-use crate::permissions::{AppContext, LocalPermissionBackend};
+use crate::permissions::{AppContext, LocalPermissionBackend, PermissionBackend};
 use crate::restores::RestoreSettings;
 use actix_web::{App, http, test, web::Data};
 use serde::Serialize;
@@ -64,6 +64,16 @@ pub async fn get_request_with_headers(
     endpoint: &str,
     headers: Vec<(http::header::HeaderName, String)>,
 ) -> actix_web::dev::ServiceResponse {
+    get_request_with_headers_and_context(pool, token, endpoint, headers, app_context(pool)).await
+}
+
+async fn get_request_with_headers_and_context(
+    pool: &DbPool,
+    token: &str,
+    endpoint: &str,
+    headers: Vec<(http::header::HeaderName, String)>,
+    context: Data<AppContext>,
+) -> actix_web::dev::ServiceResponse {
     let app = test::init_service(
         App::new()
             .wrap(actix_web::middleware::from_fn(
@@ -73,7 +83,7 @@ pub async fn get_request_with_headers(
             .app_data(Data::new(backup_settings()))
             .app_data(Data::new(restore_settings()))
             .app_data(Data::new(pool.clone()))
-            .app_data(app_context(pool))
+            .app_data(context)
             .configure(prod_api::config),
     )
     .await;
@@ -93,6 +103,16 @@ pub async fn get_request(
     endpoint: &str,
 ) -> actix_web::dev::ServiceResponse {
     get_request_with_correlation(pool, token, endpoint, None).await
+}
+
+pub async fn get_request_with_permission_backend(
+    pool: &DbPool,
+    token: &str,
+    endpoint: &str,
+    permissions: Arc<dyn PermissionBackend>,
+) -> actix_web::dev::ServiceResponse {
+    let context = Data::new(AppContext::new(pool.clone(), permissions));
+    get_request_with_headers_and_context(pool, token, endpoint, Vec::new(), context).await
 }
 
 pub async fn post_request_with_headers<T>(

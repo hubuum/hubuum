@@ -238,12 +238,13 @@ without write-time user fan-out, so scope work and output limits remain
 identical to response enrichment. Live evaluation cost grows with the
 candidate count, object JSON size, and enabled-scope complexity; materialized
 shared fields are preferable for high-volume queries. Computed-query database
-query counts are independent of page size, and requests without computed
-filtering or sorting retain the existing query path. Computed-query reads use
-live values for missing or stale materializations but defer cache repair to the
-rebuild path, keeping list requests read-only. Declarative indexing is not yet
-supported. Unsupported computed operators and mismatched filter value types
-fail with `400 Bad Request`.
+query counts do not grow with page size. A raw nonterminal sorted page enriches
+only its cursor-boundary object, while a terminal raw page skips enrichment;
+requests without computed filtering or sorting retain the existing query path.
+Computed-query reads use live values for missing or stale materializations but
+defer cache repair to the rebuild path, keeping list requests read-only.
+Declarative indexing is not yet supported. Unsupported computed operators and
+mismatched filter value types fail with `400 Bad Request`.
 
 ## Materialization freshness
 
