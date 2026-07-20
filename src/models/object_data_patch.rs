@@ -1,6 +1,9 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use utoipa::{PartialSchema, ToSchema};
 
+use crate::db::json::{
+    MAX_POSTGRES_JSONB_NESTING_DEPTH, PostgresJsonbValidationError, validate_postgres_jsonb_value,
+};
 use crate::errors::ApiError;
 
 /// Maximum number of operations accepted in one object-data JSON Patch document.
@@ -16,7 +19,7 @@ pub const MAX_OBJECT_DATA_PATCH_BYTES: usize = 2_097_152;
 pub const MAX_OBJECT_DATA_PATCH_WORK_BYTES: usize = 32 * 1024 * 1024;
 
 /// Maximum number of nested JSON containers accepted in patched object data.
-pub const MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH: usize = 64;
+pub const MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH: usize = MAX_POSTGRES_JSONB_NESTING_DEPTH;
 
 /// An RFC 6902 patch document whose pointers are relative to an object's raw `data` value.
 ///
@@ -107,28 +110,19 @@ fn validate_object_data_patch_result(
     data: &serde_json::Value,
     operation_index: Option<usize>,
 ) -> Result<usize, ApiError> {
-    let mut pending = vec![(data, 0_usize)];
-    while let Some((value, depth)) = pending.pop() {
-        match value {
-            serde_json::Value::Array(values) => {
-                if depth >= MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH {
-                    return Err(ApiError::PayloadTooLarge(format!(
-                        "JSON Patch result after {} exceeds the maximum nesting depth of {MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH}",
-                        patch_result_stage(operation_index)
-                    )));
-                }
-                pending.extend(values.iter().map(|value| (value, depth + 1)));
-            }
-            serde_json::Value::Object(values) => {
-                if depth >= MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH {
-                    return Err(ApiError::PayloadTooLarge(format!(
-                        "JSON Patch result after {} exceeds the maximum nesting depth of {MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH}",
-                        patch_result_stage(operation_index)
-                    )));
-                }
-                pending.extend(values.values().map(|value| (value, depth + 1)));
-            }
-            _ => {}
+    match validate_postgres_jsonb_value(data) {
+        Ok(()) => {}
+        Err(PostgresJsonbValidationError::UnsupportedValue) => {
+            return Err(ApiError::BadRequest(format!(
+                "JSON Patch result after {} contains JSON that PostgreSQL JSONB cannot represent",
+                patch_result_stage(operation_index)
+            )));
+        }
+        Err(PostgresJsonbValidationError::NestingTooDeep) => {
+            return Err(ApiError::PayloadTooLarge(format!(
+                "JSON Patch result after {} exceeds the maximum nesting depth of {MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH}",
+                patch_result_stage(operation_index)
+            )));
         }
     }
 

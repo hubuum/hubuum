@@ -543,7 +543,7 @@ async fn apply_object_data_patch(
     ),
     responses(
         (status = 200, description = "Updated object, or the unchanged object for a no-op patch", body = HubuumObject),
-        (status = 400, description = "Malformed JSON or invalid JSON Patch structure, operation count, or pointer depth", body = ApiErrorResponse),
+        (status = 400, description = "Malformed JSON, invalid JSON Patch structure or bounds, or a result PostgreSQL JSONB cannot represent", body = ApiErrorResponse),
         (status = 401, description = "Missing or invalid authentication", body = ApiErrorResponse),
         (status = 403, description = "UpdateObject permission denied", body = ApiErrorResponse),
         (status = 404, description = "Class/object pair not found", body = ApiErrorResponse),
@@ -598,7 +598,7 @@ async fn patch_object_data_in_class(
     ),
     responses(
         (status = 200, description = "Updated object, or the unchanged object for a no-op patch", body = HubuumObject),
-        (status = 400, description = "Malformed JSON or invalid JSON Patch structure, operation count, or pointer depth", body = ApiErrorResponse),
+        (status = 400, description = "Malformed JSON, invalid JSON Patch structure or bounds, or a result PostgreSQL JSONB cannot represent", body = ApiErrorResponse),
         (status = 401, description = "Missing or invalid authentication", body = ApiErrorResponse),
         (status = 403, description = "UpdateObject permission denied", body = ApiErrorResponse),
         (status = 404, description = "Class-name/object-name pair not found or the object was concurrently renamed", body = ApiErrorResponse),

@@ -195,3 +195,34 @@ async fn patch_result_larger_than_object_data_limit_returns_payload_too_large(
     assert_response_status(response, StatusCode::PAYLOAD_TOO_LARGE).await;
     fixture.cleanup().await.unwrap();
 }
+
+#[rstest]
+#[case::nul_string(br#"[{"op":"add","path":"/invalid","value":"\u0000"}]"#)]
+#[case::nul_key(br#"[{"op":"add","path":"/invalid","value":{"\u0000":true}}]"#)]
+#[case::numeric_out_of_range(br#"[{"op":"add","path":"/invalid","value":1e131072}]"#)]
+#[actix_web::test]
+async fn postgres_jsonb_incompatible_patch_result_returns_bad_request(
+    #[case] patch: &'static [u8],
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = object_fixture(
+        &test_context,
+        "PostgreSQL JSONB incompatible patch result",
+        serde_json::json!({}),
+    )
+    .await;
+    let object = fixture.objects[0].clone();
+
+    let response = patch_request_with_raw_body(
+        &test_context.pool,
+        &test_context.admin_token,
+        &data_patch_endpoint(fixture.class.id, object.id),
+        patch,
+        JSON_PATCH_MEDIA_TYPE,
+    )
+    .await;
+
+    assert_response_status(response, StatusCode::BAD_REQUEST).await;
+    assert_eq!(current_object(&test_context, object.id).await, object);
+    fixture.cleanup().await.unwrap();
+}

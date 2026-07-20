@@ -131,7 +131,9 @@ most 1,000 operations, and every `path` or `from` pointer may contain at most
 128 segments. The resulting raw object data is limited to 2 MiB and 64 nested
 containers. Hubuum validates the result after each operation and caps cumulative
 application work at 32 MiB, so repeated `copy` operations cannot amplify a
-small request into unbounded server work. Any limit failure rolls back the
+small request into unbounded server work. Results containing a null character
+in a string or object key, or a number outside PostgreSQL's JSONB numeric range,
+are rejected before persistence. Any validation or limit failure rolls back the
 complete patch.
 
 ## Status Codes
@@ -139,7 +141,7 @@ complete patch.
 | Status | Behavior |
 | ------ | -------- |
 | `200 OK` | The patch succeeded; the response is the updated or unchanged object. |
-| `400 Bad Request` | The JSON is malformed, the root is not an operation array, an operation is structurally invalid, or an operation/pointer limit is exceeded. |
+| `400 Bad Request` | The JSON is malformed, the patch structure or bounds are invalid, or the result contains a value PostgreSQL JSONB cannot represent. |
 | `401 Unauthorized` | Authentication is missing or invalid. |
 | `403 Forbidden` | The principal lacks `UpdateObject` permission. |
 | `404 Not Found` | The class/object pair does not exist. A class mismatch is also reported as not found. |

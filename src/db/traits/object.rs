@@ -347,6 +347,7 @@ impl CreateObjectInResolvedClassRecord for NewHubuumObject {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
         with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
+            acquire_object_write_class_advisory_lock(conn, target.class().id).await?;
             let class = lock_resolved_class_target(conn, target).await?;
             self.validate_for_class(&class)?;
             persist_new_object(conn, self, Some(context)).await

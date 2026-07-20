@@ -1949,7 +1949,7 @@
             }
           },
           "400": {
-            "description": "Malformed JSON or invalid JSON Patch structure, operation count, or pointer depth",
+            "description": "Malformed JSON, invalid JSON Patch structure or bounds, or a result PostgreSQL JSONB cannot represent",
             "content": {
               "application/json": {
                 "schema": {
@@ -5601,7 +5601,7 @@
             }
           },
           "400": {
-            "description": "Malformed JSON or invalid JSON Patch structure, operation count, or pointer depth",
+            "description": "Malformed JSON, invalid JSON Patch structure or bounds, or a result PostgreSQL JSONB cannot represent",
             "content": {
               "application/json": {
                 "schema": {

@@ -18,7 +18,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   endpoints for raw object data, with row-locked concurrent composition,
   conditional `test` operations, class schema validation, transactional
   computed materialization and audit events, and bounded patch operation and
-  pointer depth, result size, result nesting, and cumulative application work.
+  pointer depth, result size, result nesting, PostgreSQL JSONB representability,
+  and cumulative application work.
 - Added unauthenticated `GET /api/v1/config` client capability discovery with
   the effective default and maximum pagination limits, including values
   overridden by server configuration.
