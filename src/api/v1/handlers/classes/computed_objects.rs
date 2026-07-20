@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::classes::{
     computed_personal_owner, scope_object_query_to_class, serialized_object_page,
@@ -10,6 +8,9 @@ use crate::db::traits::computed_field::{
     resolve_computed_query_fields,
 };
 use crate::db::traits::user::UserSearchBackend;
+use crate::db::traits::user::search::{
+    count_computed_objects_with_authorized_ids, search_computed_objects_with_authorized_ids,
+};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::QueryOptions;
@@ -20,7 +21,7 @@ use crate::pagination::{
     Page, SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, encode_cursor,
     known_count_or_skipped, page_request, prepare_db_pagination,
 };
-use crate::permissions::visibility::authorize_all_candidates;
+use crate::permissions::visibility::{AuthorizedObjectIds, authorize_all_candidates};
 use crate::permissions::{
     AppContext, AuthzTarget, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
     authorize_resources,
@@ -29,7 +30,7 @@ use crate::traits::{BackendContext, SelfAccessors};
 
 enum ComputedListVisibility {
     SqlPushdown,
-    Policy(HashSet<i32>),
+    Policy(AuthorizedObjectIds),
 }
 
 struct ResolvedComputedObjectQuery<'a> {
@@ -91,58 +92,29 @@ impl ResolvedComputedObjectQuery<'_> {
 
     async fn search_with_policy_visibility(
         &self,
-        authorized_ids: &HashSet<i32>,
+        authorized_ids: &AuthorizedObjectIds,
     ) -> Result<(Vec<HubuumObject>, i64), ApiError> {
-        let search_options = self.search_options()?;
-        let mut candidate_options = search_options.clone();
-        candidate_options.limit = None;
-        candidate_options.cursor = None;
-        candidate_options.include_total = false;
-        let candidates = self
-            .requestor
-            .principal
-            .search_objects_with_computed_query_from_backend_with_admin_status(
+        let total_count = if self.params.include_total {
+            count_computed_objects_with_authorized_ids(
+                &self.requestor.principal,
                 self.pool.db_pool(),
-                candidate_options.clone(),
-                true,
-                None,
+                count_query_options(self.params),
                 self.snapshot,
+                authorized_ids,
             )
-            .await?;
-        let authorized = candidates
-            .into_iter()
-            .filter(|object| authorized_ids.contains(&object.id))
-            .collect::<Vec<_>>();
-        let total_count = known_count_or_skipped(self.params, authorized.len() as i64);
-
-        let mut authorized = if search_options.cursor.is_some() {
-            candidate_options.cursor = search_options.cursor.clone();
-            let after_cursor = self
-                .requestor
-                .principal
-                .search_objects_with_computed_query_from_backend_with_admin_status(
-                    self.pool.db_pool(),
-                    candidate_options,
-                    true,
-                    None,
-                    self.snapshot,
-                )
-                .await?;
-            let after_cursor_ids = after_cursor
-                .into_iter()
-                .map(|object| object.id)
-                .collect::<HashSet<_>>();
-            authorized
-                .into_iter()
-                .filter(|object| after_cursor_ids.contains(&object.id))
-                .collect()
+            .await?
         } else {
-            authorized
+            SKIPPED_TOTAL_COUNT
         };
-        if let Some(limit) = search_options.limit {
-            authorized.truncate(limit);
-        }
-        Ok((authorized, total_count))
+        let objects = search_computed_objects_with_authorized_ids(
+            &self.requestor.principal,
+            self.pool.db_pool(),
+            self.search_options()?,
+            self.snapshot,
+            authorized_ids,
+        )
+        .await?;
+        Ok((objects, total_count))
     }
 
     async fn response(
@@ -240,7 +212,7 @@ async fn authorized_object_ids_in_class(
     pool: &AppContext,
     requestor: &Authenticated,
     class: &HubuumClassID,
-) -> Result<HashSet<i32>, ApiError> {
+) -> Result<AuthorizedObjectIds, ApiError> {
     let mut visibility_query = QueryOptions {
         filters: Vec::new(),
         sort: Vec::new(),
@@ -271,7 +243,7 @@ async fn authorized_object_ids_in_class(
         },
     )
     .await?;
-    Ok(authorized.into_iter().map(|object| object.id).collect())
+    AuthorizedObjectIds::new(authorized.into_iter().map(|object| object.id))
 }
 
 async fn computed_list_visibility(

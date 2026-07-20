@@ -17,9 +17,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   operators, JSON containment, null-safe ordering,
   hash-verified stale shared-cache fallback, owner-only scope-consistent
   personal evaluation, full-list-visibility-safe definition resolution,
-  two-key computed-filter and sort bounds, depth-bounded and backend-consistent
-  PostgreSQL-compatible 64 KiB cursor validation, read-only stale-cache
-  fallback, and at-most-one-row raw cursor enrichment independent of page size.
+  policy-authorized ID pushdown, two-key computed-filter and sort bounds,
+  depth-bounded and backend-consistent PostgreSQL-compatible 64 KiB cursor
+  validation, read-only stale-cache fallback, and at-most-one-row raw cursor
+  enrichment independent of page size.
 
 ### Changed
 

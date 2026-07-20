@@ -462,8 +462,10 @@ where
         .map(|sort| item.cursor_value(&sort.field))
         .collect::<Result<_, _>>()?;
     for value in &values {
-        if let CursorValue::Json(value) = value {
-            validate_postgres_jsonb_cursor_value(value)?;
+        match value {
+            CursorValue::String(value) => validate_cursor_string(value)?,
+            CursorValue::Json(value) => validate_postgres_jsonb_cursor_value(value)?,
+            _ => {}
         }
     }
 
@@ -521,6 +523,9 @@ fn decode_cursor(cursor: &str, sorts: &[SortParam]) -> Result<CursorToken, ApiEr
                     ApiError::BadRequest("cursor contains an invalid decimal value".to_string())
                 })?;
         }
+        if let CursorValue::String(value) = value {
+            validate_cursor_string(value)?;
+        }
     }
 
     Ok(token)
@@ -529,6 +534,15 @@ fn decode_cursor(cursor: &str, sorts: &[SortParam]) -> Result<CursorToken, ApiEr
 fn ensure_cursor_within_limit(cursor: &str) -> Result<(), ApiError> {
     if cursor.len() > MAX_ENCODED_CURSOR_BYTES {
         return Err(cursor_too_large());
+    }
+    Ok(())
+}
+
+fn validate_cursor_string(value: &str) -> Result<(), ApiError> {
+    if value.contains('\0') {
+        return Err(ApiError::BadRequest(
+            "cursor string values cannot contain an embedded NUL byte".to_string(),
+        ));
     }
     Ok(())
 }
@@ -630,6 +644,7 @@ where
         }
         (CursorSqlType::Boolean, CursorValue::Boolean(value)) => Ok(value.to_string()),
         (CursorSqlType::String, CursorValue::String(value)) => {
+            validate_cursor_string(value)?;
             Ok(format!("'{}'", value.replace('\'', "''")))
         }
         (CursorSqlType::DateTime, CursorValue::DateTime(value)) => Ok(format!(

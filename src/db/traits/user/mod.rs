@@ -24,7 +24,7 @@ use crate::{date_search, numeric_search, string_search, trace_query};
 mod auth;
 mod membership;
 mod permissions;
-mod search;
+pub(crate) mod search;
 mod unified_search;
 
 pub use auth::*;

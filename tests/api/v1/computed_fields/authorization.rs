@@ -70,7 +70,7 @@ async fn computed_query_honors_object_specific_treetop_visibility(
         resource_id: Some(fixture.objects[0].id),
         attrs: ResourceAttrs::default(),
     });
-    let response = get_request_with_permission_backend(
+    let (response, queries) = capture_queries(get_request_with_permission_backend(
         &test_context.pool,
         &test_context.normal_token,
         &format!(
@@ -78,13 +78,19 @@ async fn computed_query_honors_object_specific_treetop_visibility(
             fixture.class.id
         ),
         backend,
-    )
+    ))
     .await;
     let response = assert_response_status(response, StatusCode::OK).await;
     let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
 
     assert_eq!(objects.len(), 1);
     assert_eq!(objects[0]["id"], fixture.objects[0].id);
+    assert_eq!(
+        queries.queries_matching("\"hubuumobject\".\"id\" = ANY"),
+        2,
+        "count and page queries must both apply the authorized object ids: {:#?}",
+        queries.query_counts()
+    );
 
     fixture.cleanup().await.unwrap();
     group

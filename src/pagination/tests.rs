@@ -184,6 +184,31 @@ fn cursor_encoding_rejects_an_oversized_token() {
 }
 
 #[test]
+fn cursor_encoding_rejects_a_string_with_an_embedded_nul() {
+    let error = finalize_page(
+        vec![collection(1, "a\0b"), collection(2, "z")],
+        &QueryOptions {
+            filters: vec![],
+            sort: vec![SortParam {
+                field: FilterField::Name,
+                descending: false,
+            }],
+            limit: Some(1),
+            cursor: None,
+            include_total: true,
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        ApiError::BadRequest(
+            "cursor string values cannot contain an embedded NUL byte".to_string()
+        )
+    );
+}
+
+#[test]
 fn cursor_encoding_rejects_json_that_decoding_would_reject() {
     let error = finalize_page(
         vec![
@@ -348,6 +373,29 @@ fn sql_cursor_filter_rejects_a_value_with_the_wrong_resolved_type() {
         error,
         ApiError::BadRequest(
             "cursor value does not match expected type for 'computed_value'".to_string()
+        )
+    );
+}
+
+#[test]
+fn sql_string_cursor_rejects_an_embedded_nul() {
+    let sort = SortParam {
+        field: FilterField::Id,
+        descending: false,
+    };
+    let fields = [CursorSqlField {
+        column: "computed_value".to_string(),
+        sql_type: CursorSqlType::String,
+        nullable: false,
+    }];
+    let cursor = encoded_cursor(&sort, CursorValue::String("a\0b".to_string()));
+
+    let error = cursor_filter_sql_for_fields(&[sort], &fields, Some(&cursor)).unwrap_err();
+
+    assert_eq!(
+        error,
+        ApiError::BadRequest(
+            "cursor string values cannot contain an embedded NUL byte".to_string()
         )
     );
 }
