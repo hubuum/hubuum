@@ -1,7 +1,17 @@
 #[cfg(test)]
 pub mod tests {
-    use crate::models::{HubuumClassExpanded, NewHubuumClass, Permissions, PermissionsList};
-    use crate::traits::{CanSave, PermissionController};
+    use std::time::Duration;
+
+    use crate::db::prelude::*;
+    use crate::db::with_transaction;
+    use crate::errors::ApiError;
+    use crate::events::EventContext;
+    use crate::models::traits::{ResolveClassTarget, UpdateResolvedClass};
+    use crate::models::{
+        ClassSelector, HubuumClassExpanded, HubuumClassID, NewHubuumClass, Permissions,
+        PermissionsList, UpdateHubuumClass,
+    };
+    use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use actix_web::{http::StatusCode, test};
 
     use rstest::rstest;
@@ -61,6 +71,23 @@ pub mod tests {
         let classes: Vec<HubuumClassExpanded> = test::read_body_json(resp).await;
         assert_contains_all!(&classes, &created_classes);
         cleanup(&created_classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn missing_class_object_list_preserves_the_empty_page_contract(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let response = get_request(
+            &test_context.pool,
+            &test_context.admin_token,
+            &format!("{CLASSES_ENDPOINT}/2147483647/"),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let objects: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+        assert!(objects.is_empty());
     }
 
     #[rstest]
@@ -968,5 +995,69 @@ pub mod tests {
         );
 
         collection_fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn class_update_validates_the_schema_locked_for_the_write(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let collection = test_context
+            .collection_fixture("class schema update lock")
+            .await;
+        let class = NewHubuumClass {
+            name: test_context.scoped_name("class schema update lock"),
+            collection_id: collection.collection.id,
+            json_schema: Some(serde_json::json!({"type": "object"})),
+            validate_schema: Some(false),
+            description: String::new(),
+        }
+        .save(&test_context.pool, &EventContext::system())
+        .await
+        .unwrap();
+        let target = ClassSelector::by_id(HubuumClassID::new(class.id).unwrap())
+            .resolve_class_target(&test_context.pool)
+            .await
+            .unwrap();
+        let update_pool = test_context.pool.clone();
+        let class_id = class.id;
+
+        let update_task = with_transaction(&test_context.pool, async |conn| {
+            use crate::schema::hubuumclass::dsl::{hubuumclass, id, json_schema};
+
+            diesel::update(hubuumclass.filter(id.eq(class_id)))
+                .set(json_schema.eq(Some(serde_json::json!({
+                    "$ref": "https://example.com/schema.json"
+                }))))
+                .execute(conn)
+                .await?;
+
+            let task = tokio::spawn(async move {
+                UpdateHubuumClass {
+                    name: None,
+                    collection_id: None,
+                    json_schema: None,
+                    validate_schema: Some(true),
+                    description: None,
+                }
+                .update_resolved_class(&update_pool, &target, &EventContext::system())
+                .await
+            });
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            Ok::<_, diesel::result::Error>(task)
+        })
+        .await
+        .unwrap();
+
+        let error = update_task.await.unwrap().unwrap_err();
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        let current = HubuumClassID::new(class.id)
+            .unwrap()
+            .instance(&test_context.pool)
+            .await
+            .unwrap();
+        assert!(!current.validate_schema);
+
+        collection.cleanup().await.unwrap();
     }
 }

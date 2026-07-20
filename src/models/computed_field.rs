@@ -606,25 +606,6 @@ impl CursorPaginated for HubuumObjectComputedResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
-#[serde(untagged)]
-pub enum HubuumObjectReadResponse {
-    Raw(HubuumObject),
-    Computed(HubuumObjectComputedResponse),
-}
-
-impl From<HubuumObject> for HubuumObjectReadResponse {
-    fn from(object: HubuumObject) -> Self {
-        Self::Raw(object)
-    }
-}
-
-impl From<HubuumObjectComputedResponse> for HubuumObjectReadResponse {
-    fn from(object: HubuumObjectComputedResponse) -> Self {
-        Self::Computed(object)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

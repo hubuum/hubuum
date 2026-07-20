@@ -11,9 +11,10 @@ use crate::events::EventContext;
 use crate::models::class::{HubuumClass, HubuumClassID, ResolvedClassTarget};
 use crate::models::collection::{Collection, CollectionID};
 use crate::models::object::{
-    HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, ObjectDataPatchDocument,
-    ObjectSelector, ResolvedObjectTarget, UpdateHubuumObject,
+    HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, ObjectSelector,
+    ResolvedObjectTarget, UpdateHubuumObject,
 };
+use crate::models::object_data_patch::ObjectDataPatchDocument;
 use crate::models::search::{FilterField, SortParam};
 use crate::traits::accessors::{ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
@@ -165,7 +166,6 @@ impl UpdateAdapter for UpdateHubuumObject {
         pool: &DbPool,
         object_id: i32,
     ) -> Result<Self::Output, ApiError> {
-        (self, object_id).validate_object_record(pool).await?;
         self.update_object_record_without_events(pool, object_id)
             .await
     }
@@ -176,7 +176,6 @@ impl UpdateAdapter for UpdateHubuumObject {
         object_id: i32,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        (self, object_id).validate_object_record(pool).await?;
         self.update_object_record(pool, object_id, Some(context))
             .await
     }
@@ -273,9 +272,6 @@ impl UpdateResolvedObject for UpdateHubuumObject {
     where
         C: BackendContext + ?Sized,
     {
-        (self, target.object().id)
-            .validate_object_record(backend.db_pool())
-            .await?;
         self.update_resolved_object_record(backend.db_pool(), target, context)
             .await
     }

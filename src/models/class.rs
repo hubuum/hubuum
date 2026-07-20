@@ -46,6 +46,22 @@ pub struct UpdateHubuumClass {
 }
 
 impl UpdateHubuumClass {
+    /// Validate the schema state that would result from applying this update to `current`.
+    pub(crate) fn validate_schema_update(&self, current: &HubuumClass) -> Result<(), ApiError> {
+        if self.json_schema.is_none() && self.validate_schema.is_none() {
+            return Ok(());
+        }
+
+        let schema = self.json_schema.as_ref().or(current.json_schema.as_ref());
+        if let Some(schema) = schema {
+            crate::utilities::json_schema::validate_json_schema(schema)?;
+            if self.validate_schema.unwrap_or(current.validate_schema) {
+                crate::utilities::json_schema::compile_json_schema(schema)?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn has_changes(&self, current: &HubuumClass) -> bool {
         self.name
             .as_ref()

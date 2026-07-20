@@ -283,16 +283,20 @@ impl UpdateClassRecord for UpdateHubuumClass {
     ) -> Result<HubuumClass, ApiError> {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
-        with_connection(pool, async |conn| {
-            crate::db::updated_or_current(
-                diesel::update(hubuumclass.filter(id.eq(class_id)))
-                    .set(self)
-                    .get_result(conn)
-                    .await
-                    .optional(),
-                async || hubuumclass.filter(id.eq(class_id)).first(conn).await,
-            )
-            .await
+        with_transaction(pool, async |conn| -> Result<HubuumClass, ApiError> {
+            let before = hubuumclass
+                .filter(id.eq(class_id))
+                .for_update()
+                .first::<HubuumClass>(conn)
+                .await?;
+            self.validate_schema_update(&before)?;
+            if !self.has_changes(&before) {
+                return Ok(before);
+            }
+            Ok(diesel::update(hubuumclass.filter(id.eq(class_id)))
+                .set(self)
+                .get_result::<HubuumClass>(conn)
+                .await?)
         })
         .await
     }
@@ -317,6 +321,7 @@ impl UpdateClassRecord for UpdateHubuumClass {
                 .for_update()
                 .first::<HubuumClass>(conn)
                 .await?;
+            self.validate_schema_update(&before)?;
             if !self.has_changes(&before) {
                 return Ok(before);
             }
@@ -385,6 +390,7 @@ impl UpdateResolvedClassRecord for UpdateHubuumClass {
 
         with_transaction(pool, async |conn| -> Result<HubuumClass, ApiError> {
             let before = lock_resolved_class_target(conn, target).await?;
+            self.validate_schema_update(&before)?;
             if !self.has_changes(&before) {
                 return Ok(before);
             }

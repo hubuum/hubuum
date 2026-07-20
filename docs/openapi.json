@@ -20628,7 +20628,8 @@
           {
             "$ref": "#/components/schemas/HubuumObjectComputedResponse"
           }
-        ]
+        ],
+        "description": "The two typed representations returned by object read endpoints."
       },
       "HubuumObjectRelation": {
         "type": "object",

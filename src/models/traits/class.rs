@@ -1,7 +1,5 @@
 use crate::traits::accessors::{ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter};
-use crate::traits::{
-    CanUpdate, ClassAccessors, CollectionAccessors, PermissionController, SelfAccessors,
-};
+use crate::traits::{CanUpdate, ClassAccessors, CollectionAccessors, PermissionController};
 
 use crate::db::DbPool;
 use crate::db::traits::class::{
@@ -56,7 +54,6 @@ impl UpdateResolvedClass for UpdateHubuumClass {
     where
         C: crate::traits::BackendContext + ?Sized,
     {
-        validate_class_schema_update(self, backend.db_pool(), target.class().id).await?;
         self.update_resolved_class_record(backend.db_pool(), target, context)
             .await
     }
@@ -93,26 +90,6 @@ fn validate_new_class_schema(class: &NewHubuumClass) -> Result<(), ApiError> {
     crate::utilities::json_schema::validate_json_schema(schema)?;
     if class.validate_schema.unwrap_or(false) {
         crate::utilities::json_schema::compile_json_schema(schema)?;
-    }
-    Ok(())
-}
-
-async fn validate_class_schema_update(
-    update: &UpdateHubuumClass,
-    pool: &DbPool,
-    class_id: i32,
-) -> Result<(), ApiError> {
-    if update.json_schema.is_none() && update.validate_schema.is_none() {
-        return Ok(());
-    }
-
-    let class = HubuumClassID::new(class_id)?.instance(pool).await?;
-    let schema = update.json_schema.as_ref().or(class.json_schema.as_ref());
-    if let Some(schema) = schema {
-        crate::utilities::json_schema::validate_json_schema(schema)?;
-        if update.validate_schema.unwrap_or(class.validate_schema) {
-            crate::utilities::json_schema::compile_json_schema(schema)?;
-        }
     }
     Ok(())
 }
@@ -187,7 +164,6 @@ impl UpdateAdapter for UpdateHubuumClass {
         pool: &DbPool,
         class_id: i32,
     ) -> Result<HubuumClass, ApiError> {
-        validate_class_schema_update(self, pool, class_id).await?;
         self.update_class_record_without_events(pool, class_id)
             .await
     }
@@ -198,7 +174,6 @@ impl UpdateAdapter for UpdateHubuumClass {
         class_id: i32,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        validate_class_schema_update(self, pool, class_id).await?;
         self.update_class_record(pool, class_id, Some(context))
             .await
     }

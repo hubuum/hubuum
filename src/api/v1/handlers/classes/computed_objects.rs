@@ -27,7 +27,7 @@ use crate::permissions::{
     AppContext, AuthzTarget, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
     authorize_resources,
 };
-use crate::traits::{BackendContext, SelfAccessors};
+use crate::traits::BackendContext;
 
 enum ComputedListVisibility {
     SqlPushdown,
@@ -133,12 +133,7 @@ impl ResolvedComputedObjectQuery<'_> {
             )
             .await?;
             let page = crate::pagination::finalize_page(enriched, self.params)?;
-            return object_read_page(
-                page,
-                total_count,
-                effective_page_limit(self.params)?,
-                true,
-            );
+            return object_read_page(page, total_count, effective_page_limit(self.params)?, true);
         }
 
         if self.sorts_by_computed {
@@ -289,8 +284,7 @@ pub(super) async fn list_objects(
     }
 
     let class_id = HubuumClassID::new(class.id)?;
-    let Some(visibility) =
-        computed_list_visibility(pool, requestor, class, &class_id).await?
+    let Some(visibility) = computed_list_visibility(pool, requestor, class, &class_id).await?
     else {
         return empty_computed_page(&params);
     };

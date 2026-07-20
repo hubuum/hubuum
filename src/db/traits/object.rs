@@ -75,11 +75,13 @@ async fn persist_new_object(
 async fn persist_locked_object_update(
     conn: &mut DbConnection,
     update: &UpdateHubuumObject,
+    class: &HubuumClass,
     before: HubuumObject,
-    context: &EventContext,
+    context: Option<&EventContext>,
 ) -> Result<HubuumObject, ApiError> {
     use crate::schema::hubuumobject::dsl::{hubuumobject, id};
 
+    update.validate_for_class(&before, class)?;
     if !update.has_changes(&before) {
         materialize_object_in_transaction(conn, &before).await?;
         return Ok(before);
@@ -89,16 +91,46 @@ async fn persist_locked_object_update(
         .get_result::<HubuumObject>(conn)
         .await?;
     materialize_object_in_transaction(conn, &updated).await?;
-    let event = object_event(
-        &updated,
-        Action::Updated,
-        context,
-        format!("Object '{}' updated", updated.name),
-    )?
-    .with_before(object_snapshot(&before))
-    .with_after(object_snapshot(&updated));
-    emit_event(conn, &event).await?;
+    if let Some(context) = context {
+        let event = object_event(
+            &updated,
+            Action::Updated,
+            context,
+            format!("Object '{}' updated", updated.name),
+        )?
+        .with_before(object_snapshot(&before))
+        .with_after(object_snapshot(&updated));
+        emit_event(conn, &event).await?;
+    }
     Ok(updated)
+}
+
+async fn lock_object_and_update_class_by_id(
+    conn: &mut DbConnection,
+    object_id: i32,
+    update: &UpdateHubuumObject,
+) -> Result<(HubuumClass, HubuumObject), ApiError> {
+    use crate::schema::hubuumclass::dsl as class;
+    use crate::schema::hubuumobject::dsl as object;
+
+    let current = object::hubuumobject
+        .filter(object::id.eq(object_id))
+        .first::<HubuumObject>(conn)
+        .await?;
+    let class_id = update.hubuum_class_id.unwrap_or(current.hubuum_class_id);
+    let class = class::hubuumclass
+        .filter(class::id.eq(class_id))
+        .for_update()
+        .first::<HubuumClass>(conn)
+        .await?;
+    let object = object::hubuumobject
+        .filter(object::id.eq(object_id))
+        .filter(object::hubuum_class_id.eq(current.hubuum_class_id))
+        .filter(object::collection_id.eq(current.collection_id))
+        .for_update()
+        .first::<HubuumObject>(conn)
+        .await?;
+    Ok((class, object))
 }
 
 async fn persist_locked_object_delete(
@@ -484,21 +516,9 @@ impl UpdateObjectRecord for UpdateHubuumObject {
         pool: &DbPool,
         object_id: i32,
     ) -> Result<HubuumObject, ApiError> {
-        use crate::schema::hubuumobject::dsl::{hubuumobject, id};
-
         with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
-            let object = crate::db::updated_or_current(
-                diesel::update(hubuumobject)
-                    .filter(id.eq(object_id))
-                    .set(self)
-                    .get_result::<HubuumObject>(conn)
-                    .await
-                    .optional(),
-                async || hubuumobject.filter(id.eq(object_id)).first(conn).await,
-            )
-            .await?;
-            materialize_object_in_transaction(conn, &object).await?;
-            Ok(object)
+            let (class, before) = lock_object_and_update_class_by_id(conn, object_id, self).await?;
+            persist_locked_object_update(conn, self, &class, before, None).await
         })
         .await
     }
@@ -515,15 +535,9 @@ impl UpdateObjectRecord for UpdateHubuumObject {
                 .await;
         };
 
-        use crate::schema::hubuumobject::dsl::{hubuumobject, id};
-
         with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
-            let before = hubuumobject
-                .filter(id.eq(object_id))
-                .for_update()
-                .first::<HubuumObject>(conn)
-                .await?;
-            persist_locked_object_update(conn, self, before, context).await
+            let (class, before) = lock_object_and_update_class_by_id(conn, object_id, self).await?;
+            persist_locked_object_update(conn, self, &class, before, Some(context)).await
         })
         .await
     }
@@ -541,17 +555,13 @@ pub trait PatchObjectDataRecord {
 async fn persist_locked_object_data_patch(
     conn: &mut DbConnection,
     patch: &ObjectDataPatchDocument,
+    class: &HubuumClass,
     before: HubuumObject,
     context: &EventContext,
 ) -> Result<HubuumObject, ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, id as class_id};
     use crate::schema::hubuumobject::dsl::{data, hubuumobject, id};
 
     let patched_data = patch.apply(&before.data)?;
-    let class = hubuumclass
-        .filter(class_id.eq(before.hubuum_class_id))
-        .first::<HubuumClass>(conn)
-        .await?;
     if class.validate_schema
         && let Some(schema) = class.json_schema.as_ref()
     {
@@ -634,40 +644,72 @@ impl ResolveObjectSelectorRecord for ObjectSelector {
 async fn lock_resolved_object_target(
     conn: &mut DbConnection,
     target: &ResolvedObjectTarget,
-) -> Result<HubuumObject, ApiError> {
+) -> Result<(HubuumClass, HubuumObject), ApiError> {
     use crate::schema::hubuumclass::dsl as class;
     use crate::schema::hubuumobject::dsl as object;
 
+    let resolved_class = target.class();
     let resolved = target.object();
-    match target.selector().kind() {
+    let locked_class = match target.selector().kind() {
+        ObjectSelectorKind::ById {
+            class_id,
+            object_id: _,
+        } => {
+            class::hubuumclass
+                .filter(class::id.eq(class_id.id()))
+                .filter(class::id.eq(resolved_class.id))
+                .filter(class::name.eq(&resolved_class.name))
+                .filter(class::collection_id.eq(resolved_class.collection_id))
+                .for_update()
+                .first::<HubuumClass>(conn)
+                .await?
+        }
+        ObjectSelectorKind::ByName {
+            class_name,
+            object_name: _,
+        } => {
+            class::hubuumclass
+                .filter(class::id.eq(resolved_class.id))
+                .filter(class::name.eq(class_name))
+                .filter(class::collection_id.eq(resolved_class.collection_id))
+                .for_update()
+                .first::<HubuumClass>(conn)
+                .await?
+        }
+    };
+
+    let locked_object = match target.selector().kind() {
         ObjectSelectorKind::ById {
             class_id,
             object_id,
-        } => Ok(object::hubuumobject
-            .filter(object::id.eq(object_id.id()))
-            .filter(object::id.eq(resolved.id))
-            .filter(object::name.eq(&resolved.name))
-            .filter(object::collection_id.eq(resolved.collection_id))
-            .filter(object::hubuum_class_id.eq(class_id.id()))
-            .filter(object::hubuum_class_id.eq(resolved.hubuum_class_id))
-            .for_update()
-            .first::<HubuumObject>(conn)
-            .await?),
+        } => {
+            object::hubuumobject
+                .filter(object::id.eq(object_id.id()))
+                .filter(object::id.eq(resolved.id))
+                .filter(object::name.eq(&resolved.name))
+                .filter(object::collection_id.eq(resolved.collection_id))
+                .filter(object::hubuum_class_id.eq(class_id.id()))
+                .filter(object::hubuum_class_id.eq(resolved.hubuum_class_id))
+                .for_update()
+                .first::<HubuumObject>(conn)
+                .await?
+        }
         ObjectSelectorKind::ByName {
-            class_name,
+            class_name: _,
             object_name,
-        } => Ok(object::hubuumobject
-            .inner_join(class::hubuumclass)
-            .filter(object::id.eq(resolved.id))
-            .filter(object::hubuum_class_id.eq(resolved.hubuum_class_id))
-            .filter(object::collection_id.eq(resolved.collection_id))
-            .filter(object::name.eq(object_name))
-            .filter(class::name.eq(class_name))
-            .select(object::hubuumobject::all_columns())
-            .for_update()
-            .first::<HubuumObject>(conn)
-            .await?),
-    }
+        } => {
+            object::hubuumobject
+                .filter(object::id.eq(resolved.id))
+                .filter(object::hubuum_class_id.eq(resolved.hubuum_class_id))
+                .filter(object::collection_id.eq(resolved.collection_id))
+                .filter(object::name.eq(object_name))
+                .for_update()
+                .first::<HubuumObject>(conn)
+                .await?
+        }
+    };
+
+    Ok((locked_class, locked_object))
 }
 
 impl PatchObjectDataRecord for ObjectDataPatchDocument {
@@ -678,8 +720,8 @@ impl PatchObjectDataRecord for ObjectDataPatchDocument {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
         with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
-            let before = lock_resolved_object_target(conn, target).await?;
-            persist_locked_object_data_patch(conn, self, before, context).await
+            let (class, before) = lock_resolved_object_target(conn, target).await?;
+            persist_locked_object_data_patch(conn, self, &class, before, context).await
         })
         .await
     }
@@ -702,8 +744,8 @@ impl UpdateResolvedObjectRecord for UpdateHubuumObject {
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
         with_transaction(pool, async |conn| -> Result<HubuumObject, ApiError> {
-            let before = lock_resolved_object_target(conn, target).await?;
-            persist_locked_object_update(conn, self, before, context).await
+            let (class, before) = lock_resolved_object_target(conn, target).await?;
+            persist_locked_object_update(conn, self, &class, before, Some(context)).await
         })
         .await
     }
@@ -724,7 +766,7 @@ impl DeleteResolvedObjectRecord for ResolvedObjectTarget {
         context: &EventContext,
     ) -> Result<(), ApiError> {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let before = lock_resolved_object_target(conn, self).await?;
+            let (_, before) = lock_resolved_object_target(conn, self).await?;
             persist_locked_object_delete(conn, before, context).await
         })
         .await

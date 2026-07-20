@@ -13,7 +13,7 @@ mod api_classes;
 mod api_collections;
 #[path = "api/v1/computed_fields.rs"]
 mod api_computed_fields;
-#[path = "api/v1/object_data_patch.rs"]
+#[path = "api/v1/object_data_patch/mod.rs"]
 mod api_object_data_patch;
 #[path = "api/v1/objects.rs"]
 mod api_objects;
