@@ -39,6 +39,62 @@ async fn shared_computed_groups_evaluate_snapshots_and_use_unavailable_bucket(
     fixture.cleanup().await.unwrap();
 }
 
+#[cfg(feature = "integration-test-support")]
+#[rstest::rstest]
+#[tokio::test]
+async fn computed_grouping_paginates_byte_bounded_candidate_batches(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = test_context
+        .object_fixture(
+            "computed byte bounded candidates",
+            NewHubuumClass {
+                collection_id: 0,
+                name: test_context.scoped_name("computed byte bounded candidate class"),
+                description: "Byte-bounded computed candidate class".to_string(),
+                json_schema: None,
+                validate_schema: Some(false),
+            },
+            (0..3)
+                .map(|index| NewHubuumObject {
+                    collection_id: 0,
+                    hubuum_class_id: 0,
+                    name: test_context.scoped_name(&format!("computed candidate {index}")),
+                    description: String::new(),
+                    data: serde_json::json!({
+                        "bucket": "same",
+                        "payload": "x".repeat(2048),
+                    }),
+                })
+                .collect(),
+        )
+        .await
+        .unwrap();
+    create_shared_definition(
+        &test_context.pool,
+        fixture.class.id,
+        fixture.class.collection_id,
+        test_context.admin_user.id,
+        computed_definition("byte_batch", "/bucket", true),
+        &EventContext::system(),
+    )
+    .await
+    .unwrap();
+
+    let page = group_rows(
+        &test_context,
+        &fixture,
+        &test_context.admin_token,
+        "group_by=computed.shared.byte_batch",
+    )
+    .await;
+
+    assert_eq!(summed_count(&page.rows), 3);
+
+    finish_active_rebuild(&test_context, fixture.class.id).await;
+    fixture.cleanup().await.unwrap();
+}
+
 #[rstest::rstest]
 #[tokio::test]
 async fn personal_computed_grouping_uses_the_requesting_owners_definition(

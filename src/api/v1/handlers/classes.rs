@@ -800,7 +800,7 @@ async fn read_resolved_class_permissions(
     responses(
         (status = 200, description = "Permission-scoped grouped object counts. Value states distinguish value, JSON null, a missing JSON path, and an unavailable computed result.", body = [ObjectGroupRow]),
         (status = 400, description = "Invalid dimension, path, sort, cursor, or computed selector", body = ApiErrorResponse),
-        (status = 413, description = "A group value is too large for a replay-safe cursor, or externally authorized intermediate groups exceed the bounded accumulator", body = ApiErrorResponse),
+        (status = 413, description = "A group value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate groups exceed their memory bounds", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse)
     )

@@ -15,9 +15,12 @@ use crate::models::{CollectionID, HubuumClass, HubuumClassID, Permissions, UserI
 
 pub const MIN_OBJECT_GROUP_DIMENSIONS: usize = 1;
 pub const MAX_OBJECT_GROUP_DIMENSIONS: usize = 3;
-/// Keeps the cursor safe for replay in a request target and response header
-/// across common HTTP server and proxy limits.
-pub const MAX_OBJECT_GROUP_CURSOR_LENGTH: usize = 8 * 1024;
+const COMMON_HTTP_LINE_LIMIT_BYTES: usize = 8 * 1024;
+const OBJECT_GROUP_CURSOR_TRANSPORT_RESERVE_BYTES: usize = 4 * 1024;
+/// Leaves half of a common 8 KiB HTTP line limit for the route, query
+/// parameters, response-header name, separators, and line terminators.
+pub const MAX_OBJECT_GROUP_CURSOR_LENGTH: usize =
+    COMMON_HTTP_LINE_LIMIT_BYTES - OBJECT_GROUP_CURSOR_TRANSPORT_RESERVE_BYTES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectGroupScalarField {
@@ -776,6 +779,18 @@ mod tests {
 
         assert!(matches!(error, ApiError::PayloadTooLarge(_)));
         assert!(error.to_string().contains("replay-safe limit"));
+    }
+
+    #[test]
+    fn cursor_limit_reserves_transport_overhead() {
+        assert_eq!(
+            MAX_OBJECT_GROUP_CURSOR_LENGTH + OBJECT_GROUP_CURSOR_TRANSPORT_RESERVE_BYTES,
+            COMMON_HTTP_LINE_LIMIT_BYTES
+        );
+        assert!(
+            OBJECT_GROUP_CURSOR_TRANSPORT_RESERVE_BYTES
+                > "X-Next-Cursor: \r\n/api/v1/classes/1/object-groups?cursor=".len()
+        );
     }
 
     #[test]

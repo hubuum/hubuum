@@ -77,6 +77,73 @@ async fn non_pushdown_authorization_filters_objects_before_aggregation(
         .unwrap();
 }
 
+#[cfg(feature = "integration-test-support")]
+#[rstest::rstest]
+#[tokio::test]
+async fn non_pushdown_candidate_batches_are_bounded_by_serialized_size(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = test_context
+        .object_fixture(
+            "external byte bounded candidates",
+            NewHubuumClass {
+                collection_id: 0,
+                name: test_context.scoped_name("external byte bounded candidate class"),
+                description: "Byte-bounded candidate class".to_string(),
+                json_schema: None,
+                validate_schema: Some(false),
+            },
+            (0..3)
+                .map(|index| NewHubuumObject {
+                    collection_id: 0,
+                    hubuum_class_id: 0,
+                    name: test_context.scoped_name(&format!("large candidate {index}")),
+                    description: "same group".to_string(),
+                    data: serde_json::json!({"payload": "x".repeat(2048)}),
+                })
+                .collect(),
+        )
+        .await
+        .unwrap();
+    let group = create_test_group(&test_context.pool).await;
+    group
+        .add_member_without_events(&test_context.pool, &test_context.normal_user)
+        .await
+        .unwrap();
+    let backend = Arc::new(MockTreetopBackend::new());
+    for object in &fixture.objects {
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(object.id),
+            attrs: ResourceAttrs::default(),
+        });
+    }
+
+    let response = get_with_permission_backend(
+        &test_context,
+        &test_context.normal_token,
+        backend.clone(),
+        &format!(
+            "/api/v1/classes/{}/object-groups?group_by=description",
+            fixture.class.id
+        ),
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+    assert_eq!(rows[0]["object_count"], 3);
+    assert_eq!(backend.authorization_batch_sizes(), vec![1, 1, 1]);
+
+    fixture.cleanup().await.unwrap();
+    group
+        .delete_without_events(&test_context.pool)
+        .await
+        .unwrap();
+}
+
 #[rstest::rstest]
 #[tokio::test]
 async fn non_pushdown_high_cardinality_groups_paginate_from_bounded_accumulator(

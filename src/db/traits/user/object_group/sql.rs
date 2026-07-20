@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+
 use diesel::dsl::{count, sql};
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Bool, Jsonb};
@@ -16,8 +18,13 @@ use crate::models::object_group::{
     ObjectGroupSpec,
 };
 use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
-use crate::pagination::SKIPPED_TOTAL_COUNT;
+use crate::pagination::{Page, SKIPPED_TOTAL_COUNT, finalize_page, finalize_partial_page};
 use crate::utilities::extensions::CustomStringExtensions;
+
+#[cfg(not(feature = "integration-test-support"))]
+const MAX_OBJECT_GROUP_CANDIDATE_BATCH_BYTES: usize = 8 * 1024 * 1024;
+#[cfg(feature = "integration-test-support")]
+const MAX_OBJECT_GROUP_CANDIDATE_BATCH_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Clone)]
 pub(super) enum ObjectGroupBindValue {
@@ -29,6 +36,24 @@ pub(super) enum ObjectGroupBindValue {
 pub(super) struct ObjectGroupSqlSpec {
     pub(super) sql: String,
     pub(super) binds: Vec<ObjectGroupBindValue>,
+}
+
+pub(super) struct ObjectGroupCandidateBatch {
+    items: Vec<HubuumObject>,
+    stopped_by_size: bool,
+}
+
+impl ObjectGroupCandidateBatch {
+    pub(super) fn into_page(
+        self,
+        query_options: &QueryOptions,
+    ) -> Result<Page<HubuumObject>, ApiError> {
+        if self.stopped_by_size {
+            finalize_partial_page(self.items, query_options, true)
+        } else {
+            finalize_page(self.items, query_options)
+        }
+    }
 }
 
 impl ObjectGroupSqlSpec {
@@ -198,7 +223,7 @@ pub(super) async fn load_group_candidate_batch(
     connection: &mut DbConnection,
     query_options: &QueryOptions,
     collection_id: i32,
-) -> Result<Vec<HubuumObject>, ApiError> {
+) -> Result<ObjectGroupCandidateBatch, ApiError> {
     use crate::schema::hubuumobject::dsl::{
         collection_id as object_collection_id, created_at as object_created_at,
         description as object_description, hubuum_class_id, hubuumobject, id as object_id,
@@ -210,11 +235,78 @@ pub(super) async fn load_group_candidate_batch(
         .into_boxed();
     apply_visible_object_filters!(query, query_options);
     crate::apply_query_options!(query, query_options, HubuumObject);
-    Ok(query
+    let stream = query
         .select(hubuumobject::all_columns())
         .distinct()
-        .load::<HubuumObject>(connection)
-        .await?)
+        .load_stream::<HubuumObject>(connection)
+        .await?;
+    futures::pin_mut!(stream);
+    let mut items = Vec::new();
+    let mut serialized_bytes = 2_usize;
+    let mut stopped_by_size = false;
+    while let Some(candidate) = stream.try_next().await? {
+        let candidate_bytes = serialized_candidate_len(&candidate)?;
+        let next_size = serialized_bytes
+            .checked_add(candidate_bytes.saturating_add(1))
+            .ok_or_else(candidate_batch_too_large)?;
+        if next_size > MAX_OBJECT_GROUP_CANDIDATE_BATCH_BYTES {
+            if items.is_empty() {
+                return Err(candidate_batch_too_large());
+            }
+            stopped_by_size = true;
+            break;
+        }
+        items.push(candidate);
+        serialized_bytes = next_size;
+    }
+    Ok(ObjectGroupCandidateBatch {
+        items,
+        stopped_by_size,
+    })
+}
+
+fn serialized_candidate_len(candidate: &HubuumObject) -> Result<usize, ApiError> {
+    let mut writer = CandidateSizeWriter::default();
+    match serde_json::to_writer(&mut writer, candidate) {
+        Ok(()) => Ok(writer.bytes),
+        Err(_) if writer.exceeded => Err(candidate_batch_too_large()),
+        Err(error) => Err(ApiError::InternalServerError(format!(
+            "Failed to measure object group candidate: {error}"
+        ))),
+    }
+}
+
+#[derive(Default)]
+struct CandidateSizeWriter {
+    bytes: usize,
+    exceeded: bool,
+}
+
+impl Write for CandidateSizeWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let Some(bytes) = self.bytes.checked_add(buffer.len()) else {
+            self.exceeded = true;
+            return Err(io::Error::other("object group candidate size overflowed"));
+        };
+        if bytes > MAX_OBJECT_GROUP_CANDIDATE_BATCH_BYTES {
+            self.exceeded = true;
+            return Err(io::Error::other(
+                "object group candidate exceeds the source batch bound",
+            ));
+        }
+        self.bytes = bytes;
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn candidate_batch_too_large() -> ApiError {
+    ApiError::PayloadTooLarge(format!(
+        "An object snapshot exceeds the {MAX_OBJECT_GROUP_CANDIDATE_BATCH_BYTES}-byte grouped-query source batch limit"
+    ))
 }
 
 pub(super) async fn grouped_snapshot_rows(
@@ -264,9 +356,11 @@ fn build_group_ctes(
     } else {
         ""
     };
-    let computed_column = (!computed_input.is_empty())
-        .then_some(", input.computed_values")
-        .unwrap_or_default();
+    let computed_column = if computed_input.is_empty() {
+        ""
+    } else {
+        ", input.computed_values"
+    };
     let expressions = spec
         .dimensions()
         .iter()

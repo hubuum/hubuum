@@ -378,17 +378,18 @@ fields. Group ordering is selected with one of:
 Count ordering always appends the complete dimension tuple in ascending order
 as a deterministic tie-breaker. Cursor tokens are bound to the selected
 dimensions and sort; changing either while following a cursor returns
-`400 Bad Request`. Group cursors are limited to 8 KiB so they remain safe to
-return in `X-Next-Cursor` and replay in the next request URI. If a JSON or
-computed value at a page boundary would exceed that limit, the request returns
-`413 Payload Too Large`; narrow the grouping dimensions or choose a page limit
-that does not end on that value.
+`400 Bad Request`. Group cursors are limited to 4 KiB, reserving the other half
+of a common 8 KiB HTTP line budget for the route, query parameters, header name,
+separators, and line terminators. If a JSON or computed value at a page boundary
+would exceed that limit, the request returns `413 Payload Too Large`; narrow the
+grouping dimensions or choose a page limit that does not end on that value.
 
-When an external permission backend must authorize source objects individually,
-Hubuum scans and groups bounded batches without retaining a database connection
-during the external calls. The compacted intermediate group rows are limited to
-8 MiB. A request that exceeds that bound returns `413 Payload Too Large`; narrow
-the source filters or grouping dimensions.
+When computed grouping or an external permission backend requires source object
+snapshots, Hubuum streams them into byte-bounded batches. An individual snapshot
+larger than 8 MiB returns `413 Payload Too Large`. External authorization does
+not retain a database connection during its calls, and its compacted
+intermediate group rows are also limited to 8 MiB. Narrow the source filters or
+grouping dimensions when either bound is exceeded.
 
 Each response row is self-describing:
 

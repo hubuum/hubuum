@@ -15,8 +15,7 @@ use crate::models::object_group::{
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{CollectionID, Permissions, UserID};
 use crate::pagination::{
-    SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, finalize_page,
-    prepare_db_pagination,
+    SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, prepare_db_pagination,
 };
 use crate::permissions::PrincipalRef;
 use crate::traits::BackendContext;
@@ -188,7 +187,7 @@ async fn group_visible_filtered_objects_with_local_batches(
                 let candidates =
                     load_group_candidate_batch(connection, &database_options, target.collection_id)
                         .await?;
-                let candidate_page = finalize_page(candidates, &chunk_options)?;
+                let candidate_page = candidates.into_page(&chunk_options)?;
                 validate_candidate_target(&candidate_page.items, &target)?;
                 if !candidate_page.items.is_empty() && computed_definitions.is_none() {
                     computed_definitions = Some(
@@ -270,7 +269,7 @@ where
             load_group_candidate_batch(connection, &database_options, target.collection_id).await
         })
         .await?;
-        let candidate_page = finalize_page(candidates, &chunk_options)?;
+        let candidate_page = candidates.into_page(&chunk_options)?;
         validate_candidate_target(&candidate_page.items, &target)?;
         let authorized = authorizer.authorize(candidate_page.items).await?;
 

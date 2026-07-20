@@ -13,8 +13,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `GET /api/v1/classes/{class_id}/object-groups`, with one to three scalar,
   nested JSON, shared computed, or owned personal computed dimensions,
   deterministic cursor pagination, explicit null/missing/unavailable states,
-  group-cardinality totals, and bounded aggregation for external permission
-  backends.
+  group-cardinality totals, byte-bounded source snapshots and external
+  aggregation, and replay-safe cursor transport budgets.
 - Added explicit, numeric-safe `by-name` aliases for current class and object
   reads, updates, deletes, class-scoped object listing and creation,
   permissions, related-resource views, and object-data patching. Name-addressed
