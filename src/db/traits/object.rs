@@ -4,7 +4,9 @@ use serde_json;
 
 use crate::db::traits::GetObject;
 use crate::db::traits::class::lock_resolved_class_target;
-use crate::db::traits::computed_field::materialize_object_in_transaction;
+use crate::db::traits::computed_field::{
+    acquire_computed_class_shared_lock, materialize_object_in_transaction,
+};
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
@@ -43,6 +45,15 @@ fn object_event(
             .with_collection_id(object.collection_id)
             .with_metadata(serde_json::json!({ "class_id": object.hubuum_class_id })),
     )
+}
+
+async fn acquire_object_write_class_advisory_lock(
+    conn: &mut DbConnection,
+    class_id: i32,
+) -> Result<(), ApiError> {
+    // Computed-definition mutations take the advisory lock before the class row lock.
+    // Object writes must use the same order to avoid an advisory/row-lock cycle.
+    acquire_computed_class_shared_lock(conn, class_id).await
 }
 
 async fn persist_new_object(
@@ -118,6 +129,7 @@ async fn lock_object_and_update_class_by_id(
         .first::<HubuumObject>(conn)
         .await?;
     let class_id = update.hubuum_class_id.unwrap_or(current.hubuum_class_id);
+    acquire_object_write_class_advisory_lock(conn, class_id).await?;
     let class = class::hubuumclass
         .filter(class::id.eq(class_id))
         .for_update()
@@ -650,6 +662,7 @@ async fn lock_resolved_object_target(
 
     let resolved_class = target.class();
     let resolved = target.object();
+    acquire_object_write_class_advisory_lock(conn, resolved_class.id).await?;
     let locked_class = match target.selector().kind() {
         ObjectSelectorKind::ById {
             class_id,

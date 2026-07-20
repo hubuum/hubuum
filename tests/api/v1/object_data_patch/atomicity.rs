@@ -1,6 +1,6 @@
 use super::*;
 
-use diesel::sql_types::{Bool, Integer};
+use diesel::sql_types::{BigInt, Bool, Integer};
 
 use crate::db::DbPool;
 
@@ -407,6 +407,12 @@ struct WaitingLock {
     waiting: bool,
 }
 
+#[derive(QueryableByName)]
+struct TransactionId {
+    #[diesel(sql_type = BigInt)]
+    id: i64,
+}
+
 async fn wait_for_computed_lock_waiter(pool: &DbPool, class_id: i32) {
     for _ in 0..100 {
         let waiting = with_connection(pool, async |conn| {
@@ -433,7 +439,86 @@ async fn wait_for_computed_lock_waiter(pool: &DbPool, class_id: i32) {
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    panic!("JSON Patch did not reach computed materialization");
+    panic!("JSON Patch did not request the computed-class lock");
+}
+
+async fn wait_for_transaction_waiter(pool: &DbPool, transaction_id: i64) {
+    for _ in 0..100 {
+        let waiting = with_connection(pool, async |conn| {
+            diesel::sql_query(
+                "SELECT EXISTS (\
+                    SELECT 1 FROM pg_locks \
+                    WHERE locktype = 'transactionid' \
+                      AND transactionid = $1::text::xid \
+                      AND NOT granted\
+                ) AS waiting",
+            )
+            .bind::<BigInt, _>(transaction_id)
+            .get_result::<WaitingLock>(conn)
+            .await
+        })
+        .await
+        .unwrap()
+        .waiting;
+        if waiting {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("JSON Patch did not reach the locked object row");
+}
+
+#[rstest]
+#[actix_web::test]
+async fn object_data_patch_locks_computed_state_before_the_class_row(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = object_fixture(
+        &test_context,
+        "object patch computed lock order",
+        serde_json::json!({"before": true}),
+    )
+    .await;
+    let object = fixture.objects[0].clone();
+    let target = ObjectSelector::by_id(
+        HubuumClassID::new(fixture.class.id).unwrap(),
+        HubuumObjectID::new(object.id).unwrap(),
+    )
+    .resolve_object_target(&test_context.pool)
+    .await
+    .unwrap();
+    let patch: ObjectDataPatchDocument = serde_json::from_value(serde_json::json!([
+        {"op": "add", "path": "/after", "value": true}
+    ]))
+    .unwrap();
+    let patch_pool = test_context.pool.clone();
+    let class_id = fixture.class.id;
+
+    let patch_task = with_transaction(&test_context.pool, async |conn| {
+        diesel::sql_query("SELECT pg_advisory_xact_lock($1, $2)")
+            .bind::<Integer, _>(COMPUTED_CLASS_LOCK_NAMESPACE)
+            .bind::<Integer, _>(class_id)
+            .execute(conn)
+            .await?;
+
+        let patch_task = tokio::spawn(async move {
+            patch
+                .patch_object_data(&patch_pool, &target, &EventContext::system())
+                .await
+        });
+        wait_for_computed_lock_waiter(&test_context.pool, class_id).await;
+
+        diesel::sql_query("SELECT id FROM hubuumclass WHERE id = $1 FOR UPDATE NOWAIT")
+            .bind::<Integer, _>(class_id)
+            .execute(conn)
+            .await?;
+        Ok::<_, diesel::result::Error>(patch_task)
+    })
+    .await
+    .unwrap();
+
+    patch_task.await.unwrap().unwrap();
+    fixture.cleanup().await.unwrap();
 }
 
 #[rstest]
@@ -481,18 +566,24 @@ async fn object_data_patch_holds_the_class_schema_lock_until_commit(
     let class_id = fixture.class.id;
 
     let (patch_task, schema_task) = with_transaction(&test_context.pool, async |conn| {
-        diesel::sql_query("SELECT pg_advisory_xact_lock($1, $2)")
-            .bind::<Integer, _>(COMPUTED_CLASS_LOCK_NAMESPACE)
-            .bind::<Integer, _>(class_id)
-            .execute(conn)
+        use crate::schema::hubuumobject::dsl::{hubuumobject, id};
+
+        hubuumobject
+            .filter(id.eq(object.id))
+            .for_update()
+            .first::<HubuumObject>(conn)
             .await?;
+        let transaction_id = diesel::sql_query("SELECT txid_current()::bigint AS id")
+            .get_result::<TransactionId>(conn)
+            .await?
+            .id;
 
         let patch_task = tokio::spawn(async move {
             patch
                 .patch_object_data(&patch_pool, &target, &EventContext::system())
                 .await
         });
-        wait_for_computed_lock_waiter(&test_context.pool, class_id).await;
+        wait_for_transaction_waiter(&test_context.pool, transaction_id).await;
 
         let mut schema_task = tokio::spawn(async move {
             with_connection(&schema_pool, async |conn| {
