@@ -8,14 +8,82 @@ use crate::models::permissions::Permissions;
 use crate::models::principal::{Principal, load_principal_by_id};
 use crate::models::token::{PrincipalToken, Token};
 use crate::models::user::User;
+use crate::models::{MAX_OBJECT_DATA_PATCH_BYTES, ObjectDataPatchDocument};
 use crate::permissions::{AppContext, PrincipalRef};
 
-use actix_web::{FromRequest, HttpMessage, HttpRequest, dev::Payload, web::Data};
+use actix_web::{
+    FromRequest, HttpMessage, HttpRequest,
+    dev::Payload,
+    error::JsonPayloadError,
+    web::{Data, JsonBody},
+};
 use futures_util::future::{self, FutureExt};
 use std::pin::Pin;
 use tracing::debug;
 
 use crate::middlewares::actor_context::ResolvedAuth;
+
+const JSON_PATCH_MEDIA_TYPE: &str = "application/json-patch+json";
+
+/// Strict JSON Patch request extractor for object-data patching.
+pub struct ObjectDataPatchPayload(ObjectDataPatchDocument);
+
+impl ObjectDataPatchPayload {
+    pub fn into_inner(self) -> ObjectDataPatchDocument {
+        self.0
+    }
+}
+
+impl FromRequest for ObjectDataPatchPayload {
+    type Error = ApiError;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
+        let content_type = req
+            .mime_type()
+            .ok()
+            .flatten()
+            .map(|mime| mime.essence_str().to_string());
+
+        if content_type.as_deref() != Some(JSON_PATCH_MEDIA_TYPE) {
+            return Box::pin(future::ready(Err(ApiError::UnsupportedMediaType(format!(
+                "Content-Type must be {JSON_PATCH_MEDIA_TYPE}"
+            )))));
+        }
+
+        let body = JsonBody::<ObjectDataPatchDocument>::new(req, payload, None, true)
+            .limit(MAX_OBJECT_DATA_PATCH_BYTES);
+        Box::pin(async move {
+            body.await
+                .map(Self)
+                .map_err(object_data_patch_payload_error)
+        })
+    }
+}
+
+fn object_data_patch_payload_error(error: JsonPayloadError) -> ApiError {
+    match error {
+        JsonPayloadError::OverflowKnownLength { length, limit } => ApiError::PayloadTooLarge(
+            format!("JSON Patch payload is {length} bytes; the limit is {limit} bytes"),
+        ),
+        JsonPayloadError::Overflow { limit } => ApiError::PayloadTooLarge(format!(
+            "JSON Patch payload exceeded the {limit} byte limit"
+        )),
+        JsonPayloadError::ContentType => {
+            ApiError::UnsupportedMediaType(format!("Content-Type must be {JSON_PATCH_MEDIA_TYPE}"))
+        }
+        JsonPayloadError::Deserialize(error) => {
+            ApiError::BadRequest(format!("Invalid JSON Patch document: {error}"))
+        }
+        JsonPayloadError::Serialize(error) => ApiError::InternalServerError(format!(
+            "Unexpected JSON Patch serialization error: {error}"
+        )),
+        JsonPayloadError::Payload(error) => {
+            ApiError::BadRequest(format!("Could not read JSON Patch payload: {error}"))
+        }
+        _ => ApiError::BadRequest("Could not read JSON Patch payload".to_string()),
+    }
+}
 
 /// The principal-centric authenticated context for resource and task flows.
 ///

@@ -1,11 +1,18 @@
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use crate::db::prelude::*;
-    use diesel::sql_types::Text;
+    use diesel::sql_types::{Bool, Integer, Text};
     use rstest::rstest;
 
-    use crate::db::with_connection;
-    use crate::models::{HubuumObject, NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
+    use crate::db::{DbPool, with_connection, with_transaction};
+    use crate::events::EventContext;
+    use crate::models::traits::{CreateObjectInResolvedClass, ResolveClassTarget};
+    use crate::models::{
+        ClassSelector, HubuumClassID, HubuumObject, NewHubuumClass, NewHubuumObject,
+        UpdateHubuumObject,
+    };
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
@@ -20,6 +27,43 @@ mod tests {
     // use crate::{assert_contains_all, assert_contains_same_ids};
 
     const OBJECT_ENDPOINT: &str = "/api/v1/classes";
+    const COMPUTED_CLASS_LOCK_NAMESPACE: i32 = 1_133_113;
+
+    #[derive(QueryableByName)]
+    struct WaitingLock {
+        #[diesel(sql_type = Bool)]
+        waiting: bool,
+    }
+
+    async fn wait_for_computed_lock_waiter(pool: &DbPool, class_id: i32) {
+        for _ in 0..100 {
+            let waiting = with_connection(pool, async |conn| {
+                diesel::sql_query(
+                    "SELECT EXISTS (\
+                        SELECT 1 FROM pg_locks \
+                        WHERE locktype = 'advisory' \
+                          AND classid = $1::oid \
+                          AND objid = $2::oid \
+                          AND objsubid = 2 \
+                          AND NOT granted\
+                    ) AS waiting",
+                )
+                .bind::<Integer, _>(COMPUTED_CLASS_LOCK_NAMESPACE)
+                .bind::<Integer, _>(class_id)
+                .get_result::<WaitingLock>(conn)
+                .await
+            })
+            .await
+            .unwrap()
+            .waiting;
+            if waiting {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("object creation did not request the computed-class lock");
+    }
+
     fn object_in_class_endpoint(class_id: i32, object_id: i32) -> String {
         format!("{OBJECT_ENDPOINT}/{class_id}/{object_id}")
     }
@@ -419,6 +463,55 @@ mod tests {
                 assert_eq!(created_object_url, object_url);
             }
         }
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn object_creation_locks_computed_state_before_the_class_row(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let classes = create_test_classes(&test_context, "object create computed lock order").await;
+        let class = classes[0].clone();
+        let target = ClassSelector::by_id(HubuumClassID::new(class.id).unwrap())
+            .resolve_class_target(&test_context.pool)
+            .await
+            .unwrap();
+        let object = NewHubuumObject {
+            collection_id: class.collection_id,
+            hubuum_class_id: class.id,
+            data: serde_json::json!({"created": true}),
+            name: test_context.scoped_name("object create computed lock order"),
+            description: "object create computed lock order".to_string(),
+        };
+        let create_pool = test_context.pool.clone();
+        let class_id = class.id;
+
+        let create_task = with_transaction(&test_context.pool, async |conn| {
+            diesel::sql_query("SELECT pg_advisory_xact_lock($1, $2)")
+                .bind::<Integer, _>(COMPUTED_CLASS_LOCK_NAMESPACE)
+                .bind::<Integer, _>(class_id)
+                .execute(conn)
+                .await?;
+
+            let create_task = tokio::spawn(async move {
+                object
+                    .create_object_in_resolved_class(&create_pool, &target, &EventContext::system())
+                    .await
+            });
+            wait_for_computed_lock_waiter(&test_context.pool, class_id).await;
+
+            diesel::sql_query("SELECT id FROM hubuumclass WHERE id = $1 FOR UPDATE NOWAIT")
+                .bind::<Integer, _>(class_id)
+                .execute(conn)
+                .await?;
+            Ok::<_, diesel::result::Error>(create_task)
+        })
+        .await
+        .unwrap();
+
+        let created = create_task.await.unwrap().unwrap();
+        assert_eq!(created.hubuum_class_id, class_id);
         cleanup(&classes).await;
     }
 

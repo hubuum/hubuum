@@ -1,19 +1,87 @@
 use crate::traits::accessors::{ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter};
-use crate::traits::{
-    CanUpdate, ClassAccessors, CollectionAccessors, PermissionController, SelfAccessors,
-};
+use crate::traits::{CanUpdate, ClassAccessors, CollectionAccessors, PermissionController};
 
 use crate::db::DbPool;
 use crate::db::traits::class::{
-    ClassCollectionLookup, CreateClassRecord, DeleteClassRecord, LoadClassRecord, UpdateClassRecord,
+    ClassCollectionLookup, CreateClassRecord, DeleteClassRecord, DeleteResolvedClassRecord,
+    LoadClassRecord, ResolveClassSelectorRecord, UpdateClassRecord, UpdateResolvedClassRecord,
 };
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 
 use crate::models::{
-    Collection, CollectionID, HubuumClass, HubuumClassID, NewHubuumClass, UpdateHubuumClass,
+    ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassID, NewHubuumClass,
+    ResolvedClassTarget, UpdateHubuumClass,
 };
+
+pub trait ResolveClassTarget {
+    async fn resolve_class_target<C>(&self, backend: &C) -> Result<ResolvedClassTarget, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized;
+}
+
+impl ResolveClassTarget for ClassSelector {
+    async fn resolve_class_target<C>(&self, backend: &C) -> Result<ResolvedClassTarget, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized,
+    {
+        let class = self
+            .resolve_class_selector_record(backend.db_pool())
+            .await?;
+        Ok(ResolvedClassTarget::new(self.clone(), class))
+    }
+}
+
+pub trait UpdateResolvedClass {
+    async fn update_resolved_class<C>(
+        &self,
+        backend: &C,
+        target: &ResolvedClassTarget,
+        context: &EventContext,
+    ) -> Result<HubuumClass, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized;
+}
+
+impl UpdateResolvedClass for UpdateHubuumClass {
+    async fn update_resolved_class<C>(
+        &self,
+        backend: &C,
+        target: &ResolvedClassTarget,
+        context: &EventContext,
+    ) -> Result<HubuumClass, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized,
+    {
+        self.update_resolved_class_record(backend.db_pool(), target, context)
+            .await
+    }
+}
+
+pub trait DeleteResolvedClass {
+    async fn delete_resolved_class<C>(
+        &self,
+        backend: &C,
+        context: &EventContext,
+    ) -> Result<(), ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized;
+}
+
+impl DeleteResolvedClass for ResolvedClassTarget {
+    async fn delete_resolved_class<C>(
+        &self,
+        backend: &C,
+        context: &EventContext,
+    ) -> Result<(), ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized,
+    {
+        self.delete_resolved_class_record(backend.db_pool(), context)
+            .await
+    }
+}
 
 fn validate_new_class_schema(class: &NewHubuumClass) -> Result<(), ApiError> {
     let Some(schema) = class.json_schema.as_ref() else {
@@ -22,26 +90,6 @@ fn validate_new_class_schema(class: &NewHubuumClass) -> Result<(), ApiError> {
     crate::utilities::json_schema::validate_json_schema(schema)?;
     if class.validate_schema.unwrap_or(false) {
         crate::utilities::json_schema::compile_json_schema(schema)?;
-    }
-    Ok(())
-}
-
-async fn validate_class_schema_update(
-    update: &UpdateHubuumClass,
-    pool: &DbPool,
-    class_id: i32,
-) -> Result<(), ApiError> {
-    if update.json_schema.is_none() && update.validate_schema.is_none() {
-        return Ok(());
-    }
-
-    let class = HubuumClassID::new(class_id)?.instance(pool).await?;
-    let schema = update.json_schema.as_ref().or(class.json_schema.as_ref());
-    if let Some(schema) = schema {
-        crate::utilities::json_schema::validate_json_schema(schema)?;
-        if update.validate_schema.unwrap_or(class.validate_schema) {
-            crate::utilities::json_schema::compile_json_schema(schema)?;
-        }
     }
     Ok(())
 }
@@ -116,7 +164,6 @@ impl UpdateAdapter for UpdateHubuumClass {
         pool: &DbPool,
         class_id: i32,
     ) -> Result<HubuumClass, ApiError> {
-        validate_class_schema_update(self, pool, class_id).await?;
         self.update_class_record_without_events(pool, class_id)
             .await
     }
@@ -127,7 +174,6 @@ impl UpdateAdapter for UpdateHubuumClass {
         class_id: i32,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        validate_class_schema_update(self, pool, class_id).await?;
         self.update_class_record(pool, class_id, Some(context))
             .await
     }

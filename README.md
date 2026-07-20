@@ -97,6 +97,10 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/iam/users
 - Event audit and delivery behavior is documented in [docs/events.md](docs/events.md).
 - Temporal history, actor capture, and GDPR anonymization are documented in [docs/temporal_history.md](docs/temporal_history.md).
 - Personal and shared computed object fields are documented in [docs/computed_fields.md](docs/computed_fields.md).
+- Numeric-safe class and object name addressing is documented in
+  [docs/name_addressing.md](docs/name_addressing.md).
+- Atomic RFC 6902 updates to raw object data are documented in
+  [docs/object_data_json_patch.md](docs/object_data_json_patch.md).
 - Full-system disaster-recovery behavior is documented in [docs/backup-restore.md](docs/backup-restore.md).
 - Database pool sizing, observability, and load testing are documented in [docs/performance.md](docs/performance.md).
 

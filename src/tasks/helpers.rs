@@ -80,6 +80,7 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
         ApiError::Unauthorized(msg) => format!("Unauthorized: {}", msg),
         ApiError::TooManyRequests(msg) => format!("Too many requests: {}", msg),
         ApiError::NotAcceptable(msg) => format!("Not acceptable: {}", msg),
+        ApiError::UnsupportedMediaType(msg) => format!("Unsupported media type: {}", msg),
         ApiError::PayloadTooLarge(msg) => format!("Payload too large: {}", msg),
         ApiError::OperatorMismatch(msg) => format!("Invalid operation: {}", msg),
         ApiError::InvalidIntegerRange(msg) => format!("Invalid value: {}", msg),

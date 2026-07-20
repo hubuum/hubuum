@@ -606,13 +606,6 @@ impl CursorPaginated for HubuumObjectComputedResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
-#[serde(untagged)]
-pub enum HubuumObjectReadResponse {
-    Raw(HubuumObject),
-    Computed(HubuumObjectComputedResponse),
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

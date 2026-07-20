@@ -46,6 +46,22 @@ pub struct UpdateHubuumClass {
 }
 
 impl UpdateHubuumClass {
+    /// Validate the schema state that would result from applying this update to `current`.
+    pub(crate) fn validate_schema_update(&self, current: &HubuumClass) -> Result<(), ApiError> {
+        if self.json_schema.is_none() && self.validate_schema.is_none() {
+            return Ok(());
+        }
+
+        let schema = self.json_schema.as_ref().or(current.json_schema.as_ref());
+        if let Some(schema) = schema {
+            crate::utilities::json_schema::validate_json_schema(schema)?;
+            if self.validate_schema.unwrap_or(current.validate_schema) {
+                crate::utilities::json_schema::compile_json_schema(schema)?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn has_changes(&self, current: &HubuumClass) -> bool {
         self.name
             .as_ref()
@@ -101,6 +117,55 @@ crate::int_id_newtype! {
     /// Identifier wrapper for a [`HubuumClass`].
     pub struct HubuumClassID;
     noun = "class id";
+}
+
+/// Explicit route-selected address for a class.
+///
+/// The route chooses the constructor, so [`Self::by_name`] never interprets a numeric-looking
+/// class name as an ID.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClassSelector(ClassSelectorKind);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ClassSelectorKind {
+    ById(HubuumClassID),
+    ByName(String),
+}
+
+impl ClassSelector {
+    pub fn by_id(class_id: HubuumClassID) -> Self {
+        Self(ClassSelectorKind::ById(class_id))
+    }
+
+    pub fn by_name(class_name: impl Into<String>) -> Self {
+        Self(ClassSelectorKind::ByName(class_name.into()))
+    }
+
+    pub(crate) fn kind(&self) -> &ClassSelectorKind {
+        &self.0
+    }
+}
+
+/// A class resolved from one explicit selector and safe to carry from authorization into a
+/// selector-aware mutation.
+#[derive(Clone, Debug)]
+pub struct ResolvedClassTarget {
+    selector: ClassSelector,
+    class: HubuumClass,
+}
+
+impl ResolvedClassTarget {
+    pub(crate) fn new(selector: ClassSelector, class: HubuumClass) -> Self {
+        Self { selector, class }
+    }
+
+    pub fn class(&self) -> &HubuumClass {
+        &self.class
+    }
+
+    pub(crate) fn selector(&self) -> &ClassSelector {
+        &self.selector
+    }
 }
 
 /// A normalized set of class ids: deduplicated, sorted ascending, and guaranteed positive.

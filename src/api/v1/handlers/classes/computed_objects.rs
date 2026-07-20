@@ -1,6 +1,6 @@
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::classes::{
-    computed_personal_owner, scope_object_query_to_class, serialized_object_page,
+    computed_personal_owner, object_read_page, scope_object_query_to_class,
 };
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::computed_field::{
@@ -15,7 +15,8 @@ use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::QueryOptions;
 use crate::models::{
-    HubuumClass, HubuumClassID, HubuumObject, HubuumObjectComputedResponse, Permissions,
+    HubuumClass, HubuumClassID, HubuumObject, HubuumObjectComputedResponse,
+    HubuumObjectReadResponse, Permissions,
 };
 use crate::pagination::{
     Page, SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, encode_cursor,
@@ -26,7 +27,7 @@ use crate::permissions::{
     AppContext, AuthzTarget, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
     authorize_resources,
 };
-use crate::traits::{BackendContext, SelfAccessors};
+use crate::traits::BackendContext;
 
 enum ComputedListVisibility {
     SqlPushdown,
@@ -122,7 +123,7 @@ impl ResolvedComputedObjectQuery<'_> {
         objects: Vec<HubuumObject>,
         total_count: i64,
         include_computed: bool,
-    ) -> Result<ApiResponse<serde_json::Value>, ApiError> {
+    ) -> Result<ApiResponse<Vec<HubuumObjectReadResponse>>, ApiError> {
         if include_computed {
             let enriched = enrich_objects_with_computed_query_snapshot(
                 self.pool.db_pool(),
@@ -132,12 +133,7 @@ impl ResolvedComputedObjectQuery<'_> {
             )
             .await?;
             let page = crate::pagination::finalize_page(enriched, self.params)?;
-            return serialized_object_page(
-                page,
-                total_count,
-                effective_page_limit(self.params)?,
-                true,
-            );
+            return object_read_page(page, total_count, effective_page_limit(self.params)?, true);
         }
 
         if self.sorts_by_computed {
@@ -145,14 +141,14 @@ impl ResolvedComputedObjectQuery<'_> {
         }
 
         let page = crate::pagination::finalize_page(objects, self.params)?;
-        serialized_object_page(page, total_count, effective_page_limit(self.params)?, true)
+        object_read_page(page, total_count, effective_page_limit(self.params)?, true)
     }
 
     async fn raw_sorted_response(
         &self,
         objects: Vec<HubuumObject>,
         total_count: i64,
-    ) -> Result<ApiResponse<serde_json::Value>, ApiError> {
+    ) -> Result<ApiResponse<Vec<HubuumObjectReadResponse>>, ApiError> {
         let request = page_request::<HubuumObjectComputedResponse>(self.params)?;
         let (objects, cursor_boundary) = page_items_and_cursor_boundary(objects, request.limit);
         let next_cursor = if let Some(boundary) = cursor_boundary {
@@ -174,7 +170,7 @@ impl ResolvedComputedObjectQuery<'_> {
         } else {
             None
         };
-        serialized_object_page(
+        object_read_page(
             Page {
                 items: objects,
                 next_cursor,
@@ -262,8 +258,10 @@ async fn computed_list_visibility(
     Ok((!authorized_ids.is_empty()).then_some(ComputedListVisibility::Policy(authorized_ids)))
 }
 
-fn empty_computed_page(params: &QueryOptions) -> Result<ApiResponse<serde_json::Value>, ApiError> {
-    serialized_object_page(
+fn empty_computed_page(
+    params: &QueryOptions,
+) -> Result<ApiResponse<Vec<HubuumObjectReadResponse>>, ApiError> {
+    object_read_page(
         Page::<HubuumObjectComputedResponse> {
             items: Vec::new(),
             next_cursor: None,
@@ -277,29 +275,28 @@ fn empty_computed_page(params: &QueryOptions) -> Result<ApiResponse<serde_json::
 pub(super) async fn list_objects(
     pool: &AppContext,
     requestor: &Authenticated,
-    class: &HubuumClassID,
+    class: &HubuumClass,
     mut params: QueryOptions,
     include_computed: bool,
-) -> Result<ApiResponse<serde_json::Value>, ApiError> {
+) -> Result<ApiResponse<Vec<HubuumObjectReadResponse>>, ApiError> {
     if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
         return empty_computed_page(&params);
     }
 
-    let class_instance = class.instance(pool).await?;
-    let Some(visibility) =
-        computed_list_visibility(pool, requestor, &class_instance, class).await?
+    let class_id = HubuumClassID::new(class.id)?;
+    let Some(visibility) = computed_list_visibility(pool, requestor, class, &class_id).await?
     else {
         return empty_computed_page(&params);
     };
 
-    let personal_owner = computed_personal_owner(pool, requestor, &class_instance).await?;
+    let personal_owner = computed_personal_owner(pool, requestor, class).await?;
     let computed_sorting = params
         .sort
         .iter()
         .any(|sort| sort.field.computed_query().is_some());
     let computed_query_snapshot = resolve_computed_query_fields(
         pool.db_pool(),
-        class_instance.id,
+        class.id,
         personal_owner,
         &mut params.filters,
         &mut params.sort,

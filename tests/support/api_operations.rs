@@ -220,6 +220,49 @@ where
         .map_into_boxed_body()
 }
 
+pub async fn patch_request_with_content_type<T>(
+    pool: &DbPool,
+    token: &str,
+    endpoint: &str,
+    content: T,
+    content_type: &str,
+) -> actix_web::dev::ServiceResponse
+where
+    T: Serialize,
+{
+    let body = serde_json::to_vec(&content).expect("request content must serialize as JSON");
+    patch_request_with_raw_body(pool, token, endpoint, body, content_type).await
+}
+
+pub async fn patch_request_with_raw_body(
+    pool: &DbPool,
+    token: &str,
+    endpoint: &str,
+    body: impl Into<actix_web::web::Bytes>,
+    content_type: &str,
+) -> actix_web::dev::ServiceResponse {
+    let app = test::init_service(
+        App::new()
+            .wrap(actix_web::middleware::from_fn(
+                crate::middlewares::actor_context,
+            ))
+            .wrap(TracingMiddleware::new())
+            .app_data(Data::new(pool.clone()))
+            .app_data(app_context(pool))
+            .configure(prod_api::config),
+    )
+    .await;
+
+    test::TestRequest::patch()
+        .insert_header(create_token_header(token))
+        .insert_header((http::header::CONTENT_TYPE, content_type))
+        .uri(endpoint)
+        .set_payload(body)
+        .send_request(&app)
+        .await
+        .map_into_boxed_body()
+}
+
 pub async fn put_request<T>(
     pool: &DbPool,
     token: &str,
