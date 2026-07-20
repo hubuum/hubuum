@@ -10,9 +10,9 @@ mod tests {
     use crate::events::{Event, EventContext};
     use crate::models::traits::{PatchObjectData, ResolveObjectTarget};
     use crate::models::{
-        HubuumClassID, HubuumObject, HubuumObjectHistory, HubuumObjectID, NewHubuumClass,
-        NewHubuumObject, NewObjectComputedData, ObjectComputedData, ObjectDataPatchDocument,
-        ObjectSelector,
+        HubuumClassID, HubuumObject, HubuumObjectHistory, HubuumObjectID,
+        MAX_OBJECT_DATA_PATCH_BYTES, NewHubuumClass, NewHubuumObject, NewObjectComputedData,
+        ObjectComputedData, ObjectDataPatchDocument, ObjectSelector,
     };
     use crate::tests::api_operations::{
         patch_request, patch_request_with_content_type, patch_request_with_raw_body, post_request,
@@ -947,6 +947,34 @@ mod tests {
             &test_context.admin_token,
             &data_patch_endpoint(fixture.class.id, fixture.objects[0].id),
             body,
+            JSON_PATCH_MEDIA_TYPE,
+        )
+        .await;
+
+        assert_response_status(response, StatusCode::PAYLOAD_TOO_LARGE).await;
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn patch_result_larger_than_object_data_limit_returns_payload_too_large(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let blob = "x".repeat(MAX_OBJECT_DATA_PATCH_BYTES / 2 + 1);
+        let fixture = object_fixture(
+            &test_context,
+            "oversized patch result",
+            serde_json::json!({"blob": blob}),
+        )
+        .await;
+
+        let response = patch_request_with_content_type(
+            &test_context.pool,
+            &test_context.admin_token,
+            &data_patch_endpoint(fixture.class.id, fixture.objects[0].id),
+            serde_json::json!([
+                {"op": "copy", "from": "/blob", "path": "/copy"}
+            ]),
             JSON_PATCH_MEDIA_TYPE,
         )
         .await;

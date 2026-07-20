@@ -2009,7 +2009,7 @@
             }
           },
           "413": {
-            "description": "JSON Patch request exceeds the normal 2 MiB JSON payload limit",
+            "description": "JSON Patch request or resulting object data exceeds its resource limits",
             "content": {
               "application/json": {
                 "schema": {
@@ -5661,7 +5661,7 @@
             }
           },
           "413": {
-            "description": "JSON Patch request exceeds the normal 2 MiB JSON payload limit",
+            "description": "JSON Patch request or resulting object data exceeds its resource limits",
             "content": {
               "application/json": {
                 "schema": {
@@ -23072,7 +23072,7 @@
           ],
           "description": "JSON Patch single patch operation"
         },
-        "description": "RFC 6902 operations applied relative to the root of an object's raw data document. Supports add, remove, replace, move, copy, and test.",
+        "description": "RFC 6902 operations applied relative to the root of an object's raw data document. Supports add, remove, replace, move, copy, and test. The resulting document is limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
         "examples": [
           [
             {

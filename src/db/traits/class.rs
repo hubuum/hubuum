@@ -343,19 +343,22 @@ pub(crate) async fn lock_resolved_class_target(
     conn: &mut crate::db::DbConnection,
     target: &ResolvedClassTarget,
 ) -> Result<HubuumClass, ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
+    use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, id, name};
 
     let resolved = target.class();
     match target.selector().kind() {
         ClassSelectorKind::ById(class_id) => Ok(hubuumclass
             .filter(id.eq(class_id.id()))
             .filter(id.eq(resolved.id))
+            .filter(name.eq(&resolved.name))
+            .filter(collection_id.eq(resolved.collection_id))
             .for_update()
             .first::<HubuumClass>(conn)
             .await?),
         ClassSelectorKind::ByName(class_name) => Ok(hubuumclass
             .filter(id.eq(resolved.id))
             .filter(name.eq(class_name))
+            .filter(collection_id.eq(resolved.collection_id))
             .for_update()
             .first::<HubuumClass>(conn)
             .await?),

@@ -4,11 +4,11 @@ use crate::db::traits::authz::{AuthzSubject, load_token_scopes};
 use crate::db::traits::principal::load_principal_with_user;
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
-use crate::models::ObjectDataPatchDocument;
 use crate::models::permissions::Permissions;
 use crate::models::principal::{Principal, load_principal_by_id};
 use crate::models::token::{PrincipalToken, Token};
 use crate::models::user::User;
+use crate::models::{MAX_OBJECT_DATA_PATCH_BYTES, ObjectDataPatchDocument};
 use crate::permissions::{AppContext, PrincipalRef};
 
 use actix_web::{
@@ -23,7 +23,6 @@ use tracing::debug;
 
 use crate::middlewares::actor_context::ResolvedAuth;
 
-const OBJECT_DATA_PATCH_PAYLOAD_LIMIT: usize = 2_097_152;
 const JSON_PATCH_MEDIA_TYPE: &str = "application/json-patch+json";
 
 /// Strict JSON Patch request extractor for object-data patching.
@@ -53,7 +52,7 @@ impl FromRequest for ObjectDataPatchPayload {
         }
 
         let body = JsonBody::<ObjectDataPatchDocument>::new(req, payload, None, true)
-            .limit(OBJECT_DATA_PATCH_PAYLOAD_LIMIT);
+            .limit(MAX_OBJECT_DATA_PATCH_BYTES);
         Box::pin(async move {
             body.await
                 .map(Self)

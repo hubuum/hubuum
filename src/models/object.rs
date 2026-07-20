@@ -88,6 +88,15 @@ pub const MAX_OBJECT_DATA_PATCH_OPERATIONS: usize = 1_000;
 /// Maximum number of reference tokens accepted in a JSON Pointer used by a patch operation.
 pub const MAX_OBJECT_DATA_PATCH_POINTER_DEPTH: usize = 128;
 
+/// Maximum serialized size of a JSON Patch request or its resulting raw object data.
+pub const MAX_OBJECT_DATA_PATCH_BYTES: usize = 2_097_152;
+
+/// Maximum cumulative serialized result bytes inspected while applying one JSON Patch document.
+pub const MAX_OBJECT_DATA_PATCH_WORK_BYTES: usize = 32 * 1024 * 1024;
+
+/// Maximum number of nested JSON containers accepted in patched object data.
+pub const MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH: usize = 64;
+
 /// An RFC 6902 patch document whose pointers are relative to an object's raw `data` value.
 ///
 /// The private representation keeps the third-party patch implementation behind a small,
@@ -101,7 +110,7 @@ impl PartialSchema for ObjectDataPatchDocument {
             .items(json_patch::PatchOperation::schema())
             .max_items(Some(MAX_OBJECT_DATA_PATCH_OPERATIONS))
             .description(Some(
-                "RFC 6902 operations applied relative to the root of an object's raw data document. Supports add, remove, replace, move, copy, and test.",
+                "RFC 6902 operations applied relative to the root of an object's raw data document. Supports add, remove, replace, move, copy, and test. The resulting document is limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
             ))
             .examples([serde_json::json!([
                 {"op": "add", "path": "/facts", "value": {"source": "inventory"}}
@@ -152,15 +161,77 @@ impl ObjectDataPatchDocument {
 
     /// Apply the complete patch to `data`, returning a new value only if every operation succeeds.
     pub fn apply(&self, data: &serde_json::Value) -> Result<serde_json::Value, ApiError> {
+        let mut cumulative_bytes = validate_object_data_patch_result(data, None)?;
         let mut patched = data.clone();
-        json_patch::patch(&mut patched, &self.0).map_err(|error| {
-            ApiError::Conflict(format!(
-                "JSON Patch operation at index {} failed at path '{}': {}",
-                error.operation, error.path, error.kind
-            ))
-        })?;
+        for (operation_index, operation) in self.0.iter().enumerate() {
+            json_patch::patch(&mut patched, std::slice::from_ref(operation)).map_err(|error| {
+                ApiError::Conflict(format!(
+                    "JSON Patch operation at index {operation_index} failed at path '{}': {}",
+                    error.path, error.kind
+                ))
+            })?;
+            let result_bytes = validate_object_data_patch_result(&patched, Some(operation_index))?;
+            cumulative_bytes = cumulative_bytes
+                .checked_add(result_bytes)
+                .ok_or_else(object_data_patch_work_limit_error)?;
+            if cumulative_bytes > MAX_OBJECT_DATA_PATCH_WORK_BYTES {
+                return Err(object_data_patch_work_limit_error());
+            }
+        }
         Ok(patched)
     }
+}
+
+fn validate_object_data_patch_result(
+    data: &serde_json::Value,
+    operation_index: Option<usize>,
+) -> Result<usize, ApiError> {
+    let mut pending = vec![(data, 0_usize)];
+    while let Some((value, depth)) = pending.pop() {
+        match value {
+            serde_json::Value::Array(values) => {
+                if depth >= MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH {
+                    return Err(ApiError::PayloadTooLarge(format!(
+                        "JSON Patch result after {} exceeds the maximum nesting depth of {MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH}",
+                        patch_result_stage(operation_index)
+                    )));
+                }
+                pending.extend(values.iter().map(|value| (value, depth + 1)));
+            }
+            serde_json::Value::Object(values) => {
+                if depth >= MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH {
+                    return Err(ApiError::PayloadTooLarge(format!(
+                        "JSON Patch result after {} exceeds the maximum nesting depth of {MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH}",
+                        patch_result_stage(operation_index)
+                    )));
+                }
+                pending.extend(values.values().map(|value| (value, depth + 1)));
+            }
+            _ => {}
+        }
+    }
+
+    let serialized_bytes = serde_json::to_vec(data)?.len();
+    if serialized_bytes > MAX_OBJECT_DATA_PATCH_BYTES {
+        return Err(ApiError::PayloadTooLarge(format!(
+            "JSON Patch result after {} is {serialized_bytes} bytes; the limit is {MAX_OBJECT_DATA_PATCH_BYTES} bytes",
+            patch_result_stage(operation_index)
+        )));
+    }
+    Ok(serialized_bytes)
+}
+
+fn patch_result_stage(operation_index: Option<usize>) -> String {
+    operation_index.map_or_else(
+        || "loading the current object data".to_string(),
+        |index| format!("operation {index}"),
+    )
+}
+
+fn object_data_patch_work_limit_error() -> ApiError {
+    ApiError::PayloadTooLarge(format!(
+        "JSON Patch exceeds the cumulative application-work limit of {MAX_OBJECT_DATA_PATCH_WORK_BYTES} bytes"
+    ))
 }
 
 fn validate_patch_pointer_depth(
@@ -736,6 +807,50 @@ pub mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("at most 128 segments"));
+    }
+
+    #[test]
+    fn object_data_patch_rejects_a_result_larger_than_the_object_data_limit() {
+        let blob = "x".repeat(MAX_OBJECT_DATA_PATCH_BYTES / 2 + 1);
+        let original = serde_json::json!({"blob": blob});
+        let patch = patch_document(serde_json::json!([
+            {"op": "copy", "from": "/blob", "path": "/copy"}
+        ]));
+
+        let error = patch.apply(&original).unwrap_err();
+
+        assert!(matches!(error, ApiError::PayloadTooLarge(_)));
+    }
+
+    #[test]
+    fn object_data_patch_rejects_a_result_with_excessive_nesting() {
+        let nested = (0..=MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH)
+            .fold(serde_json::Value::Null, |value, _| {
+                serde_json::Value::Array(vec![value])
+            });
+        let patch = patch_document(serde_json::json!([
+            {"op": "add", "path": "/nested", "value": nested}
+        ]));
+
+        let error = patch.apply(&serde_json::json!({})).unwrap_err();
+
+        assert!(matches!(error, ApiError::PayloadTooLarge(_)));
+    }
+
+    #[test]
+    fn object_data_patch_bounds_cumulative_application_work() {
+        let original = serde_json::json!({
+            "padding": "x".repeat(40 * 1024),
+            "value": true
+        });
+        let operations = (0..MAX_OBJECT_DATA_PATCH_OPERATIONS)
+            .map(|_| serde_json::json!({"op": "test", "path": "/value", "value": true}))
+            .collect::<Vec<_>>();
+        let patch = patch_document(serde_json::Value::Array(operations));
+
+        let error = patch.apply(&original).unwrap_err();
+
+        assert!(matches!(error, ApiError::PayloadTooLarge(_)));
     }
 
     pub async fn verify_no_such_object(pool: &DbPool, object_id: i32) {

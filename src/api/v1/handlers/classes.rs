@@ -1329,19 +1329,20 @@ async fn list_objects_in_resolved_class(
     req: HttpRequest,
 ) -> Result<ApiResponse<Vec<HubuumObjectReadResponse>>, ApiError> {
     let user = &requestor.principal;
-    let class = HubuumClassID::new(target.class().id)?;
+    let class_id = HubuumClassID::new(target.class().id)?;
+    let class = target.class().clone();
     let query_string = req.query_string();
 
     let (mut params, include_computed) = parse_computed_object_list_query(query_string)?;
 
     // The path is authoritative even if the caller supplied a conflicting
     // class_id/classes filter.
-    scope_object_query_to_class(&mut params, &class);
+    scope_object_query_to_class(&mut params, &class_id);
 
     debug!(
         message = "Getting objects in class",
         user_id = user.id(),
-        class_id = class.id(),
+        class_id = class_id.id(),
         query = query_string
     );
 
@@ -1409,7 +1410,6 @@ async fn list_objects_in_resolved_class(
 
     let page = finalize_page(objects, &params)?;
     if include_computed {
-        let class = class.instance(&pool).await?;
         let personal_owner = computed_personal_owner(&pool, &requestor, &class).await?;
         let next_cursor = page.next_cursor;
         let enriched = enrich_objects_with_computed(&pool, page.items, personal_owner).await?;
@@ -1786,7 +1786,7 @@ async fn apply_object_data_patch(
         (status = 404, description = "Class/object pair not found", body = ApiErrorResponse),
         (status = 406, description = "Final patched data fails the class JSON Schema", body = ApiErrorResponse),
         (status = 409, description = "A patch operation failed, including a failed test operation; no change was persisted", body = ApiErrorResponse),
-        (status = 413, description = "JSON Patch request exceeds the normal 2 MiB JSON payload limit", body = ApiErrorResponse),
+        (status = 413, description = "JSON Patch request or resulting object data exceeds its resource limits", body = ApiErrorResponse),
         (status = 415, description = "Content-Type is not application/json-patch+json", body = ApiErrorResponse),
         (status = 500, description = "Persistence, computed-field materialization, or event emission failed and the transaction was rolled back", body = ApiErrorResponse)
     )
@@ -1841,7 +1841,7 @@ async fn patch_object_data_in_class(
         (status = 404, description = "Class-name/object-name pair not found or the object was concurrently renamed", body = ApiErrorResponse),
         (status = 406, description = "Final patched data fails the class JSON Schema", body = ApiErrorResponse),
         (status = 409, description = "A patch operation failed, including a failed test operation; no change was persisted", body = ApiErrorResponse),
-        (status = 413, description = "JSON Patch request exceeds the normal 2 MiB JSON payload limit", body = ApiErrorResponse),
+        (status = 413, description = "JSON Patch request or resulting object data exceeds its resource limits", body = ApiErrorResponse),
         (status = 415, description = "Content-Type is not application/json-patch+json", body = ApiErrorResponse),
         (status = 500, description = "Persistence, computed-field materialization, or event emission failed and the transaction was rolled back", body = ApiErrorResponse)
     )

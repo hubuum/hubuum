@@ -646,6 +646,8 @@ async fn lock_resolved_object_target(
         } => Ok(object::hubuumobject
             .filter(object::id.eq(object_id.id()))
             .filter(object::id.eq(resolved.id))
+            .filter(object::name.eq(&resolved.name))
+            .filter(object::collection_id.eq(resolved.collection_id))
             .filter(object::hubuum_class_id.eq(class_id.id()))
             .filter(object::hubuum_class_id.eq(resolved.hubuum_class_id))
             .for_update()
@@ -658,6 +660,7 @@ async fn lock_resolved_object_target(
             .inner_join(class::hubuumclass)
             .filter(object::id.eq(resolved.id))
             .filter(object::hubuum_class_id.eq(resolved.hubuum_class_id))
+            .filter(object::collection_id.eq(resolved.collection_id))
             .filter(object::name.eq(object_name))
             .filter(class::name.eq(class_name))
             .select(object::hubuumobject::all_columns())

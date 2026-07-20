@@ -280,7 +280,7 @@ fn empty_computed_page(
 pub(super) async fn list_objects(
     pool: &AppContext,
     requestor: &Authenticated,
-    class: &HubuumClassID,
+    class: &HubuumClass,
     mut params: QueryOptions,
     include_computed: bool,
 ) -> Result<ApiResponse<Vec<HubuumObjectReadResponse>>, ApiError> {
@@ -288,21 +288,21 @@ pub(super) async fn list_objects(
         return empty_computed_page(&params);
     }
 
-    let class_instance = class.instance(pool).await?;
+    let class_id = HubuumClassID::new(class.id)?;
     let Some(visibility) =
-        computed_list_visibility(pool, requestor, &class_instance, class).await?
+        computed_list_visibility(pool, requestor, class, &class_id).await?
     else {
         return empty_computed_page(&params);
     };
 
-    let personal_owner = computed_personal_owner(pool, requestor, &class_instance).await?;
+    let personal_owner = computed_personal_owner(pool, requestor, class).await?;
     let computed_sorting = params
         .sort
         .iter()
         .any(|sort| sort.field.computed_query().is_some());
     let computed_query_snapshot = resolve_computed_query_fields(
         pool.db_pool(),
-        class_instance.id,
+        class.id,
         personal_owner,
         &mut params.filters,
         &mut params.sort,

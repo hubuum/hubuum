@@ -128,7 +128,11 @@ object PATCH endpoint. The object must belong to the class named in the URL.
 
 Requests use Hubuum's normal 2 MiB JSON request limit. A patch may contain at
 most 1,000 operations, and every `path` or `from` pointer may contain at most
-128 segments. JSON value nesting is also bounded by the JSON parser.
+128 segments. The resulting raw object data is limited to 2 MiB and 64 nested
+containers. Hubuum validates the result after each operation and caps cumulative
+application work at 32 MiB, so repeated `copy` operations cannot amplify a
+small request into unbounded server work. Any limit failure rolls back the
+complete patch.
 
 ## Status Codes
 
@@ -141,6 +145,6 @@ most 1,000 operations, and every `path` or `from` pointer may contain at most
 | `404 Not Found` | The class/object pair does not exist. A class mismatch is also reported as not found. |
 | `406 Not Acceptable` | The final patched data fails the class JSON Schema. |
 | `409 Conflict` | An operation cannot be applied, including a failed `test`; no operation is persisted. |
-| `413 Payload Too Large` | The request exceeds the JSON payload limit. |
+| `413 Payload Too Large` | The request, resulting object data, nesting depth, or cumulative application work exceeds its limit. |
 | `415 Unsupported Media Type` | `Content-Type` is not `application/json-patch+json`. |
 | `500 Internal Server Error` | Persistence, computed materialization, or event emission failed; the transaction is rolled back. |
