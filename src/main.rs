@@ -1,5 +1,4 @@
 #[cfg(test)]
-#[path = "tests/container_build.rs"]
 mod container_build;
 
 use actix_web::{App, HttpServer, middleware::from_fn, web, web::Data, web::JsonConfig};

@@ -789,11 +789,11 @@ mod class_objects;
 mod class_related;
 mod computed_objects;
 mod history_endpoints;
-pub(crate) mod object_groups;
+pub(crate) mod object_aggregates;
 mod object_related;
 
 pub use class_objects::*;
 pub use class_related::*;
 pub use history_endpoints::*;
-pub(crate) use object_groups::get_object_aggregates;
+pub(crate) use object_aggregates::get_object_aggregates;
 pub use object_related::*;

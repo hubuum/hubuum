@@ -338,9 +338,9 @@ Examples:
 
 If the JSON path does not exist, or the stored value cannot be interpreted as the requested JSON type, the filter does not match, but it does not fail the request.
 
-## Grouped object queries
+## Aggregated object queries
 
-Object grouping is a separate read-only collection resource, so the normal
+Object aggregation is a separate read-only collection resource, so the normal
 object-list response remains unchanged:
 
 ```text
@@ -371,7 +371,7 @@ GET /api/v1/classes/12/object-aggregates?json_data__equals=status=active&group_b
 
 Grouping by `created_at` or `updated_at` uses the exact timestamp. The endpoint
 does not accept date bucketing, arbitrary expressions, or object-list sort
-fields. Group ordering is selected with one of:
+fields. Aggregate ordering is selected with one of:
 
 - `sort=dimensions.asc`, the default;
 - `sort=dimensions.desc`;
@@ -390,12 +390,12 @@ response header or replay request line exceed that limit, the request returns
 shorten the filters, narrow the grouping dimensions, or choose a page limit
 that does not end on that value.
 
-When computed grouping or an external permission backend requires source object
+When computed aggregation or an external permission backend requires source object
 snapshots, Hubuum streams them into byte-bounded batches. An individual snapshot
 larger than 8 MiB returns `413 Payload Too Large`. External authorization does
 not retain a database connection during its calls, and its compacted
-intermediate group rows are also limited to 8 MiB. Narrow the source filters or
-grouping dimensions when either bound is exceeded.
+intermediate aggregate rows are also limited to 8 MiB. Narrow the source
+filters or grouping dimensions when either bound is exceeded.
 
 Each response row is self-describing:
 
@@ -435,10 +435,10 @@ aggregation.
 This rule also applies when the permission backend cannot push visibility into
 SQL: candidate object snapshots are authorized in bounded batches, and only
 the immutable authorized snapshots are grouped. Hidden objects therefore
-cannot affect bucket counts or group cardinality, and rows are not reloaded
+cannot affect bucket counts or aggregate cardinality, and rows are not reloaded
 after authorization.
 
-Computed grouping snapshots the selected current definitions after the first
+Computed aggregation snapshots the selected current definitions after the first
 object is visible, then evaluates those definitions from the authorized object
 snapshots. Only the requested shared keys and the requesting owner's requested
 personal keys are loaded. If no object is visible, the endpoint returns an
@@ -452,12 +452,12 @@ or perform computed read repair. Service accounts cannot group by personal
 fields. Responses depending on computed state include
 `Cache-Control: private, no-store`.
 
-Pagination headers describe group rows, not source objects:
+Pagination headers describe aggregate rows, not source objects:
 
-- `X-Total-Count` is the total number of groups and is omitted when
+- `X-Total-Count` is the total number of aggregate rows and is omitted when
   `include_total=false`;
-- `X-Next-Cursor` is present when another group page exists;
-- `X-Page-Limit` is the effective group page size.
+- `X-Next-Cursor` is present when another aggregate page exists;
+- `X-Page-Limit` is the effective aggregate page size.
 
 ## Contextual endpoints
 
@@ -490,7 +490,7 @@ The shared query interface is currently used by:
 - user lists, user tokens, and user groups
 - group lists and group members
 - collection lists and collection permission listings
-- class lists, class permissions, connected-class listings, direct class-relation listings, objects in class, and grouped objects in class
+- class lists, class permissions, connected-class listings, direct class-relation listings, objects in class, and aggregated objects in class
 - global class relation and object relation lists
 - connected-object listings
 - direct related-relation listings

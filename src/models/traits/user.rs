@@ -3,15 +3,15 @@ use std::iter::IntoIterator;
 use crate::models::search::QueryOptions;
 use crate::models::{
     ClassGraphRow, Collection, ExportIncludeRelatedQuery, Group, HubuumClass, HubuumClassExpanded,
-    HubuumClassRelation, HubuumObject, HubuumObjectRelation, ObjectGroupBackendRequest,
-    ObjectGroupPage, Permissions, RelatedObjectForRootRow, RelatedObjectGraphRow,
+    HubuumClassRelation, HubuumObject, HubuumObjectRelation, ObjectAggregateBackendRequest,
+    ObjectAggregatePage, Permissions, RelatedObjectForRootRow, RelatedObjectGraphRow,
     RelatedObjectIncludeRow, UnifiedSearchSpec, User, UserID,
 };
 
 use crate::db::DbPool;
 use crate::db::traits::user::{
     LoadPermittedCollections, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
-    ObjectGroupBackend, UnifiedSearchBackend, UserSearchBackend,
+    ObjectAggregateBackend, UnifiedSearchBackend, UserSearchBackend,
 };
 use crate::errors::ApiError;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
@@ -22,15 +22,15 @@ use crate::traits::{AuthzSubject, BackendContext, ClassAccessors, SelfAccessors}
 /// The methods on this trait delegate into backend search implementations while keeping the
 /// model-facing API expressed in terms of `User` / `UserID` style accessors.
 pub trait Search: UserCollectionAccessors {
-    async fn group_objects<C>(
+    async fn aggregate_objects<C>(
         &self,
         backend: &C,
-        request: ObjectGroupBackendRequest,
-    ) -> Result<ObjectGroupPage, ApiError>
+        request: ObjectAggregateBackendRequest,
+    ) -> Result<ObjectAggregatePage, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.group_objects_from_backend(backend, request).await
+        self.aggregate_objects_from_backend(backend, request).await
     }
 
     async fn search_collections<C>(

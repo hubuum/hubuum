@@ -24,7 +24,8 @@ pub mod tasks;
 #[cfg(feature = "integration-test-support")]
 #[doc(hidden)]
 pub mod test_support;
-#[cfg(test)]
+#[cfg(any(test, feature = "integration-test-support"))]
+#[doc(hidden)]
 pub mod tests;
 pub mod tls;
 pub mod traits;

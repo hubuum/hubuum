@@ -48,6 +48,7 @@
 - Keep invariants close to the data they protect. Constructors and setters should reject invalid states rather than relying on callers to remember preconditions.
 - Use small, explicit APIs. Expose only what callers need, and keep representation details private unless there is a strong reason not to.
 - Prefer `use` imports over inline fully-qualified paths for functions, types, and macros. Only fully-qualify a path inline when needed to resolve a genuine name ambiguity (or for a one-off reference where a `use` would mislead).
+- Use Rust's conventional module discovery (`foo.rs` or `foo/mod.rs`) and organize files accordingly. Do not use `#[path = "..."]` module overrides.
 
 ## OpenAPI
 
