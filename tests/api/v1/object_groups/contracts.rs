@@ -11,7 +11,7 @@ async fn route_class_constraint_overrides_a_conflicting_filter(
         &test_context.pool,
         &test_context.admin_token,
         &format!(
-            "/api/v1/classes/{}/object-groups?class_id={}&group_by=name",
+            "/api/v1/classes/{}/object-aggregates?class_id={}&group_by=name",
             route_fixture.class.id, other_fixture.class.id
         ),
     )

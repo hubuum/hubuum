@@ -115,7 +115,10 @@ async fn group_rows(
     let response = get_request(
         &context.pool,
         token,
-        &format!("/api/v1/classes/{}/object-groups?{query}", fixture.class.id),
+        &format!(
+            "/api/v1/classes/{}/object-aggregates?{query}",
+            fixture.class.id
+        ),
     )
     .await;
     let response = assert_response_status(response, StatusCode::OK).await;

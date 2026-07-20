@@ -250,7 +250,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::get_related_class_relations_by_name,
         classes::get_related_class_graph,
         classes::get_related_class_graph_by_name,
-        classes::get_object_groups,
+        classes::object_groups::get_object_aggregates,
         classes::get_objects_in_class,
         classes::get_objects_in_class_by_name,
         classes::create_object_in_class,

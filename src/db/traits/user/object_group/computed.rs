@@ -2,14 +2,15 @@ use diesel::prelude::*;
 use diesel_async::RunQueryDsl;
 use hubuum_computed_fields::{EvaluationResult, MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS};
 
+use super::candidate::ObjectGroupCandidate;
 use crate::db::DbConnection;
-use crate::db::traits::computed_field::{acquire_computed_class_shared_lock, evaluate_definitions};
+use crate::db::traits::computed_field::evaluate_definitions;
 use crate::errors::ApiError;
 use crate::models::computed_field::{
     COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ComputedFieldDefinition,
 };
-use crate::models::object::HubuumObject;
-use crate::models::object_group::{ComputedFieldScope, ObjectGroupDimension, ObjectGroupSpec};
+use crate::models::object_group::{ObjectGroupDimension, ObjectGroupSpec};
+use crate::models::search::ComputedFieldScope;
 
 #[derive(Default)]
 pub(super) struct ComputedGroupDefinitions {
@@ -106,7 +107,6 @@ async fn load_selected_definitions(
 
     let mut definitions = Vec::with_capacity(shared_keys.len() + personal_keys.len());
     if !shared_keys.is_empty() {
-        acquire_computed_class_shared_lock(connection, class_id_value).await?;
         definitions.extend(
             computed_field_definitions
                 .filter(class_id.eq(class_id_value))
@@ -140,20 +140,25 @@ async fn load_selected_definitions(
 }
 
 pub(super) fn computed_group_payload(
-    candidates: Vec<HubuumObject>,
+    candidates: Vec<ObjectGroupCandidate>,
     spec: &ObjectGroupSpec,
     definitions: &ComputedGroupDefinitions,
-) -> Result<(Vec<HubuumObject>, serde_json::Value), ApiError> {
+) -> Result<(Vec<ObjectGroupCandidate>, serde_json::Value), ApiError> {
     let mut payload = serde_json::Map::new();
     for object in &candidates {
+        let data = object.data.as_ref().ok_or_else(|| {
+            ApiError::InternalServerError(
+                "Computed grouping candidate is missing its JSON data snapshot".to_string(),
+            )
+        })?;
         let shared = evaluate_group_definitions(
-            &object.data,
+            data,
             &definitions.shared,
             MAX_SHARED_DEFINITIONS,
             "shared_group",
         )?;
         let personal = evaluate_group_definitions(
-            &object.data,
+            data,
             &definitions.personal,
             MAX_PERSONAL_DEFINITIONS,
             "personal_group",

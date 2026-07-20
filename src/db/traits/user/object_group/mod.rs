@@ -1,5 +1,7 @@
 mod accumulator;
 mod authorization;
+mod bounded_json;
+mod candidate;
 mod computed;
 mod sql;
 
@@ -10,7 +12,7 @@ use crate::errors::ApiError;
 use crate::models::object::HubuumObject;
 use crate::models::object_group::{
     DecodedObjectGroupCursor, ObjectGroupBackendParts, ObjectGroupBackendRequest,
-    ObjectGroupDimension, ObjectGroupPage, ObjectGroupSpec,
+    ObjectGroupCursorBudget, ObjectGroupDimension, ObjectGroupPage, ObjectGroupSpec,
 };
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{CollectionID, Permissions, UserID};
@@ -25,10 +27,9 @@ use self::accumulator::{
     page_external_groups,
 };
 use self::authorization::{ExternalObjectGroupAuthorizer, ObjectGroupPermissionResources};
+use self::candidate::{ObjectGroupCandidate, load_group_candidate_batch};
 use self::computed::{ComputedGroupDefinitions, load_computed_group_definitions};
-use self::sql::{
-    group_visible_filtered_objects_with_sql, grouped_snapshot_rows, load_group_candidate_batch,
-};
+use self::sql::{group_visible_filtered_objects_with_sql, grouped_snapshot_rows};
 
 #[cfg(not(feature = "integration-test-support"))]
 const OBJECT_GROUP_CANDIDATE_BATCH_SIZE: usize = 500;
@@ -45,13 +46,18 @@ struct ObjectGroupRouteTarget {
 struct ObjectGroupExecution<'a> {
     pool: &'a DbPool,
     target: ObjectGroupRouteTarget,
-    query_options: &'a QueryOptions,
-    spec: &'a ObjectGroupSpec,
+    paging: ObjectGroupPaging<'a>,
     personal_owner_id: Option<i32>,
     required_permissions: Vec<Permissions>,
     token_scopes: Option<&'a [Permissions]>,
+}
+
+struct ObjectGroupPaging<'a> {
+    query_options: &'a QueryOptions,
+    spec: &'a ObjectGroupSpec,
     decoded_cursor: Option<DecodedObjectGroupCursor>,
     effective_limit: usize,
+    cursor_budget: ObjectGroupCursorBudget,
 }
 
 pub trait ObjectGroupBackend: UserCollectionAccessors {
@@ -69,6 +75,7 @@ pub trait ObjectGroupBackend: UserCollectionAccessors {
             spec,
             personal_owner_id,
             authorization,
+            cursor_budget,
         } = request.into_parts();
         let (class_id, class_name, collection_id) = target.into_parts();
         let (required_permissions, token_scopes) = authorization.into_parts();
@@ -76,7 +83,7 @@ pub trait ObjectGroupBackend: UserCollectionAccessors {
         let decoded_cursor = query_options
             .cursor
             .as_deref()
-            .map(|cursor| spec.decode_cursor(cursor))
+            .map(|cursor| spec.decode_cursor(cursor, cursor_budget))
             .transpose()?;
         tracing::debug!(
             message = "Grouping visible filtered objects",
@@ -95,13 +102,16 @@ pub trait ObjectGroupBackend: UserCollectionAccessors {
                 class_name,
                 collection_id: collection_id.id(),
             },
-            query_options: &query_options,
-            spec: &spec,
+            paging: ObjectGroupPaging {
+                query_options: &query_options,
+                spec: &spec,
+                decoded_cursor,
+                effective_limit,
+                cursor_budget,
+            },
             personal_owner_id: personal_owner_id.map(UserID::id),
             required_permissions,
             token_scopes: token_scopes.as_deref(),
-            decoded_cursor,
-            effective_limit,
         };
 
         let permission_backend = context.permission_backend();
@@ -137,7 +147,7 @@ where
             .push(Permissions::ReadCollection);
     }
     if !scope_allows(execution.token_scopes, &execution.required_permissions) {
-        return empty_group_page(execution.query_options);
+        return empty_group_page(execution.paging.query_options);
     }
     let collection = CollectionID::new(execution.target.collection_id)?;
     match user
@@ -150,11 +160,11 @@ where
         .await
     {
         Ok(()) => {}
-        Err(ApiError::Forbidden(_)) => return empty_group_page(execution.query_options),
+        Err(ApiError::Forbidden(_)) => return empty_group_page(execution.paging.query_options),
         Err(error) => return Err(error),
     }
 
-    if !execution.spec.has_computed_dimension() {
+    if !execution.paging.spec.has_computed_dimension() {
         return group_visible_filtered_objects_with_sql(execution).await;
     }
     group_visible_filtered_objects_with_local_batches(execution).await
@@ -166,11 +176,8 @@ async fn group_visible_filtered_objects_with_local_batches(
     let ObjectGroupExecution {
         pool,
         target,
-        query_options,
-        spec,
+        paging,
         personal_owner_id,
-        decoded_cursor,
-        effective_limit,
         ..
     } = execution;
     with_transaction(
@@ -178,15 +185,19 @@ async fn group_visible_filtered_objects_with_local_batches(
         async |connection| -> Result<ObjectGroupPage, ApiError> {
             create_group_accumulator(connection).await?;
             let mut computed_definitions = None;
-            let mut chunk_options = object_group_chunk_options(query_options);
+            let mut chunk_options = object_group_chunk_options(paging.query_options);
             let mut object_cursor = None;
 
             loop {
                 chunk_options.cursor.clone_from(&object_cursor);
                 let database_options = prepare_db_pagination::<HubuumObject>(&chunk_options)?;
-                let candidates =
-                    load_group_candidate_batch(connection, &database_options, target.collection_id)
-                        .await?;
+                let candidates = load_group_candidate_batch(
+                    connection,
+                    &database_options,
+                    target.collection_id,
+                    paging.spec,
+                )
+                .await?;
                 let candidate_page = candidates.into_page(&chunk_options)?;
                 validate_candidate_target(&candidate_page.items, &target)?;
                 if !candidate_page.items.is_empty() && computed_definitions.is_none() {
@@ -194,16 +205,20 @@ async fn group_visible_filtered_objects_with_local_batches(
                         load_computed_group_definitions(
                             connection,
                             target.class_id,
-                            spec,
+                            paging.spec,
                             personal_owner_id,
                         )
                         .await?,
                     );
                 }
                 if let Some(definitions) = computed_definitions.as_ref() {
-                    let grouped =
-                        grouped_snapshot_rows(connection, candidate_page.items, spec, definitions)
-                            .await?;
+                    let grouped = grouped_snapshot_rows(
+                        connection,
+                        candidate_page.items,
+                        paging.spec,
+                        definitions,
+                    )
+                    .await?;
                     merge_group_rows(connection, grouped).await?;
                 }
 
@@ -213,14 +228,7 @@ async fn group_visible_filtered_objects_with_local_batches(
                 }
             }
 
-            page_accumulated_groups(
-                connection,
-                query_options,
-                spec,
-                decoded_cursor,
-                effective_limit,
-            )
-            .await
+            page_accumulated_groups(connection, &paging).await
         },
     )
     .await
@@ -237,16 +245,13 @@ where
     let ObjectGroupExecution {
         pool,
         target,
-        query_options,
-        spec,
+        paging,
         personal_owner_id,
         required_permissions,
         token_scopes,
-        decoded_cursor,
-        effective_limit,
     } = execution;
     if !scope_allows(token_scopes, &required_permissions) {
-        return empty_group_page(query_options);
+        return empty_group_page(paging.query_options);
     }
 
     let principal = PrincipalRef::load(pool, user).await?;
@@ -256,17 +261,26 @@ where
     .await?;
     let authorizer =
         ExternalObjectGroupAuthorizer::new(backend, &principal, &required_permissions, &resources)?;
+    if !authorizer.authorize_invariants().await? {
+        return empty_group_page(paging.query_options);
+    }
     let mut computed_definitions =
-        (!spec.has_computed_dimension()).then(ComputedGroupDefinitions::default);
+        (!paging.spec.has_computed_dimension()).then(ComputedGroupDefinitions::default);
     let mut accumulator = ExternalGroupAccumulator::default();
-    let mut chunk_options = object_group_chunk_options(query_options);
+    let mut chunk_options = object_group_chunk_options(paging.query_options);
     let mut object_cursor = None;
 
     loop {
         chunk_options.cursor.clone_from(&object_cursor);
         let database_options = prepare_db_pagination::<HubuumObject>(&chunk_options)?;
         let candidates = with_connection(pool, async |connection| {
-            load_group_candidate_batch(connection, &database_options, target.collection_id).await
+            load_group_candidate_batch(
+                connection,
+                &database_options,
+                target.collection_id,
+                paging.spec,
+            )
+            .await
         })
         .await?;
         let candidate_page = candidates.into_page(&chunk_options)?;
@@ -275,11 +289,11 @@ where
 
         if !authorized.is_empty() && computed_definitions.is_none() {
             computed_definitions = Some(
-                with_transaction(pool, async |connection| {
+                with_connection(pool, async |connection| {
                     load_computed_group_definitions(
                         connection,
                         target.class_id,
-                        spec,
+                        paging.spec,
                         personal_owner_id,
                     )
                     .await
@@ -289,7 +303,7 @@ where
         }
         if let Some(definitions) = computed_definitions.as_ref() {
             let grouped = with_connection(pool, async |connection| {
-                grouped_snapshot_rows(connection, authorized, spec, definitions).await
+                grouped_snapshot_rows(connection, authorized, paging.spec, definitions).await
             })
             .await?;
             accumulator.add_rows(pool, grouped).await?;
@@ -303,17 +317,9 @@ where
 
     let groups = accumulator.finish(pool).await?;
     if groups.is_empty() {
-        return empty_group_page(query_options);
+        return empty_group_page(paging.query_options);
     }
-    page_external_groups(
-        pool,
-        groups,
-        query_options,
-        spec,
-        decoded_cursor,
-        effective_limit,
-    )
-    .await
+    page_external_groups(pool, groups, &paging).await
 }
 
 fn object_group_chunk_options(query_options: &QueryOptions) -> QueryOptions {
@@ -340,7 +346,7 @@ fn empty_group_page(query_options: &QueryOptions) -> Result<ObjectGroupPage, Api
 }
 
 fn validate_candidate_target(
-    candidates: &[HubuumObject],
+    candidates: &[ObjectGroupCandidate],
     target: &ObjectGroupRouteTarget,
 ) -> Result<(), ApiError> {
     if candidates.iter().any(|object| {

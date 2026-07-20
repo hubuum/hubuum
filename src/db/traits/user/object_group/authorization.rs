@@ -2,9 +2,10 @@ use diesel::prelude::*;
 use diesel_async::RunQueryDsl;
 
 use super::ObjectGroupRouteTarget;
+use super::candidate::ObjectGroupCandidate;
 use crate::db::DbConnection;
 use crate::errors::ApiError;
-use crate::models::{HubuumObject, Permissions};
+use crate::models::Permissions;
 use crate::permissions::{
     PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs,
     ResourceKind, ResourceRef,
@@ -56,24 +57,30 @@ impl ObjectGroupPermissionResources {
         })
     }
 
-    fn for_permission(&self, object: &HubuumObject, permission: Permissions) -> ResourceRef {
-        match permission {
+    fn for_object(object: &ObjectGroupCandidate) -> ResourceRef {
+        ResourceRef {
+            kind: ResourceKind::Object,
+            id: object.id,
+            attrs: ResourceAttrs {
+                collection_id: Some(object.collection_id),
+                class_id: Some(object.hubuum_class_id),
+                name: Some(object.name.clone()),
+                ..Default::default()
+            },
+        }
+    }
+
+    fn for_invariant_permission(&self, permission: Permissions) -> Result<ResourceRef, ApiError> {
+        Ok(match permission {
             Permissions::ReadObject | Permissions::UpdateObject | Permissions::DeleteObject => {
-                ResourceRef {
-                    kind: ResourceKind::Object,
-                    id: object.id,
-                    attrs: ResourceAttrs {
-                        collection_id: Some(object.collection_id),
-                        class_id: Some(object.hubuum_class_id),
-                        name: Some(object.name.clone()),
-                        ..Default::default()
-                    },
-                }
+                return Err(ApiError::InternalServerError(
+                    "Object-specific permission cannot be preauthorized".to_string(),
+                ));
             }
             Permissions::CreateObject => {
                 let mut resource =
-                    ResourceRef::for_permission_on_collection(permission, object.collection_id);
-                resource.attrs.class_id = Some(object.hubuum_class_id);
+                    ResourceRef::for_permission_on_collection(permission, self.collection.id);
+                resource.attrs.class_id = Some(self.class.id);
                 resource
             }
             Permissions::ReadClass | Permissions::UpdateClass | Permissions::DeleteClass => {
@@ -103,17 +110,17 @@ impl ObjectGroupPermissionResources {
             | Permissions::CreateTemplate
             | Permissions::UpdateTemplate
             | Permissions::DeleteTemplate => {
-                ResourceRef::for_permission_on_collection(permission, object.collection_id)
+                ResourceRef::for_permission_on_collection(permission, self.collection.id)
             }
-        }
+        })
     }
 }
 
 pub(super) struct ExternalObjectGroupAuthorizer<'a> {
     backend: &'a dyn PermissionBackend,
     principal: &'a PrincipalRef,
-    required_permissions: &'a [Permissions],
-    resources: &'a ObjectGroupPermissionResources,
+    object_permissions: Vec<Permissions>,
+    invariant_requests: Vec<PermissionRequest>,
 }
 
 impl<'a> ExternalObjectGroupAuthorizer<'a> {
@@ -128,59 +135,87 @@ impl<'a> ExternalObjectGroupAuthorizer<'a> {
                 "Object group authorization requires at least one permission".to_string(),
             ));
         }
+        let (object_permissions, invariant_permissions): (Vec<_>, Vec<_>) = required_permissions
+            .iter()
+            .copied()
+            .partition(is_object_specific_permission);
+        if object_permissions.is_empty() {
+            return Err(ApiError::InternalServerError(
+                "Object group authorization requires an object permission".to_string(),
+            ));
+        }
+        let invariant_requests = invariant_permissions
+            .into_iter()
+            .map(|permission| {
+                Ok(PermissionRequest {
+                    resource: resources.for_invariant_permission(permission)?,
+                    permissions: vec![permission],
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?;
         Ok(Self {
             backend,
             principal,
-            required_permissions,
-            resources,
+            object_permissions,
+            invariant_requests,
         })
+    }
+
+    pub(super) async fn authorize_invariants(&self) -> Result<bool, ApiError> {
+        if self.invariant_requests.is_empty() {
+            return Ok(true);
+        }
+        let decisions = self
+            .backend
+            .authorize_many(self.principal, self.invariant_requests.clone())
+            .await?;
+        if decisions.len() != self.invariant_requests.len() {
+            return Err(ApiError::InternalServerError(
+                "Permission backend returned an unexpected number of invariant decisions"
+                    .to_string(),
+            ));
+        }
+        Ok(decisions
+            .into_iter()
+            .all(|decision| decision == PermissionDecision::Allow))
     }
 
     pub(super) async fn authorize(
         &self,
-        candidates: Vec<HubuumObject>,
-    ) -> Result<Vec<HubuumObject>, ApiError> {
-        let permissions_per_object = self.required_permissions.len();
+        candidates: Vec<ObjectGroupCandidate>,
+    ) -> Result<Vec<ObjectGroupCandidate>, ApiError> {
+        if candidates.is_empty() {
+            return Ok(candidates);
+        }
         let requests = candidates
             .iter()
-            .flat_map(|object| {
-                self.required_permissions
-                    .iter()
-                    .copied()
-                    .map(|permission| PermissionRequest {
-                        resource: self.resources.for_permission(object, permission),
-                        permissions: vec![permission],
-                    })
+            .map(|object| PermissionRequest {
+                resource: ObjectGroupPermissionResources::for_object(object),
+                permissions: self.object_permissions.clone(),
             })
             .collect::<Vec<_>>();
         let decisions = self
             .backend
             .authorize_many(self.principal, requests)
             .await?;
-        let expected_decisions = candidates
-            .len()
-            .checked_mul(permissions_per_object)
-            .ok_or_else(|| {
-                ApiError::InternalServerError(
-                    "Object group permission decision count overflowed".to_string(),
-                )
-            })?;
-        if decisions.len() != expected_decisions {
+        if decisions.len() != candidates.len() {
             return Err(ApiError::InternalServerError(
                 "Permission backend returned an unexpected number of object decisions".to_string(),
             ));
         }
-        let allowed = decisions
-            .chunks_exact(permissions_per_object)
-            .map(|object_decisions| {
-                object_decisions
-                    .iter()
-                    .all(|decision| *decision == PermissionDecision::Allow)
-            });
         Ok(candidates
             .into_iter()
-            .zip(allowed)
-            .filter_map(|(object, allowed)| allowed.then_some(object))
+            .zip(decisions)
+            .filter_map(|(object, decision)| {
+                (decision == PermissionDecision::Allow).then_some(object)
+            })
             .collect())
     }
+}
+
+fn is_object_specific_permission(permission: &Permissions) -> bool {
+    matches!(
+        permission,
+        Permissions::ReadObject | Permissions::UpdateObject | Permissions::DeleteObject
+    )
 }

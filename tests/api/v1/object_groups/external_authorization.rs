@@ -54,7 +54,7 @@ async fn non_pushdown_authorization_filters_objects_before_aggregation(
         &test_context.normal_token,
         backend.clone(),
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=description",
+            "/api/v1/classes/{}/object-aggregates?group_by=description",
             fixture.class.id
         ),
     )
@@ -80,7 +80,7 @@ async fn non_pushdown_authorization_filters_objects_before_aggregation(
 #[cfg(feature = "integration-test-support")]
 #[rstest::rstest]
 #[tokio::test]
-async fn non_pushdown_candidate_batches_are_bounded_by_serialized_size(
+async fn non_pushdown_scalar_grouping_does_not_load_object_json(
     #[future(awt)] test_context: TestContext,
 ) {
     let fixture = test_context
@@ -126,7 +126,7 @@ async fn non_pushdown_candidate_batches_are_bounded_by_serialized_size(
         &test_context.normal_token,
         backend.clone(),
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=description",
+            "/api/v1/classes/{}/object-aggregates?group_by=description",
             fixture.class.id
         ),
     )
@@ -135,7 +135,7 @@ async fn non_pushdown_candidate_batches_are_bounded_by_serialized_size(
     let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
 
     assert_eq!(rows[0]["object_count"], 3);
-    assert_eq!(backend.authorization_batch_sizes(), vec![1, 1, 1]);
+    assert_eq!(backend.authorization_batch_sizes(), vec![2, 1]);
 
     fixture.cleanup().await.unwrap();
     group
@@ -167,7 +167,7 @@ async fn non_pushdown_high_cardinality_groups_paginate_from_bounded_accumulator(
     }
 
     let endpoint = format!(
-        "/api/v1/classes/{}/object-groups?collection_id={}&group_by=name&limit=2",
+        "/api/v1/classes/{}/object-aggregates?collection_id={}&group_by=name&limit=2",
         fixture.class.id, fixture.collection.collection.id
     );
     let mut cursor = None;
@@ -256,7 +256,7 @@ async fn non_pushdown_grouping_uses_the_authorized_object_snapshot(
         &test_context.normal_token,
         backend,
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=name",
+            "/api/v1/classes/{}/object-aggregates?group_by=name",
             fixture.class.id
         ),
     )
@@ -309,7 +309,7 @@ async fn non_pushdown_authorization_honors_permission_filters(
         &test_context.normal_token,
         backend,
         &format!(
-            "/api/v1/classes/{}/object-groups?permissions=UpdateObject&group_by=description",
+            "/api/v1/classes/{}/object-aggregates?permissions=UpdateObject&group_by=description",
             fixture.class.id
         ),
     )
@@ -380,7 +380,7 @@ async fn non_pushdown_parent_permission_filters_use_complete_resources(
             &test_context.normal_token,
             backend.clone(),
             &format!(
-                "/api/v1/classes/{}/object-groups?permissions={filtered_permission}&group_by=description",
+                "/api/v1/classes/{}/object-aggregates?permissions={filtered_permission}&group_by=description",
                 fixture.class.id
             ),
         )
@@ -390,7 +390,7 @@ async fn non_pushdown_parent_permission_filters_use_complete_resources(
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["object_count"], 2);
-    assert_eq!(backend.authorization_batch_sizes(), vec![4, 4, 2]);
+    assert_eq!(backend.authorization_batch_sizes(), vec![1, 2, 2, 1]);
 
     fixture.cleanup().await.unwrap();
     group
@@ -440,9 +440,9 @@ async fn non_pushdown_create_permission_filters_use_prospective_resources(
     let response = get_with_permission_backend(
             &test_context,
             &test_context.normal_token,
-            backend,
+            backend.clone(),
             &format!(
-                "/api/v1/classes/{}/object-groups?permissions={filtered_permission}&group_by=description",
+                "/api/v1/classes/{}/object-aggregates?permissions={filtered_permission}&group_by=description",
                 fixture.class.id
             ),
         )
@@ -452,6 +452,52 @@ async fn non_pushdown_create_permission_filters_use_prospective_resources(
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["object_count"], 2);
+    assert_eq!(backend.authorization_batch_sizes(), vec![1, 2, 2, 1]);
+
+    fixture.cleanup().await.unwrap();
+    group
+        .delete_without_events(&test_context.pool)
+        .await
+        .unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn denied_parent_permission_stops_before_object_authorization(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = fixture(&test_context, "external denied parent permission").await;
+    let group = create_test_group(&test_context.pool).await;
+    group
+        .add_member_without_events(&test_context.pool, &test_context.normal_user)
+        .await
+        .unwrap();
+    let backend = Arc::new(MockTreetopBackend::new());
+    for object in &fixture.objects {
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(object.id),
+            attrs: ResourceAttrs::default(),
+        });
+    }
+
+    let response = get_with_permission_backend(
+        &test_context,
+        &test_context.normal_token,
+        backend.clone(),
+        &format!(
+            "/api/v1/classes/{}/object-aggregates?permissions=ReadClass&group_by=description",
+            fixture.class.id
+        ),
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+    assert!(rows.is_empty());
+    assert_eq!(backend.authorization_batch_sizes(), vec![1]);
 
     fixture.cleanup().await.unwrap();
     group
@@ -489,7 +535,7 @@ async fn non_pushdown_computed_selectors_are_not_disclosed_without_visible_objec
         &test_context.normal_token,
         backend,
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=computed.shared.{selector}",
+            "/api/v1/classes/{}/object-aggregates?group_by=computed.shared.{selector}",
             fixture.class.id
         ),
     )
@@ -570,7 +616,7 @@ async fn non_pushdown_authorization_does_not_hold_the_computed_definition_lock(
             &test_context.normal_token,
             backend,
             &format!(
-                "/api/v1/classes/{}/object-groups?group_by=computed.shared.lock_probe",
+                "/api/v1/classes/{}/object-aggregates?group_by=computed.shared.lock_probe",
                 fixture.class.id
             ),
         ),
@@ -623,7 +669,7 @@ async fn non_pushdown_permission_filters_respect_token_scopes(
         &token,
         backend,
         &format!(
-            "/api/v1/classes/{}/object-groups?permissions=UpdateObject&group_by=description",
+            "/api/v1/classes/{}/object-aggregates?permissions=UpdateObject&group_by=description",
             fixture.class.id
         ),
     )

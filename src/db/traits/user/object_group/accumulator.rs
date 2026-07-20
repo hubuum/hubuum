@@ -1,22 +1,18 @@
-use std::io::{self, Write};
-
 use diesel::sql_types::{BigInt, Jsonb};
 use diesel_async::RunQueryDsl;
 use futures::TryStreamExt;
 
+use super::ObjectGroupPaging;
+use super::bounded_json::{MAX_OBJECT_GROUP_ACCUMULATOR_BYTES, ObjectGroupJsonBound};
 use super::sql::{
     ObjectGroupBindValue, ObjectGroupSqlSpec, append_page_options, bind_object_group_query,
 };
 use crate::db::{DbConnection, DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::models::object_group::{
-    DecodedObjectGroupCursor, ObjectGroupPage, ObjectGroupRow, ObjectGroupSpec,
-};
-use crate::models::search::QueryOptions;
+use crate::models::object_group::{ObjectGroupPage, ObjectGroupRow};
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 
 const OBJECT_GROUP_ACCUMULATOR_COMPACT_BYTES: usize = 1024 * 1024;
-const MAX_OBJECT_GROUP_ACCUMULATOR_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(diesel::QueryableByName, serde::Serialize)]
 pub(super) struct ObjectGroupDatabaseRow {
@@ -236,29 +232,24 @@ GROUP BY sort_key"
 pub(super) async fn page_external_groups(
     pool: &DbPool,
     groups: GroupRows,
-    query_options: &QueryOptions,
-    spec: &ObjectGroupSpec,
-    decoded_cursor: Option<DecodedObjectGroupCursor>,
-    effective_limit: usize,
+    paging: &ObjectGroupPaging<'_>,
 ) -> Result<ObjectGroupPage, ApiError> {
-    let total_count = if query_options.include_total {
+    let total_count = if paging.query_options.include_total {
         i64::try_from(groups.len()).map_err(|_| accumulator_too_large())?
     } else {
         SKIPPED_TOTAL_COUNT
     };
     let database_rows = with_connection(pool, async |connection| {
-        page_group_rows(connection, groups, spec, decoded_cursor, effective_limit).await
+        page_group_rows(connection, groups, paging).await
     })
     .await?;
-    finish_group_page(database_rows, total_count, effective_limit, spec)
+    finish_group_page(database_rows, total_count, paging)
 }
 
 async fn page_group_rows(
     connection: &mut DbConnection,
     groups: GroupRows,
-    spec: &ObjectGroupSpec,
-    decoded_cursor: Option<DecodedObjectGroupCursor>,
-    effective_limit: usize,
+    paging: &ObjectGroupPaging<'_>,
 ) -> Result<Vec<ObjectGroupDatabaseRow>, ApiError> {
     let mut page_spec = ObjectGroupSqlSpec {
         sql: "WITH object_group_accumulator AS (
@@ -274,7 +265,12 @@ FROM object_group_accumulator"
             .to_string(),
         binds: vec![ObjectGroupBindValue::Json(group_rows_payload(groups))],
     };
-    append_page_options(&mut page_spec, spec.sort(), decoded_cursor, effective_limit)?;
+    append_page_options(
+        &mut page_spec,
+        paging.spec.sort(),
+        paging.decoded_cursor.as_ref(),
+        paging.effective_limit,
+    )?;
     Ok(bind_object_group_query!(page_spec)
         .load::<ObjectGroupDatabaseRow>(connection)
         .await?)
@@ -282,12 +278,9 @@ FROM object_group_accumulator"
 
 pub(super) async fn page_accumulated_groups(
     connection: &mut DbConnection,
-    query_options: &QueryOptions,
-    spec: &ObjectGroupSpec,
-    decoded_cursor: Option<DecodedObjectGroupCursor>,
-    effective_limit: usize,
+    paging: &ObjectGroupPaging<'_>,
 ) -> Result<ObjectGroupPage, ApiError> {
-    let total_count = if query_options.include_total {
+    let total_count = if paging.query_options.include_total {
         diesel::sql_query("SELECT COUNT(*) AS count FROM object_group_accumulator")
             .get_result::<ObjectGroupCountRow>(connection)
             .await?
@@ -301,29 +294,35 @@ FROM object_group_accumulator"
             .to_string(),
         binds: Vec::new(),
     };
-    append_page_options(&mut page_spec, spec.sort(), decoded_cursor, effective_limit)?;
+    append_page_options(
+        &mut page_spec,
+        paging.spec.sort(),
+        paging.decoded_cursor.as_ref(),
+        paging.effective_limit,
+    )?;
     let database_rows = bind_object_group_query!(page_spec)
         .load::<ObjectGroupDatabaseRow>(connection)
         .await?;
-    finish_group_page(database_rows, total_count, effective_limit, spec)
+    finish_group_page(database_rows, total_count, paging)
 }
 
 pub(super) fn finish_group_page(
     database_rows: Vec<ObjectGroupDatabaseRow>,
     total_count: i64,
-    effective_limit: usize,
-    spec: &ObjectGroupSpec,
+    paging: &ObjectGroupPaging<'_>,
 ) -> Result<ObjectGroupPage, ApiError> {
     let mut rows = database_rows
         .into_iter()
         .map(|row| ObjectGroupRow::from_database(row.dimensions, row.object_count, row.sort_key))
         .collect::<Result<Vec<_>, _>>()?;
-    let has_more = rows.len() > effective_limit;
+    let has_more = rows.len() > paging.effective_limit;
     if has_more {
-        rows.truncate(effective_limit);
+        rows.truncate(paging.effective_limit);
     }
     let next_cursor = if has_more {
-        rows.last().map(|row| spec.encode_cursor(row)).transpose()?
+        rows.last()
+            .map(|row| paging.spec.encode_cursor(row, paging.cursor_budget))
+            .transpose()?
     } else {
         None
     };
@@ -347,47 +346,11 @@ fn group_rows_payload(groups: GroupRows) -> serde_json::Value {
 }
 
 fn serialized_row_len(row: &ObjectGroupDatabaseRow) -> Result<usize, ApiError> {
-    let mut writer = BoundedSizeWriter::default();
-    match serde_json::to_writer(&mut writer, row) {
-        Ok(()) => Ok(writer.bytes),
-        Err(_) if writer.exceeded => Err(accumulator_too_large()),
-        Err(error) => Err(ApiError::InternalServerError(format!(
-            "Failed to measure grouped object row: {error}"
-        ))),
-    }
-}
-
-#[derive(Default)]
-struct BoundedSizeWriter {
-    bytes: usize,
-    exceeded: bool,
-}
-
-impl Write for BoundedSizeWriter {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        let Some(bytes) = self.bytes.checked_add(buffer.len()) else {
-            self.exceeded = true;
-            return Err(io::Error::other("object group row size overflowed"));
-        };
-        if bytes > MAX_OBJECT_GROUP_ACCUMULATOR_BYTES {
-            self.exceeded = true;
-            return Err(io::Error::other(
-                "object group row exceeds accumulator bound",
-            ));
-        }
-        self.bytes = bytes;
-        Ok(buffer.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
+    ObjectGroupJsonBound::Accumulator.measure(row)
 }
 
 fn accumulator_too_large() -> ApiError {
-    ApiError::PayloadTooLarge(format!(
-        "Object group cardinality and values exceed the {MAX_OBJECT_GROUP_ACCUMULATOR_BYTES}-byte intermediate storage limit; narrow the source filters or grouping dimensions"
-    ))
+    ObjectGroupJsonBound::Accumulator.overflow_error()
 }
 
 #[derive(diesel::QueryableByName)]

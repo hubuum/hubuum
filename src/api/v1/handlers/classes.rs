@@ -44,15 +44,13 @@ use crate::models::{
     HubuumClassWithPath, HubuumObject, HubuumObjectHistory, HubuumObjectID,
     HubuumObjectReadResponse, HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass,
     NewHubuumClassRelationFromClass, NewHubuumObjectRelation, NewHubuumObjectRequest,
-    ObjectDataPatchDocument, ObjectGroupAuthorization, ObjectGroupBackendRequest, ObjectGroupRow,
-    ObjectGroupTarget, ObjectSelector, Permissions, RelatedClassGraph, RelatedObjectGraph,
+    ObjectDataPatchDocument, ObjectSelector, Permissions, RelatedClassGraph, RelatedObjectGraph,
     RelatedObjectGraphRow, ResolvedClassTarget, ResolvedObjectTarget, UpdateHubuumClass,
-    UpdateHubuumObject, UpdateHubuumObjectRequest, UserID,
+    UpdateHubuumObject, UpdateHubuumObjectRequest,
 };
 use crate::traits::{BackendContext, CanDelete, CanSave, Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
 
-use crate::models::object_group::parse_object_group_query;
 use crate::models::search::{
     FilterField, QueryOptions, QueryParamsExt, SearchOperator, parse_query_parameter,
     parse_query_parameter_with_computed_filters_and_passthrough,
@@ -787,97 +785,15 @@ async fn read_resolved_class_permissions(
     ApiResponse::paginated(permissions, total_count, &params)
 }
 
-#[utoipa::path(
-    get,
-    path = "/api/v1/classes/{class_id}/object-groups",
-    tag = "classes",
-    security(("bearer_auth" = [])),
-    params(
-        ("class_id" = i32, Path, description = "Class ID"),
-        ("group_by" = Vec<String>, Query, description = "One to three repeated ordered dimensions: name, description, collection_id, created_at, updated_at, json_data.<comma-separated-path>, computed.shared.<key>, or computed.personal.<key>"),
-        ("sort" = Option<String>, Query, description = "Group ordering: dimensions.asc, dimensions.desc, object_count.asc, or object_count.desc")
-    ),
-    responses(
-        (status = 200, description = "Permission-scoped grouped object counts. Value states distinguish value, JSON null, a missing JSON path, and an unavailable computed result.", body = [ObjectGroupRow]),
-        (status = 400, description = "Invalid dimension, path, sort, cursor, or computed selector", body = ApiErrorResponse),
-        (status = 413, description = "A group value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate groups exceed their memory bounds", body = ApiErrorResponse),
-        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 404, description = "Class not found", body = ApiErrorResponse)
-    )
-)]
-#[routes]
-#[get("/{class_id}/object-groups")]
-#[get("/{class_id}/object-groups/")]
-async fn get_object_groups(
-    pool: AppContext,
-    requestor: Authenticated,
-    class_id: web::Path<HubuumClassID>,
-    req: HttpRequest,
-) -> Result<impl Responder, ApiError> {
-    let user = &requestor.principal;
-    let class_id = class_id.into_inner();
-    let class = class_id.instance(&pool).await?;
-    let target = ObjectGroupTarget::from_class(&class)?;
-    let query = parse_object_group_query(req.query_string())?;
-
-    let personal_owner_id = if query.spec().has_personal_computed_dimension() {
-        if !requestor.principal.is_human() {
-            return Err(ApiError::BadRequest(
-                "Service accounts cannot group by personal computed fields".to_string(),
-            ));
-        }
-        Some(UserID::new(
-            computed_personal_owner(&pool, &requestor, &class)
-                .await?
-                .ok_or_else(|| {
-                    ApiError::BadRequest(
-                        "Personal computed grouping requires ReadClass access to the requested class"
-                            .to_string(),
-                    )
-                })?,
-        )?)
-    } else {
-        None
-    };
-
-    debug!(
-        message = "Getting object groups in class",
-        user_id = user.id(),
-        class_id = class.id,
-        query = req.query_string()
-    );
-
-    let mut required = query.query_options().filters.permissions()?;
-    required.ensure_contains(&[Permissions::ReadObject]);
-    let required = required.iter().copied().collect::<Vec<_>>();
-    let authorization =
-        ObjectGroupAuthorization::new(required, requestor.scopes().map(<[Permissions]>::to_vec))?;
-
-    let computed = query.spec().has_computed_dimension();
-    let effective_limit = effective_page_limit(query.query_options())?;
-    let mut request =
-        ObjectGroupBackendRequest::builder(target, query).authorization(authorization);
-    if let Some(owner_id) = personal_owner_id {
-        request = request.personal_owner(owner_id);
-    }
-    let page = user.group_objects(&pool, request.build()?).await?;
-    let (rows, total_count, next_cursor) = page.into_parts();
-    Ok(ApiResponse::paginated_items(
-        rows,
-        &next_cursor,
-        total_count,
-        effective_limit,
-        computed,
-    ))
-}
-
 mod class_objects;
 mod class_related;
 mod computed_objects;
 mod history_endpoints;
+pub(crate) mod object_groups;
 mod object_related;
 
 pub use class_objects::*;
 pub use class_related::*;
 pub use history_endpoints::*;
+pub(crate) use object_groups::get_object_aggregates;
 pub use object_related::*;

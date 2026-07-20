@@ -1,5 +1,3 @@
-use std::io::{self, Write};
-
 use diesel::dsl::{count, sql};
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Bool, Jsonb};
@@ -8,23 +6,18 @@ use futures::TryStreamExt;
 
 use super::ObjectGroupExecution;
 use super::accumulator::{GroupRows, ObjectGroupDatabaseRow, finish_group_page};
+use super::candidate::ObjectGroupCandidate;
 use super::computed::{ComputedGroupDefinitions, computed_group_payload};
 use crate::db::traits::search::JsonPredicateExt;
 use crate::db::{DbConnection, with_connection};
 use crate::errors::ApiError;
-use crate::models::object::HubuumObject;
 use crate::models::object_group::{
     DecodedObjectGroupCursor, ObjectGroupDimension, ObjectGroupScalarField, ObjectGroupSort,
     ObjectGroupSpec,
 };
-use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
-use crate::pagination::{Page, SKIPPED_TOTAL_COUNT, finalize_page, finalize_partial_page};
+use crate::models::search::{FilterField, QueryParamsExt};
+use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::utilities::extensions::CustomStringExtensions;
-
-#[cfg(not(feature = "integration-test-support"))]
-const MAX_OBJECT_GROUP_CANDIDATE_BATCH_BYTES: usize = 8 * 1024 * 1024;
-#[cfg(feature = "integration-test-support")]
-const MAX_OBJECT_GROUP_CANDIDATE_BATCH_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Clone)]
 pub(super) enum ObjectGroupBindValue {
@@ -36,24 +29,6 @@ pub(super) enum ObjectGroupBindValue {
 pub(super) struct ObjectGroupSqlSpec {
     pub(super) sql: String,
     pub(super) binds: Vec<ObjectGroupBindValue>,
-}
-
-pub(super) struct ObjectGroupCandidateBatch {
-    items: Vec<HubuumObject>,
-    stopped_by_size: bool,
-}
-
-impl ObjectGroupCandidateBatch {
-    pub(super) fn into_page(
-        self,
-        query_options: &QueryOptions,
-    ) -> Result<Page<HubuumObject>, ApiError> {
-        if self.stopped_by_size {
-            finalize_partial_page(self.items, query_options, true)
-        } else {
-            finalize_page(self.items, query_options)
-        }
-    }
 }
 
 impl ObjectGroupSqlSpec {
@@ -119,6 +94,8 @@ macro_rules! apply_visible_object_filters {
     }};
 }
 
+pub(super) use apply_visible_object_filters;
+
 macro_rules! visible_filtered_object_query {
     ($collection_id:expr, $query_options:expr) => {{
         use crate::schema::hubuumobject::dsl::{
@@ -159,12 +136,11 @@ pub(super) async fn group_visible_filtered_objects_with_sql(
     let ObjectGroupExecution {
         pool,
         target,
-        query_options,
-        spec,
-        decoded_cursor,
-        effective_limit,
+        paging,
         ..
     } = execution;
+    let query_options = paging.query_options;
+    let spec = paging.spec;
     let sort_key_sql = direct_group_sort_key(spec);
     let total_count = if query_options.include_total {
         let query = visible_filtered_object_query!(target.collection_id, query_options);
@@ -181,10 +157,10 @@ pub(super) async fn group_visible_filtered_objects_with_sql(
 
     let mut query =
         visible_filtered_group_query!(target.collection_id, query_options, &sort_key_sql);
-    if let Some(cursor) = decoded_cursor {
+    if let Some(cursor) = paging.decoded_cursor.as_ref() {
         query = query.having(sql::<Bool>(&inline_cursor_clause(
             spec.sort(),
-            &cursor,
+            cursor,
             &sort_key_sql,
         )?));
     }
@@ -202,7 +178,7 @@ pub(super) async fn group_visible_filtered_objects_with_sql(
             .order_by(sql::<BigInt>("COUNT(*) DESC"))
             .then_order_by(sql::<Jsonb>(&format!("{sort_key_sql} ASC"))),
     };
-    query = query.limit(page_query_limit(effective_limit)?);
+    query = query.limit(page_query_limit(paging.effective_limit)?);
     let database_rows = with_connection(pool, async |connection| {
         query.load::<(serde_json::Value, i64)>(connection).await
     })
@@ -216,102 +192,12 @@ pub(super) async fn group_visible_filtered_objects_with_sql(
         })
     })
     .collect::<Result<Vec<_>, ApiError>>()?;
-    finish_group_page(database_rows, total_count, effective_limit, spec)
-}
-
-pub(super) async fn load_group_candidate_batch(
-    connection: &mut DbConnection,
-    query_options: &QueryOptions,
-    collection_id: i32,
-) -> Result<ObjectGroupCandidateBatch, ApiError> {
-    use crate::schema::hubuumobject::dsl::{
-        collection_id as object_collection_id, created_at as object_created_at,
-        description as object_description, hubuum_class_id, hubuumobject, id as object_id,
-        name as object_name, updated_at as object_updated_at,
-    };
-
-    let mut query = hubuumobject
-        .filter(object_collection_id.eq(collection_id))
-        .into_boxed();
-    apply_visible_object_filters!(query, query_options);
-    crate::apply_query_options!(query, query_options, HubuumObject);
-    let stream = query
-        .select(hubuumobject::all_columns())
-        .distinct()
-        .load_stream::<HubuumObject>(connection)
-        .await?;
-    futures::pin_mut!(stream);
-    let mut items = Vec::new();
-    let mut serialized_bytes = 2_usize;
-    let mut stopped_by_size = false;
-    while let Some(candidate) = stream.try_next().await? {
-        let candidate_bytes = serialized_candidate_len(&candidate)?;
-        let next_size = serialized_bytes
-            .checked_add(candidate_bytes.saturating_add(1))
-            .ok_or_else(candidate_batch_too_large)?;
-        if next_size > MAX_OBJECT_GROUP_CANDIDATE_BATCH_BYTES {
-            if items.is_empty() {
-                return Err(candidate_batch_too_large());
-            }
-            stopped_by_size = true;
-            break;
-        }
-        items.push(candidate);
-        serialized_bytes = next_size;
-    }
-    Ok(ObjectGroupCandidateBatch {
-        items,
-        stopped_by_size,
-    })
-}
-
-fn serialized_candidate_len(candidate: &HubuumObject) -> Result<usize, ApiError> {
-    let mut writer = CandidateSizeWriter::default();
-    match serde_json::to_writer(&mut writer, candidate) {
-        Ok(()) => Ok(writer.bytes),
-        Err(_) if writer.exceeded => Err(candidate_batch_too_large()),
-        Err(error) => Err(ApiError::InternalServerError(format!(
-            "Failed to measure object group candidate: {error}"
-        ))),
-    }
-}
-
-#[derive(Default)]
-struct CandidateSizeWriter {
-    bytes: usize,
-    exceeded: bool,
-}
-
-impl Write for CandidateSizeWriter {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        let Some(bytes) = self.bytes.checked_add(buffer.len()) else {
-            self.exceeded = true;
-            return Err(io::Error::other("object group candidate size overflowed"));
-        };
-        if bytes > MAX_OBJECT_GROUP_CANDIDATE_BATCH_BYTES {
-            self.exceeded = true;
-            return Err(io::Error::other(
-                "object group candidate exceeds the source batch bound",
-            ));
-        }
-        self.bytes = bytes;
-        Ok(buffer.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-fn candidate_batch_too_large() -> ApiError {
-    ApiError::PayloadTooLarge(format!(
-        "An object snapshot exceeds the {MAX_OBJECT_GROUP_CANDIDATE_BATCH_BYTES}-byte grouped-query source batch limit"
-    ))
+    finish_group_page(database_rows, total_count, &paging)
 }
 
 pub(super) async fn grouped_snapshot_rows(
     connection: &mut DbConnection,
-    candidates: Vec<HubuumObject>,
+    candidates: Vec<ObjectGroupCandidate>,
     spec: &ObjectGroupSpec,
     computed_definitions: &ComputedGroupDefinitions,
 ) -> Result<GroupRows, ApiError> {
@@ -340,7 +226,7 @@ pub(super) async fn grouped_snapshot_rows(
 }
 
 fn build_group_ctes(
-    candidates: Vec<HubuumObject>,
+    candidates: Vec<ObjectGroupCandidate>,
     computed_payload: Option<serde_json::Value>,
     spec: &ObjectGroupSpec,
 ) -> Result<ObjectGroupSqlSpec, ApiError> {
@@ -592,7 +478,7 @@ fn inline_cursor_clause(
 pub(super) fn append_page_options(
     spec: &mut ObjectGroupSqlSpec,
     sort: ObjectGroupSort,
-    cursor: Option<DecodedObjectGroupCursor>,
+    cursor: Option<&DecodedObjectGroupCursor>,
     effective_limit: usize,
 ) -> Result<(), ApiError> {
     if let Some(cursor) = cursor {
@@ -611,17 +497,19 @@ pub(super) fn append_page_options(
 fn append_cursor_clause(
     spec: &mut ObjectGroupSqlSpec,
     sort: ObjectGroupSort,
-    cursor: DecodedObjectGroupCursor,
+    cursor: &DecodedObjectGroupCursor,
 ) {
     spec.sql.push_str("\nWHERE ");
     match sort {
         ObjectGroupSort::DimensionsAscending => {
             spec.sql.push_str("sort_key > ?::jsonb");
-            spec.binds.push(ObjectGroupBindValue::Json(cursor.sort_key));
+            spec.binds
+                .push(ObjectGroupBindValue::Json(cursor.sort_key.clone()));
         }
         ObjectGroupSort::DimensionsDescending => {
             spec.sql.push_str("sort_key < ?::jsonb");
-            spec.binds.push(ObjectGroupBindValue::Json(cursor.sort_key));
+            spec.binds
+                .push(ObjectGroupBindValue::Json(cursor.sort_key.clone()));
         }
         ObjectGroupSort::ObjectCountAscending => {
             spec.sql
@@ -630,7 +518,8 @@ fn append_cursor_clause(
                 .push(ObjectGroupBindValue::BigInt(cursor.object_count));
             spec.binds
                 .push(ObjectGroupBindValue::BigInt(cursor.object_count));
-            spec.binds.push(ObjectGroupBindValue::Json(cursor.sort_key));
+            spec.binds
+                .push(ObjectGroupBindValue::Json(cursor.sort_key.clone()));
         }
         ObjectGroupSort::ObjectCountDescending => {
             spec.sql
@@ -639,7 +528,8 @@ fn append_cursor_clause(
                 .push(ObjectGroupBindValue::BigInt(cursor.object_count));
             spec.binds
                 .push(ObjectGroupBindValue::BigInt(cursor.object_count));
-            spec.binds.push(ObjectGroupBindValue::Json(cursor.sort_key));
+            spec.binds
+                .push(ObjectGroupBindValue::Json(cursor.sort_key.clone()));
         }
     }
 }

@@ -344,7 +344,7 @@ Object grouping is a separate read-only collection resource, so the normal
 object-list response remains unchanged:
 
 ```text
-GET /api/v1/classes/{class_id}/object-groups
+GET /api/v1/classes/{class_id}/object-aggregates
 ```
 
 Supply `group_by` once for each ordered dimension. Between one and three
@@ -359,11 +359,14 @@ dimensions are required. Supported dimensions are:
 - `computed.shared.<key>`
 - `computed.personal.<key>`
 
-For example, this request first applies the normal object filter and then
+The endpoint accepts the normal non-computed object filters, including scalar,
+`json_data`, and `permissions` filters. Computed fields may be grouping
+dimensions but are not accepted as source filters. For example, this request
+first applies a JSON object filter and then
 groups the remaining readable objects by country and shared lifecycle:
 
 ```text
-GET /api/v1/classes/12/object-groups?json_data__equals=status=active&group_by=json_data.location,country&group_by=computed.shared.lifecycle&sort=object_count.desc&limit=50
+GET /api/v1/classes/12/object-aggregates?json_data__equals=status=active&group_by=json_data.location,country&group_by=computed.shared.lifecycle&sort=object_count.desc&limit=50
 ```
 
 Grouping by `created_at` or `updated_at` uses the exact timestamp. The endpoint
@@ -378,11 +381,14 @@ fields. Group ordering is selected with one of:
 Count ordering always appends the complete dimension tuple in ascending order
 as a deterministic tie-breaker. Cursor tokens are bound to the selected
 dimensions and sort; changing either while following a cursor returns
-`400 Bad Request`. Group cursors are limited to 4 KiB, reserving the other half
-of a common 8 KiB HTTP line budget for the route, query parameters, header name,
-separators, and line terminators. If a JSON or computed value at a page boundary
-would exceed that limit, the request returns `413 Payload Too Large`; narrow the
-grouping dimensions or choose a page limit that does not end on that value.
+`400 Bad Request`. The cursor limit is calculated for each request from a
+common 8 KiB HTTP line budget after reserving its route, non-cursor query
+parameters, request-line and response-header framing, separators, and line
+terminators. If a JSON or computed value at a page boundary would make the
+response header or replay request line exceed that limit, the request returns
+`413 Payload Too Large`;
+shorten the filters, narrow the grouping dimensions, or choose a page limit
+that does not end on that value.
 
 When computed grouping or an external permission backend requires source object
 snapshots, Hubuum streams them into byte-bounded batches. An individual snapshot
@@ -424,7 +430,8 @@ JSON objects and arrays retain their structure and group by PostgreSQL JSONB
 equality. The `value` member is omitted for `null`, `missing`, and
 `unavailable` states.
 
-Authorization and all supplied object filters are applied before aggregation.
+Authorization and all supported supplied object filters are applied before
+aggregation.
 This rule also applies when the permission backend cannot push visibility into
 SQL: candidate object snapshots are authorized in bounded batches, and only
 the immutable authorized snapshots are grouped. Hidden objects therefore
@@ -461,7 +468,7 @@ Examples:
 - `/api/v1/classes/{class_id}/related/classes` always constrains the result to classes connected to the class in the path
 - `/api/v1/classes/{class_id}/related/relations` always constrains the result to direct relations touching the class in the path
 - `/api/v1/classes/{class_id}/` always constrains the result to objects in that class
-- `/api/v1/classes/{class_id}/object-groups` always constrains source objects to that class and returns aggregate rows
+- `/api/v1/classes/{class_id}/object-aggregates` always constrains source objects to that class and returns aggregate rows
 - `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` always constrains the result to objects connected to the object in the path
 - `/api/v1/classes/{class_id}/objects/{object_id}/related/relations` always constrains the result to direct relations touching the object in the path
 

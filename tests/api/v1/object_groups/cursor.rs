@@ -7,7 +7,7 @@ async fn count_sort_cursor_is_deterministic_across_duplicate_counts(
 ) {
     let fixture = fixture(&test_context, "count cursor").await;
     let endpoint = format!(
-        "/api/v1/classes/{}/object-groups?group_by=description&sort=object_count.desc&limit=1",
+        "/api/v1/classes/{}/object-aggregates?group_by=description&sort=object_count.desc&limit=1",
         fixture.class.id
     );
     let mut cursor = None;
@@ -85,7 +85,7 @@ async fn oversized_group_key_is_rejected_before_a_cursor_is_emitted(
         &test_context.pool,
         &test_context.admin_token,
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=json_data.group_key&limit=1",
+            "/api/v1/classes/{}/object-aggregates?group_by=json_data.group_key&limit=1",
             fixture.class.id
         ),
     )
@@ -106,7 +106,7 @@ async fn include_total_false_omits_group_cardinality_header(
         &test_context.pool,
         &test_context.admin_token,
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=description&include_total=false",
+            "/api/v1/classes/{}/object-aggregates?group_by=description&include_total=false",
             fixture.class.id
         ),
     )
@@ -139,7 +139,7 @@ async fn empty_class_returns_empty_group_page(#[future(awt)] test_context: TestC
         &test_context.pool,
         &test_context.admin_token,
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=name",
+            "/api/v1/classes/{}/object-aggregates?group_by=name",
             fixture.class.id
         ),
     )
@@ -176,7 +176,7 @@ async fn empty_group_page_rejects_a_malformed_cursor(#[future(awt)] test_context
         &test_context.pool,
         &test_context.admin_token,
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=name&cursor=not-a-cursor",
+            "/api/v1/classes/{}/object-aggregates?group_by=name&cursor=not-a-cursor",
             fixture.class.id
         ),
     )
@@ -198,7 +198,7 @@ async fn empty_group_page_rejects_structurally_invalid_cursor(
             &test_context.pool,
             &test_context.admin_token,
             &format!(
-                "/api/v1/classes/{}/object-groups?name__equals=no-such-object&group_by=name&cursor={cursor}",
+                "/api/v1/classes/{}/object-aggregates?name__equals=no-such-object&group_by=name&cursor={cursor}",
                 fixture.class.id
             ),
         )
@@ -219,7 +219,7 @@ async fn empty_group_page_rejects_a_cursor_for_different_dimensions(
         &test_context.pool,
         &test_context.admin_token,
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=description&limit=1",
+            "/api/v1/classes/{}/object-aggregates?group_by=description&limit=1",
             fixture.class.id
         ),
     )
@@ -230,7 +230,7 @@ async fn empty_group_page_rejects_a_cursor_for_different_dimensions(
             &test_context.pool,
             &test_context.admin_token,
             &format!(
-                "/api/v1/classes/{}/object-groups?name__equals=no-such-object&group_by=name&cursor={cursor}",
+                "/api/v1/classes/{}/object-aggregates?name__equals=no-such-object&group_by=name&cursor={cursor}",
                 fixture.class.id
             ),
         )

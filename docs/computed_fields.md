@@ -252,8 +252,8 @@ mismatched filter value types fail with `400 Bad Request`.
 Computed fields can be dimensions of the separate grouped-object resource:
 
 ```text
-GET /api/v1/classes/{class_id}/object-groups?group_by=computed.shared.lifecycle
-GET /api/v1/classes/{class_id}/object-groups?group_by=computed.personal.priority
+GET /api/v1/classes/{class_id}/object-aggregates?group_by=computed.shared.lifecycle
+GET /api/v1/classes/{class_id}/object-aggregates?group_by=computed.personal.priority
 ```
 
 Shared grouping snapshots the selected current definitions after the first

@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::search::{
-    FilterField, QueryOptions, QueryParamsExt, SearchOperator,
+    ComputedFieldScope, FilterField, QueryOptions, QueryParamsExt, SearchOperator,
     parse_query_parameter_with_passthrough,
 };
 use crate::models::{CollectionID, HubuumClass, HubuumClassID, Permissions, UserID};
@@ -16,11 +16,61 @@ use crate::models::{CollectionID, HubuumClass, HubuumClassID, Permissions, UserI
 pub const MIN_OBJECT_GROUP_DIMENSIONS: usize = 1;
 pub const MAX_OBJECT_GROUP_DIMENSIONS: usize = 3;
 const COMMON_HTTP_LINE_LIMIT_BYTES: usize = 8 * 1024;
-const OBJECT_GROUP_CURSOR_TRANSPORT_RESERVE_BYTES: usize = 4 * 1024;
-/// Leaves half of a common 8 KiB HTTP line limit for the route, query
-/// parameters, response-header name, separators, and line terminators.
+const NEXT_CURSOR_HEADER_PREFIX: &str = "X-Next-Cursor: ";
+const HTTP_LINE_TERMINATOR: &str = "\r\n";
+const HTTP_GET_REQUEST_LINE_PREFIX: &str = "GET ";
+const HTTP_1_1_REQUEST_LINE_SUFFIX: &str = " HTTP/1.1\r\n";
+const CURSOR_QUERY_PREFIX: &str = "cursor=";
+/// Absolute cursor cap after reserving the response header framing from a
+/// common 8 KiB HTTP line limit. Individual requests usually have a smaller
+/// replay budget because their path and non-cursor query parameters also count.
 pub const MAX_OBJECT_GROUP_CURSOR_LENGTH: usize =
-    COMMON_HTTP_LINE_LIMIT_BYTES - OBJECT_GROUP_CURSOR_TRANSPORT_RESERVE_BYTES;
+    COMMON_HTTP_LINE_LIMIT_BYTES - NEXT_CURSOR_HEADER_PREFIX.len() - HTTP_LINE_TERMINATOR.len();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectGroupCursorBudget {
+    max_encoded_bytes: usize,
+}
+
+impl ObjectGroupCursorBudget {
+    pub fn for_request_target(path: &str, query_string: &str) -> Result<Self, ApiError> {
+        let base_query_length = query_string
+            .split('&')
+            .filter(|parameter| !is_cursor_query_parameter(parameter))
+            .map(str::len)
+            .reduce(|total, length| total.saturating_add(1).saturating_add(length))
+            .unwrap_or_default();
+        let query_separator_length = usize::from(base_query_length > 0);
+        let replay_overhead = path
+            .len()
+            .saturating_add(HTTP_GET_REQUEST_LINE_PREFIX.len())
+            .saturating_add(HTTP_1_1_REQUEST_LINE_SUFFIX.len())
+            .saturating_add(1)
+            .saturating_add(base_query_length)
+            .saturating_add(query_separator_length)
+            .saturating_add(CURSOR_QUERY_PREFIX.len());
+        let max_encoded_bytes = COMMON_HTTP_LINE_LIMIT_BYTES
+            .saturating_sub(replay_overhead)
+            .min(MAX_OBJECT_GROUP_CURSOR_LENGTH);
+        if max_encoded_bytes == 0 {
+            return Err(ApiError::PayloadTooLarge(
+                "Object group request target leaves no room for a replay-safe cursor; shorten the filters"
+                    .to_string(),
+            ));
+        }
+        Ok(Self { max_encoded_bytes })
+    }
+
+    pub(crate) const fn max_encoded_bytes(self) -> usize {
+        self.max_encoded_bytes
+    }
+}
+
+fn is_cursor_query_parameter(parameter: &str) -> bool {
+    parameter
+        .split_once('=')
+        .is_some_and(|(key, _)| key == "cursor")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectGroupScalarField {
@@ -72,21 +122,6 @@ impl ObjectGroupJsonPath {
 
     pub fn canonical(&self) -> String {
         self.segments.join(",")
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComputedFieldScope {
-    Shared,
-    Personal,
-}
-
-impl ComputedFieldScope {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Shared => "shared",
-            Self::Personal => "personal",
-        }
     }
 }
 
@@ -248,6 +283,15 @@ impl ObjectGroupSpec {
             .any(|dimension| dimension.computed_selector().is_some())
     }
 
+    pub(crate) fn requires_object_data(&self) -> bool {
+        self.dimensions.iter().any(|dimension| {
+            matches!(
+                dimension,
+                ObjectGroupDimension::JsonData(_) | ObjectGroupDimension::Computed(_)
+            )
+        })
+    }
+
     pub fn has_personal_computed_dimension(&self) -> bool {
         self.dimensions.iter().any(|dimension| {
             dimension
@@ -263,10 +307,15 @@ impl ObjectGroupSpec {
             .collect()
     }
 
-    pub(crate) fn decode_cursor(&self, cursor: &str) -> Result<DecodedObjectGroupCursor, ApiError> {
-        if cursor.len() > MAX_OBJECT_GROUP_CURSOR_LENGTH {
+    pub(crate) fn decode_cursor(
+        &self,
+        cursor: &str,
+        budget: ObjectGroupCursorBudget,
+    ) -> Result<DecodedObjectGroupCursor, ApiError> {
+        if cursor.len() > budget.max_encoded_bytes() {
             return Err(ApiError::PayloadTooLarge(format!(
-                "group cursor exceeds the replay-safe limit of {MAX_OBJECT_GROUP_CURSOR_LENGTH} bytes"
+                "group cursor exceeds the replay-safe limit of {} bytes for this request",
+                budget.max_encoded_bytes()
             )));
         }
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -300,7 +349,11 @@ impl ObjectGroupSpec {
         })
     }
 
-    pub(crate) fn encode_cursor(&self, row: &ObjectGroupRow) -> Result<String, ApiError> {
+    pub(crate) fn encode_cursor(
+        &self,
+        row: &ObjectGroupRow,
+        budget: ObjectGroupCursorBudget,
+    ) -> Result<String, ApiError> {
         let token = ObjectGroupCursorToken {
             version: 1,
             dimensions: self.dimension_names(),
@@ -312,9 +365,10 @@ impl ObjectGroupSpec {
             ApiError::InternalServerError(format!("failed to serialize group cursor: {error}"))
         })?;
         let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-        if cursor.len() > MAX_OBJECT_GROUP_CURSOR_LENGTH {
+        if cursor.len() > budget.max_encoded_bytes() {
             return Err(ApiError::PayloadTooLarge(format!(
-                "group value at the page boundary produces a cursor larger than the replay-safe limit of {MAX_OBJECT_GROUP_CURSOR_LENGTH} bytes; narrow the grouping dimensions or use a page limit that does not end on this value"
+                "group value at the page boundary produces a cursor larger than the replay-safe limit of {} bytes for this request; shorten the filters, narrow the grouping dimensions, or use a page limit that does not end on this value",
+                budget.max_encoded_bytes()
             )));
         }
         Ok(cursor)
@@ -517,6 +571,7 @@ pub struct ObjectGroupBackendRequest {
     spec: ObjectGroupSpec,
     personal_owner_id: Option<UserID>,
     authorization: ObjectGroupAuthorization,
+    cursor_budget: ObjectGroupCursorBudget,
 }
 
 pub struct ObjectGroupBackendRequestBuilder {
@@ -524,6 +579,7 @@ pub struct ObjectGroupBackendRequestBuilder {
     query: ObjectGroupQuery,
     personal_owner_id: Option<UserID>,
     authorization: Option<ObjectGroupAuthorization>,
+    cursor_budget: Option<ObjectGroupCursorBudget>,
 }
 
 pub(crate) struct ObjectGroupBackendParts {
@@ -532,6 +588,7 @@ pub(crate) struct ObjectGroupBackendParts {
     pub spec: ObjectGroupSpec,
     pub personal_owner_id: Option<UserID>,
     pub authorization: ObjectGroupAuthorization,
+    pub cursor_budget: ObjectGroupCursorBudget,
 }
 
 pub struct ObjectGroupAuthorization {
@@ -570,6 +627,7 @@ impl ObjectGroupBackendRequest {
             query,
             personal_owner_id: None,
             authorization: None,
+            cursor_budget: None,
         }
     }
 
@@ -580,6 +638,7 @@ impl ObjectGroupBackendRequest {
             spec: self.spec,
             personal_owner_id: self.personal_owner_id,
             authorization: self.authorization,
+            cursor_budget: self.cursor_budget,
         }
     }
 }
@@ -595,10 +654,20 @@ impl ObjectGroupBackendRequestBuilder {
         self
     }
 
+    pub fn cursor_budget(mut self, cursor_budget: ObjectGroupCursorBudget) -> Self {
+        self.cursor_budget = Some(cursor_budget);
+        self
+    }
+
     pub fn build(mut self) -> Result<ObjectGroupBackendRequest, ApiError> {
         let authorization = self.authorization.ok_or_else(|| {
             ApiError::InternalServerError(
                 "Object group backend request is missing authorization".to_string(),
+            )
+        })?;
+        let cursor_budget = self.cursor_budget.ok_or_else(|| {
+            ApiError::InternalServerError(
+                "Object group backend request is missing a cursor transport budget".to_string(),
             )
         })?;
         self.query.query_options.filters.add_filter(
@@ -623,6 +692,7 @@ impl ObjectGroupBackendRequestBuilder {
             spec,
             personal_owner_id: self.personal_owner_id,
             authorization,
+            cursor_budget,
         })
     }
 }
@@ -669,6 +739,14 @@ pub fn parse_object_group_query(query_string: &str) -> Result<ObjectGroupQuery, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cursor_budget() -> ObjectGroupCursorBudget {
+        ObjectGroupCursorBudget::for_request_target(
+            "/api/v1/classes/1/object-aggregates",
+            "group_by=name",
+        )
+        .unwrap()
+    }
 
     fn encoded_cursor(dimension: &str, sort_key: serde_json::Value, object_count: i64) -> String {
         let token = ObjectGroupCursorToken {
@@ -751,8 +829,9 @@ mod tests {
             serde_json::json!([[0, "a"]]),
         )
         .unwrap();
-        let cursor = first.encode_cursor(&row).unwrap();
-        let error = second.decode_cursor(&cursor).unwrap_err();
+        let budget = cursor_budget();
+        let cursor = first.encode_cursor(&row, budget).unwrap();
+        let error = second.decode_cursor(&cursor, budget).unwrap_err();
         assert!(error.to_string().contains("does not match"));
     }
 
@@ -775,22 +854,81 @@ mod tests {
         )
         .unwrap();
 
-        let error = spec.encode_cursor(&row).unwrap_err();
+        let error = spec.encode_cursor(&row, cursor_budget()).unwrap_err();
 
         assert!(matches!(error, ApiError::PayloadTooLarge(_)));
         assert!(error.to_string().contains("replay-safe limit"));
     }
 
     #[test]
-    fn cursor_limit_reserves_transport_overhead() {
+    fn cursor_budget_accounts_for_the_complete_replay_target() {
+        let short = ObjectGroupCursorBudget::for_request_target(
+            "/api/v1/classes/1/object-aggregates",
+            "group_by=name",
+        )
+        .unwrap();
+        let long = ObjectGroupCursorBudget::for_request_target(
+            "/api/v1/classes/1/object-aggregates",
+            &format!("name__contains={}&group_by=name", "x".repeat(5_000)),
+        )
+        .unwrap();
+
+        assert!(long.max_encoded_bytes() < short.max_encoded_bytes());
         assert_eq!(
-            MAX_OBJECT_GROUP_CURSOR_LENGTH + OBJECT_GROUP_CURSOR_TRANSPORT_RESERVE_BYTES,
+            MAX_OBJECT_GROUP_CURSOR_LENGTH
+                + NEXT_CURSOR_HEADER_PREFIX.len()
+                + HTTP_LINE_TERMINATOR.len(),
             COMMON_HTTP_LINE_LIMIT_BYTES
         );
-        assert!(
-            OBJECT_GROUP_CURSOR_TRANSPORT_RESERVE_BYTES
-                > "X-Next-Cursor: \r\n/api/v1/classes/1/object-groups?cursor=".len()
-        );
+    }
+
+    #[test]
+    fn existing_cursor_does_not_reduce_its_replacement_budget() {
+        let without_cursor = ObjectGroupCursorBudget::for_request_target(
+            "/api/v1/classes/1/object-aggregates",
+            "group_by=name&limit=1",
+        )
+        .unwrap();
+        let with_cursor = ObjectGroupCursorBudget::for_request_target(
+            "/api/v1/classes/1/object-aggregates",
+            "group_by=name&cursor=opaque&limit=1",
+        )
+        .unwrap();
+
+        assert_eq!(with_cursor, without_cursor);
+    }
+
+    #[test]
+    fn cursor_emission_uses_the_request_specific_budget() {
+        let spec = ObjectGroupSpec::new(
+            vec![ObjectGroupDimension::from_str("json_data.large").unwrap()],
+            ObjectGroupSort::DimensionsAscending,
+        )
+        .unwrap();
+        let boundary_value = "x".repeat(1_000);
+        let row = ObjectGroupRow::from_database(
+            serde_json::json!([{
+                "field": "json_data.large",
+                "state": "value",
+                "value": boundary_value.clone(),
+            }]),
+            1,
+            serde_json::json!([[0, boundary_value]]),
+        )
+        .unwrap();
+        let budget = ObjectGroupCursorBudget::for_request_target(
+            "/api/v1/classes/1/object-aggregates",
+            &format!(
+                "name__contains={}&group_by=json_data.large",
+                "x".repeat(7_000)
+            ),
+        )
+        .unwrap();
+
+        let error = spec.encode_cursor(&row, budget).unwrap_err();
+
+        assert!(matches!(error, ApiError::PayloadTooLarge(_)));
+        assert!(error.to_string().contains("for this request"));
     }
 
     #[test]
@@ -802,7 +940,10 @@ mod tests {
         .unwrap();
 
         let error = spec
-            .decode_cursor(&"a".repeat(MAX_OBJECT_GROUP_CURSOR_LENGTH + 1))
+            .decode_cursor(
+                &"a".repeat(MAX_OBJECT_GROUP_CURSOR_LENGTH + 1),
+                cursor_budget(),
+            )
             .unwrap_err();
 
         assert!(matches!(error, ApiError::PayloadTooLarge(_)));
@@ -827,7 +968,10 @@ mod tests {
         .unwrap();
 
         let error = spec
-            .decode_cursor(&encoded_cursor("name", sort_key, object_count))
+            .decode_cursor(
+                &encoded_cursor("name", sort_key, object_count),
+                cursor_budget(),
+            )
             .unwrap_err();
 
         assert!(error.to_string().contains("invalid ordering values"));
@@ -851,11 +995,10 @@ mod tests {
         .unwrap();
 
         let error = spec
-            .decode_cursor(&encoded_cursor(
-                dimension,
-                serde_json::json!([[0, value]]),
-                1,
-            ))
+            .decode_cursor(
+                &encoded_cursor(dimension, serde_json::json!([[0, value]]), 1),
+                cursor_budget(),
+            )
             .unwrap_err();
 
         assert!(error.to_string().contains("invalid ordering values"));
@@ -877,11 +1020,24 @@ mod tests {
         )
         .unwrap();
 
-        spec.decode_cursor(&encoded_cursor(
-            dimension,
-            serde_json::json!([[0, value]]),
-            1,
-        ))
+        spec.decode_cursor(
+            &encoded_cursor(dimension, serde_json::json!([[0, value]]), 1),
+            cursor_budget(),
+        )
         .unwrap();
+    }
+
+    #[test]
+    fn rejects_computed_source_filters() {
+        let error = parse_object_group_query(
+            "computed.shared.lifecycle__equals=active&group_by=description",
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("Computed fields are not supported")
+        );
     }
 }

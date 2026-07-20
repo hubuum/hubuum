@@ -148,7 +148,7 @@ async fn personal_computed_grouping_rejects_another_owners_definition(
         &test_context.pool,
         &test_context.normal_token,
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=computed.personal.admin_only",
+            "/api/v1/classes/{}/object-aggregates?group_by=computed.personal.admin_only",
             fixture.class.id
         ),
     )
@@ -195,7 +195,7 @@ async fn personal_computed_grouping_rejects_service_accounts(
         &test_context.pool,
         &token,
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=computed.personal.priority",
+            "/api/v1/classes/{}/object-aggregates?group_by=computed.personal.priority",
             fixture.class.id
         ),
     )
@@ -246,7 +246,7 @@ async fn invalid_computed_selectors_are_bad_requests(
         &test_context.pool,
         &test_context.normal_token,
         &format!(
-            "/api/v1/classes/{}/object-groups?group_by=computed.personal.{key}",
+            "/api/v1/classes/{}/object-aggregates?group_by=computed.personal.{key}",
             fixture.class.id
         ),
     )
