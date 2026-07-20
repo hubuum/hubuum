@@ -64,6 +64,7 @@ pub enum ApiError {
     InternalServerError(String),
     Forbidden(String),
     NotAcceptable(String),
+    UnsupportedMediaType(String),
     PayloadTooLarge(String),
     NotImplemented(String),
     PermissionBackendUnavailable(String),
@@ -88,6 +89,7 @@ impl ApiError {
             ApiError::InternalServerError(_) => "internal_server_error",
             ApiError::Forbidden(_) => "forbidden",
             ApiError::NotAcceptable(_) => "not_acceptable",
+            ApiError::UnsupportedMediaType(_) => "unsupported_media_type",
             ApiError::PayloadTooLarge(_) => "payload_too_large",
             ApiError::DatabaseError(_) => "database_error",
             ApiError::Conflict(_) => "conflict",
@@ -139,6 +141,7 @@ impl ApiError {
             ApiError::Unauthorized(message)
             | ApiError::Forbidden(message)
             | ApiError::NotAcceptable(message)
+            | ApiError::UnsupportedMediaType(message)
             | ApiError::PayloadTooLarge(message)
             | ApiError::Conflict(message)
             | ApiError::TooManyRequests(message)
@@ -174,6 +177,7 @@ impl fmt::Display for ApiError {
             ApiError::InvalidIntegerRange(message) => write!(f, "{message}"),
             ApiError::ValidationError(message) => write!(f, "{message}"),
             ApiError::NotAcceptable(message) => write!(f, "{message}"),
+            ApiError::UnsupportedMediaType(message) => write!(f, "{message}"),
             ApiError::PayloadTooLarge(message) => write!(f, "{message}"),
         }
     }
@@ -204,6 +208,8 @@ impl ResponseError for ApiError {
             }
             ApiError::NotAcceptable(message) => HttpResponse::NotAcceptable()
                 .json(json!({ "error": "Not Acceptable", "message": message })),
+            ApiError::UnsupportedMediaType(message) => HttpResponse::UnsupportedMediaType()
+                .json(json!({ "error": "Unsupported Media Type", "message": message })),
             ApiError::PayloadTooLarge(message) => HttpResponse::PayloadTooLarge()
                 .json(json!({ "error": "Payload Too Large", "message": message })),
             ApiError::InternalServerError(_)
@@ -240,6 +246,7 @@ impl ResponseError for ApiError {
             ApiError::PermissionBackendUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::NotAcceptable(_) => StatusCode::NOT_ACCEPTABLE,
+            ApiError::UnsupportedMediaType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             ApiError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             ApiError::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,

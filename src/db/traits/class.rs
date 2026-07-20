@@ -5,8 +5,9 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::{
-    ClassIdSet, Collection, HubuumClass, HubuumClassID, HubuumClassRelation, HubuumClassRelationID,
-    NewHubuumClass, NewHubuumClassRelation, UpdateHubuumClass,
+    ClassIdSet, ClassSelector, ClassSelectorKind, Collection, HubuumClass, HubuumClassID,
+    HubuumClassRelation, HubuumClassRelationID, NewHubuumClass, NewHubuumClassRelation,
+    ResolvedClassTarget, UpdateHubuumClass,
 };
 
 fn class_snapshot(class: &HubuumClass) -> serde_json::Value {
@@ -167,6 +168,32 @@ impl LoadClassRecord for HubuumClassID {
     }
 }
 
+pub trait ResolveClassSelectorRecord {
+    async fn resolve_class_selector_record(&self, pool: &DbPool) -> Result<HubuumClass, ApiError>;
+}
+
+impl ResolveClassSelectorRecord for ClassSelector {
+    async fn resolve_class_selector_record(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
+        use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
+
+        with_connection(pool, async |conn| match self.kind() {
+            ClassSelectorKind::ById(class_id) => {
+                hubuumclass
+                    .filter(id.eq(class_id.id()))
+                    .first::<HubuumClass>(conn)
+                    .await
+            }
+            ClassSelectorKind::ByName(class_name) => {
+                hubuumclass
+                    .filter(name.eq(class_name))
+                    .first::<HubuumClass>(conn)
+                    .await
+            }
+        })
+        .await
+    }
+}
+
 pub trait CreateClassRecord {
     async fn create_class_record_without_events(
         &self,
@@ -307,6 +334,106 @@ impl UpdateClassRecord for UpdateHubuumClass {
             .with_after(class_snapshot(&updated));
             emit_event(conn, &event).await?;
             Ok(updated)
+        })
+        .await
+    }
+}
+
+pub(crate) async fn lock_resolved_class_target(
+    conn: &mut crate::db::DbConnection,
+    target: &ResolvedClassTarget,
+) -> Result<HubuumClass, ApiError> {
+    use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
+
+    let resolved = target.class();
+    match target.selector().kind() {
+        ClassSelectorKind::ById(class_id) => Ok(hubuumclass
+            .filter(id.eq(class_id.id()))
+            .filter(id.eq(resolved.id))
+            .for_update()
+            .first::<HubuumClass>(conn)
+            .await?),
+        ClassSelectorKind::ByName(class_name) => Ok(hubuumclass
+            .filter(id.eq(resolved.id))
+            .filter(name.eq(class_name))
+            .for_update()
+            .first::<HubuumClass>(conn)
+            .await?),
+    }
+}
+
+pub trait UpdateResolvedClassRecord {
+    async fn update_resolved_class_record(
+        &self,
+        pool: &DbPool,
+        target: &ResolvedClassTarget,
+        context: &EventContext,
+    ) -> Result<HubuumClass, ApiError>;
+}
+
+impl UpdateResolvedClassRecord for UpdateHubuumClass {
+    async fn update_resolved_class_record(
+        &self,
+        pool: &DbPool,
+        target: &ResolvedClassTarget,
+        context: &EventContext,
+    ) -> Result<HubuumClass, ApiError> {
+        use crate::schema::hubuumclass::dsl::{hubuumclass, id};
+
+        with_transaction(pool, async |conn| -> Result<HubuumClass, ApiError> {
+            let before = lock_resolved_class_target(conn, target).await?;
+            if !self.has_changes(&before) {
+                return Ok(before);
+            }
+            let updated = diesel::update(hubuumclass.filter(id.eq(before.id)))
+                .set(self)
+                .get_result::<HubuumClass>(conn)
+                .await?;
+            let event = class_event(
+                &updated,
+                Action::Updated,
+                context,
+                format!("Class '{}' updated", updated.name),
+            )?
+            .with_before(class_snapshot(&before))
+            .with_after(class_snapshot(&updated));
+            emit_event(conn, &event).await?;
+            Ok(updated)
+        })
+        .await
+    }
+}
+
+pub trait DeleteResolvedClassRecord {
+    async fn delete_resolved_class_record(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<(), ApiError>;
+}
+
+impl DeleteResolvedClassRecord for ResolvedClassTarget {
+    async fn delete_resolved_class_record(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<(), ApiError> {
+        use crate::schema::hubuumclass::dsl::{hubuumclass, id};
+
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            let before = lock_resolved_class_target(conn, self).await?;
+            diesel::delete(hubuumclass.filter(id.eq(before.id)))
+                .execute(conn)
+                .await?;
+            let event = class_event(
+                &before,
+                Action::Deleted,
+                context,
+                format!("Class '{}' deleted", before.name),
+            )?
+            .with_before(class_snapshot(&before));
+            emit_event(conn, &event).await?;
+            Ok(())
         })
         .await
     }

@@ -5,15 +5,86 @@ use crate::traits::{
 
 use crate::db::DbPool;
 use crate::db::traits::class::{
-    ClassCollectionLookup, CreateClassRecord, DeleteClassRecord, LoadClassRecord, UpdateClassRecord,
+    ClassCollectionLookup, CreateClassRecord, DeleteClassRecord, DeleteResolvedClassRecord,
+    LoadClassRecord, ResolveClassSelectorRecord, UpdateClassRecord, UpdateResolvedClassRecord,
 };
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 
 use crate::models::{
-    Collection, CollectionID, HubuumClass, HubuumClassID, NewHubuumClass, UpdateHubuumClass,
+    ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassID, NewHubuumClass,
+    ResolvedClassTarget, UpdateHubuumClass,
 };
+
+pub trait ResolveClassTarget {
+    async fn resolve_class_target<C>(&self, backend: &C) -> Result<ResolvedClassTarget, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized;
+}
+
+impl ResolveClassTarget for ClassSelector {
+    async fn resolve_class_target<C>(&self, backend: &C) -> Result<ResolvedClassTarget, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized,
+    {
+        let class = self
+            .resolve_class_selector_record(backend.db_pool())
+            .await?;
+        Ok(ResolvedClassTarget::new(self.clone(), class))
+    }
+}
+
+pub trait UpdateResolvedClass {
+    async fn update_resolved_class<C>(
+        &self,
+        backend: &C,
+        target: &ResolvedClassTarget,
+        context: &EventContext,
+    ) -> Result<HubuumClass, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized;
+}
+
+impl UpdateResolvedClass for UpdateHubuumClass {
+    async fn update_resolved_class<C>(
+        &self,
+        backend: &C,
+        target: &ResolvedClassTarget,
+        context: &EventContext,
+    ) -> Result<HubuumClass, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized,
+    {
+        validate_class_schema_update(self, backend.db_pool(), target.class().id).await?;
+        self.update_resolved_class_record(backend.db_pool(), target, context)
+            .await
+    }
+}
+
+pub trait DeleteResolvedClass {
+    async fn delete_resolved_class<C>(
+        &self,
+        backend: &C,
+        context: &EventContext,
+    ) -> Result<(), ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized;
+}
+
+impl DeleteResolvedClass for ResolvedClassTarget {
+    async fn delete_resolved_class<C>(
+        &self,
+        backend: &C,
+        context: &EventContext,
+    ) -> Result<(), ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized,
+    {
+        self.delete_resolved_class_record(backend.db_pool(), context)
+            .await
+    }
+}
 
 fn validate_new_class_schema(class: &NewHubuumClass) -> Result<(), ApiError> {
     let Some(schema) = class.json_schema.as_ref() else {

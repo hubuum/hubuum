@@ -40,13 +40,14 @@ use crate::models::{
     NewCollectionWithAssignee, NewEventSink, NewEventSubscription, NewExportTemplate, NewGroup,
     NewHubuumClass, NewHubuumClassRelation, NewHubuumClassRelationFromClass, NewHubuumObject,
     NewHubuumObjectRelation, NewHubuumObjectRequest, NewRemoteTarget, NewServiceAccount, NewUser,
-    ObjectKey, ObjectsByClass, Permission, Permissions, PersonalComputedFieldDefinitionRequest,
-    PrincipalKey, PrincipalMemberResponse, PrincipalSettings, PrincipalToken,
-    PrincipalTokenMetadata, RelatedClassGraph, RelatedObjectGraph, RemoteAuthConfig,
-    RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride, RemoteInvocationParameters,
-    RemoteInvocationSubject, RemoteTarget, RemoteTargetHistory, RemoteTargetID,
-    RemoteTargetInvokeRequest, RemoteTargetSubjectType, RestoreConfirmRequest, RestoreJobStatus,
-    RestoreStageResponse, RestoreTimestamps, RestoreValidationSummary, ServiceAccountResponse,
+    ObjectDataPatchDocument, ObjectKey, ObjectsByClass, Permission, Permissions,
+    PersonalComputedFieldDefinitionRequest, PrincipalKey, PrincipalMemberResponse,
+    PrincipalSettings, PrincipalToken, PrincipalTokenMetadata, RelatedClassGraph,
+    RelatedObjectGraph, RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod,
+    RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteInvocationSubject,
+    RemoteTarget, RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest,
+    RemoteTargetSubjectType, RestoreConfirmRequest, RestoreJobStatus, RestoreStageResponse,
+    RestoreTimestamps, RestoreValidationSummary, ServiceAccountResponse,
     SharedComputedScopeResponse, TaskDetails, TaskEventResponse, TaskKind, TaskLinks, TaskProgress,
     TaskResponse, TaskStatus, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
     UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
@@ -225,11 +226,15 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::get_classes,
         classes::create_class,
         classes::get_class,
+        classes::get_class_by_name,
         classes::get_class_history,
         classes::get_class_as_of,
         classes::update_class,
+        classes::update_class_by_name,
         classes::delete_class,
+        classes::delete_class_by_name,
         classes::get_class_permissions,
+        classes::get_class_permissions_by_name,
         computed_fields::get_shared_computed_fields,
         computed_fields::create_shared_computed_field,
         computed_fields::patch_shared_computed_field,
@@ -237,20 +242,33 @@ use utoipa::{Modify, OpenApi, ToSchema};
         computed_fields::preview_shared_computed_field,
         computed_fields::rebuild_shared_computed_fields,
         classes::get_related_classes,
+        classes::get_related_classes_by_name,
         classes::create_class_relation,
         classes::delete_class_relation,
         classes::get_related_class_relations,
+        classes::get_related_class_relations_by_name,
         classes::get_related_class_graph,
+        classes::get_related_class_graph_by_name,
         classes::get_objects_in_class,
+        classes::get_objects_in_class_by_name,
         classes::create_object_in_class,
+        classes::create_object_in_class_by_name,
         classes::get_object_in_class,
+        classes::get_object_in_class_by_name,
         classes::get_object_history,
         classes::get_object_as_of,
         classes::patch_object_in_class,
+        classes::patch_object_in_class_by_name,
+        classes::patch_object_data_in_class,
+        classes::patch_object_data_by_name_in_class,
         classes::delete_object_in_class,
+        classes::delete_object_in_class_by_name,
         classes::get_related_objects,
+        classes::get_related_objects_by_name,
         classes::get_related_object_relations,
+        classes::get_related_object_relations_by_name,
         classes::get_related_object_graph,
+        classes::get_related_object_graph_by_name,
         classes::get_object_relation_from_class_and_objects,
         classes::delete_object_relation,
         classes::create_object_relation
@@ -336,6 +354,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             UpdateHubuumObject,
             NewHubuumObjectRequest,
             UpdateHubuumObjectRequest,
+            ObjectDataPatchDocument,
             ComputedResultType,
             ComputedFieldDefinition,
             ComputedFieldDefinitionRequest,
@@ -674,6 +693,12 @@ const CURSOR_PAGINATED_GET_PATHS: &[&str] = &[
     "/api/v1/classes/{class_id}/{object_id}/history",
     "/api/v1/classes/{class_id}/objects/{object_id}/related/objects",
     "/api/v1/classes/{class_id}/objects/{object_id}/related/relations",
+    "/api/v1/classes/by-name/{class_name}/permissions",
+    "/api/v1/classes/by-name/{class_name}/related/classes",
+    "/api/v1/classes/by-name/{class_name}/related/relations",
+    "/api/v1/classes/by-name/{class_name}/objects",
+    "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/objects",
+    "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/relations",
 ];
 
 fn is_cursor_paginated_get(path: &str, method: &str) -> bool {
@@ -1149,6 +1174,17 @@ mod tests {
             "/api/v1/relations/objects/{relation_id}",
             "/api/v1/classes",
             "/api/v1/classes/{class_id}",
+            "/api/v1/classes/by-name/{class_name}",
+            "/api/v1/classes/by-name/{class_name}/permissions",
+            "/api/v1/classes/by-name/{class_name}/related/classes",
+            "/api/v1/classes/by-name/{class_name}/related/relations",
+            "/api/v1/classes/by-name/{class_name}/related/graph",
+            "/api/v1/classes/by-name/{class_name}/objects",
+            "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}",
+            "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/data",
+            "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/objects",
+            "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/relations",
+            "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/graph",
             "/api/v1/classes/{class_id}/computed-fields",
             "/api/v1/classes/{class_id}/computed-fields/preview",
             "/api/v1/classes/{class_id}/computed-fields/rebuild",
@@ -1164,6 +1200,7 @@ mod tests {
             "/api/v1/classes/{class_id}/relations/{relation_id}",
             "/api/v1/classes/{class_id}/",
             "/api/v1/classes/{class_id}/{object_id}",
+            "/api/v1/classes/{class_id}/{object_id}/data",
             "/api/v1/classes/{class_id}/{object_id}/events",
             "/api/v1/classes/{class_id}/{object_id}/history",
             "/api/v1/classes/{class_id}/{object_id}/history/as-of",
@@ -1190,6 +1227,56 @@ mod tests {
             .and_then(Value::as_str),
             Some("#/components/schemas/BackupDocument")
         );
+    }
+
+    #[test]
+    fn object_data_json_patch_media_type_limits_and_statuses_are_documented() {
+        let json = openapi_json();
+        let operation_pointers = [
+            "/paths/~1api~1v1~1classes~1{class_id}~1{object_id}~1data/patch",
+            "/paths/~1api~1v1~1classes~1by-name~1{class_name}~1objects~1by-name~1{object_name}~1data/patch",
+        ];
+
+        for operation_pointer in operation_pointers {
+            let operation = json
+                .pointer(operation_pointer)
+                .expect("object-data JSON Patch operation");
+            assert_eq!(
+                operation
+                    .pointer("/requestBody/content/application~1json-patch+json/schema/$ref")
+                    .and_then(Value::as_str),
+                Some("#/components/schemas/ObjectDataPatchDocument")
+            );
+            for status in [
+                "200", "400", "401", "403", "404", "406", "409", "413", "415", "500",
+            ] {
+                assert!(
+                    operation["responses"].get(status).is_some(),
+                    "missing documented JSON Patch response {status}"
+                );
+            }
+        }
+        let id_operation = json
+            .pointer(operation_pointers[0])
+            .expect("ID-addressed JSON Patch operation");
+        assert!(
+            id_operation["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("relative to the root of `data`"))
+        );
+        let name_operation = json
+            .pointer(operation_pointers[1])
+            .expect("name-addressed JSON Patch operation");
+        assert!(
+            name_operation["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("concurrent rename"))
+        );
+
+        let schema = &json["components"]["schemas"]["ObjectDataPatchDocument"];
+        assert_eq!(schema["type"], "array");
+        assert_eq!(schema["maxItems"], 1_000);
+        assert!(schema["items"].is_object());
     }
 
     #[test]

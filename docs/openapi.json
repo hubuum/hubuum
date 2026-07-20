@@ -1211,6 +1211,1662 @@
         ]
       }
     },
+    "/api/v1/classes/by-name/{class_name}": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get a class by name",
+        "description": "Name-addressed alias for the class endpoint. The explicit by-name segment always treats numeric-looking values as names.",
+        "operationId": "getApiV1ClassesByNameByClassName",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumClassExpanded"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Delete a class by name",
+        "description": "Name-addressed alias for class deletion. The original name and resolved ID are rechecked under the transactional row lock.",
+        "operationId": "deleteApiV1ClassesByNameByClassName",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique current class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Class deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found or concurrently renamed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Update a class by name",
+        "description": "Name-addressed alias for class update. Authorization is bound to the resolved class, and the original name plus resolved ID are rechecked under the transactional row lock.",
+        "operationId": "patchApiV1ClassesByNameByClassName",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique current class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateHubuumClass"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumClassExpanded"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found or concurrently renamed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/by-name/{class_name}/objects": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "List objects in a class by class name",
+        "description": "Name-addressed alias for listing the current objects in a class. Numeric-looking class names remain names. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ClassesByNameByClassNameObjects",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "Set to computed to enrich each object",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort by object fields or computed.shared.<key>/computed.personal.<key>; computed sorting supports at most two explicit sort fields",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Objects in class, optionally enriched with computed fields The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumObjectReadResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Create an object in a class by class name",
+        "description": "Name-addressed alias for object creation. The original class name and resolved ID are rechecked under the same transaction that creates the object.",
+        "operationId": "postApiV1ClassesByNameByClassNameObjects",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique current class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewHubuumObjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Object created in class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found or concurrently renamed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get an object by class and object name",
+        "description": "Fully name-addressed alias for the object endpoint. Numeric-looking path values remain names.",
+        "operationId": "getApiV1ClassesByNameByClassNameObjectsByNameByObjectName",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object_name",
+            "in": "path",
+            "description": "Object name, unique within the class",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "Set to computed to enrich the object",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object in class, optionally enriched with computed fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObjectReadResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class/object name pair not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Delete an object by class and object name",
+        "description": "Fully name-addressed alias for object deletion. The original natural key and resolved IDs are rechecked under the transactional row lock.",
+        "operationId": "deleteApiV1ClassesByNameByClassNameObjectsByNameByObjectName",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique current class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object_name",
+            "in": "path",
+            "description": "Current object name, unique within the class",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Object deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class/object pair not found or concurrently renamed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Update an object by class and object name",
+        "description": "Fully name-addressed alias for object update. The original natural key and resolved IDs are rechecked under the transactional row lock.",
+        "operationId": "patchApiV1ClassesByNameByClassNameObjectsByNameByObjectName",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique current class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object_name",
+            "in": "path",
+            "description": "Current object name, unique within the class",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateHubuumObjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class/object pair not found or concurrently renamed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/data": {
+      "patch": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Apply JSON Patch to object data by object name",
+        "description": "Fully name-addressed alias for the atomic object-data JSON Patch endpoint. Class names are globally unique, object names are unique within their class, and both names are URL percent-decoded. The server resolves the natural key for authorization, then requires that same object ID, class ID, class name, and object name when taking the transactional row lock so a concurrent rename cannot redirect the patch. Numeric-looking names are always treated as names on this route. Every `path` and `from` remains relative to the root of the raw `data` document.",
+        "operationId": "patchApiV1ClassesByNameByClassNameObjectsByNameByObjectNameData",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name, URL percent-encoded as needed",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object_name",
+            "in": "path",
+            "description": "Class-scoped object name, URL percent-encoded as needed",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "RFC 6902 operation array. Supports add, remove, replace, move, copy, and test. Limited to 1,000 operations and 128 pointer segments per path/from.",
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObjectDataPatchDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated object, or the unchanged object for a no-op patch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON or invalid JSON Patch structure, operation count, or pointer depth",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "UpdateObject permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class-name/object-name pair not found or the object was concurrently renamed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Final patched data fails the class JSON Schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A patch operation failed, including a failed test operation; no change was persisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON Patch request exceeds the normal 2 MiB JSON payload limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type is not application/json-patch+json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Persistence, computed-field materialization, or event emission failed and the transaction was rolled back",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/graph": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get the related-object graph by class and object name",
+        "description": "Auto-generated documentation for GET /api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/graph.",
+        "operationId": "getApiV1ClassesByNameByClassNameObjectsByNameByObjectNameRelatedGraph",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object_name",
+            "in": "path",
+            "description": "Object name, unique within the class",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Neighborhood graph for the object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelatedObjectGraph"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class/object name pair not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/objects": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get related objects by class and object name",
+        "description": "Auto-generated documentation for GET /api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/objects. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ClassesByNameByClassNameObjectsByNameByObjectNameRelatedObjects",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object_name",
+            "in": "path",
+            "description": "Object name, unique within the class",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ignore_classes",
+            "in": "query",
+            "description": "Comma-separated class IDs to exclude from the returned connected objects",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ignore_self_class",
+            "in": "query",
+            "description": "Exclude connected objects in the same class as the root object. Defaults to true",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Objects connected to the object The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumObjectWithPath"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class/object name pair not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/relations": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get related object relations by class and object name",
+        "description": "Auto-generated documentation for GET /api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/related/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ClassesByNameByClassNameObjectsByNameByObjectNameRelatedRelations",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object_name",
+            "in": "path",
+            "description": "Object name, unique within the class",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Direct relations touching the object The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumObjectRelation"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class/object name pair not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/by-name/{class_name}/permissions": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get class permissions by class name",
+        "description": "Auto-generated documentation for GET /api/v1/classes/by-name/{class_name}/permissions. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ClassesByNameByClassNamePermissions",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Collection-group permission mappings for class collection The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GroupPermission"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/by-name/{class_name}/related/classes": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get related classes by class name",
+        "description": "Auto-generated documentation for GET /api/v1/classes/by-name/{class_name}/related/classes. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ClassesByNameByClassNameRelatedClasses",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Classes connected to the class The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumClassWithPath"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/by-name/{class_name}/related/graph": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get the related-class graph by class name",
+        "description": "Auto-generated documentation for GET /api/v1/classes/by-name/{class_name}/related/graph.",
+        "operationId": "getApiV1ClassesByNameByClassNameRelatedGraph",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Neighborhood graph for the class",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelatedClassGraph"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/by-name/{class_name}/related/relations": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get related class relations by class name",
+        "description": "Auto-generated documentation for GET /api/v1/classes/by-name/{class_name}/related/relations. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "operationId": "getApiV1ClassesByNameByClassNameRelatedRelations",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 250,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Comma-separated sort fields. Cursor pagination uses the requested sort order and appends a stable tie-breaker automatically.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor returned in the X-Next-Cursor response header from a previous page. Supply it unchanged to fetch the next page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_total",
+            "in": "query",
+            "description": "Whether to execute an exact count query and return X-Total-Count. Defaults to true; set false on latency-sensitive requests that do not need the count.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Direct relations touching the class The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "headers": {
+              "X-Next-Cursor": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Opaque cursor for the next page. This header is omitted when there are no more results."
+              },
+              "X-Page-Limit": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Effective page size used by the server after applying the configured default and maximum."
+              },
+              "X-Total-Count": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Exact total number of results matching the current filter set, independent of cursor pagination. Omitted when include_total=false."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HubuumClassRelation"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes/{class_id}": {
       "get": {
         "tags": [
@@ -3876,6 +5532,156 @@
           },
           "404": {
             "description": "Object not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/{object_id}/data": {
+      "patch": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Apply JSON Patch to object data",
+        "description": "Atomically applies an RFC 6902 JSON Patch document to the object's raw `data` document. Every `path` and `from` is an RFC 6901 JSON Pointer relative to the root of `data`; an empty path replaces the complete document. Operations are evaluated against the latest row-locked data. A successful change updates schema validation, computed-field materialization, history, timestamps, and the object update event in one transaction. A patch that produces no data change returns the current object without changing its timestamp or emitting an update event.",
+        "operationId": "patchApiV1ClassesByClassIdByObjectIdData",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "object_id",
+            "in": "path",
+            "description": "Object ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "RFC 6902 operation array. Supports add, remove, replace, move, copy, and test. Limited to 1,000 operations and 128 pointer segments per path/from.",
+          "content": {
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObjectDataPatchDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated object, or the unchanged object for a no-op patch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON or invalid JSON Patch structure, operation count, or pointer depth",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "UpdateObject permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class/object pair not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "Final patched data fails the class JSON Schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A patch operation failed, including a failed test operation; no change was persisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON Patch request exceeds the normal 2 MiB JSON payload limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type is not application/json-patch+json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Persistence, computed-field materialization, or event emission failed and the transaction was rolled back",
             "content": {
               "application/json": {
                 "schema": {
@@ -15097,6 +16903,23 @@
   },
   "components": {
     "schemas": {
+      "AddOperation": {
+        "type": "object",
+        "description": "JSON Patch 'add' operation representation",
+        "required": [
+          "path",
+          "value"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "JSON-Pointer value [RFC6901](https://tools.ietf.org/html/rfc6901) that references a location\nwithin the target document where the operation is performed."
+          },
+          "value": {
+            "description": "Value to add to the target location."
+          }
+        }
+      },
       "ApiErrorResponse": {
         "type": "object",
         "required": [
@@ -15919,6 +17742,24 @@
             "propertyNames": {
               "type": "string"
             }
+          }
+        }
+      },
+      "CopyOperation": {
+        "type": "object",
+        "description": "JSON Patch 'copy' operation representation",
+        "required": [
+          "from",
+          "path"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "JSON-Pointer value [RFC6901](https://tools.ietf.org/html/rfc6901) that references a location\nto copy value from."
+          },
+          "path": {
+            "type": "string",
+            "description": "JSON-Pointer value [RFC6901](https://tools.ietf.org/html/rfc6901) that references a location\nwithin the target document where the operation is performed."
           }
         }
       },
@@ -20436,6 +22277,24 @@
           "message": "Token is valid."
         }
       },
+      "MoveOperation": {
+        "type": "object",
+        "description": "JSON Patch 'move' operation representation",
+        "required": [
+          "from",
+          "path"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "JSON-Pointer value [RFC6901](https://tools.ietf.org/html/rfc6901) that references a location\nto move value from."
+          },
+          "path": {
+            "type": "string",
+            "description": "JSON-Pointer value [RFC6901](https://tools.ietf.org/html/rfc6901) that references a location\nwithin the target document where the operation is performed."
+          }
+        }
+      },
       "NetworkConfig": {
         "type": "object",
         "required": [
@@ -20870,14 +22729,15 @@
         "type": "object",
         "required": [
           "name",
-          "collection_id",
-          "hubuum_class_id",
           "data",
           "description"
         ],
         "properties": {
           "collection_id": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int32"
           },
           "data": {},
@@ -20885,7 +22745,10 @@
             "type": "string"
           },
           "hubuum_class_id": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int32"
           },
           "name": {
@@ -21064,6 +22927,165 @@
           "proper_name": "Alice Doe"
         }
       },
+      "ObjectDataPatchDocument": {
+        "type": "array",
+        "items": {
+          "oneOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/AddOperation",
+                  "description": "'add' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "add"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'add' operation"
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/RemoveOperation",
+                  "description": "'remove' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "remove"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'remove' operation"
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ReplaceOperation",
+                  "description": "'replace' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "replace"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'replace' operation"
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/MoveOperation",
+                  "description": "'move' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "move"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'move' operation"
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/CopyOperation",
+                  "description": "'copy' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "copy"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'copy' operation"
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/TestOperation",
+                  "description": "'test' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "test"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'test' operation"
+            }
+          ],
+          "description": "JSON Patch single patch operation"
+        },
+        "description": "RFC 6902 operations applied relative to the root of an object's raw data document. Supports add, remove, replace, move, copy, and test.",
+        "examples": [
+          [
+            {
+              "op": "add",
+              "path": "/facts",
+              "value": {
+                "source": "inventory"
+              }
+            }
+          ]
+        ],
+        "maxItems": 1000
+      },
       "ObjectKey": {
         "type": "object",
         "required": [
@@ -21129,6 +23151,149 @@
             "format": "int32"
           }
         }
+      },
+      "PatchOperation": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AddOperation",
+                "description": "'add' operation"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "op"
+                ],
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "enum": [
+                      "add"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "'add' operation"
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RemoveOperation",
+                "description": "'remove' operation"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "op"
+                ],
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "enum": [
+                      "remove"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "'remove' operation"
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ReplaceOperation",
+                "description": "'replace' operation"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "op"
+                ],
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "enum": [
+                      "replace"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "'replace' operation"
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MoveOperation",
+                "description": "'move' operation"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "op"
+                ],
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "enum": [
+                      "move"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "'move' operation"
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CopyOperation",
+                "description": "'copy' operation"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "op"
+                ],
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "enum": [
+                      "copy"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "'copy' operation"
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TestOperation",
+                "description": "'test' operation"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "op"
+                ],
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "enum": [
+                      "test"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "'test' operation"
+          }
+        ],
+        "description": "JSON Patch single patch operation"
       },
       "Permission": {
         "type": "object",
@@ -22139,6 +24304,36 @@
           "object_relation"
         ]
       },
+      "RemoveOperation": {
+        "type": "object",
+        "description": "JSON Patch 'remove' operation representation",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "JSON-Pointer value [RFC6901](https://tools.ietf.org/html/rfc6901) that references a location\nwithin the target document where the operation is performed."
+          }
+        }
+      },
+      "ReplaceOperation": {
+        "type": "object",
+        "description": "JSON Patch 'replace' operation representation",
+        "required": [
+          "path",
+          "value"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "JSON-Pointer value [RFC6901](https://tools.ietf.org/html/rfc6901) that references a location\nwithin the target document where the operation is performed."
+          },
+          "value": {
+            "description": "Value to replace with."
+          }
+        }
+      },
       "RestoreConfig": {
         "type": "object",
         "required": [
@@ -22921,6 +25116,23 @@
           "partially_succeeded",
           "cancelled"
         ]
+      },
+      "TestOperation": {
+        "type": "object",
+        "description": "JSON Patch 'test' operation representation",
+        "required": [
+          "path",
+          "value"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "JSON-Pointer value [RFC6901](https://tools.ietf.org/html/rfc6901) that references a location\nwithin the target document where the operation is performed."
+          },
+          "value": {
+            "description": "Value to test against."
+          }
+        }
       },
       "TlsConfig": {
         "type": "object",

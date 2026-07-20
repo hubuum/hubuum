@@ -9,6 +9,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added explicit, numeric-safe `by-name` aliases for current class and object
+  reads, updates, deletes, class-scoped object listing and creation,
+  permissions, related-resource views, and object-data patching. Name-addressed
+  writes recheck the resolved ID and original natural key under their row lock
+  so concurrent renames fail instead of redirecting the operation.
+- Added ID- and natural-key-addressed atomic RFC 6902 JSON Patch
+  endpoints for raw object data, with row-locked concurrent composition,
+  conditional `test` operations, class schema validation, transactional
+  computed materialization and audit events, and bounded patch operation and
+  pointer depth.
 - Added unauthenticated `GET /api/v1/config` client capability discovery with
   the effective default and maximum pagination limits, including values
   overridden by server configuration.
@@ -24,6 +34,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Class-scoped object creation now infers `hubuum_class_id` and `collection_id`
+  from the path. Existing clients may still send either field, but conflicting
+  values are rejected.
 - **Breaking:** LDAP `group_filters` now match group names produced by
   `group_rules` instead of raw LDAP attribute values. Replace filters containing
   raw directory structure, such as distinguished-name components, with patterns

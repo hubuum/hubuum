@@ -1,15 +1,18 @@
 use crate::db::DbPool;
 use crate::db::traits::object::{
-    DeleteObjectRecord, LoadObjectRecord, ObjectClassLookup, ObjectCollectionLookup,
-    SaveObjectRecord, UpdateObjectRecord, ValidateObjectRecord, ValidateObjectSchema,
+    CreateObjectInResolvedClassRecord, DeleteObjectRecord, DeleteResolvedObjectRecord,
+    LoadObjectRecord, ObjectClassLookup, ObjectCollectionLookup, PatchObjectDataRecord,
+    ResolveObjectSelectorRecord, SaveObjectRecord, UpdateObjectRecord, UpdateResolvedObjectRecord,
+    ValidateObjectRecord, ValidateObjectSchema,
 };
 use crate::errors::ApiError;
 use crate::events::EventContext;
 
-use crate::models::class::{HubuumClass, HubuumClassID};
+use crate::models::class::{HubuumClass, HubuumClassID, ResolvedClassTarget};
 use crate::models::collection::{Collection, CollectionID};
 use crate::models::object::{
-    HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, UpdateHubuumObject,
+    HubuumObject, HubuumObjectID, HubuumObjectWithPath, NewHubuumObject, ObjectDataPatchDocument,
+    ObjectSelector, ResolvedObjectTarget, UpdateHubuumObject,
 };
 use crate::models::search::{FilterField, SortParam};
 use crate::traits::accessors::{ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter};
@@ -175,6 +178,129 @@ impl UpdateAdapter for UpdateHubuumObject {
     ) -> Result<Self::Output, ApiError> {
         (self, object_id).validate_object_record(pool).await?;
         self.update_object_record(pool, object_id, Some(context))
+            .await
+    }
+}
+
+pub trait PatchObjectData {
+    async fn patch_object_data<C>(
+        &self,
+        backend: &C,
+        target: &ResolvedObjectTarget,
+        context: &EventContext,
+    ) -> Result<HubuumObject, ApiError>
+    where
+        C: BackendContext + ?Sized;
+}
+
+impl PatchObjectData for ObjectDataPatchDocument {
+    async fn patch_object_data<C>(
+        &self,
+        backend: &C,
+        target: &ResolvedObjectTarget,
+        context: &EventContext,
+    ) -> Result<HubuumObject, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.patch_object_data_record(backend.db_pool(), target, context)
+            .await
+    }
+}
+
+pub trait ResolveObjectTarget {
+    async fn resolve_object_target<C>(&self, backend: &C) -> Result<ResolvedObjectTarget, ApiError>
+    where
+        C: BackendContext + ?Sized;
+}
+
+pub trait CreateObjectInResolvedClass {
+    async fn create_object_in_resolved_class<C>(
+        &self,
+        backend: &C,
+        target: &ResolvedClassTarget,
+        context: &EventContext,
+    ) -> Result<HubuumObject, ApiError>
+    where
+        C: BackendContext + ?Sized;
+}
+
+impl CreateObjectInResolvedClass for NewHubuumObject {
+    async fn create_object_in_resolved_class<C>(
+        &self,
+        backend: &C,
+        target: &ResolvedClassTarget,
+        context: &EventContext,
+    ) -> Result<HubuumObject, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.create_object_in_resolved_class_record(backend.db_pool(), target, context)
+            .await
+    }
+}
+
+impl ResolveObjectTarget for ObjectSelector {
+    async fn resolve_object_target<C>(&self, backend: &C) -> Result<ResolvedObjectTarget, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let (class, object) = self
+            .resolve_object_selector_record(backend.db_pool())
+            .await?;
+        Ok(ResolvedObjectTarget::new(self.clone(), class, object))
+    }
+}
+
+pub trait UpdateResolvedObject {
+    async fn update_resolved_object<C>(
+        &self,
+        backend: &C,
+        target: &ResolvedObjectTarget,
+        context: &EventContext,
+    ) -> Result<HubuumObject, ApiError>
+    where
+        C: BackendContext + ?Sized;
+}
+
+impl UpdateResolvedObject for UpdateHubuumObject {
+    async fn update_resolved_object<C>(
+        &self,
+        backend: &C,
+        target: &ResolvedObjectTarget,
+        context: &EventContext,
+    ) -> Result<HubuumObject, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        (self, target.object().id)
+            .validate_object_record(backend.db_pool())
+            .await?;
+        self.update_resolved_object_record(backend.db_pool(), target, context)
+            .await
+    }
+}
+
+pub trait DeleteResolvedObject {
+    async fn delete_resolved_object<C>(
+        &self,
+        backend: &C,
+        context: &EventContext,
+    ) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized;
+}
+
+impl DeleteResolvedObject for ResolvedObjectTarget {
+    async fn delete_resolved_object<C>(
+        &self,
+        backend: &C,
+        context: &EventContext,
+    ) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.delete_resolved_object_record(backend.db_pool(), context)
             .await
     }
 }

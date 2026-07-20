@@ -613,6 +613,18 @@ pub enum HubuumObjectReadResponse {
     Computed(HubuumObjectComputedResponse),
 }
 
+impl From<HubuumObject> for HubuumObjectReadResponse {
+    fn from(object: HubuumObject) -> Self {
+        Self::Raw(object)
+    }
+}
+
+impl From<HubuumObjectComputedResponse> for HubuumObjectReadResponse {
+    fn from(object: HubuumObjectComputedResponse) -> Self {
+        Self::Computed(object)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

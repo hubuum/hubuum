@@ -123,6 +123,7 @@ fn preflight_failure_kind(error: &ApiError) -> FailureKind {
         ApiError::BadRequest(_)
         | ApiError::ValidationError(_)
         | ApiError::NotAcceptable(_)
+        | ApiError::UnsupportedMediaType(_)
         | ApiError::PayloadTooLarge(_)
         | ApiError::OperatorMismatch(_)
         | ApiError::InvalidIntegerRange(_) => FailureKind::Validation,
