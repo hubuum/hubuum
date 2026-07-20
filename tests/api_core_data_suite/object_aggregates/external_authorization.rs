@@ -27,6 +27,16 @@ async fn get_with_permission_backend(
         .map_into_boxed_body()
 }
 
+fn allow_read_collection(backend: &MockTreetopBackend, group_id: i32, collection_id: i32) {
+    backend.add_rule(MockAllowRule {
+        group_id,
+        action: Permissions::ReadCollection,
+        resource_kind: ResourceKind::Collection,
+        resource_id: Some(collection_id),
+        attrs: ResourceAttrs::default(),
+    });
+}
+
 #[rstest::rstest]
 #[tokio::test]
 async fn non_pushdown_authorization_filters_objects_before_aggregation(
@@ -39,6 +49,7 @@ async fn non_pushdown_authorization_filters_objects_before_aggregation(
         .await
         .unwrap();
     let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
     for object in fixture.objects.iter().take(2) {
         backend.add_rule(MockAllowRule {
             group_id: group.id,
@@ -68,7 +79,52 @@ async fn non_pushdown_authorization_filters_objects_before_aggregation(
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["object_count"], 2);
     assert_eq!(rows[0]["dimensions"][0]["value"], "alpha");
-    assert_eq!(backend.authorization_batch_sizes(), vec![2, 2, 1]);
+    assert_eq!(backend.authorization_batch_sizes(), vec![1, 2, 2, 1]);
+
+    fixture.cleanup().await.unwrap();
+    group
+        .delete_without_events(&test_context.pool)
+        .await
+        .unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn non_pushdown_authorization_requires_collection_read_access(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = fixture(&test_context, "external collection permission").await;
+    let group = create_test_group(&test_context.pool).await;
+    group
+        .add_member_without_events(&test_context.pool, &test_context.normal_user)
+        .await
+        .unwrap();
+    let backend = Arc::new(MockTreetopBackend::new());
+    for object in &fixture.objects {
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(object.id),
+            attrs: ResourceAttrs::default(),
+        });
+    }
+
+    let response = get_with_permission_backend(
+        &test_context,
+        &test_context.normal_token,
+        backend.clone(),
+        &format!(
+            "/api/v1/classes/{}/object-aggregates?group_by=description",
+            fixture.class.id
+        ),
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+    assert!(rows.is_empty());
+    assert_eq!(backend.authorization_batch_sizes(), vec![1]);
 
     fixture.cleanup().await.unwrap();
     group
@@ -111,6 +167,7 @@ async fn non_pushdown_scalar_grouping_does_not_load_object_json(
         .await
         .unwrap();
     let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
     for object in &fixture.objects {
         backend.add_rule(MockAllowRule {
             group_id: group.id,
@@ -135,7 +192,7 @@ async fn non_pushdown_scalar_grouping_does_not_load_object_json(
     let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
 
     assert_eq!(rows[0]["object_count"], 3);
-    assert_eq!(backend.authorization_batch_sizes(), vec![2, 1]);
+    assert_eq!(backend.authorization_batch_sizes(), vec![1, 2, 1]);
 
     fixture.cleanup().await.unwrap();
     group
@@ -156,6 +213,7 @@ async fn non_pushdown_high_cardinality_groups_paginate_from_bounded_accumulator(
         .await
         .unwrap();
     let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
     for object in &fixture.objects {
         backend.add_rule(MockAllowRule {
             group_id: group.id,
@@ -226,6 +284,7 @@ async fn non_pushdown_grouping_uses_the_authorized_object_snapshot(
     let authorized_object = fixture.objects[0].clone();
     let renamed = test_context.scoped_name("renamed after authorization input");
     let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
     backend.add_rule(MockAllowRule {
         group_id: group.id,
         action: Permissions::ReadObject,
@@ -238,7 +297,7 @@ async fn non_pushdown_grouping_uses_the_authorized_object_snapshot(
     });
     let pool = test_context.pool.clone();
     let renamed_for_hook = renamed.clone();
-    backend.set_authorization_hook(move || async move {
+    backend.set_authorization_hook_after_calls(1, move || async move {
         UpdateHubuumObject {
             name: Some(renamed_for_hook),
             collection_id: None,
@@ -287,6 +346,7 @@ async fn non_pushdown_authorization_honors_permission_filters(
         .await
         .unwrap();
     let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
     for object in fixture.objects.iter().take(2) {
         backend.add_rule(MockAllowRule {
             group_id: group.id,
@@ -347,6 +407,7 @@ async fn non_pushdown_parent_permission_filters_use_complete_resources(
         .await
         .unwrap();
     let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
     for object in fixture.objects.iter().take(2) {
         backend.add_rule(MockAllowRule {
             group_id: group.id,
@@ -390,7 +451,15 @@ async fn non_pushdown_parent_permission_filters_use_complete_resources(
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["object_count"], 2);
-    assert_eq!(backend.authorization_batch_sizes(), vec![1, 2, 2, 1]);
+    let invariant_permissions = if filtered_permission == Permissions::ReadCollection {
+        1
+    } else {
+        2
+    };
+    assert_eq!(
+        backend.authorization_batch_sizes(),
+        vec![invariant_permissions, 2, 2, 1]
+    );
 
     fixture.cleanup().await.unwrap();
     group
@@ -415,6 +484,7 @@ async fn non_pushdown_create_permission_filters_use_prospective_resources(
         .await
         .unwrap();
     let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
     for object in fixture.objects.iter().take(2) {
         backend.add_rule(MockAllowRule {
             group_id: group.id,
@@ -452,7 +522,7 @@ async fn non_pushdown_create_permission_filters_use_prospective_resources(
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["object_count"], 2);
-    assert_eq!(backend.authorization_batch_sizes(), vec![1, 2, 2, 1]);
+    assert_eq!(backend.authorization_batch_sizes(), vec![2, 2, 2, 1]);
 
     fixture.cleanup().await.unwrap();
     group
@@ -473,6 +543,7 @@ async fn denied_parent_permission_stops_before_object_authorization(
         .await
         .unwrap();
     let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
     for object in &fixture.objects {
         backend.add_rule(MockAllowRule {
             group_id: group.id,
@@ -497,7 +568,7 @@ async fn denied_parent_permission_stops_before_object_authorization(
     let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
 
     assert!(rows.is_empty());
-    assert_eq!(backend.authorization_batch_sizes(), vec![1]);
+    assert_eq!(backend.authorization_batch_sizes(), vec![2]);
 
     fixture.cleanup().await.unwrap();
     group
@@ -550,6 +621,59 @@ async fn non_pushdown_computed_selectors_are_not_disclosed_without_visible_objec
 }
 
 #[rstest::rstest]
+#[case("known")]
+#[case("disabled")]
+#[case("unknown")]
+#[tokio::test]
+async fn non_pushdown_computed_filters_are_not_disclosed_without_visible_objects(
+    #[future(awt)] test_context: TestContext,
+    #[case] selector: &str,
+) {
+    let fixture = fixture(&test_context, "external computed filter visibility").await;
+    let group = create_test_group(&test_context.pool).await;
+    group
+        .add_member_without_events(&test_context.pool, &test_context.normal_user)
+        .await
+        .unwrap();
+    for (key, enabled) in [("known", true), ("disabled", false)] {
+        create_shared_definition(
+            &test_context.pool,
+            fixture.class.id,
+            fixture.class.collection_id,
+            test_context.admin_user.id,
+            computed_definition(key, "/bucket", enabled),
+            &EventContext::system(),
+        )
+        .await
+        .unwrap();
+    }
+    let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
+
+    let response = get_with_permission_backend(
+        &test_context,
+        &test_context.normal_token,
+        backend,
+        &format!(
+            "/api/v1/classes/{}/object-aggregates?computed.shared.{selector}__equals=a&group_by=description",
+            fixture.class.id
+        ),
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+    assert!(rows.is_empty());
+
+    finish_active_rebuild(&test_context, fixture.class.id).await;
+    fixture.cleanup().await.unwrap();
+    group
+        .delete_without_events(&test_context.pool)
+        .await
+        .unwrap();
+}
+
+#[rstest::rstest]
 #[tokio::test]
 async fn non_pushdown_authorization_does_not_hold_the_computed_definition_lock(
     #[future(awt)] test_context: TestContext,
@@ -571,6 +695,7 @@ async fn non_pushdown_authorization_does_not_hold_the_computed_definition_lock(
     .await
     .unwrap();
     let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
     for object in &fixture.objects {
         backend.add_rule(MockAllowRule {
             group_id: group.id,
@@ -586,7 +711,7 @@ async fn non_pushdown_authorization_does_not_hold_the_computed_definition_lock(
     let actor_id = test_context.admin_user.id;
     let definition_id = created.definition.id;
     let definition_revision = created.definition.revision;
-    backend.set_authorization_hook(move || async move {
+    backend.set_authorization_hook_after_calls(1, move || async move {
         let context = EventContext::system();
         update_shared_definition(
             &pool,
@@ -638,6 +763,77 @@ async fn non_pushdown_authorization_does_not_hold_the_computed_definition_lock(
 
 #[rstest::rstest]
 #[tokio::test]
+async fn non_pushdown_computed_filters_apply_before_authorized_aggregation(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = fixture(&test_context, "external computed aggregate filter").await;
+    let group = create_test_group(&test_context.pool).await;
+    group
+        .add_member_without_events(&test_context.pool, &test_context.normal_user)
+        .await
+        .unwrap();
+    create_shared_definition(
+        &test_context.pool,
+        fixture.class.id,
+        fixture.class.collection_id,
+        test_context.admin_user.id,
+        serde_json::from_value(serde_json::json!({
+            "key": "external_status",
+            "label": "external_status",
+            "description": "",
+            "operation": {
+                "type": "first_non_null",
+                "paths": ["/missing?key", "/status"]
+            },
+            "result_type": "string",
+            "enabled": true
+        }))
+        .unwrap(),
+        &EventContext::system(),
+    )
+    .await
+    .unwrap();
+    let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
+    for object in &fixture.objects {
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(object.id),
+            attrs: ResourceAttrs::default(),
+        });
+    }
+
+    let response = get_with_permission_backend(
+        &test_context,
+        &test_context.normal_token,
+        backend,
+        &format!(
+            "/api/v1/classes/{}/object-aggregates?computed.shared.external_status__equals=active&group_by=description",
+            fixture.class.id
+        ),
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    assert_eq!(
+        header_value(&response, "Cache-Control").as_deref(),
+        Some("private, no-store")
+    );
+    let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+    assert_eq!(summed_count(&rows), 4);
+
+    finish_active_rebuild(&test_context, fixture.class.id).await;
+    fixture.cleanup().await.unwrap();
+    group
+        .delete_without_events(&test_context.pool)
+        .await
+        .unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
 async fn non_pushdown_permission_filters_respect_token_scopes(
     #[future(awt)] test_context: TestContext,
 ) {
@@ -648,6 +844,7 @@ async fn non_pushdown_permission_filters_respect_token_scopes(
         .await
         .unwrap();
     let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
     for action in [Permissions::ReadObject, Permissions::UpdateObject] {
         backend.add_rule(MockAllowRule {
             group_id: group.id,
@@ -660,7 +857,7 @@ async fn non_pushdown_permission_filters_respect_token_scopes(
     let token = scoped_token(
         &test_context.pool,
         test_context.normal_user.id,
-        &[Permissions::ReadObject],
+        &[Permissions::ReadObject, Permissions::ReadCollection],
     )
     .await;
 
@@ -681,6 +878,58 @@ async fn non_pushdown_permission_filters_respect_token_scopes(
     );
     let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
     assert!(rows.is_empty());
+
+    fixture.cleanup().await.unwrap();
+    group
+        .delete_without_events(&test_context.pool)
+        .await
+        .unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn non_pushdown_collection_read_respects_token_scopes(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = fixture(&test_context, "external collection permission scope").await;
+    let group = create_test_group(&test_context.pool).await;
+    group
+        .add_member_without_events(&test_context.pool, &test_context.normal_user)
+        .await
+        .unwrap();
+    let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
+    for object in &fixture.objects {
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(object.id),
+            attrs: ResourceAttrs::default(),
+        });
+    }
+    let token = scoped_token(
+        &test_context.pool,
+        test_context.normal_user.id,
+        &[Permissions::ReadObject],
+    )
+    .await;
+
+    let response = get_with_permission_backend(
+        &test_context,
+        &token,
+        backend.clone(),
+        &format!(
+            "/api/v1/classes/{}/object-aggregates?group_by=description",
+            fixture.class.id
+        ),
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+    assert!(rows.is_empty());
+    assert!(backend.authorization_batch_sizes().is_empty());
 
     fixture.cleanup().await.unwrap();
     group

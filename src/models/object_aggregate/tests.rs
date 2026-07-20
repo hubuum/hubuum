@@ -306,15 +306,26 @@ fn accepts_cursor_with_correct_scalar_value_type(
 }
 
 #[test]
-fn rejects_computed_source_filters() {
-    let error = parse_object_aggregate_query(
+fn parses_computed_source_filters() {
+    let query = parse_object_aggregate_query(
         "computed.shared.lifecycle__equals=active&group_by=description",
     )
-    .unwrap_err();
+    .unwrap();
 
-    assert!(
-        error
-            .to_string()
-            .contains("Computed fields are not supported")
-    );
+    assert!(query.has_computed_filter());
+    assert!(!query.has_personal_computed_filter());
+    assert!(query.uses_computed_values());
+}
+
+#[rstest::rstest]
+#[case(vec![Permissions::ReadObject])]
+#[case(vec![Permissions::ReadCollection])]
+fn aggregate_authorization_requires_object_and_collection_access(
+    #[case] permissions: Vec<Permissions>,
+) {
+    let error = ObjectAggregateAuthorization::new(permissions, None)
+        .err()
+        .expect("incomplete authorization must fail");
+
+    assert!(error.to_string().contains("ReadObject and ReadCollection"));
 }

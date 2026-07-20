@@ -177,6 +177,14 @@ struct ResolvedComputedQueryField {
 }
 
 impl ComputedQuerySnapshot {
+    pub(crate) const fn class_id(&self) -> i32 {
+        self.class_id
+    }
+
+    pub(crate) fn definitions(&self) -> &[ComputedFieldDefinition] {
+        &self.definitions
+    }
+
     fn query_field(&self, field: &FilterField) -> Result<&ResolvedComputedQueryField, ApiError> {
         let computed = field.computed_query().ok_or_else(|| {
             ApiError::InternalServerError(format!("Field '{field}' is not a computed field"))
@@ -317,6 +325,13 @@ pub(crate) fn computed_filter_predicate(
     param: &ParsedQueryParam,
     snapshot: &ComputedQuerySnapshot,
 ) -> Result<JsonSqlPredicate, ApiError> {
+    dynamic_sql_predicate(computed_filter_sql_component(param, snapshot)?)
+}
+
+pub(crate) fn computed_filter_sql_component(
+    param: &ParsedQueryParam,
+    snapshot: &ComputedQuerySnapshot,
+) -> Result<SQLComponent, ApiError> {
     if param.value.contains('\0') {
         return Err(ApiError::BadRequest(format!(
             "Filter value for computed field '{}' contains a null character",
@@ -361,7 +376,7 @@ pub(crate) fn computed_filter_predicate(
             }
         }
     };
-    dynamic_sql_predicate(component)
+    Ok(component)
 }
 
 fn computed_string_filter(

@@ -9,6 +9,7 @@ use super::accumulator::{AggregateRows, ObjectAggregateDatabaseRow, finish_aggre
 use super::candidate::ObjectAggregateCandidate;
 use super::computed::{ComputedAggregateDefinitions, computed_aggregate_payload};
 use super::filters::apply_object_aggregate_source_filters;
+use crate::db::traits::computed_field::{ComputedQuerySnapshot, computed_filter_sql_component};
 use crate::db::traits::search::JsonPredicateExt;
 use crate::db::{DbConnection, with_connection};
 use crate::errors::ApiError;
@@ -16,7 +17,7 @@ use crate::models::object_aggregate::{
     DecodedObjectAggregateCursor, ObjectAggregateDimension, ObjectAggregateScalarField,
     ObjectAggregateSort, ObjectAggregateSpec,
 };
-use crate::models::search::{FilterField, QueryParamsExt};
+use crate::models::search::{FilterField, QueryOptions, QueryParamsExt, SQLValue};
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::utilities::extensions::CustomStringExtensions;
 
@@ -24,6 +25,7 @@ use crate::utilities::extensions::CustomStringExtensions;
 pub(super) enum ObjectAggregateBindValue {
     Json(serde_json::Value),
     BigInt(i64),
+    Query(SQLValue),
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +51,18 @@ macro_rules! bind_object_aggregate_query {
             query = match bind {
                 ObjectAggregateBindValue::Json(value) => query.bind::<Jsonb, _>(value),
                 ObjectAggregateBindValue::BigInt(value) => query.bind::<BigInt, _>(value),
+                ObjectAggregateBindValue::Query(crate::models::search::SQLValue::String(value)) => {
+                    query.bind::<diesel::sql_types::Text, _>(value)
+                }
+                ObjectAggregateBindValue::Query(crate::models::search::SQLValue::Integer(
+                    value,
+                )) => query.bind::<diesel::sql_types::Integer, _>(value),
+                ObjectAggregateBindValue::Query(crate::models::search::SQLValue::Date(value)) => {
+                    query.bind::<diesel::sql_types::Timestamp, _>(value)
+                }
+                ObjectAggregateBindValue::Query(crate::models::search::SQLValue::Boolean(
+                    value,
+                )) => query.bind::<diesel::sql_types::Bool, _>(value),
             };
         }
         query
@@ -58,7 +72,7 @@ macro_rules! bind_object_aggregate_query {
 pub(super) use bind_object_aggregate_query;
 
 macro_rules! visible_filtered_object_query {
-    ($collection_id:expr, $query_options:expr) => {{
+    ($collection_id:expr, $query_options:expr, $computed_filter_snapshot:expr) => {{
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
@@ -68,13 +82,13 @@ macro_rules! visible_filtered_object_query {
         let mut query = hubuumobject
             .filter(object_collection_id.eq($collection_id))
             .into_boxed();
-        apply_object_aggregate_source_filters!(query, $query_options);
+        apply_object_aggregate_source_filters!(query, $query_options, $computed_filter_snapshot);
         query
     }};
 }
 
 macro_rules! visible_filtered_aggregate_query {
-    ($collection_id:expr, $query_options:expr, $sort_key_sql:expr) => {{
+    ($collection_id:expr, $query_options:expr, $sort_key_sql:expr, $computed_filter_snapshot:expr) => {{
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
@@ -86,7 +100,7 @@ macro_rules! visible_filtered_aggregate_query {
             .select((sql::<Jsonb>($sort_key_sql), sql::<BigInt>("COUNT(*)")))
             .into_boxed()
             .filter(object_collection_id.eq($collection_id));
-        apply_object_aggregate_source_filters!(query, $query_options);
+        apply_object_aggregate_source_filters!(query, $query_options, $computed_filter_snapshot);
         query
     }};
 }
@@ -100,11 +114,16 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
         paging,
         ..
     } = execution;
-    let query_options = paging.query_options;
-    let spec = paging.spec;
+    let query_options = &paging.query_options;
+    let spec = &paging.spec;
+    let computed_filter_snapshot = paging.computed_filter_snapshot.as_ref();
     let sort_key_sql = direct_aggregate_sort_key(spec);
     let total_count = if query_options.include_total {
-        let query = visible_filtered_object_query!(target.collection_id, query_options);
+        let query = visible_filtered_object_query!(
+            target.collection_id,
+            query_options,
+            computed_filter_snapshot
+        );
         with_connection(pool, async |connection| {
             query
                 .select(count(sql::<Jsonb>(&sort_key_sql)).aggregate_distinct())
@@ -116,8 +135,12 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
         SKIPPED_TOTAL_COUNT
     };
 
-    let mut query =
-        visible_filtered_aggregate_query!(target.collection_id, query_options, &sort_key_sql);
+    let mut query = visible_filtered_aggregate_query!(
+        target.collection_id,
+        query_options,
+        &sort_key_sql,
+        computed_filter_snapshot
+    );
     if let Some(cursor) = paging.decoded_cursor.as_ref() {
         query = query.having(sql::<Bool>(&inline_cursor_clause(
             spec.sort(),
@@ -159,20 +182,19 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
 pub(super) async fn aggregate_snapshot_rows(
     connection: &mut DbConnection,
     candidates: Vec<ObjectAggregateCandidate>,
-    spec: &ObjectAggregateSpec,
-    computed_definitions: &ComputedAggregateDefinitions,
+    plan: SnapshotAggregatePlan<'_>,
 ) -> Result<AggregateRows, ApiError> {
     if candidates.is_empty() {
         return Ok(AggregateRows::default());
     }
-    let (candidates, computed_payload) = if spec.has_computed_dimension() {
+    let (candidates, computed_payload) = if plan.spec.has_computed_dimension() {
         let (candidates, payload) =
-            computed_aggregate_payload(candidates, spec, computed_definitions)?;
+            computed_aggregate_payload(candidates, plan.spec, plan.computed_definitions)?;
         (candidates, Some(payload))
     } else {
         (candidates, None)
     };
-    let mut query = build_aggregate_ctes(candidates, computed_payload, spec)?;
+    let mut query = build_aggregate_ctes(candidates, computed_payload, &plan)?;
     query
         .sql
         .push_str("\nSELECT dimensions, sort_key, object_count FROM aggregate_rows");
@@ -187,10 +209,38 @@ pub(super) async fn aggregate_snapshot_rows(
     Ok(groups)
 }
 
+pub(super) struct SnapshotAggregatePlan<'a> {
+    spec: &'a ObjectAggregateSpec,
+    computed_definitions: &'a ComputedAggregateDefinitions,
+    computed_filters: Option<(&'a QueryOptions, &'a ComputedQuerySnapshot)>,
+}
+
+impl<'a> SnapshotAggregatePlan<'a> {
+    pub(super) fn new(
+        spec: &'a ObjectAggregateSpec,
+        computed_definitions: &'a ComputedAggregateDefinitions,
+    ) -> Self {
+        Self {
+            spec,
+            computed_definitions,
+            computed_filters: None,
+        }
+    }
+
+    pub(super) fn computed_filters(
+        mut self,
+        query_options: &'a QueryOptions,
+        snapshot: &'a ComputedQuerySnapshot,
+    ) -> Self {
+        self.computed_filters = Some((query_options, snapshot));
+        self
+    }
+}
+
 fn build_aggregate_ctes(
     candidates: Vec<ObjectAggregateCandidate>,
     computed_payload: Option<serde_json::Value>,
-    spec: &ObjectAggregateSpec,
+    plan: &SnapshotAggregatePlan<'_>,
 ) -> Result<ObjectAggregateSqlSpec, ApiError> {
     let candidates = serde_json::to_value(candidates).map_err(|error| {
         ApiError::InternalServerError(format!(
@@ -209,7 +259,14 @@ fn build_aggregate_ctes(
     } else {
         ", input.computed_values"
     };
-    let expressions = spec
+    let (computed_filter_clause, computed_filter_binds) = plan
+        .computed_filters
+        .map(|(query_options, snapshot)| computed_filter_clause(query_options, snapshot))
+        .transpose()?
+        .unwrap_or_default();
+    binds.extend(computed_filter_binds);
+    let expressions = plan
+        .spec
         .dimensions()
         .iter()
         .enumerate()
@@ -230,7 +287,8 @@ fn build_aggregate_ctes(
         .flat_map(|index| [format!("d{index}_state"), format!("d{index}_value")])
         .collect::<Vec<_>>()
         .join(", ");
-    let response_dimensions = spec
+    let response_dimensions = plan
+        .spec
         .dimensions()
         .iter()
         .enumerate()
@@ -246,9 +304,9 @@ fn build_aggregate_ctes(
     SELECT ?::jsonb AS objects{computed_input}
 ),
 visible_filtered_objects AS (
-    SELECT object.*{computed_column}
+    SELECT hubuumobject.*{computed_column}
     FROM query_input AS input
-    CROSS JOIN LATERAL jsonb_populate_recordset(NULL::hubuumobject, input.objects) AS object
+    CROSS JOIN LATERAL jsonb_populate_recordset(NULL::hubuumobject, input.objects) AS hubuumobject{computed_filter_clause}
 ),
 dimensioned_objects AS (
     SELECT
@@ -273,6 +331,34 @@ aggregate_rows AS (
 )"#
     );
     Ok(ObjectAggregateSqlSpec { sql, binds })
+}
+
+fn computed_filter_clause(
+    query_options: &QueryOptions,
+    snapshot: &ComputedQuerySnapshot,
+) -> Result<(String, Vec<ObjectAggregateBindValue>), ApiError> {
+    let mut clauses = Vec::new();
+    let mut binds = Vec::new();
+    for filter in query_options
+        .filters
+        .iter()
+        .filter(|filter| filter.field.computed_query().is_some())
+    {
+        let component = computed_filter_sql_component(filter, snapshot)?;
+        clauses.push(format!("({})", component.sql));
+        binds.extend(
+            component
+                .bind_variables
+                .into_iter()
+                .map(ObjectAggregateBindValue::Query),
+        );
+    }
+    let clause = if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("\n    WHERE {}", clauses.join(" AND "))
+    };
+    Ok((clause, binds))
 }
 
 fn dimension_sql(index: usize, dimension: &ObjectAggregateDimension) -> (String, String) {

@@ -8,6 +8,7 @@ mod sql;
 
 use super::{UserCollectionAccessors, UserPermissions};
 use crate::db::traits::authz::scope_allows;
+use crate::db::traits::computed_field::{ComputedQuerySnapshot, resolve_computed_query_fields};
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::object::HubuumObject;
@@ -29,9 +30,13 @@ use self::accumulator::{
     page_accumulated_aggregates, page_external_aggregates,
 };
 use self::authorization::{ExternalObjectAggregateAuthorizer, ObjectAggregatePermissionResources};
-use self::candidate::{ObjectAggregateCandidate, load_aggregate_candidate_batch};
+use self::candidate::{
+    ObjectAggregateCandidate, ObjectAggregateCandidateQuery, load_aggregate_candidate_batch,
+};
 use self::computed::{ComputedAggregateDefinitions, load_computed_aggregate_definitions};
-use self::sql::{aggregate_snapshot_rows, aggregate_visible_filtered_objects_with_sql};
+use self::sql::{
+    SnapshotAggregatePlan, aggregate_snapshot_rows, aggregate_visible_filtered_objects_with_sql,
+};
 
 #[cfg(not(feature = "integration-test-support"))]
 const OBJECT_AGGREGATE_CANDIDATE_BATCH_SIZE: usize = 500;
@@ -48,18 +53,50 @@ struct ObjectAggregateRouteTarget {
 struct ObjectAggregateExecution<'a> {
     pool: &'a DbPool,
     target: ObjectAggregateRouteTarget,
-    paging: ObjectAggregatePaging<'a>,
+    paging: ObjectAggregatePaging,
     personal_owner_id: Option<i32>,
     required_permissions: Vec<Permissions>,
     token_scopes: Option<&'a [Permissions]>,
 }
 
-struct ObjectAggregatePaging<'a> {
-    query_options: &'a QueryOptions,
-    spec: &'a ObjectAggregateSpec,
+struct ObjectAggregatePaging {
+    query_options: QueryOptions,
+    spec: ObjectAggregateSpec,
     decoded_cursor: Option<DecodedObjectAggregateCursor>,
     effective_limit: usize,
     cursor_budget: ObjectAggregateCursorBudget,
+    computed_filter_snapshot: Option<ComputedQuerySnapshot>,
+}
+
+impl ObjectAggregatePaging {
+    fn has_computed_filter(&self) -> bool {
+        self.query_options
+            .filters
+            .iter()
+            .any(|filter| filter.field.computed_query().is_some())
+    }
+
+    async fn resolve_computed_filters(
+        &mut self,
+        pool: &DbPool,
+        class_id: i32,
+        personal_owner_id: Option<i32>,
+    ) -> Result<(), ApiError> {
+        if !self.has_computed_filter() {
+            return Ok(());
+        }
+        let mut no_sorts = [];
+        let snapshot = resolve_computed_query_fields(
+            pool,
+            class_id,
+            personal_owner_id,
+            &mut self.query_options.filters,
+            &mut no_sorts,
+        )
+        .await?;
+        self.computed_filter_snapshot = Some(snapshot);
+        Ok(())
+    }
 }
 
 pub trait ObjectAggregateBackend: UserCollectionAccessors {
@@ -105,11 +142,12 @@ pub trait ObjectAggregateBackend: UserCollectionAccessors {
                 collection_id: collection_id.id(),
             },
             paging: ObjectAggregatePaging {
-                query_options: &query_options,
-                spec: &spec,
+                query_options,
+                spec,
                 decoded_cursor,
                 effective_limit,
                 cursor_budget,
+                computed_filter_snapshot: None,
             },
             personal_owner_id: personal_owner_id.map(UserID::id),
             required_permissions,
@@ -140,16 +178,8 @@ async fn aggregate_objects_with_local_authorization<U>(
 where
     U: UserCollectionAccessors + ?Sized,
 {
-    if !execution
-        .required_permissions
-        .contains(&Permissions::ReadCollection)
-    {
-        execution
-            .required_permissions
-            .push(Permissions::ReadCollection);
-    }
     if !scope_allows(execution.token_scopes, &execution.required_permissions) {
-        return empty_aggregate_page(execution.paging.query_options);
+        return empty_aggregate_page(&execution.paging.query_options);
     }
     let collection = CollectionID::new(execution.target.collection_id)?;
     match user
@@ -162,10 +192,20 @@ where
         .await
     {
         Ok(()) => {}
-        Err(ApiError::Forbidden(_)) => return empty_aggregate_page(execution.paging.query_options),
+        Err(ApiError::Forbidden(_)) => {
+            return empty_aggregate_page(&execution.paging.query_options);
+        }
         Err(error) => return Err(error),
     }
 
+    execution
+        .paging
+        .resolve_computed_filters(
+            execution.pool,
+            execution.target.class_id,
+            execution.personal_owner_id,
+        )
+        .await?;
     if !execution.paging.spec.has_computed_dimension() {
         return aggregate_visible_filtered_objects_with_sql(execution).await;
     }
@@ -187,19 +227,25 @@ async fn aggregate_visible_filtered_objects_with_local_batches(
         async |connection| -> Result<ObjectAggregatePage, ApiError> {
             create_aggregate_accumulator(connection).await?;
             let mut computed_definitions = None;
-            let mut chunk_options = object_aggregate_chunk_options(paging.query_options);
+            let mut chunk_options = object_aggregate_chunk_options(&paging.query_options);
             let mut object_cursor = None;
 
             loop {
                 chunk_options.cursor.clone_from(&object_cursor);
                 let database_options = prepare_db_pagination::<HubuumObject>(&chunk_options)?;
-                let candidates = load_aggregate_candidate_batch(
-                    connection,
+                let candidate_query = ObjectAggregateCandidateQuery::new(
                     &database_options,
                     target.collection_id,
-                    paging.spec,
-                )
-                .await?;
+                    &paging.spec,
+                );
+                let candidate_query =
+                    if let Some(snapshot) = paging.computed_filter_snapshot.as_ref() {
+                        candidate_query.resolved_computed_filters(snapshot)
+                    } else {
+                        candidate_query
+                    };
+                let candidates =
+                    load_aggregate_candidate_batch(connection, candidate_query).await?;
                 let candidate_page = candidates.into_page(&chunk_options)?;
                 validate_candidate_target(&candidate_page.items, &target)?;
                 if !candidate_page.items.is_empty() && computed_definitions.is_none() {
@@ -207,20 +253,17 @@ async fn aggregate_visible_filtered_objects_with_local_batches(
                         load_computed_aggregate_definitions(
                             connection,
                             target.class_id,
-                            paging.spec,
+                            &paging.spec,
                             personal_owner_id,
+                            paging.computed_filter_snapshot.as_ref(),
                         )
                         .await?,
                     );
                 }
                 if let Some(definitions) = computed_definitions.as_ref() {
-                    let grouped = aggregate_snapshot_rows(
-                        connection,
-                        candidate_page.items,
-                        paging.spec,
-                        definitions,
-                    )
-                    .await?;
+                    let plan = SnapshotAggregatePlan::new(&paging.spec, definitions);
+                    let grouped =
+                        aggregate_snapshot_rows(connection, candidate_page.items, plan).await?;
                     merge_aggregate_rows(connection, grouped).await?;
                 }
 
@@ -244,63 +287,85 @@ async fn aggregate_visible_filtered_objects_with_external_batches<U>(
 where
     U: UserCollectionAccessors + ?Sized,
 {
+    if !scope_allows(execution.token_scopes, &execution.required_permissions) {
+        return empty_aggregate_page(&execution.paging.query_options);
+    }
+
+    let principal = PrincipalRef::load(execution.pool, user).await?;
+    let resources = with_connection(execution.pool, async |connection| {
+        ObjectAggregatePermissionResources::load(connection, &execution.target).await
+    })
+    .await?;
+    {
+        let authorizer = ExternalObjectAggregateAuthorizer::new(
+            backend,
+            &principal,
+            &execution.required_permissions,
+            &resources,
+        )?;
+        if !authorizer.authorize_invariants().await? {
+            return empty_aggregate_page(&execution.paging.query_options);
+        }
+    }
     let ObjectAggregateExecution {
         pool,
         target,
-        paging,
+        mut paging,
         personal_owner_id,
         required_permissions,
-        token_scopes,
+        token_scopes: _,
     } = execution;
-    if !scope_allows(token_scopes, &required_permissions) {
-        return empty_aggregate_page(paging.query_options);
-    }
-
-    let principal = PrincipalRef::load(pool, user).await?;
-    let resources = with_connection(pool, async |connection| {
-        ObjectAggregatePermissionResources::load(connection, &target).await
-    })
-    .await?;
     let authorizer = ExternalObjectAggregateAuthorizer::new(
         backend,
         &principal,
         &required_permissions,
         &resources,
     )?;
-    if !authorizer.authorize_invariants().await? {
-        return empty_aggregate_page(paging.query_options);
-    }
     let mut computed_definitions =
         (!paging.spec.has_computed_dimension()).then(ComputedAggregateDefinitions::default);
     let mut accumulator = ExternalAggregateAccumulator::default();
-    let mut chunk_options = object_aggregate_chunk_options(paging.query_options);
+    let filters_computed_values = paging.has_computed_filter();
+    let mut chunk_options = object_aggregate_authorization_chunk_options(&paging.query_options);
     let mut object_cursor = None;
 
     loop {
         chunk_options.cursor.clone_from(&object_cursor);
         let database_options = prepare_db_pagination::<HubuumObject>(&chunk_options)?;
+        let candidate_query = ObjectAggregateCandidateQuery::new(
+            &database_options,
+            target.collection_id,
+            &paging.spec,
+        );
+        let candidate_query = if filters_computed_values {
+            candidate_query.include_computed_filter_data()
+        } else {
+            candidate_query
+        };
         let candidates = with_connection(pool, async |connection| {
-            load_aggregate_candidate_batch(
-                connection,
-                &database_options,
-                target.collection_id,
-                paging.spec,
-            )
-            .await
+            load_aggregate_candidate_batch(connection, candidate_query).await
         })
         .await?;
         let candidate_page = candidates.into_page(&chunk_options)?;
         validate_candidate_target(&candidate_page.items, &target)?;
         let authorized = authorizer.authorize(candidate_page.items).await?;
 
+        if !authorized.is_empty()
+            && filters_computed_values
+            && paging.computed_filter_snapshot.is_none()
+        {
+            paging
+                .resolve_computed_filters(pool, target.class_id, personal_owner_id)
+                .await?;
+        }
         if !authorized.is_empty() && computed_definitions.is_none() {
             computed_definitions = Some(
                 with_connection(pool, async |connection| {
                     load_computed_aggregate_definitions(
                         connection,
                         target.class_id,
-                        paging.spec,
+                        &paging.spec,
                         personal_owner_id,
+                        paging.computed_filter_snapshot.as_ref(),
                     )
                     .await
                 })
@@ -308,8 +373,14 @@ where
             );
         }
         if let Some(definitions) = computed_definitions.as_ref() {
+            let plan = SnapshotAggregatePlan::new(&paging.spec, definitions);
+            let plan = if let Some(snapshot) = paging.computed_filter_snapshot.as_ref() {
+                plan.computed_filters(&paging.query_options, snapshot)
+            } else {
+                plan
+            };
             let grouped = with_connection(pool, async |connection| {
-                aggregate_snapshot_rows(connection, authorized, paging.spec, definitions).await
+                aggregate_snapshot_rows(connection, authorized, plan).await
             })
             .await?;
             accumulator.add_rows(pool, grouped).await?;
@@ -323,7 +394,7 @@ where
 
     let groups = accumulator.finish(pool).await?;
     if groups.is_empty() {
-        return empty_aggregate_page(paging.query_options);
+        return empty_aggregate_page(&paging.query_options);
     }
     page_external_aggregates(pool, groups, &paging).await
 }
@@ -336,6 +407,14 @@ fn object_aggregate_chunk_options(query_options: &QueryOptions) -> QueryOptions 
     }];
     chunk_options.limit = Some(OBJECT_AGGREGATE_CANDIDATE_BATCH_SIZE);
     chunk_options.include_total = false;
+    chunk_options
+}
+
+fn object_aggregate_authorization_chunk_options(query_options: &QueryOptions) -> QueryOptions {
+    let mut chunk_options = object_aggregate_chunk_options(query_options);
+    chunk_options
+        .filters
+        .retain(|filter| filter.field.computed_query().is_none());
     chunk_options
 }
 

@@ -1,10 +1,22 @@
 macro_rules! apply_object_aggregate_source_filters {
-    ($query:ident, $query_options:expr) => {{
+    ($query:ident, $query_options:expr, $computed_filter_snapshot:expr) => {{
         let query_params = $query_options.filters.clone();
         for param in query_params.json_datas(FilterField::JsonData)? {
             $query = $query.filter(param.as_json_predicate()?);
         }
         for param in query_params {
+            if param.field.computed_query().is_some() {
+                let snapshot = $computed_filter_snapshot.ok_or_else(|| {
+                    ApiError::InternalServerError(
+                        "Computed object aggregate filter is missing its resolved query snapshot"
+                            .to_string(),
+                    )
+                })?;
+                $query = $query.filter(
+                    crate::db::traits::computed_field::computed_filter_predicate(&param, snapshot)?,
+                );
+                continue;
+            }
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => crate::numeric_search!($query, param, operator, object_id),

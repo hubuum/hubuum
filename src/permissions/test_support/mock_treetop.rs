@@ -188,6 +188,11 @@ const ADMIN_ACTION_MARKER: Permissions = Permissions::ReadCollection;
 
 type AuthorizationHook = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
+struct DeferredAuthorizationHook {
+    calls_to_skip: usize,
+    hook: AuthorizationHook,
+}
+
 #[derive(Default)]
 pub struct MockTreetopBackend {
     rules: Mutex<Vec<MockAllowRule>>,
@@ -197,7 +202,7 @@ pub struct MockTreetopBackend {
     /// NotImplemented (matching the previous behavior). Set this in
     /// tests that want to exercise the groups-listing path.
     group_candidates: Mutex<Option<Vec<Group>>>,
-    authorization_hook: Mutex<Option<AuthorizationHook>>,
+    authorization_hook: Mutex<Option<DeferredAuthorizationHook>>,
     authorization_batch_sizes: Mutex<Vec<usize>>,
 }
 
@@ -246,7 +251,18 @@ impl MockTreetopBackend {
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        *self.authorization_hook.lock().unwrap() = Some(Box::new(move || Box::pin(hook())));
+        self.set_authorization_hook_after_calls(0, hook);
+    }
+
+    pub fn set_authorization_hook_after_calls<F, Fut>(&self, calls_to_skip: usize, hook: F)
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        *self.authorization_hook.lock().unwrap() = Some(DeferredAuthorizationHook {
+            calls_to_skip,
+            hook: Box::new(move || Box::pin(hook())),
+        });
     }
 
     pub fn authorization_batch_sizes(&self) -> Vec<usize> {
@@ -352,7 +368,20 @@ impl PermissionBackend for MockTreetopBackend {
             .lock()
             .unwrap()
             .push(requests.len());
-        let hook = self.authorization_hook.lock().unwrap().take();
+        let hook = {
+            let mut deferred = self.authorization_hook.lock().unwrap();
+            if deferred
+                .as_ref()
+                .is_some_and(|hook| hook.calls_to_skip == 0)
+            {
+                deferred.take().map(|hook| hook.hook)
+            } else {
+                if let Some(hook) = deferred.as_mut() {
+                    hook.calls_to_skip -= 1;
+                }
+                None
+            }
+        };
         if let Some(hook) = hook {
             hook().await;
         }

@@ -1420,7 +1420,7 @@
           "classes"
         ],
         "summary": "Aggregate objects in a class by class name",
-        "description": "Name-addressed alias for permission-scoped object aggregation. Numeric-looking class names remain names.",
+        "description": "Name-addressed alias for permission-scoped object aggregation. Numeric-looking class names remain names. Normal object filters and up to two enabled shared or owned personal computed filters are applied before grouping.",
         "operationId": "getApiV1ClassesByNameByClassNameObjectAggregates",
         "parameters": [
           {
@@ -1469,7 +1469,7 @@
             }
           },
           "400": {
-            "description": "Invalid dimension, path, sort, cursor, or computed selector",
+            "description": "Invalid filter, dimension, path, sort, cursor, or computed selector",
             "content": {
               "application/json": {
                 "schema": {
@@ -4173,7 +4173,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Object Aggregates",
-        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/object-aggregates.",
+        "description": "Permission-scoped object aggregation. Normal object filters and up to two enabled shared or owned personal computed filters are applied before grouping.",
         "operationId": "getApiV1ClassesByClassIdObjectAggregates",
         "parameters": [
           {
@@ -4223,7 +4223,7 @@
             }
           },
           "400": {
-            "description": "Invalid dimension, path, sort, cursor, or computed selector",
+            "description": "Invalid filter, dimension, path, sort, cursor, or computed selector",
             "content": {
               "application/json": {
                 "schema": {

@@ -25,6 +25,7 @@ use crate::traits::{Search, SelfAccessors};
     get,
     path = "/api/v1/classes/{class_id}/object-aggregates",
     tag = "classes",
+    description = "Permission-scoped object aggregation. Normal object filters and up to two enabled shared or owned personal computed filters are applied before grouping.",
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Class ID"),
@@ -33,7 +34,7 @@ use crate::traits::{Search, SelfAccessors};
     ),
     responses(
         (status = 200, description = "Permission-scoped aggregated object counts. Value states distinguish value, JSON null, a missing JSON path, and an unavailable computed result.", body = [ObjectAggregateRow]),
-        (status = 400, description = "Invalid dimension, path, sort, cursor, or computed selector", body = ApiErrorResponse),
+        (status = 400, description = "Invalid filter, dimension, path, sort, cursor, or computed selector", body = ApiErrorResponse),
         (status = 413, description = "An aggregate value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate aggregates exceed their memory bounds", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse)
@@ -59,7 +60,7 @@ pub(crate) async fn get_object_aggregates(
     path = "/api/v1/classes/by-name/{class_name}/object-aggregates",
     tag = "classes",
     summary = "Aggregate objects in a class by class name",
-    description = "Name-addressed alias for permission-scoped object aggregation. Numeric-looking class names remain names.",
+    description = "Name-addressed alias for permission-scoped object aggregation. Numeric-looking class names remain names. Normal object filters and up to two enabled shared or owned personal computed filters are applied before grouping.",
     security(("bearer_auth" = [])),
     params(
         ("class_name" = String, Path, description = "Globally unique class name"),
@@ -68,7 +69,7 @@ pub(crate) async fn get_object_aggregates(
     ),
     responses(
         (status = 200, description = "Permission-scoped aggregated object counts. Value states distinguish value, JSON null, a missing JSON path, and an unavailable computed result.", body = [ObjectAggregateRow]),
-        (status = 400, description = "Invalid dimension, path, sort, cursor, or computed selector", body = ApiErrorResponse),
+        (status = 400, description = "Invalid filter, dimension, path, sort, cursor, or computed selector", body = ApiErrorResponse),
         (status = 413, description = "An aggregate value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate aggregates exceed their memory bounds", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse)
@@ -97,13 +98,14 @@ async fn read_object_aggregates(
     let class = class_target.class();
     let aggregate_target = ObjectAggregateTarget::from_class(class)?;
     let query = parse_object_aggregate_query(req.query_string())?;
+    let computed = query.uses_computed_values();
     let cursor_budget =
         ObjectAggregateCursorBudget::for_request_target(req.path(), req.query_string())?;
 
-    let personal_owner_id = if query.spec().has_personal_computed_dimension() {
+    let personal_owner_id = if query.requires_personal_owner() {
         if !requestor.principal.is_human() {
             return Err(ApiError::BadRequest(
-                "Service accounts cannot group by personal computed fields".to_string(),
+                "Service accounts cannot filter or group by personal computed fields".to_string(),
             ));
         }
         Some(UserID::new(
@@ -128,14 +130,13 @@ async fn read_object_aggregates(
     );
 
     let mut required = query.query_options().filters.permissions()?;
-    required.ensure_contains(&[Permissions::ReadObject]);
+    required.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
     let required = required.iter().copied().collect::<Vec<_>>();
     let authorization = ObjectAggregateAuthorization::new(
         required,
         requestor.scopes().map(<[Permissions]>::to_vec),
     )?;
 
-    let computed = query.spec().has_computed_dimension();
     let effective_limit = effective_page_limit(query.query_options())?;
     let mut request = ObjectAggregateBackendRequest::builder(aggregate_target, query)
         .authorization(authorization)

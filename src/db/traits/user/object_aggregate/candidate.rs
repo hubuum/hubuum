@@ -7,6 +7,7 @@ use serde::Serialize;
 use super::bounded_json::ObjectAggregateJsonBound;
 use super::filters::apply_object_aggregate_source_filters;
 use crate::db::DbConnection;
+use crate::db::traits::computed_field::ComputedQuerySnapshot;
 use crate::db::traits::search::JsonPredicateExt;
 use crate::errors::ApiError;
 use crate::models::HubuumObject;
@@ -59,6 +60,39 @@ pub(super) struct ObjectAggregateCandidateBatch {
     stopped_by_size: bool,
 }
 
+pub(super) struct ObjectAggregateCandidateQuery<'a> {
+    query_options: &'a QueryOptions,
+    collection_id: i32,
+    include_object_data: bool,
+    computed_filter_snapshot: Option<&'a ComputedQuerySnapshot>,
+}
+
+impl<'a> ObjectAggregateCandidateQuery<'a> {
+    pub(super) fn new(
+        query_options: &'a QueryOptions,
+        collection_id: i32,
+        spec: &ObjectAggregateSpec,
+    ) -> Self {
+        Self {
+            query_options,
+            collection_id,
+            include_object_data: spec.requires_object_data(),
+            computed_filter_snapshot: None,
+        }
+    }
+
+    pub(super) fn include_computed_filter_data(mut self) -> Self {
+        self.include_object_data = true;
+        self
+    }
+
+    pub(super) fn resolved_computed_filters(mut self, snapshot: &'a ComputedQuerySnapshot) -> Self {
+        self.computed_filter_snapshot = Some(snapshot);
+        self.include_object_data = true;
+        self
+    }
+}
+
 impl ObjectAggregateCandidateBatch {
     pub(super) fn into_page(
         self,
@@ -74,9 +108,7 @@ impl ObjectAggregateCandidateBatch {
 
 pub(super) async fn load_aggregate_candidate_batch(
     connection: &mut DbConnection,
-    query_options: &QueryOptions,
-    collection_id: i32,
-    spec: &ObjectAggregateSpec,
+    candidate_query: ObjectAggregateCandidateQuery<'_>,
 ) -> Result<ObjectAggregateCandidateBatch, ApiError> {
     use crate::schema::hubuumobject::dsl::{
         collection_id as object_collection_id, created_at as object_created_at,
@@ -84,12 +116,18 @@ pub(super) async fn load_aggregate_candidate_batch(
         name as object_name, updated_at as object_updated_at,
     };
 
+    let ObjectAggregateCandidateQuery {
+        query_options,
+        collection_id,
+        include_object_data,
+        computed_filter_snapshot,
+    } = candidate_query;
     let mut query = hubuumobject
         .filter(object_collection_id.eq(collection_id))
         .into_boxed();
-    apply_object_aggregate_source_filters!(query, query_options);
+    apply_object_aggregate_source_filters!(query, query_options, computed_filter_snapshot);
     crate::apply_query_options!(query, query_options, HubuumObject);
-    let data_projection = if spec.requires_object_data() {
+    let data_projection = if include_object_data {
         "data"
     } else {
         "NULL::jsonb"

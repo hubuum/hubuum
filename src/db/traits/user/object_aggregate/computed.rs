@@ -4,7 +4,7 @@ use hubuum_computed_fields::{EvaluationResult, MAX_PERSONAL_DEFINITIONS, MAX_SHA
 
 use super::candidate::ObjectAggregateCandidate;
 use crate::db::DbConnection;
-use crate::db::traits::computed_field::evaluate_definitions;
+use crate::db::traits::computed_field::{ComputedQuerySnapshot, evaluate_definitions};
 use crate::errors::ApiError;
 use crate::models::computed_field::{
     COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ComputedFieldDefinition,
@@ -23,6 +23,7 @@ pub(super) async fn load_computed_aggregate_definitions(
     class_id_value: i32,
     spec: &ObjectAggregateSpec,
     personal_owner_id: Option<i32>,
+    computed_filter_snapshot: Option<&ComputedQuerySnapshot>,
 ) -> Result<ComputedAggregateDefinitions, ApiError> {
     let selectors = spec
         .dimensions()
@@ -43,14 +44,29 @@ pub(super) async fn load_computed_aggregate_definitions(
         .filter(|selector| selector.scope() == ComputedFieldScope::Personal)
         .map(|selector| selector.key().to_string())
         .collect::<Vec<_>>();
-    let definitions = load_selected_definitions(
-        connection,
-        class_id_value,
-        &shared_keys,
-        &personal_keys,
-        personal_owner_id,
-    )
-    .await?;
+    if computed_filter_snapshot.is_some_and(|snapshot| snapshot.class_id() != class_id_value) {
+        return Err(ApiError::InternalServerError(
+            "Computed object aggregate filter snapshot belongs to a different class".to_string(),
+        ));
+    }
+    let loaded_definitions = if computed_filter_snapshot.is_none() {
+        Some(
+            load_selected_definitions(
+                connection,
+                class_id_value,
+                &shared_keys,
+                &personal_keys,
+                personal_owner_id,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let definitions = computed_filter_snapshot
+        .map(ComputedQuerySnapshot::definitions)
+        .or(loaded_definitions.as_deref())
+        .unwrap_or_default();
 
     let mut selected = ComputedAggregateDefinitions::default();
     for selector in selectors {

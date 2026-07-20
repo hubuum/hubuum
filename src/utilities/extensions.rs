@@ -49,9 +49,10 @@ pub trait CustomStringExtensions {
     /// * A vector of integers or ApiError::BadRequest if the value is invalid
     fn as_integer(&self) -> Result<Vec<i32>, ApiError>;
 
-    /// ## Replace ? with $n in a string
+    /// ## Replace unquoted ? placeholders with $n in a string
     ///
-    /// This is used to replace the ? placeholders in a query with the $n placeholders
+    /// This replaces query placeholders while preserving question marks inside
+    /// single-quoted SQL literals.
     ///
     /// ### Returns
     ///
@@ -66,11 +67,25 @@ impl<T: AsRef<str>> CustomStringExtensions for T {
 
     fn replace_question_mark_with_indexed_n(&self) -> String {
         let mut n = 1;
-        let mut result = self.as_ref().to_string();
-        while let Some(pos) = result.find('?') {
-            // Replace '?' with '$n'
-            result.replace_range(pos..pos + 1, &format!("${n}"));
-            n += 1;
+        let mut result = String::with_capacity(self.as_ref().len());
+        let mut characters = self.as_ref().chars().peekable();
+        let mut in_single_quoted_string = false;
+        while let Some(character) = characters.next() {
+            if character == '\'' {
+                result.push(character);
+                if in_single_quoted_string && characters.peek() == Some(&'\'') {
+                    if let Some(escaped_quote) = characters.next() {
+                        result.push(escaped_quote);
+                    }
+                } else {
+                    in_single_quoted_string = !in_single_quoted_string;
+                }
+            } else if character == '?' && !in_single_quoted_string {
+                result.push_str(&format!("${n}"));
+                n += 1;
+            } else {
+                result.push(character);
+            }
         }
         result
     }
@@ -158,4 +173,19 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, ApiError> {
             ApiError::InvalidIntegerRange(message)
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CustomStringExtensions;
+
+    #[test]
+    fn placeholder_rewriting_ignores_question_marks_in_sql_strings() {
+        let sql = "scope = '[{\"path\":\"/answer?\"}]' AND escaped = 'it''s?' AND value = ?";
+
+        assert_eq!(
+            sql.replace_question_mark_with_indexed_n(),
+            "scope = '[{\"path\":\"/answer?\"}]' AND escaped = 'it''s?' AND value = $1"
+        );
+    }
 }

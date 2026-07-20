@@ -13,7 +13,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `GET /api/v1/classes/{class_id}/object-aggregates` and its numeric-safe
   `/api/v1/classes/by-name/{class_name}/object-aggregates` alias, with one to
   three scalar, nested JSON, shared computed, or owned personal computed
-  dimensions, deterministic cursor pagination, explicit
+  dimensions, typed shared and owned personal computed source filters,
+  deterministic cursor pagination, explicit
   null/missing/unavailable states, aggregate-cardinality totals, byte-bounded
   source snapshots and external aggregation, and replay-safe cursor transport
   budgets.

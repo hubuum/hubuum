@@ -42,7 +42,9 @@ pub use materialization::{
 pub(crate) use materialization::{evaluate_definitions, materialize_object_in_transaction};
 use materialization::{shared_definitions_conn, upsert_materialized};
 pub use query::{ComputedQuerySnapshot, resolve_computed_query_fields};
-pub(crate) use query::{computed_filter_predicate, object_cursor_sql_fields};
+pub(crate) use query::{
+    computed_filter_predicate, computed_filter_sql_component, object_cursor_sql_fields,
+};
 #[cfg(test)]
 use query::{validate_computed_filter_count, validate_computed_query_count};
 pub(crate) use rebuild::{

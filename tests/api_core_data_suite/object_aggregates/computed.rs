@@ -39,6 +39,47 @@ async fn shared_computed_groups_evaluate_snapshots_and_use_unavailable_bucket(
     fixture.cleanup().await.unwrap();
 }
 
+#[rstest::rstest]
+#[tokio::test]
+async fn shared_computed_filters_apply_before_scalar_aggregation(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = fixture(&test_context, "shared computed aggregate filter").await;
+    create_shared_definition(
+        &test_context.pool,
+        fixture.class.id,
+        fixture.class.collection_id,
+        test_context.admin_user.id,
+        computed_definition("filter_status", "/status", true),
+        &EventContext::system(),
+    )
+    .await
+    .unwrap();
+
+    let page = aggregate_rows(
+        &test_context,
+        &fixture,
+        &test_context.admin_token,
+        "computed.shared.filter_status__equals=active&group_by=description",
+    )
+    .await;
+    let count_for = |description: &str| {
+        page.rows
+            .iter()
+            .find(|row| row["dimensions"][0]["value"] == description)
+            .map(|row| row["object_count"].as_i64().unwrap())
+    };
+
+    assert_eq!(summed_count(&page.rows), 4);
+    assert_eq!(count_for("alpha"), Some(2));
+    assert_eq!(count_for("beta"), Some(1));
+    assert_eq!(count_for("gamma"), Some(1));
+    assert_eq!(page.cache_control.as_deref(), Some("private, no-store"));
+
+    finish_active_rebuild(&test_context, fixture.class.id).await;
+    fixture.cleanup().await.unwrap();
+}
+
 #[cfg(feature = "integration-test-support")]
 #[rstest::rstest]
 #[tokio::test]
@@ -120,6 +161,41 @@ async fn personal_computed_grouping_uses_the_requesting_owners_definition(
     .await;
 
     assert_eq!(summed_count(&page.rows), 5);
+
+    fixture.cleanup().await.unwrap();
+    group
+        .delete_without_events(&test_context.pool)
+        .await
+        .unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn personal_computed_filters_use_the_requesting_owners_definition(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = fixture(&test_context, "owned personal computed aggregate filter").await;
+    let group = grant_normal_user_read_access(&test_context, &fixture).await;
+    create_personal_definition(
+        &test_context.pool,
+        fixture.class.id,
+        test_context.normal_user.id,
+        computed_definition("filter_priority", "/bucket", true),
+    )
+    .await
+    .unwrap();
+
+    let page = aggregate_rows(
+        &test_context,
+        &fixture,
+        &test_context.normal_token,
+        "computed.personal.filter_priority__equals=a&group_by=description",
+    )
+    .await;
+
+    assert_eq!(summed_count(&page.rows), 2);
+    assert_eq!(page.rows.len(), 2);
+    assert_eq!(page.cache_control.as_deref(), Some("private, no-store"));
 
     fixture.cleanup().await.unwrap();
     group

@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use crate::errors::ApiError;
 use crate::models::search::{
     ComputedFieldScope, FilterField, QueryOptions, QueryParamsExt, SearchOperator,
-    parse_query_parameter_with_passthrough,
+    parse_query_parameter_with_computed_filters_and_passthrough,
 };
 use crate::models::{CollectionID, HubuumClass, HubuumClassID, Permissions, UserID};
 
@@ -571,6 +571,30 @@ impl ObjectAggregateQuery {
     pub const fn spec(&self) -> &ObjectAggregateSpec {
         &self.spec
     }
+
+    pub fn has_computed_filter(&self) -> bool {
+        self.query_options
+            .filters
+            .iter()
+            .any(|filter| filter.field.computed_query().is_some())
+    }
+
+    pub fn has_personal_computed_filter(&self) -> bool {
+        self.query_options.filters.iter().any(|filter| {
+            filter
+                .field
+                .computed_query()
+                .is_some_and(|field| field.scope() == ComputedFieldScope::Personal)
+        })
+    }
+
+    pub fn uses_computed_values(&self) -> bool {
+        self.spec.has_computed_dimension() || self.has_computed_filter()
+    }
+
+    pub fn requires_personal_owner(&self) -> bool {
+        self.spec.has_personal_computed_dimension() || self.has_personal_computed_filter()
+    }
 }
 
 pub struct ObjectAggregateBackendRequest {
@@ -609,9 +633,12 @@ impl ObjectAggregateAuthorization {
         required_permissions: Vec<Permissions>,
         token_scopes: Option<Vec<Permissions>>,
     ) -> Result<Self, ApiError> {
-        if !required_permissions.contains(&Permissions::ReadObject) {
+        if !required_permissions.contains(&Permissions::ReadObject)
+            || !required_permissions.contains(&Permissions::ReadCollection)
+        {
             return Err(ApiError::BadRequest(
-                "Object aggregation authorization must require ReadObject".to_string(),
+                "Object aggregation authorization must require ReadObject and ReadCollection"
+                    .to_string(),
             ));
         }
         Ok(Self {
@@ -689,9 +716,16 @@ impl ObjectAggregateBackendRequestBuilder {
             &self.target.collection_id.id().to_string(),
         );
         let (query_options, spec) = self.query.into_parts();
-        if spec.has_personal_computed_dimension() != self.personal_owner_id.is_some() {
+        let requires_personal_owner = spec.has_personal_computed_dimension()
+            || query_options.filters.iter().any(|filter| {
+                filter
+                    .field
+                    .computed_query()
+                    .is_some_and(|field| field.scope() == ComputedFieldScope::Personal)
+            });
+        if requires_personal_owner != self.personal_owner_id.is_some() {
             return Err(ApiError::InternalServerError(
-                "Personal computed grouping requires exactly one typed owner".to_string(),
+                "Personal computed aggregation requires exactly one typed owner".to_string(),
             ));
         }
         Ok(ObjectAggregateBackendRequest {
@@ -707,7 +741,10 @@ impl ObjectAggregateBackendRequestBuilder {
 
 pub fn parse_object_aggregate_query(query_string: &str) -> Result<ObjectAggregateQuery, ApiError> {
     let (query_options, mut passthrough) =
-        parse_query_parameter_with_passthrough(query_string, &["group_by", "sort"])?;
+        parse_query_parameter_with_computed_filters_and_passthrough(
+            query_string,
+            &["group_by", "sort"],
+        )?;
     if !query_options.sort.is_empty() {
         return Err(ApiError::BadRequest(
             "Object-list sort fields are not valid for grouped results; use sort=dimensions.asc|desc or sort=object_count.asc|desc"

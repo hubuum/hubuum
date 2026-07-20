@@ -105,16 +105,17 @@ Notes:
 
 ## Computed filtering
 
-Class object lists can filter enabled computed fields with the same scope and
-alias names used for computed sorting:
+Class object lists and class object-aggregate queries can filter enabled
+computed fields with the same scope and alias names used for computed sorting:
 
 ```text
 GET /api/v1/classes/12/?computed.shared.display_name__icontains=edge
 GET /api/v1/classes/12/?computed.personal.my_priority__between=10,20
+GET /api/v1/classes/12/object-aggregates?computed.shared.lifecycle__equals=active&group_by=description
 ```
 
-Computed filtering is intentionally endpoint-specific. Other list endpoints
-reject computed filter parameters instead of silently ignoring them. The
+Computed filtering is intentionally endpoint-specific. Other endpoints reject
+computed filter parameters instead of silently ignoring them. The
 definition's declared result type determines which operators and values are
 valid. At most two computed filter parameters may appear in one request.
 String, numeric, boolean, object, and array definitions are supported;
@@ -363,14 +364,15 @@ dimensions are required. Supported dimensions are:
 - `computed.shared.<key>`
 - `computed.personal.<key>`
 
-The endpoint accepts the normal non-computed object filters, including scalar,
-`json_data`, and `permissions` filters. Computed fields may be grouping
-dimensions but are not accepted as source filters. For example, this request
-first applies a JSON object filter and then
-groups the remaining readable objects by country and shared lifecycle:
+The endpoint accepts the normal object filters, including scalar, `json_data`,
+`permissions`, and enabled shared or owned personal computed filters. Computed
+source filters use the same typed operators, `public`/`private` aliases, and
+two-filter limit as class object lists. For example, this request first applies
+JSON and computed filters and then groups the remaining readable objects by
+country and shared lifecycle:
 
 ```text
-GET /api/v1/classes/12/object-aggregates?json_data__equals=status=active&group_by=json_data.location,country&group_by=computed.shared.lifecycle&sort=object_count.desc&limit=50
+GET /api/v1/classes/12/object-aggregates?json_data__equals=status=active&computed.shared.environment__equals=production&group_by=json_data.location,country&group_by=computed.shared.lifecycle&sort=object_count.desc&limit=50
 ```
 
 Grouping by `created_at` or `updated_at` uses the exact timestamp. The endpoint
@@ -442,18 +444,21 @@ the immutable authorized snapshots are grouped. Hidden objects therefore
 cannot affect bucket counts or aggregate cardinality, and rows are not reloaded
 after authorization.
 
-Computed aggregation snapshots the selected current definitions after the first
-object is visible, then evaluates those definitions from the authorized object
-snapshots. Only the requested shared keys and the requesting owner's requested
-personal keys are loaded. If no object is visible, the endpoint returns an
-empty page without resolving the selector, so inaccessible definition metadata
-is not disclosed. Once an object is visible, unknown, disabled, inaccessible,
-and wrong-class selectors return `400 Bad Request`.
+Computed aggregation snapshots current definitions and applies computed source
+filters and dimensions to source-object snapshots. A filter and dimension in
+the same request share that definition snapshot. Only the definitions needed
+by dimensions and the enabled scope needed by computed-filter evaluation are
+loaded. With a non-pushdown permission backend, ordinary-filter candidates are
+authorized first; if none is visible, the endpoint returns an empty page
+without resolving computed fields. Otherwise, unknown, disabled, inaccessible,
+and wrong-class selectors return `400 Bad Request`. SQL-pushdown computed
+filters are resolved before their database query, matching class object-list
+behavior even when the filtered result is empty.
 
-Personal dimensions require a human owner with `ReadClass` access and can only
-use that owner's enabled definitions. Grouping does not reload source objects
-or perform computed read repair. Service accounts cannot group by personal
-fields. Responses depending on computed state include
+Personal filters and dimensions require a human owner with `ReadClass` access
+and can only use that owner's enabled definitions. Aggregation does not reload
+source objects or perform computed read repair. Service accounts cannot filter
+or group by personal fields. Responses depending on computed state include
 `Cache-Control: private, no-store`.
 
 Pagination headers describe aggregate rows, not source objects:

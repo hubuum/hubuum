@@ -249,25 +249,29 @@ defer cache repair to the rebuild path, keeping list requests read-only.
 Declarative indexing is not yet supported. Unsupported computed operators and
 mismatched filter value types fail with `400 Bad Request`.
 
-Computed fields can be dimensions of the separate grouped-object resource:
+Computed fields can filter source objects and provide dimensions for the
+separate object-aggregate resource:
 
 ```text
 GET /api/v1/classes/{class_id}/object-aggregates?group_by=computed.shared.lifecycle
 GET /api/v1/classes/{class_id}/object-aggregates?group_by=computed.personal.priority
+GET /api/v1/classes/{class_id}/object-aggregates?computed.shared.lifecycle__equals=active&group_by=description
 ```
 
-Shared grouping snapshots the selected current definitions after the first
-object is visible, then evaluates those definitions from the authorized object
-snapshots; it does not reload source objects or perform read repair. Definition
-loading is restricted to the requested shared keys and the requesting owner's
-requested personal keys. If no object is visible, the endpoint returns an empty
-page without resolving the selector, so inaccessible class definition metadata
-is not disclosed.
-Personal grouping is limited to the requesting human owner's enabled
-definitions and still requires `ReadClass`; service accounts are rejected.
-Evaluation failures use one documented
+Computed aggregation snapshots current definitions, then applies computed
+filters and dimensions to immutable object snapshots; it does not reload source
+objects or perform read repair. Filters use the same typed operators, aliases,
+and two-filter limit as class object lists. A combined filter and grouping
+request shares one definition snapshot. With a non-pushdown permission backend,
+ordinary-filter candidates are authorized first; if none is visible, the
+endpoint returns an empty page without resolving computed fields. SQL-pushdown
+computed filters resolve before their database query, matching class object-list
+behavior even when the filtered result is empty.
+Personal filtering and grouping are limited to the requesting human owner's
+enabled definitions and still require `ReadClass`; service accounts are
+rejected. Evaluation failures use one documented
 `unavailable` bucket. Computed grouping responses use
-`Cache-Control: private, no-store`. See [querying.md](querying.md#grouped-object-queries)
+`Cache-Control: private, no-store`. See [querying.md](querying.md#aggregated-object-queries)
 for selectors, response states, sorting, and cursor semantics.
 
 ## Materialization freshness

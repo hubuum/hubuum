@@ -242,7 +242,7 @@ GROUP BY sort_key"
 pub(super) async fn page_external_aggregates(
     pool: &DbPool,
     groups: AggregateRows,
-    paging: &ObjectAggregatePaging<'_>,
+    paging: &ObjectAggregatePaging,
 ) -> Result<ObjectAggregatePage, ApiError> {
     let total_count = if paging.query_options.include_total {
         i64::try_from(groups.len()).map_err(|_| accumulator_too_large())?
@@ -259,7 +259,7 @@ pub(super) async fn page_external_aggregates(
 async fn page_aggregate_rows(
     connection: &mut DbConnection,
     groups: AggregateRows,
-    paging: &ObjectAggregatePaging<'_>,
+    paging: &ObjectAggregatePaging,
 ) -> Result<Vec<ObjectAggregateDatabaseRow>, ApiError> {
     let mut page_spec = ObjectAggregateSqlSpec {
         sql: "WITH object_aggregate_accumulator AS (
@@ -290,7 +290,7 @@ FROM object_aggregate_accumulator"
 
 pub(super) async fn page_accumulated_aggregates(
     connection: &mut DbConnection,
-    paging: &ObjectAggregatePaging<'_>,
+    paging: &ObjectAggregatePaging,
 ) -> Result<ObjectAggregatePage, ApiError> {
     let total_count = if paging.query_options.include_total {
         diesel::sql_query("SELECT COUNT(*) AS count FROM object_aggregate_accumulator")
@@ -321,7 +321,7 @@ FROM object_aggregate_accumulator"
 pub(super) fn finish_aggregate_page(
     database_rows: Vec<ObjectAggregateDatabaseRow>,
     total_count: i64,
-    paging: &ObjectAggregatePaging<'_>,
+    paging: &ObjectAggregatePaging,
 ) -> Result<ObjectAggregatePage, ApiError> {
     let mut rows = database_rows
         .into_iter()
