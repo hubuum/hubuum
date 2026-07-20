@@ -161,9 +161,7 @@ async fn concurrent_backfill_and_object_update_cannot_restore_old_source_data(
 
 #[rstest::rstest]
 #[tokio::test]
-async fn lease_recovery_marks_the_class_rebuild_failed(
-    #[future(awt)] test_context: TestContext,
-) {
+async fn lease_recovery_marks_the_class_rebuild_failed(#[future(awt)] test_context: TestContext) {
     let fixture = fixture(&test_context, "computed lease recovery").await;
     let response = post_request(
         &test_context.pool,
@@ -202,9 +200,7 @@ async fn lease_recovery_marks_the_class_rebuild_failed(
 
 #[rstest::rstest]
 #[tokio::test]
-async fn user_anonymization_removes_personal_definitions(
-    #[future(awt)] test_context: TestContext,
-) {
+async fn user_anonymization_removes_personal_definitions(#[future(awt)] test_context: TestContext) {
     let fixture = fixture(&test_context, "computed anonymization").await;
     let group = grant_normal_user(&test_context, &fixture, &[Permissions::ReadClass]).await;
     let response = post_request(
@@ -393,3 +389,4 @@ async fn manual_rebuild_queues_the_current_revision(#[future(awt)] test_context:
     finish_active_rebuild(&test_context, fixture.class.id).await;
     fixture.cleanup().await.unwrap();
 }
+use super::*;

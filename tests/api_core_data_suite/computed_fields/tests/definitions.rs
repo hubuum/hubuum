@@ -248,8 +248,7 @@ async fn update_collection_permission_can_manage_shared_definitions(
     #[future(awt)] test_context: TestContext,
 ) {
     let fixture = fixture(&test_context, "shared update collection permission").await;
-    let group =
-        grant_normal_user(&test_context, &fixture, &[Permissions::UpdateCollection]).await;
+    let group = grant_normal_user(&test_context, &fixture, &[Permissions::UpdateCollection]).await;
     let response = post_request(
         &test_context.pool,
         &test_context.normal_token,
@@ -415,3 +414,4 @@ async fn service_accounts_cannot_manage_or_receive_personal_fields(
         .await
         .unwrap();
 }
+use super::*;

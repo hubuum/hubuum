@@ -1414,6 +1414,108 @@
         ]
       }
     },
+    "/api/v1/classes/by-name/{class_name}/object-aggregates": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Aggregate objects in a class by class name",
+        "description": "Name-addressed alias for permission-scoped object aggregation. Numeric-looking class names remain names. Normal object filters and up to two enabled shared or owned personal computed filters are applied before grouping.",
+        "operationId": "getApiV1ClassesByNameByClassNameObjectAggregates",
+        "parameters": [
+          {
+            "name": "class_name",
+            "in": "path",
+            "description": "Globally unique class name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "description": "One to three repeated ordered dimensions: name, description, collection_id, created_at, updated_at, json_data.<comma-separated-path>, computed.shared.<key>, or computed.personal.<key>",
+            "required": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Aggregate ordering: dimensions.asc, dimensions.desc, object_count.asc, or object_count.desc",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Permission-scoped aggregated object counts. Value states distinguish value, JSON null, a missing JSON path, and an unavailable computed result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ObjectAggregateRow"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter, dimension, path, sort, cursor, or computed selector",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "An aggregate value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate aggregates exceed their memory bounds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/classes/by-name/{class_name}/objects": {
       "get": {
         "tags": [
@@ -4049,6 +4151,109 @@
           },
           "404": {
             "description": "Class or version not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/classes/{class_id}/object-aggregates": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Object Aggregates",
+        "description": "Permission-scoped object aggregation. Normal object filters and up to two enabled shared or owned personal computed filters are applied before grouping.",
+        "operationId": "getApiV1ClassesByClassIdObjectAggregates",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "description": "One to three repeated ordered dimensions: name, description, collection_id, created_at, updated_at, json_data.<comma-separated-path>, computed.shared.<key>, or computed.personal.<key>",
+            "required": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Aggregate ordering: dimensions.asc, dimensions.desc, object_count.asc, or object_count.desc",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Permission-scoped aggregated object counts. Value states distinguish value, JSON null, a missing JSON path, and an unavailable computed result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ObjectAggregateRow"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter, dimension, path, sort, cursor, or computed selector",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "An aggregate value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate aggregates exceed their memory bounds",
             "content": {
               "application/json": {
                 "schema": {
@@ -22927,6 +23132,50 @@
           "password": "correct-horse-battery-staple",
           "proper_name": "Alice Doe"
         }
+      },
+      "ObjectAggregateDimensionValue": {
+        "type": "object",
+        "required": [
+          "field",
+          "state"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ObjectAggregateValueState"
+          },
+          "value": {}
+        }
+      },
+      "ObjectAggregateRow": {
+        "type": "object",
+        "required": [
+          "dimensions",
+          "object_count"
+        ],
+        "properties": {
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObjectAggregateDimensionValue"
+            }
+          },
+          "object_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ObjectAggregateValueState": {
+        "type": "string",
+        "enum": [
+          "value",
+          "null",
+          "missing",
+          "unavailable"
+        ]
       },
       "ObjectDataPatchDocument": {
         "type": "array",

@@ -105,16 +105,17 @@ Notes:
 
 ## Computed filtering
 
-Class object lists can filter enabled computed fields with the same scope and
-alias names used for computed sorting:
+Class object lists and class object-aggregate queries can filter enabled
+computed fields with the same scope and alias names used for computed sorting:
 
 ```text
 GET /api/v1/classes/12/?computed.shared.display_name__icontains=edge
 GET /api/v1/classes/12/?computed.personal.my_priority__between=10,20
+GET /api/v1/classes/12/object-aggregates?computed.shared.lifecycle__equals=active&group_by=description
 ```
 
-Computed filtering is intentionally endpoint-specific. Other list endpoints
-reject computed filter parameters instead of silently ignoring them. The
+Computed filtering is intentionally endpoint-specific. Other endpoints reject
+computed filter parameters instead of silently ignoring them. The
 definition's declared result type determines which operators and values are
 valid. At most two computed filter parameters may appear in one request.
 String, numeric, boolean, object, and array definitions are supported;
@@ -338,6 +339,135 @@ Examples:
 
 If the JSON path does not exist, or the stored value cannot be interpreted as the requested JSON type, the filter does not match, but it does not fail the request.
 
+## Aggregated object queries
+
+Object aggregation is a separate read-only collection resource, so the normal
+object-list response remains unchanged:
+
+```text
+GET /api/v1/classes/{class_id}/object-aggregates
+GET /api/v1/classes/by-name/{class_name}/object-aggregates
+```
+
+The explicit `by-name` alias applies the same query behavior while treating
+numeric-looking class names as names.
+
+Supply `group_by` once for each ordered dimension. Between one and three
+dimensions are required. Supported dimensions are:
+
+- `name`
+- `description`
+- `collection_id`
+- `created_at`
+- `updated_at`
+- `json_data.<path>`, using the existing comma-separated nested path grammar
+- `computed.shared.<key>`
+- `computed.personal.<key>`
+
+The endpoint accepts the normal object filters, including scalar, `json_data`,
+`permissions`, and enabled shared or owned personal computed filters. Computed
+source filters use the same typed operators, `public`/`private` aliases, and
+two-filter limit as class object lists. For example, this request first applies
+JSON and computed filters and then groups the remaining readable objects by
+country and shared lifecycle:
+
+```text
+GET /api/v1/classes/12/object-aggregates?json_data__equals=status=active&computed.shared.environment__equals=production&group_by=json_data.location,country&group_by=computed.shared.lifecycle&sort=object_count.desc&limit=50
+```
+
+Grouping by `created_at` or `updated_at` uses the exact timestamp. The endpoint
+does not accept date bucketing, arbitrary expressions, or object-list sort
+fields. Aggregate ordering is selected with one of:
+
+- `sort=dimensions.asc`, the default;
+- `sort=dimensions.desc`;
+- `sort=object_count.asc`;
+- `sort=object_count.desc`.
+
+Count ordering always appends the complete dimension tuple in ascending order
+as a deterministic tie-breaker. Cursor tokens are bound to the selected
+dimensions and sort; changing either while following a cursor returns
+`400 Bad Request`. The cursor limit is calculated for each request from a
+common 8 KiB HTTP line budget after reserving its route, non-cursor query
+parameters, request-line and response-header framing, separators, and line
+terminators. If a JSON or computed value at a page boundary would make the
+response header or replay request line exceed that limit, the request returns
+`413 Payload Too Large`;
+shorten the filters, narrow the grouping dimensions, or choose a page limit
+that does not end on that value.
+
+When computed aggregation or an external permission backend requires source object
+snapshots, Hubuum streams them into byte-bounded batches. An individual snapshot
+larger than 8 MiB returns `413 Payload Too Large`. External authorization does
+not retain a database connection during its calls, and its compacted
+intermediate aggregate rows are also limited to 8 MiB. Narrow the source
+filters or grouping dimensions when either bound is exceeded.
+
+Each response row is self-describing:
+
+```json
+[
+  {
+    "dimensions": [
+      {
+        "field": "json_data.location,country",
+        "state": "value",
+        "value": "NO"
+      },
+      {
+        "field": "computed.shared.lifecycle",
+        "state": "value",
+        "value": "production"
+      }
+    ],
+    "object_count": 37
+  }
+]
+```
+
+Dimension states have explicit meanings:
+
+- `value`: the dimension has a value; `value` preserves its JSON type;
+- `null`: the JSON path or computed field produced JSON `null`;
+- `missing`: a `json_data` path does not exist;
+- `unavailable`: a computed field could not produce a value.
+
+JSON objects and arrays retain their structure and group by PostgreSQL JSONB
+equality. The `value` member is omitted for `null`, `missing`, and
+`unavailable` states.
+
+Authorization and all supported supplied object filters are applied before
+aggregation.
+This rule also applies when the permission backend cannot push visibility into
+SQL: candidate object snapshots are authorized in bounded batches, and only
+the immutable authorized snapshots are grouped. Hidden objects therefore
+cannot affect bucket counts or aggregate cardinality, and rows are not reloaded
+after authorization.
+
+Computed aggregation snapshots current definitions and applies computed source
+filters and dimensions to source-object snapshots. A filter and dimension in
+the same request share that definition snapshot. Only the definitions needed
+by dimensions and the enabled scope needed by computed-filter evaluation are
+loaded. With a non-pushdown permission backend, ordinary-filter candidates are
+authorized first; if none is visible, the endpoint returns an empty page
+without resolving computed fields. Otherwise, unknown, disabled, inaccessible,
+and wrong-class selectors return `400 Bad Request`. SQL-pushdown computed
+filters are resolved before their database query, matching class object-list
+behavior even when the filtered result is empty.
+
+Personal filters and dimensions require a human owner with `ReadClass` access
+and can only use that owner's enabled definitions. Aggregation does not reload
+source objects or perform computed read repair. Service accounts cannot filter
+or group by personal fields. Responses depending on computed state include
+`Cache-Control: private, no-store`.
+
+Pagination headers describe aggregate rows, not source objects:
+
+- `X-Total-Count` is the total number of aggregate rows and is omitted when
+  `include_total=false`;
+- `X-Next-Cursor` is present when another aggregate page exists;
+- `X-Page-Limit` is the effective aggregate page size.
+
 ## Contextual endpoints
 
 Some list endpoints derive part of the query from the path.
@@ -347,6 +477,7 @@ Examples:
 - `/api/v1/classes/{class_id}/related/classes` always constrains the result to classes connected to the class in the path
 - `/api/v1/classes/{class_id}/related/relations` always constrains the result to direct relations touching the class in the path
 - `/api/v1/classes/{class_id}/` always constrains the result to objects in that class
+- `/api/v1/classes/{class_id}/object-aggregates` always constrains source objects to that class and returns aggregate rows
 - `/api/v1/classes/{class_id}/objects/{object_id}/related/objects` always constrains the result to objects connected to the object in the path
 - `/api/v1/classes/{class_id}/objects/{object_id}/related/relations` always constrains the result to direct relations touching the object in the path
 
@@ -368,7 +499,7 @@ The shared query interface is currently used by:
 - user lists, user tokens, and user groups
 - group lists and group members
 - collection lists and collection permission listings
-- class lists, class permissions, connected-class listings, direct class-relation listings, and objects in class
+- class lists, class permissions, connected-class listings, direct class-relation listings, objects in class, and aggregated objects in class
 - global class relation and object relation lists
 - connected-object listings
 - direct related-relation listings

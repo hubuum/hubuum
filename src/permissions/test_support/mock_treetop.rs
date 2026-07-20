@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -184,6 +186,13 @@ pub struct MockAllowRule {
 /// to the mock.
 const ADMIN_ACTION_MARKER: Permissions = Permissions::ReadCollection;
 
+type AuthorizationHook = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
+
+struct DeferredAuthorizationHook {
+    calls_to_skip: usize,
+    hook: AuthorizationHook,
+}
+
 #[derive(Default)]
 pub struct MockTreetopBackend {
     rules: Mutex<Vec<MockAllowRule>>,
@@ -193,6 +202,8 @@ pub struct MockTreetopBackend {
     /// NotImplemented (matching the previous behavior). Set this in
     /// tests that want to exercise the groups-listing path.
     group_candidates: Mutex<Option<Vec<Group>>>,
+    authorization_hook: Mutex<Option<DeferredAuthorizationHook>>,
+    authorization_batch_sizes: Mutex<Vec<usize>>,
 }
 
 impl MockTreetopBackend {
@@ -201,6 +212,8 @@ impl MockTreetopBackend {
             rules: Mutex::new(Vec::new()),
             task_read_rules: Mutex::new(Vec::new()),
             group_candidates: Mutex::new(None),
+            authorization_hook: Mutex::new(None),
+            authorization_batch_sizes: Mutex::new(Vec::new()),
         }
     }
 
@@ -231,6 +244,29 @@ impl MockTreetopBackend {
     /// of returning NotImplemented.
     pub fn set_group_candidates(&self, groups: Vec<Group>) {
         *self.group_candidates.lock().unwrap() = Some(groups);
+    }
+
+    pub fn set_authorization_hook<F, Fut>(&self, hook: F)
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.set_authorization_hook_after_calls(0, hook);
+    }
+
+    pub fn set_authorization_hook_after_calls<F, Fut>(&self, calls_to_skip: usize, hook: F)
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        *self.authorization_hook.lock().unwrap() = Some(DeferredAuthorizationHook {
+            calls_to_skip,
+            hook: Box::new(move || Box::pin(hook())),
+        });
+    }
+
+    pub fn authorization_batch_sizes(&self) -> Vec<usize> {
+        self.authorization_batch_sizes.lock().unwrap().clone()
     }
 
     fn rule_matches(rule: &MockAllowRule, request: &PermissionRequest, perm: Permissions) -> bool {
@@ -295,6 +331,9 @@ impl MockTreetopBackend {
         {
             return false;
         }
+        if rule.attrs.name.is_some() && rule.attrs.name != request.resource.attrs.name {
+            return false;
+        }
         true
     }
 
@@ -325,6 +364,27 @@ impl PermissionBackend for MockTreetopBackend {
         principal: &PrincipalRef,
         requests: Vec<PermissionRequest>,
     ) -> Result<Vec<PermissionDecision>, ApiError> {
+        self.authorization_batch_sizes
+            .lock()
+            .unwrap()
+            .push(requests.len());
+        let hook = {
+            let mut deferred = self.authorization_hook.lock().unwrap();
+            if deferred
+                .as_ref()
+                .is_some_and(|hook| hook.calls_to_skip == 0)
+            {
+                deferred.take().map(|hook| hook.hook)
+            } else {
+                if let Some(hook) = deferred.as_mut() {
+                    hook.calls_to_skip -= 1;
+                }
+                None
+            }
+        };
+        if let Some(hook) = hook {
+            hook().await;
+        }
         // Order preserved by zipping per request.
         Ok(requests
             .iter()

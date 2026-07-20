@@ -178,8 +178,7 @@ async fn computed_filter_without_computed_response_skips_page_enrichment(
     ))
     .await;
     let enriched_response = assert_response_status(enriched_response, StatusCode::OK).await;
-    let enriched_objects: Vec<serde_json::Value> =
-        test::read_body_json(enriched_response).await;
+    let enriched_objects: Vec<serde_json::Value> = test::read_body_json(enriched_response).await;
     assert_eq!(enriched_objects.len(), 1);
     assert!(enriched_objects[0].get("computed").is_some());
     assert_eq!(
@@ -418,3 +417,4 @@ async fn computed_query_accepts_keys_named_after_directions(
     finish_active_rebuild(&test_context, fixture.class.id).await;
     fixture.cleanup().await.unwrap();
 }
+use super::*;

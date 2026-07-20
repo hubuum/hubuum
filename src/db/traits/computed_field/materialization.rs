@@ -10,7 +10,7 @@ fn shared_definitions_from_rows(
         .collect()
 }
 
-pub(super) fn evaluate_definitions(
+pub(crate) fn evaluate_definitions(
     data: &serde_json::Value,
     definitions: &[ComputedFieldDefinition],
     maximum: usize,

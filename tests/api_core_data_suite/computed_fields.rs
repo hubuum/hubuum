@@ -451,9 +451,9 @@ mod tests {
         ListVisibility,
     }
 
-    include!("computed_fields/definitions.rs");
-    include!("computed_fields/querying.rs");
-    include!("computed_fields/authorization.rs");
-    include!("computed_fields/consistency.rs");
-    include!("computed_fields/lifecycle.rs");
+    mod authorization;
+    mod consistency;
+    mod definitions;
+    mod lifecycle;
+    mod querying;
 }
