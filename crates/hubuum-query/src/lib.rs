@@ -5,7 +5,8 @@
 //! [`QueryError`] into its public error surface at the boundary.
 
 use chrono::{DateTime, NaiveDate};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -171,28 +172,42 @@ pub fn decode_query_parameter_pairs(qs: &str) -> Result<Vec<(String, String)>, Q
     }
 
     for chunk in qs.split('&') {
-        let (raw_key, raw_value) = chunk
-            .split_once('=')
-            .ok_or_else(|| QueryError::BadRequest(format!("Invalid query parameter: '{chunk}'")))?;
-
-        let key = decode_query_component(raw_key, chunk, "key")?;
-        let value = decode_query_component(raw_value, chunk, "value")?;
-        pairs.push((key, value));
+        let (key, value) = decode_query_parameter_pair(chunk)?;
+        pairs.push((key.into_owned(), value.into_owned()));
     }
 
     Ok(pairs)
 }
 
-fn decode_query_component(raw: &str, chunk: &str, component: &str) -> Result<String, QueryError> {
+/// Decode one `key=value` query-string component.
+///
+/// Components that need no form or percent decoding remain borrowed. This lets
+/// streaming endpoint parsers share the transport grammar without allocating a
+/// complete intermediate pair list.
+pub fn decode_query_parameter_pair(
+    chunk: &str,
+) -> Result<(Cow<'_, str>, Cow<'_, str>), QueryError> {
+    let (raw_key, raw_value) = chunk
+        .split_once('=')
+        .ok_or_else(|| QueryError::BadRequest(format!("Invalid query parameter: '{chunk}'")))?;
+
+    let key = decode_query_component(raw_key, chunk, "key")?;
+    let value = decode_query_component(raw_value, chunk, "value")?;
+    Ok((key, value))
+}
+
+fn decode_query_component<'a>(
+    raw: &'a str,
+    chunk: &str,
+    component: &str,
+) -> Result<Cow<'a, str>, QueryError> {
     let decoded = if raw.contains('+') {
         let form_encoded = raw.replace('+', " ");
         percent_encoding::percent_decode(form_encoded.as_bytes())
             .decode_utf8()
-            .map(|value| value.into_owned())
+            .map(|value| Cow::Owned(value.into_owned()))
     } else {
-        percent_encoding::percent_decode(raw.as_bytes())
-            .decode_utf8()
-            .map(|value| value.into_owned())
+        percent_encoding::percent_decode(raw.as_bytes()).decode_utf8()
     };
 
     decoded.map_err(|e| {
@@ -295,35 +310,70 @@ pub struct QueryOptions {
 /// Paths are kept app-neutral here so query filters, aggregate dimensions, and
 /// future query-planning features share one grammar. Each segment must be
 /// non-empty and contain only ASCII letters, digits, `_`, or `$`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct JsonFieldPath {
-    segments: Vec<String>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct JsonFieldPathRef<'a> {
+    canonical: &'a str,
 }
 
-impl JsonFieldPath {
-    pub fn new(value: &str) -> Result<Self, QueryError> {
-        let segments = value.split(',').map(str::to_string).collect::<Vec<_>>();
+impl<'a> JsonFieldPathRef<'a> {
+    pub fn new(value: &'a str) -> Result<Self, QueryError> {
         let valid = !value.is_empty()
-            && segments.iter().all(|segment| {
+            && value.split(',').all(|segment| {
                 !segment.is_empty()
                     && segment
                         .bytes()
                         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
             });
         if !valid {
-            return Err(QueryError::BadRequest(format!(
-                "Invalid JSON path '{value}'; use non-empty comma-separated ASCII path segments containing only letters, digits, '_', or '$'"
-            )));
+            return Err(invalid_json_field_path(value));
         }
-        Ok(Self { segments })
+        Ok(Self { canonical: value })
     }
 
-    pub fn segments(&self) -> &[String] {
-        &self.segments
+    pub fn segments(self) -> impl Iterator<Item = &'a str> {
+        self.canonical.split(',')
     }
 
-    pub fn canonical(&self) -> String {
-        self.segments.join(",")
+    pub fn canonical(self) -> &'a str {
+        self.canonical
+    }
+}
+
+impl fmt::Display for JsonFieldPathRef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.canonical)
+    }
+}
+
+/// An owned [`JsonFieldPathRef`].
+///
+/// Use the borrowed representation while parsing request-local values and this
+/// owned representation when a validated path must be retained in a model.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct JsonFieldPath {
+    canonical: String,
+}
+
+impl JsonFieldPath {
+    pub fn new(value: &str) -> Result<Self, QueryError> {
+        JsonFieldPathRef::new(value)?;
+        Ok(Self {
+            canonical: value.to_string(),
+        })
+    }
+
+    pub fn segments(&self) -> impl Iterator<Item = &str> {
+        self.as_ref().segments()
+    }
+
+    pub fn canonical(&self) -> &str {
+        &self.canonical
+    }
+
+    pub fn as_ref(&self) -> JsonFieldPathRef<'_> {
+        JsonFieldPathRef {
+            canonical: &self.canonical,
+        }
     }
 }
 
@@ -337,16 +387,14 @@ impl FromStr for JsonFieldPath {
 
 impl fmt::Display for JsonFieldPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut segments = self.segments.iter();
-        if let Some(first) = segments.next() {
-            f.write_str(first)?;
-        }
-        for segment in segments {
-            f.write_str(",")?;
-            f.write_str(segment)?;
-        }
-        Ok(())
+        f.write_str(&self.canonical)
     }
+}
+
+fn invalid_json_field_path(value: &str) -> QueryError {
+    QueryError::BadRequest(format!(
+        "Invalid JSON path '{value}'; use non-empty comma-separated ASCII path segments containing only letters, digits, '_', or '$'"
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -799,7 +847,7 @@ pub fn get_jsonb_field_type_from_json_schema(
     schema: &serde_json::Value,
     key: &str,
 ) -> Option<SQLMappedType> {
-    let path = JsonFieldPath::new(key).ok()?;
+    let path = JsonFieldPathRef::new(key).ok()?;
     use serde_json::Value;
     let mut current_schema = schema;
 
@@ -1075,7 +1123,7 @@ pub fn parse_integer_list_with_limit(
     input: &str,
     max_values: usize,
 ) -> Result<Vec<i32>, QueryError> {
-    let mut numbers = BTreeSet::new();
+    let mut numbers = IntegerAccumulator::new(max_values);
 
     for segment in input.split(',') {
         if let Some((start, negative_end)) = segment.split_once("--") {
@@ -1090,13 +1138,13 @@ pub fn parse_integer_list_with_limit(
             let end = format!("-{negative_end}").parse::<i32>().map_err(|_| {
                 QueryError::InvalidIntegerRange(format!("Invalid end of range: '{negative_end}'"))
             })?;
-            insert_integer_range(&mut numbers, start, end, max_values, input, segment)?;
+            insert_integer_range(&mut numbers, start, end, input, segment)?;
         } else if let Some(idx) = segment.find('-') {
             if idx == 0 {
                 let value = segment.parse::<i32>().map_err(|_| {
                     QueryError::InvalidIntegerRange(format!("Invalid number: '{segment}'"))
                 })?;
-                insert_integer(&mut numbers, value, max_values, input)?;
+                insert_integer(&mut numbers, value, input)?;
             } else {
                 let (start, end) = segment.split_at(idx);
                 let end = &end[1..];
@@ -1106,24 +1154,101 @@ pub fn parse_integer_list_with_limit(
                 let end = end.parse::<i32>().map_err(|_| {
                     QueryError::InvalidIntegerRange(format!("Invalid end of range: '{end}'"))
                 })?;
-                insert_integer_range(&mut numbers, start, end, max_values, input, segment)?;
+                insert_integer_range(&mut numbers, start, end, input, segment)?;
             }
         } else {
             let value = segment.parse::<i32>().map_err(|_| {
                 QueryError::InvalidIntegerRange(format!("Invalid number: '{segment}'"))
             })?;
-            insert_integer(&mut numbers, value, max_values, input)?;
+            insert_integer(&mut numbers, value, input)?;
         }
     }
 
-    Ok(numbers.into_iter().collect())
+    Ok(numbers.finish())
+}
+
+enum IntegerAccumulator {
+    Values {
+        values: Vec<i32>,
+        max_values: usize,
+    },
+    Unique {
+        values: HashSet<i32>,
+        max_values: usize,
+    },
+}
+
+impl IntegerAccumulator {
+    fn new(max_values: usize) -> Self {
+        Self::Values {
+            values: Vec::new(),
+            max_values,
+        }
+    }
+
+    fn insert(&mut self, value: i32, input: &str) -> Result<(), QueryError> {
+        if let Self::Values { values, max_values } = self {
+            if values.len() < *max_values {
+                values.push(value);
+                return Ok(());
+            }
+            self.promote();
+        }
+
+        let Self::Unique { values, max_values } = self else {
+            unreachable!("integer accumulator must be promoted")
+        };
+        values.insert(value);
+        if values.len() > *max_values {
+            return Err(integer_filter_limit_error(input, *max_values));
+        }
+        Ok(())
+    }
+
+    fn extend_range(&mut self, start: i32, end: i32, input: &str) -> Result<(), QueryError> {
+        if let Self::Values { values, max_values } = self {
+            let range_len = (i64::from(end) - i64::from(start) + 1) as u64;
+            let available = max_values.saturating_sub(values.len()) as u64;
+            if range_len <= available {
+                values.extend(start..=end);
+                return Ok(());
+            }
+            self.promote();
+        }
+
+        for value in start..=end {
+            self.insert(value, input)?;
+        }
+        Ok(())
+    }
+
+    fn promote(&mut self) {
+        let Self::Values { values, max_values } = self else {
+            return;
+        };
+        let max_values = *max_values;
+        let unique = std::mem::take(values).into_iter().collect();
+        *self = Self::Unique {
+            values: unique,
+            max_values,
+        };
+    }
+
+    fn finish(self) -> Vec<i32> {
+        let mut values = match self {
+            Self::Values { values, .. } => values,
+            Self::Unique { values, .. } => values.into_iter().collect(),
+        };
+        values.sort_unstable();
+        values.dedup();
+        values
+    }
 }
 
 fn insert_integer_range(
-    numbers: &mut BTreeSet<i32>,
+    numbers: &mut IntegerAccumulator,
     start: i32,
     end: i32,
-    max_values: usize,
     input: &str,
     segment: &str,
 ) -> Result<(), QueryError> {
@@ -1132,25 +1257,21 @@ fn insert_integer_range(
             "Range start is greater than end: '{segment}'"
         )));
     }
-    for value in start..=end {
-        insert_integer(numbers, value, max_values, input)?;
-    }
-    Ok(())
+    numbers.extend_range(start, end, input)
 }
 
 fn insert_integer(
-    numbers: &mut BTreeSet<i32>,
+    numbers: &mut IntegerAccumulator,
     value: i32,
-    max_values: usize,
     input: &str,
 ) -> Result<(), QueryError> {
-    numbers.insert(value);
-    if numbers.len() > max_values {
-        return Err(QueryError::InvalidIntegerRange(format!(
-            "Integer filter '{input}' expands to more than {max_values} unique values"
-        )));
-    }
-    Ok(())
+    numbers.insert(value, input)
+}
+
+fn integer_filter_limit_error(input: &str, max_values: usize) -> QueryError {
+    QueryError::InvalidIntegerRange(format!(
+        "Integer filter '{input}' expands to more than {max_values} unique values"
+    ))
 }
 
 #[cfg(test)]
@@ -1398,6 +1519,14 @@ mod tests {
     }
 
     #[test]
+    fn shared_query_decoder_borrows_unchanged_components() {
+        let (key, value) = decode_query_parameter_pair("kind=object").unwrap();
+
+        assert!(matches!(key, Cow::Borrowed("kind")));
+        assert!(matches!(value, Cow::Borrowed("object")));
+    }
+
+    #[test]
     fn parses_integer_ranges() {
         assert_eq!(
             parse_integer_list("1-4,3,8,-4--2").unwrap(),
@@ -1441,7 +1570,10 @@ mod tests {
     fn json_path_preserves_valid_nested_segments() {
         let path = JsonFieldPath::new("network,address_v4,$value").unwrap();
 
-        assert_eq!(path.segments(), ["network", "address_v4", "$value"]);
+        assert_eq!(
+            path.segments().collect::<Vec<_>>(),
+            ["network", "address_v4", "$value"]
+        );
         assert_eq!(path.canonical(), "network,address_v4,$value");
         assert_eq!(path.to_string(), "network,address_v4,$value");
     }

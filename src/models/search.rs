@@ -7,7 +7,7 @@ use std::str::FromStr;
 use tracing::debug;
 
 pub use hubuum_query::{
-    ComputedFieldScope, ComputedQueryValueType, DataType, FilterField, JsonFieldPath, Operator,
+    ComputedFieldScope, ComputedQueryValueType, DataType, FilterField, JsonFieldPathRef, Operator,
     ParsedQueryParam, QueryOptions, SQLMappedType, SearchOperator, SortParam, StatementTimeoutMs,
     get_jsonb_field_type_from_value_and_operator,
 };
@@ -241,7 +241,7 @@ trait ParsedQueryParamSqlExt {
     fn as_json_has_key_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &JsonFieldPath,
+        path: JsonFieldPathRef<'_>,
         key_name: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError>;
@@ -250,7 +250,7 @@ trait ParsedQueryParamSqlExt {
         &self,
         jsonb_field_expr: &str,
         field_expr: &str,
-        path: &JsonFieldPath,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError>;
@@ -258,7 +258,7 @@ trait ParsedQueryParamSqlExt {
     fn as_json_all_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &JsonFieldPath,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError>;
@@ -266,7 +266,7 @@ trait ParsedQueryParamSqlExt {
     fn as_json_array_length_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &JsonFieldPath,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError>;
@@ -346,7 +346,7 @@ impl ParsedQueryParamExt for ParsedQueryParam {
         let (key, value) = self.value.split_once('=').ok_or_else(|| {
             ApiError::BadRequest("Expected exactly two parts of key=value".to_string())
         })?;
-        let path = JsonFieldPath::new(key)?;
+        let path = JsonFieldPathRef::new(key)?;
 
         // Validate the value, no longer needed as we're using bind variables
         /*
@@ -358,7 +358,7 @@ impl ParsedQueryParamExt for ParsedQueryParam {
         }
         */
 
-        let field_expr = json_text_path_expression(jsonb_field_expr, &path);
+        let field_expr = json_text_path_expression(jsonb_field_expr, path);
 
         // The bind variables for the SQL query. We can't bind the key as using
         // bind variables for the key itself is not supported in Postgres.
@@ -374,19 +374,19 @@ impl ParsedQueryParamExt for ParsedQueryParam {
         }
 
         if op == Operator::HasKey {
-            return self.as_json_has_key_sql(jsonb_field_expr, &path, value, neg);
+            return self.as_json_has_key_sql(jsonb_field_expr, path, value, neg);
         }
 
         if op == Operator::All {
-            return self.as_json_all_sql(jsonb_field_expr, &path, value, neg);
+            return self.as_json_all_sql(jsonb_field_expr, path, value, neg);
         }
 
         if op == Operator::ArrayLength {
-            return self.as_json_array_length_sql(jsonb_field_expr, &path, value, neg);
+            return self.as_json_array_length_sql(jsonb_field_expr, path, value, neg);
         }
 
         if op == Operator::In {
-            return self.as_json_in_sql(jsonb_field_expr, &field_expr, &path, value, neg);
+            return self.as_json_in_sql(jsonb_field_expr, &field_expr, path, value, neg);
         }
 
         let sql_type = get_jsonb_field_type_from_value_and_operator(value, op.clone());
@@ -494,8 +494,8 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
         let path = &self.value;
-        let path = JsonFieldPath::new(path)?;
-        let field_expr = json_text_path_expression(jsonb_field_expr, &path);
+        let path = JsonFieldPathRef::new(path)?;
+        let field_expr = json_text_path_expression(jsonb_field_expr, path);
         let sql = if negated {
             format!("{field_expr} IS NOT NULL")
         } else {
@@ -510,7 +510,7 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
     fn as_json_has_key_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &JsonFieldPath,
+        path: JsonFieldPathRef<'_>,
         key_name: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
@@ -531,7 +531,7 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
         &self,
         jsonb_field_expr: &str,
         field_expr: &str,
-        path: &JsonFieldPath,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
@@ -578,7 +578,7 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
     fn as_json_all_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &JsonFieldPath,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
@@ -609,7 +609,7 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
     fn as_json_array_length_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &JsonFieldPath,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
@@ -764,15 +764,15 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
     }
 }
 
-fn json_path_sql_literal(path: &JsonFieldPath) -> String {
+fn json_path_sql_literal(path: JsonFieldPathRef<'_>) -> String {
     format!("'{{{path}}}'")
 }
 
-fn json_text_path_expression(jsonb_field_expr: &str, path: &JsonFieldPath) -> String {
+fn json_text_path_expression(jsonb_field_expr: &str, path: JsonFieldPathRef<'_>) -> String {
     format!("{jsonb_field_expr} #>> {}", json_path_sql_literal(path))
 }
 
-fn json_value_path_expression(jsonb_field_expr: &str, path: &JsonFieldPath) -> String {
+fn json_value_path_expression(jsonb_field_expr: &str, path: JsonFieldPathRef<'_>) -> String {
     format!("{jsonb_field_expr} #> {}", json_path_sql_literal(path))
 }
 

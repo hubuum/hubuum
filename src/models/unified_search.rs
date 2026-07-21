@@ -297,8 +297,11 @@ pub fn parse_unified_search_query_with_limits(
 ) -> Result<UnifiedSearchQuery, ApiError> {
     let mut parts = UnifiedSearchQueryParts::default();
 
-    for (key, value) in hubuum_query::decode_query_parameter_pairs(qs)? {
-        parts.apply(&key, value)?;
+    if !qs.is_empty() {
+        for chunk in qs.split('&') {
+            let (key, value) = hubuum_query::decode_query_parameter_pair(chunk)?;
+            parts.apply(key.as_ref(), value.into_owned())?;
+        }
     }
 
     parts.build(default_limit, max_limit)
