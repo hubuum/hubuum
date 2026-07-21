@@ -8,6 +8,7 @@ mod tests {
     };
     use base64::Engine;
     use futures::join;
+    use rstest::rstest;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1020,6 +1021,40 @@ mod tests {
         )
         .await;
         assert_response_status(resp, StatusCode::FORBIDDEN).await;
+    }
+
+    #[rstest]
+    #[case::header_template(serde_json::json!({
+        "headers_template": { "Host": "internal.example" }
+    }))]
+    #[case::api_key_auth(serde_json::json!({
+        "auth_config": {
+            "type": "api_key_secret",
+            "header": "Content-Length",
+            "secret": "inventory_api_key"
+        }
+    }))]
+    #[actix_web::test]
+    async fn create_rejects_transport_controlled_headers(
+        #[case] override_fields: serde_json::Value,
+    ) {
+        let context = TestContext::new().await;
+        let (collection_id, class_id, _) = setup_object(&context, "rt_transport_headers").await;
+        let mut payload = target_payload(
+            collection_id,
+            class_id,
+            "transport-header-target",
+            "https://service.example.com/hook",
+        );
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(override_fields.as_object().unwrap().clone());
+
+        let response =
+            post_request(&context.pool, &context.admin_token, RT_ENDPOINT, payload).await;
+
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
     }
 
     #[actix_web::test]

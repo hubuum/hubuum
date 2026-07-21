@@ -20,6 +20,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- **Breaking:** Remote target header templates and API-key authentication now
+  reject HTTP routing, framing, connection-specific, and proxy-authentication
+  fields. Existing targets using these transport-controlled headers must remove
+  them and let Hubuum's HTTP client derive them from the target URL and body.
 - Integer list and range filters are limited to 1,024 unique expanded values,
   and oversized ranges fail during bounded parsing instead of allocating an
   attacker-controlled number of integers.

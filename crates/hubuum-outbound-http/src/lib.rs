@@ -59,6 +59,7 @@ pub enum OutboundHttpError {
     Connect,
     Request(String),
     InvalidHeaderName { name: String },
+    TransportControlledHeader { name: String },
     InvalidHeaderValue { name: String },
 }
 
@@ -86,6 +87,12 @@ impl fmt::Display for OutboundHttpError {
             Self::Connect => write!(f, "outbound connection failed"),
             Self::Request(error) => write!(f, "outbound call failed: {error}"),
             Self::InvalidHeaderName { name } => write!(f, "invalid outbound header name: {name}"),
+            Self::TransportControlledHeader { name } => {
+                write!(
+                    f,
+                    "outbound header is controlled by the HTTP transport: {name}"
+                )
+            }
             Self::InvalidHeaderValue { name } => {
                 write!(f, "invalid outbound header value for {name}")
             }
@@ -253,6 +260,52 @@ pub async fn screen_host(
     Ok(addrs)
 }
 
+/// A syntactically valid application header that cannot alter HTTP routing,
+/// connection handling, proxy authentication, or message framing.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OutboundHeaderName(HeaderName);
+
+impl OutboundHeaderName {
+    pub fn new(name: &str) -> Result<Self, OutboundHttpError> {
+        let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+            OutboundHttpError::InvalidHeaderName {
+                name: name.to_string(),
+            }
+        })?;
+        if transport_controls_header(&header_name) {
+            return Err(OutboundHttpError::TransportControlledHeader {
+                name: header_name.to_string(),
+            });
+        }
+        Ok(Self(header_name))
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    fn into_inner(self) -> HeaderName {
+        self.0
+    }
+}
+
+fn transport_controls_header(name: &HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "connection"
+            | "content-length"
+            | "host"
+            | "http2-settings"
+            | "keep-alive"
+            | "proxy-authorization"
+            | "proxy-connection"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+    )
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct OutboundHeaders {
     inner: HeaderMap,
@@ -264,16 +317,12 @@ impl OutboundHeaders {
     }
 
     pub fn insert(&mut self, name: &str, value: &str) -> Result<(), OutboundHttpError> {
-        let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
-            OutboundHttpError::InvalidHeaderName {
-                name: name.to_string(),
-            }
-        })?;
+        let header_name = OutboundHeaderName::new(name)?;
         let header_value =
             HeaderValue::from_str(value).map_err(|_| OutboundHttpError::InvalidHeaderValue {
                 name: name.to_string(),
             })?;
-        self.inner.insert(header_name, header_value);
+        self.inner.insert(header_name.into_inner(), header_value);
         Ok(())
     }
 
@@ -606,6 +655,35 @@ mod tests {
         let json = headers_to_json(&headers);
         assert_eq!(json["set-cookie"], "[redacted]");
         assert_eq!(json["x-request-id"], "abc");
+    }
+
+    #[test]
+    fn transport_controlled_request_headers_are_rejected() {
+        for name in [
+            "connection",
+            "content-length",
+            "host",
+            "http2-settings",
+            "keep-alive",
+            "proxy-authorization",
+            "proxy-connection",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade",
+        ] {
+            assert!(matches!(
+                OutboundHeaderName::new(name),
+                Err(OutboundHttpError::TransportControlledHeader { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn application_request_headers_are_accepted() {
+        let name = OutboundHeaderName::new("X-Integration-Request").unwrap();
+
+        assert_eq!(name.as_str(), "x-integration-request");
     }
 
     #[test]
