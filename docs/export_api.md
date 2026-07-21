@@ -52,7 +52,8 @@ Authentication:
 - it returns `202 Accepted`
 - the response body is a generic `TaskResponse`
 - the response includes `Location: /api/v1/tasks/{id}`
-- `Idempotency-Key` is supported with the same reuse/conflict semantics as imports
+- `Idempotency-Key` is supported with the same reuse/conflict semantics and
+  1-to-255-byte limit as imports
 - if the submitting user already has too many active export tasks, it returns `429 Too Many Requests`
 
 Use:
