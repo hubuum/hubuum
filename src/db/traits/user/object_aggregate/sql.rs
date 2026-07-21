@@ -387,8 +387,7 @@ fn dimension_sql_for_source(
         ObjectAggregateDimension::JsonData(path) => {
             let path = path
                 .segments()
-                .iter()
-                .map(|segment| sql_string_literal(segment))
+                .map(sql_string_literal)
                 .collect::<Vec<_>>()
                 .join(", ");
             let value = format!("{source}.data #> ARRAY[{path}]::text[]");

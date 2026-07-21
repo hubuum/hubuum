@@ -178,26 +178,6 @@ pub struct UnifiedSearchErrorEvent {
     pub message: String,
 }
 
-fn parse_query_chunk(chunk: &str) -> Result<(&str, String), ApiError> {
-    let parts: Vec<_> = chunk.splitn(2, '=').collect();
-    if parts.len() != 2 {
-        return Err(ApiError::BadRequest(format!(
-            "Invalid query parameter: '{chunk}'"
-        )));
-    }
-
-    let value = percent_encoding::percent_decode(parts[1].as_bytes())
-        .decode_utf8()
-        .map_err(|error| {
-            ApiError::BadRequest(format!(
-                "Invalid query parameter: '{chunk}', invalid value: {error}",
-            ))
-        })?
-        .to_string();
-
-    Ok((parts[0], value))
-}
-
 fn reject_duplicate<T>(slot: &Option<T>, name: &str) -> Result<(), ApiError> {
     if slot.is_some() {
         return Err(ApiError::BadRequest(format!("duplicate {name}")));
@@ -317,9 +297,11 @@ pub fn parse_unified_search_query_with_limits(
 ) -> Result<UnifiedSearchQuery, ApiError> {
     let mut parts = UnifiedSearchQueryParts::default();
 
-    for chunk in qs.split('&').filter(|chunk| !chunk.is_empty()) {
-        let (key, value) = parse_query_chunk(chunk)?;
-        parts.apply(key, value)?;
+    if !qs.is_empty() {
+        for chunk in qs.split('&') {
+            let (key, value) = hubuum_query::decode_query_parameter_pair(chunk)?;
+            parts.apply(key.as_ref(), value.into_owned())?;
+        }
     }
 
     parts.build(default_limit, max_limit)
@@ -856,6 +838,13 @@ mod tests {
         assert!(parsed.includes(UnifiedSearchKind::Object));
         assert!(!parsed.search_class_schema);
         assert!(!parsed.search_object_data);
+    }
+
+    #[test]
+    fn parse_unified_search_decodes_form_encoded_query_text() {
+        let parsed = parse_unified_search_query("q=core+router%2Fedge").unwrap();
+
+        assert_eq!(parsed.query, "core router/edge");
     }
 
     #[test]

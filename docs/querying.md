@@ -49,6 +49,12 @@ Example:
 - `in`
 - `is_null`
 
+Integer lists accept comma-separated values and inclusive ranges, including
+negative ranges such as `-6--2`. A single filter may expand to at most 1,024
+unique integers; larger ranges are rejected before they are materialized. Some
+operators and endpoints enforce smaller limits. Prefer `between` for one large
+continuous interval.
+
 ### Array fields
 
 - `equals`
@@ -242,7 +248,8 @@ You can also use string-oriented operators for textual JSON values:
 /api/v1/classes/12/?json_data__contains=hostname=srv
 ```
 
-Nested JSON paths use comma-separated keys:
+Nested JSON paths use comma-separated keys. Every path segment must be
+non-empty and contain only ASCII letters, digits, `_`, or `$`:
 
 ```text
 /api/v1/classes/12/?json_data__equals=network,address=10.0.0.10

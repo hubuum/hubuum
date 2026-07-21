@@ -7,6 +7,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- JSON filters and object-aggregate dimensions now share one typed JSON-path
+  parser. Empty segments, whitespace, and characters outside ASCII letters,
+  digits, `_`, and `$` are rejected consistently before SQL generation.
+
+### Fixed
+
+- Unified search now uses the shared form-query decoder, so `+` and percent
+  escapes are interpreted consistently with other list and search endpoints.
+
+### Security
+
+- Integer list and range filters are limited to 1,024 unique expanded values,
+  and oversized ranges fail during bounded parsing instead of allocating an
+  attacker-controlled number of integers.
+
 ## [0.0.3] - 2026-07-21
 
 ### Added

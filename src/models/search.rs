@@ -7,8 +7,8 @@ use std::str::FromStr;
 use tracing::debug;
 
 pub use hubuum_query::{
-    ComputedFieldScope, ComputedQueryValueType, DataType, FilterField, Operator, ParsedQueryParam,
-    QueryOptions, SQLMappedType, SearchOperator, SortParam, StatementTimeoutMs,
+    ComputedFieldScope, ComputedQueryValueType, DataType, FilterField, JsonFieldPathRef, Operator,
+    ParsedQueryParam, QueryOptions, SQLMappedType, SearchOperator, SortParam, StatementTimeoutMs,
     get_jsonb_field_type_from_value_and_operator,
 };
 #[cfg(test)]
@@ -241,7 +241,7 @@ trait ParsedQueryParamSqlExt {
     fn as_json_has_key_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &str,
+        path: JsonFieldPathRef<'_>,
         key_name: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError>;
@@ -250,7 +250,7 @@ trait ParsedQueryParamSqlExt {
         &self,
         jsonb_field_expr: &str,
         field_expr: &str,
-        path: &str,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError>;
@@ -258,7 +258,7 @@ trait ParsedQueryParamSqlExt {
     fn as_json_all_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &str,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError>;
@@ -266,7 +266,7 @@ trait ParsedQueryParamSqlExt {
     fn as_json_array_length_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &str,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError>;
@@ -343,24 +343,10 @@ impl ParsedQueryParamExt for ParsedQueryParam {
             return self.as_json_is_null_sql(jsonb_field_expr, neg);
         }
 
-        // split the value on key=value
-        let parts: Vec<&str> = self.value.splitn(2, '=').collect();
-
-        let (key, value) = match parts.as_slice() {
-            [key, value] => (*key, *value),
-            _ => {
-                return Err(ApiError::BadRequest(
-                    "Expected exactly two parts of key=value".to_string(),
-                ));
-            }
-        };
-
-        // Validate the key
-        if !key.is_valid_jsonb_search_key() {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid JSON search key: '{key}'"
-            )));
-        }
+        let (key, value) = self.value.split_once('=').ok_or_else(|| {
+            ApiError::BadRequest("Expected exactly two parts of key=value".to_string())
+        })?;
+        let path = JsonFieldPathRef::new(key)?;
 
         // Validate the value, no longer needed as we're using bind variables
         /*
@@ -372,9 +358,7 @@ impl ParsedQueryParamExt for ParsedQueryParam {
         }
         */
 
-        let raw_key = key;
-        let key = format!("'{{{raw_key}}}'");
-        let field_expr = format!("{jsonb_field_expr} #>> {key}");
+        let field_expr = json_text_path_expression(jsonb_field_expr, path);
 
         // The bind variables for the SQL query. We can't bind the key as using
         // bind variables for the key itself is not supported in Postgres.
@@ -390,19 +374,19 @@ impl ParsedQueryParamExt for ParsedQueryParam {
         }
 
         if op == Operator::HasKey {
-            return self.as_json_has_key_sql(jsonb_field_expr, raw_key, value, neg);
+            return self.as_json_has_key_sql(jsonb_field_expr, path, value, neg);
         }
 
         if op == Operator::All {
-            return self.as_json_all_sql(jsonb_field_expr, raw_key, value, neg);
+            return self.as_json_all_sql(jsonb_field_expr, path, value, neg);
         }
 
         if op == Operator::ArrayLength {
-            return self.as_json_array_length_sql(jsonb_field_expr, raw_key, value, neg);
+            return self.as_json_array_length_sql(jsonb_field_expr, path, value, neg);
         }
 
         if op == Operator::In {
-            return self.as_json_in_sql(jsonb_field_expr, &field_expr, raw_key, value, neg);
+            return self.as_json_in_sql(jsonb_field_expr, &field_expr, path, value, neg);
         }
 
         let sql_type = get_jsonb_field_type_from_value_and_operator(value, op.clone());
@@ -449,7 +433,7 @@ impl ParsedQueryParamExt for ParsedQueryParam {
             None => {
                 return Err(ApiError::BadRequest(format!(
                     "Invalid JSON type mapping between key '{}' and operator '{:?}'",
-                    key, self.operator
+                    path, self.operator
                 )));
             }
             Some(SQLMappedType::String) | Some(SQLMappedType::None) => {
@@ -510,13 +494,8 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
         let path = &self.value;
-        if !path.is_valid_jsonb_search_key() {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid JSON search key: '{path}'"
-            )));
-        }
-        let key = format!("'{{{path}}}'");
-        let field_expr = format!("{jsonb_field_expr} #>> {key}");
+        let path = JsonFieldPathRef::new(path)?;
+        let field_expr = json_text_path_expression(jsonb_field_expr, path);
         let sql = if negated {
             format!("{field_expr} IS NOT NULL")
         } else {
@@ -531,12 +510,11 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
     fn as_json_has_key_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &str,
+        path: JsonFieldPathRef<'_>,
         key_name: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
-        let key = format!("'{{{path}}}'");
-        let jsonb_expr = format!("{jsonb_field_expr} #> {key}");
+        let jsonb_expr = json_value_path_expression(jsonb_field_expr, path);
         let predicate = format!("jsonb_has_key({jsonb_expr}, ?)");
         let sql = if negated {
             format!("NOT ({predicate})")
@@ -553,7 +531,7 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
         &self,
         jsonb_field_expr: &str,
         field_expr: &str,
-        path: &str,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
@@ -570,8 +548,7 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
 
         // Array check: jsonb containment
         let array_placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-        let key = format!("'{{{path}}}'");
-        let jsonb_expr = format!("{jsonb_field_expr} #> {key}");
+        let jsonb_expr = json_value_path_expression(jsonb_field_expr, path);
         let array_check = format!("jsonb_contains_any({jsonb_expr}, ARRAY[{array_placeholders}])");
 
         let combined = format!("({scalar_check} OR {array_check})");
@@ -601,7 +578,7 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
     fn as_json_all_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &str,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
@@ -612,8 +589,7 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
             ));
         }
         let placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-        let key = format!("'{{{path}}}'");
-        let jsonb_expr = format!("{jsonb_field_expr} #> {key}");
+        let jsonb_expr = json_value_path_expression(jsonb_field_expr, path);
         let predicate = format!("jsonb_contains_all({jsonb_expr}, ARRAY[{placeholders}])");
         let sql = if negated {
             format!("NOT ({predicate})")
@@ -633,15 +609,14 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
     fn as_json_array_length_sql(
         &self,
         jsonb_field_expr: &str,
-        path: &str,
+        path: JsonFieldPathRef<'_>,
         value: &str,
         negated: bool,
     ) -> Result<SQLComponent, ApiError> {
         let length: i32 = value.parse().map_err(|_| {
             ApiError::BadRequest(format!("array_length requires an integer, got '{value}'"))
         })?;
-        let key = format!("'{{{path}}}'");
-        let jsonb_expr = format!("{jsonb_field_expr} #> {key}");
+        let jsonb_expr = json_value_path_expression(jsonb_field_expr, path);
         let len_expr = format!("jsonb_array_length({jsonb_expr})");
         let cmp = if negated { "!=" } else { "=" };
         let sql = format!("jsonb_typeof({jsonb_expr}) = 'array' AND {len_expr} {cmp} ?");
@@ -787,6 +762,18 @@ impl ParsedQueryParamSqlExt for ParsedQueryParam {
             bind_variables,
         })
     }
+}
+
+fn json_path_sql_literal(path: JsonFieldPathRef<'_>) -> String {
+    format!("'{{{path}}}'")
+}
+
+fn json_text_path_expression(jsonb_field_expr: &str, path: JsonFieldPathRef<'_>) -> String {
+    format!("{jsonb_field_expr} #>> {}", json_path_sql_literal(path))
+}
+
+fn json_value_path_expression(jsonb_field_expr: &str, path: JsonFieldPathRef<'_>) -> String {
+    format!("{jsonb_field_expr} #> {}", json_path_sql_literal(path))
 }
 
 pub trait QueryParamsExt {
@@ -1014,6 +1001,14 @@ mod test {
         assert!(input.as_integer().is_err());
     }
 
+    #[test]
+    fn oversized_integer_range_maps_to_the_public_validation_error() {
+        let error = "0-2147483647".as_integer().unwrap_err();
+
+        assert!(matches!(error, ApiError::InvalidIntegerRange(_)));
+        assert!(error.to_string().contains("more than 1024 unique values"));
+    }
+
     #[rstest]
     #[case(
         "name__icontains=foo&description=bar&invalid",
@@ -1069,6 +1064,39 @@ mod test {
     )]
     fn test_query_string_parsing(#[case] query: &str, #[case] expected: Vec<ParsedQueryParam>) {
         assert_eq!(parse_query_parameter(query).unwrap().filters, expected);
+    }
+
+    #[rstest]
+    #[case("=value")]
+    #[case("network,,address=value")]
+    #[case(",network=value")]
+    #[case("network,=value")]
+    #[case("network address=value")]
+    fn json_filter_rejects_malformed_paths(#[case] value: &str) {
+        let error = pq(
+            "json_data",
+            SearchOperator::Equals { is_negated: false },
+            value,
+        )
+        .as_json_sql()
+        .unwrap_err();
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert!(error.to_string().contains("JSON path"));
+    }
+
+    #[test]
+    fn json_is_null_filter_uses_the_shared_path_validation() {
+        let error = pq(
+            "json_data",
+            SearchOperator::IsNull { is_negated: false },
+            "network,,address",
+        )
+        .as_json_sql()
+        .unwrap_err();
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert!(error.to_string().contains("JSON path"));
     }
 
     #[test]
