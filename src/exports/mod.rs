@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Instant;
 
+use hubuum_task_core::IdempotencyKey;
 use hubuum_templates::SizeLimitedWriter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -309,7 +310,7 @@ pub(crate) async fn submit_export_task<S: AuthzSubject>(
     pool: &DbPool,
     subject: &S,
     submitted_token_id: Option<i32>,
-    idempotency_key: Option<String>,
+    idempotency_key: Option<IdempotencyKey>,
     export: ExportRequest,
     template: Option<ExportTemplate>,
 ) -> Result<TaskRecord, ApiError> {
@@ -414,7 +415,7 @@ async fn find_or_create_export_task(
     pool: &DbPool,
     submitted_by: i32,
     snapshot: TaskScopeSnapshot,
-    idempotency_key: Option<String>,
+    idempotency_key: Option<IdempotencyKey>,
     payload: serde_json::Value,
     request_hash_value: String,
 ) -> Result<TaskRecord, ApiError> {

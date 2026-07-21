@@ -1,4 +1,5 @@
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
+use hubuum_task_core::IdempotencyKey;
 
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
@@ -22,7 +23,7 @@ async fn find_or_create_import_task(
     pool: &DbPool,
     submitted_by: i32,
     snapshot: TaskScopeSnapshot,
-    idempotency_key: Option<String>,
+    idempotency_key: Option<IdempotencyKey>,
     payload: serde_json::Value,
     request_hash: String,
     total_items: i32,

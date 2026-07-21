@@ -1,4 +1,5 @@
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
+use hubuum_task_core::IdempotencyKey;
 use tracing::{debug, info};
 
 use crate::api::locations as api_locations;
@@ -362,7 +363,7 @@ async fn find_or_create_remote_call_task(
     pool: &DbPool,
     submitted_by: i32,
     snapshot: TaskScopeSnapshot,
-    idempotency_key: Option<String>,
+    idempotency_key: Option<IdempotencyKey>,
     payload: serde_json::Value,
 ) -> Result<TaskRecord, ApiError> {
     let hash = request_hash(&payload)?;

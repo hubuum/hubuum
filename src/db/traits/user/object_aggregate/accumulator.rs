@@ -6,11 +6,14 @@ use super::ObjectAggregatePaging;
 use super::bounded_json::{MAX_OBJECT_AGGREGATE_ACCUMULATOR_BYTES, ObjectAggregateJsonBound};
 use super::sql::{
     ObjectAggregateBindValue, ObjectAggregateSqlSpec, append_page_options,
-    bind_object_aggregate_query,
+    bind_object_aggregate_query, grouped_measure_state_sql, measure_response_sql,
+    merged_measure_state_sql,
 };
 use crate::db::{DbConnection, DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::models::object_aggregate::{ObjectAggregatePage, ObjectAggregateRow};
+use crate::models::object_aggregate::{
+    ObjectAggregatePage, ObjectAggregateRow, ObjectAggregateSpec,
+};
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 
 const OBJECT_AGGREGATE_ACCUMULATOR_COMPACT_BYTES: usize = 1024 * 1024;
@@ -18,15 +21,25 @@ const OBJECT_AGGREGATE_ACCUMULATOR_COMPACT_BYTES: usize = 1024 * 1024;
 #[derive(diesel::QueryableByName, serde::Serialize)]
 pub(super) struct ObjectAggregateDatabaseRow {
     #[diesel(sql_type = Jsonb)]
-    pub(super) dimensions: serde_json::Value,
+    pub(super) sort_key: serde_json::Value,
+    #[diesel(sql_type = Jsonb)]
+    pub(super) measures: serde_json::Value,
+    #[diesel(sql_type = BigInt)]
+    pub(super) object_count: i64,
+}
+
+#[derive(diesel::QueryableByName, serde::Serialize)]
+pub(super) struct PartialObjectAggregateRow {
     #[diesel(sql_type = Jsonb)]
     pub(super) sort_key: serde_json::Value,
+    #[diesel(sql_type = Jsonb)]
+    pub(super) measure_state: serde_json::Value,
     #[diesel(sql_type = BigInt)]
     pub(super) object_count: i64,
 }
 
 pub(super) struct AggregateRows {
-    rows: Vec<ObjectAggregateDatabaseRow>,
+    rows: Vec<PartialObjectAggregateRow>,
     serialized_bytes: usize,
 }
 
@@ -40,14 +53,14 @@ impl Default for AggregateRows {
 }
 
 impl AggregateRows {
-    pub(super) fn push_bounded(&mut self, row: ObjectAggregateDatabaseRow) -> Result<(), ApiError> {
+    pub(super) fn push_bounded(&mut self, row: PartialObjectAggregateRow) -> Result<(), ApiError> {
         let row_bytes = serialized_row_len(&row)?;
         self.push_measured(row, row_bytes)
     }
 
     fn push_measured(
         &mut self,
-        row: ObjectAggregateDatabaseRow,
+        row: PartialObjectAggregateRow,
         row_bytes: usize,
     ) -> Result<(), ApiError> {
         let serialized_bytes = self
@@ -62,7 +75,7 @@ impl AggregateRows {
         Ok(())
     }
 
-    fn into_rows(self) -> Vec<ObjectAggregateDatabaseRow> {
+    fn into_rows(self) -> Vec<PartialObjectAggregateRow> {
         self.rows
     }
 
@@ -86,33 +99,42 @@ impl ExternalAggregateAccumulator {
         &mut self,
         pool: &DbPool,
         rows: AggregateRows,
+        spec: &ObjectAggregateSpec,
     ) -> Result<(), ApiError> {
         for row in rows.into_rows() {
             let row_bytes = serialized_row_len(&row)?;
             if self.total_bytes().saturating_add(row_bytes) > MAX_OBJECT_AGGREGATE_ACCUMULATOR_BYTES
             {
-                self.compact_pending(pool).await?;
+                self.compact_pending(pool, spec).await?;
             }
             if self.compacted.serialized_bytes.saturating_add(row_bytes)
                 > MAX_OBJECT_AGGREGATE_ACCUMULATOR_BYTES
             {
                 let mut incoming = AggregateRows::default();
                 incoming.push_measured(row, row_bytes)?;
-                self.compacted =
-                    compact_aggregate_rows(pool, std::mem::take(&mut self.compacted), incoming)
-                        .await?;
+                self.compacted = compact_aggregate_rows(
+                    pool,
+                    std::mem::take(&mut self.compacted),
+                    incoming,
+                    spec,
+                )
+                .await?;
                 continue;
             }
             self.pending.push_measured(row, row_bytes)?;
             if self.pending.serialized_bytes >= OBJECT_AGGREGATE_ACCUMULATOR_COMPACT_BYTES {
-                self.compact_pending(pool).await?;
+                self.compact_pending(pool, spec).await?;
             }
         }
         Ok(())
     }
 
-    pub(super) async fn finish(mut self, pool: &DbPool) -> Result<AggregateRows, ApiError> {
-        self.compact_pending(pool).await?;
+    pub(super) async fn finish(
+        mut self,
+        pool: &DbPool,
+        spec: &ObjectAggregateSpec,
+    ) -> Result<AggregateRows, ApiError> {
+        self.compact_pending(pool, spec).await?;
         Ok(self.compacted)
     }
 
@@ -122,7 +144,11 @@ impl ExternalAggregateAccumulator {
             .saturating_add(self.pending.serialized_bytes)
     }
 
-    async fn compact_pending(&mut self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn compact_pending(
+        &mut self,
+        pool: &DbPool,
+        spec: &ObjectAggregateSpec,
+    ) -> Result<(), ApiError> {
         if self.pending.is_empty() {
             return Ok(());
         }
@@ -130,6 +156,7 @@ impl ExternalAggregateAccumulator {
             pool,
             std::mem::take(&mut self.compacted),
             std::mem::take(&mut self.pending),
+            spec,
         )
         .await?;
         Ok(())
@@ -142,7 +169,7 @@ pub(super) async fn create_aggregate_accumulator(
     diesel::sql_query(
         "CREATE TEMP TABLE object_aggregate_accumulator (
             sort_key jsonb NOT NULL,
-            dimensions jsonb NOT NULL,
+            measure_state jsonb NOT NULL,
             object_count bigint NOT NULL CHECK (object_count > 0)
         ) ON COMMIT DROP",
     )
@@ -160,25 +187,34 @@ pub(super) async fn create_aggregate_accumulator(
 pub(super) async fn merge_aggregate_rows(
     connection: &mut DbConnection,
     groups: AggregateRows,
+    spec: &ObjectAggregateSpec,
 ) -> Result<(), ApiError> {
     if groups.is_empty() {
         return Ok(());
     }
     let merge = ObjectAggregateSqlSpec {
         sql: "INSERT INTO object_aggregate_accumulator (
-    dimensions,
     sort_key,
+    measure_state,
     object_count
 )
-SELECT incoming.dimensions, incoming.sort_key, incoming.object_count
+SELECT incoming.sort_key, incoming.measure_state, incoming.object_count
 FROM jsonb_to_recordset(?::jsonb) AS incoming(
-    dimensions jsonb,
     sort_key jsonb,
+    measure_state jsonb,
     object_count bigint
 )
 ON CONFLICT (sort_key) DO UPDATE
-SET object_count = object_aggregate_accumulator.object_count + EXCLUDED.object_count"
-            .to_string(),
+SET object_count = object_aggregate_accumulator.object_count + EXCLUDED.object_count,
+    measure_state = {measure_state}"
+            .replace(
+                "{measure_state}",
+                &merged_measure_state_sql(
+                    spec,
+                    "object_aggregate_accumulator.measure_state",
+                    "EXCLUDED.measure_state",
+                ),
+            ),
         binds: vec![ObjectAggregateBindValue::Json(aggregate_rows_payload(
             groups,
         ))],
@@ -193,40 +229,43 @@ async fn compact_aggregate_rows(
     pool: &DbPool,
     compacted: AggregateRows,
     pending: AggregateRows,
+    spec: &ObjectAggregateSpec,
 ) -> Result<AggregateRows, ApiError> {
     with_connection(
         pool,
         async |connection| -> Result<AggregateRows, ApiError> {
+            let measure_state = grouped_measure_state_sql(spec, "measure_state");
             let query = ObjectAggregateSqlSpec {
-                sql: "WITH incoming AS (
+                sql: format!(
+                    "WITH incoming AS (
     SELECT *
     FROM jsonb_to_recordset(?::jsonb) AS rows(
-        dimensions jsonb,
         sort_key jsonb,
+        measure_state jsonb,
         object_count bigint
     )
     UNION ALL
     SELECT *
     FROM jsonb_to_recordset(?::jsonb) AS rows(
-        dimensions jsonb,
         sort_key jsonb,
+        measure_state jsonb,
         object_count bigint
     )
 )
 SELECT
-    (array_agg(dimensions))[1] AS dimensions,
     sort_key,
+    {measure_state} AS measure_state,
     SUM(object_count)::bigint AS object_count
 FROM incoming
 GROUP BY sort_key"
-                    .to_string(),
+                ),
                 binds: vec![
                     ObjectAggregateBindValue::Json(aggregate_rows_payload(compacted)),
                     ObjectAggregateBindValue::Json(aggregate_rows_payload(pending)),
                 ],
             };
             let stream = bind_object_aggregate_query!(query)
-                .load_stream::<ObjectAggregateDatabaseRow>(connection)
+                .load_stream::<PartialObjectAggregateRow>(connection)
                 .await?;
             futures::pin_mut!(stream);
             let mut groups = AggregateRows::default();
@@ -261,18 +300,20 @@ async fn page_aggregate_rows(
     groups: AggregateRows,
     paging: &ObjectAggregatePaging,
 ) -> Result<Vec<ObjectAggregateDatabaseRow>, ApiError> {
+    let measures = measure_response_sql(&paging.spec, "measure_state", "object_count");
     let mut page_spec = ObjectAggregateSqlSpec {
-        sql: "WITH object_aggregate_accumulator AS (
+        sql: format!(
+            "WITH object_aggregate_accumulator AS (
     SELECT *
     FROM jsonb_to_recordset(?::jsonb) AS rows(
-        dimensions jsonb,
         sort_key jsonb,
+        measure_state jsonb,
         object_count bigint
     )
 )
-SELECT dimensions, sort_key, object_count
+SELECT sort_key, {measures} AS measures, object_count
 FROM object_aggregate_accumulator"
-            .to_string(),
+        ),
         binds: vec![ObjectAggregateBindValue::Json(aggregate_rows_payload(
             groups,
         ))],
@@ -300,10 +341,12 @@ pub(super) async fn page_accumulated_aggregates(
     } else {
         SKIPPED_TOTAL_COUNT
     };
+    let measures = measure_response_sql(&paging.spec, "measure_state", "object_count");
     let mut page_spec = ObjectAggregateSqlSpec {
-        sql: "SELECT dimensions, sort_key, object_count
+        sql: format!(
+            "SELECT sort_key, {measures} AS measures, object_count
 FROM object_aggregate_accumulator"
-            .to_string(),
+        ),
         binds: Vec::new(),
     };
     append_page_options(
@@ -326,7 +369,12 @@ pub(super) fn finish_aggregate_page(
     let mut rows = database_rows
         .into_iter()
         .map(|row| {
-            ObjectAggregateRow::from_database(row.dimensions, row.object_count, row.sort_key)
+            ObjectAggregateRow::from_database(
+                &paging.spec,
+                row.measures,
+                row.object_count,
+                row.sort_key,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let has_more = rows.len() > paging.effective_limit;
@@ -350,8 +398,8 @@ fn aggregate_rows_payload(groups: AggregateRows) -> serde_json::Value {
             .into_iter()
             .map(|row| {
                 serde_json::json!({
-                    "dimensions": row.dimensions,
                     "sort_key": row.sort_key,
+                    "measure_state": row.measure_state,
                     "object_count": row.object_count,
                 })
             })
@@ -359,7 +407,7 @@ fn aggregate_rows_payload(groups: AggregateRows) -> serde_json::Value {
     )
 }
 
-fn serialized_row_len(row: &ObjectAggregateDatabaseRow) -> Result<usize, ApiError> {
+fn serialized_row_len(row: &PartialObjectAggregateRow) -> Result<usize, ApiError> {
     ObjectAggregateJsonBound::Accumulator.measure(row)
 }
 

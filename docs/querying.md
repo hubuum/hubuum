@@ -359,8 +359,8 @@ GET /api/v1/classes/by-name/{class_name}/object-aggregates
 The explicit `by-name` alias applies the same query behavior while treating
 numeric-looking class names as names.
 
-Supply `group_by` once for each ordered dimension. Between one and three
-dimensions are required. Supported dimensions are:
+Supply `group_by` once for each ordered dimension. Up to three dimensions are
+supported:
 
 - `name`
 - `description`
@@ -371,15 +371,38 @@ dimensions are required. Supported dimensions are:
 - `computed.shared.<key>`
 - `computed.personal.<key>`
 
+Supply `aggregate` once for each numeric measure, using
+`operation:field`. Up to four measures are evaluated in request order. The
+operations are `sum`, `average`, `min`, and `max`; fields can be
+`json_data.<path>`, `computed.shared.<key>`, or
+`computed.personal.<key>`. Computed measures require a definition whose result
+type is `number` or `integer`.
+
+At least one `group_by` or `aggregate` parameter is required. Omitting
+`group_by` produces one global aggregate row when at least one readable,
+filtered source object exists. For example:
+
+```text
+GET /api/v1/classes/12/object-aggregates?aggregate=sum:json_data.cost&aggregate=average:computed.shared.health_score
+```
+
+Each measure includes `value_count`, the number of finite supported numeric
+values that contributed, and `skipped_count`, the remaining objects in the
+group. Missing paths, JSON nulls, non-numeric JSON values, unavailable computed
+results, and numbers outside the supported computed-decimal range are skipped.
+A measure with no contributing values has `state=empty` and omits `value`;
+otherwise it has `state=value`. This makes partial data visible instead of
+silently presenting a number as if it covered the whole group.
+
 The endpoint accepts the normal object filters, including scalar, `json_data`,
 `permissions`, and enabled shared or owned personal computed filters. Computed
 source filters use the same typed operators, `public`/`private` aliases, and
 two-filter limit as class object lists. For example, this request first applies
-JSON and computed filters and then groups the remaining readable objects by
-country and shared lifecycle:
+JSON and computed filters, groups the remaining readable objects by country
+and shared lifecycle, and calculates a cost total per group:
 
 ```text
-GET /api/v1/classes/12/object-aggregates?json_data__equals=status=active&computed.shared.environment__equals=production&group_by=json_data.location,country&group_by=computed.shared.lifecycle&sort=object_count.desc&limit=50
+GET /api/v1/classes/12/object-aggregates?json_data__equals=status=active&computed.shared.environment__equals=production&group_by=json_data.location,country&group_by=computed.shared.lifecycle&aggregate=sum:json_data.cost&sort=object_count.desc&limit=50
 ```
 
 Grouping by `created_at` or `updated_at` uses the exact timestamp. The endpoint
@@ -392,8 +415,9 @@ fields. Aggregate ordering is selected with one of:
 - `sort=object_count.desc`.
 
 Count ordering always appends the complete dimension tuple in ascending order
-as a deterministic tie-breaker. Cursor tokens are bound to the selected
-dimensions and sort; changing either while following a cursor returns
+as a deterministic tie-breaker. Measures do not change row ordering. Cursor
+tokens are bound to the selected dimensions, measures, and sort; changing any
+of them while following a cursor returns
 `400 Bad Request`. The cursor limit is calculated for each request from a
 common 8 KiB HTTP line budget after reserving its route, non-cursor query
 parameters, request-line and response-header framing, separators, and line
@@ -408,7 +432,7 @@ snapshots, Hubuum streams them into byte-bounded batches. An individual snapshot
 larger than 8 MiB returns `413 Payload Too Large`. External authorization does
 not retain a database connection during its calls, and its compacted
 intermediate aggregate rows are also limited to 8 MiB. Narrow the source
-filters or grouping dimensions when either bound is exceeded.
+filters, grouping dimensions, or measures when either bound is exceeded.
 
 Each response row is self-describing:
 
@@ -425,6 +449,16 @@ Each response row is self-describing:
         "field": "computed.shared.lifecycle",
         "state": "value",
         "value": "production"
+      }
+    ],
+    "measures": [
+      {
+        "field": "json_data.cost",
+        "operation": "sum",
+        "state": "value",
+        "value_count": 35,
+        "skipped_count": 2,
+        "value": 917.5
       }
     ],
     "object_count": 37
@@ -452,21 +486,22 @@ cannot affect bucket counts or aggregate cardinality, and rows are not reloaded
 after authorization.
 
 Computed aggregation snapshots current definitions and applies computed source
-filters and dimensions to source-object snapshots. A filter and dimension in
-the same request share that definition snapshot. Only the definitions needed
-by dimensions and the enabled scope needed by computed-filter evaluation are
-loaded. With a non-pushdown permission backend, ordinary-filter candidates are
-authorized first; if none is visible, the endpoint returns an empty page
-without resolving computed fields. Otherwise, unknown, disabled, inaccessible,
-and wrong-class selectors return `400 Bad Request`. SQL-pushdown computed
-filters are resolved before their database query, matching class object-list
-behavior even when the filtered result is empty.
+filters, dimensions, and measures to source-object snapshots. A filter,
+dimension, and measure in the same request share that definition snapshot.
+Only the definitions needed by dimensions and measures and the enabled scope
+needed by computed-filter evaluation are loaded. With a non-pushdown permission
+backend, ordinary-filter candidates are authorized first; if none is visible,
+the endpoint returns an empty page without resolving computed fields.
+Otherwise, unknown, disabled, inaccessible, wrong-class, and non-numeric
+measure selectors return `400 Bad Request`. SQL-pushdown computed filters are
+resolved before their database query, matching class object-list behavior even
+when the filtered result is empty.
 
-Personal filters and dimensions require a human owner with `ReadClass` access
-and can only use that owner's enabled definitions. Aggregation does not reload
-source objects or perform computed read repair. Service accounts cannot filter
-or group by personal fields. Responses depending on computed state include
-`Cache-Control: private, no-store`.
+Personal filters, dimensions, and measures require a human owner with
+`ReadClass` access and can only use that owner's enabled definitions.
+Aggregation does not reload source objects or perform computed read repair.
+Service accounts cannot filter, group by, or measure personal fields. Responses
+depending on computed state include `Cache-Control: private, no-store`.
 
 Pagination headers describe aggregate rows, not source objects:
 

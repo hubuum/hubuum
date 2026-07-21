@@ -614,7 +614,10 @@ Failed item example:
 
 ## Idempotency
 
-If `Idempotency-Key` is provided, repeated submissions by the same user with the same key return the same task instead of creating a duplicate queued import.
+If `Idempotency-Key` is provided, repeated submissions by the same user with
+the same key return the same task instead of creating a duplicate queued import.
+Keys must contain between 1 and 255 bytes. Empty or longer keys return
+`400 Bad Request`.
 
 ## Payload retention
 

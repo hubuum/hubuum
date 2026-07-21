@@ -2042,6 +2042,7 @@ dependencies = [
  "hubuum-events-core",
  "hubuum-outbound-http",
  "hubuum-query",
+ "hubuum-task-core",
  "hubuum-templates",
  "iai-callgrind",
  "ipnet",
@@ -2216,6 +2217,10 @@ dependencies = [
  "percent-encoding",
  "serde_json",
 ]
+
+[[package]]
+name = "hubuum-task-core"
+version = "0.0.1"
 
 [[package]]
 name = "hubuum-templates"

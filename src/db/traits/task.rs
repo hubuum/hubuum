@@ -3,6 +3,7 @@ use chrono::Utc;
 use diesel::dsl::sql;
 use diesel::expression::AsExpression;
 use diesel::sql_types::{BigInt, Bool, Nullable, Timestamp};
+use hubuum_task_core::IdempotencyKey;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
 use uuid::Uuid;
@@ -42,7 +43,7 @@ pub struct TaskCreateRequest {
     pub kind: TaskKind,
     /// Principal id of the submitter.
     pub submitted_by: i32,
-    pub idempotency_key: Option<String>,
+    pub idempotency_key: Option<IdempotencyKey>,
     pub request_hash: Option<String>,
     pub request_payload: serde_json::Value,
     pub total_items: i32,
@@ -1352,8 +1353,9 @@ impl TaskCreateRequest {
         let matches_request =
             |task: &TaskRecord| task.kind == kind.as_str() && task.request_hash == request_hash;
 
-        if let Some(key) = idempotency_key.as_deref()
-            && let Some(existing) = TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
+        if let Some(key) = idempotency_key.as_ref()
+            && let Some(existing) =
+                TaskRecord::find_by_idempotency(pool, submitted_by, key.as_str()).await?
         {
             if matches_request(&existing) {
                 return Ok(existing);
@@ -1369,9 +1371,9 @@ impl TaskCreateRequest {
         {
             Ok(task) => Ok(task),
             Err(ApiError::Conflict(_)) => {
-                if let Some(key) = idempotency_key.as_deref()
+                if let Some(key) = idempotency_key.as_ref()
                     && let Some(existing) =
-                        TaskRecord::find_by_idempotency(pool, submitted_by, key).await?
+                        TaskRecord::find_by_idempotency(pool, submitted_by, key.as_str()).await?
                     && matches_request(&existing)
                 {
                     return Ok(existing);
@@ -1432,7 +1434,7 @@ async fn insert_queued_task_with_event(
             kind: task_kind.as_str().to_string(),
             status: TaskStatus::Queued.as_str().to_string(),
             submitted_by: Some(submitted_by),
-            idempotency_key: request.idempotency_key,
+            idempotency_key: request.idempotency_key.map(IdempotencyKey::into_inner),
             request_hash: request.request_hash,
             request_payload: Some(request.request_payload),
             summary: None,
@@ -1597,6 +1599,7 @@ fn log_task_queued(task: &TaskRecord) {
 mod tests {
     use crate::db::prelude::*;
     use chrono::{Duration as ChronoDuration, Utc};
+    use hubuum_task_core::IdempotencyKey;
     use rstest::rstest;
     use tokio::sync::oneshot;
     use uuid::Uuid;
@@ -2214,7 +2217,9 @@ mod tests {
             submitted_token_id: None,
             submitted_token_scoped: false,
             submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(context.scoped_name("export-cap-first")),
+            idempotency_key: Some(
+                IdempotencyKey::new(context.scoped_name("export-cap-first")).unwrap(),
+            ),
             request_hash: Some(context.scoped_name("export-cap-first-hash")),
             request_payload: serde_json::json!({"export": "first"}),
             total_items: 1,
@@ -2231,7 +2236,9 @@ mod tests {
             submitted_token_id: None,
             submitted_token_scoped: false,
             submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(context.scoped_name("export-cap-second")),
+            idempotency_key: Some(
+                IdempotencyKey::new(context.scoped_name("export-cap-second")).unwrap(),
+            ),
             request_hash: Some(context.scoped_name("export-cap-second-hash")),
             request_payload: serde_json::json!({"export": "second"}),
             total_items: 1,
@@ -2257,7 +2264,9 @@ mod tests {
             submitted_token_id: None,
             submitted_token_scoped: false,
             submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(context.scoped_name(&format!("import-cap-{suffix}"))),
+            idempotency_key: Some(
+                IdempotencyKey::new(context.scoped_name(&format!("import-cap-{suffix}"))).unwrap(),
+            ),
             request_hash: Some(context.scoped_name(&format!("import-cap-{suffix}-hash"))),
             request_payload: serde_json::json!({"import": suffix}),
             total_items: 1,
@@ -2300,7 +2309,9 @@ mod tests {
             submitted_token_id: None,
             submitted_token_scoped: false,
             submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(context.scoped_name("remote-cap-first")),
+            idempotency_key: Some(
+                IdempotencyKey::new(context.scoped_name("remote-cap-first")).unwrap(),
+            ),
             request_hash: Some(context.scoped_name("remote-cap-first-hash")),
             request_payload: payload.clone(),
             total_items: 1,
@@ -2317,7 +2328,9 @@ mod tests {
             submitted_token_id: None,
             submitted_token_scoped: false,
             submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(context.scoped_name("remote-cap-second")),
+            idempotency_key: Some(
+                IdempotencyKey::new(context.scoped_name("remote-cap-second")).unwrap(),
+            ),
             request_hash: Some(context.scoped_name("remote-cap-second-hash")),
             request_payload: payload,
             total_items: 1,
@@ -2349,7 +2362,10 @@ mod tests {
             submitted_token_scoped: false,
             submitted_token_scopes: serde_json::json!([]),
             idempotency_key: Some(
-                context.scoped_name(&format!("{}-concurrent-cap-{suffix}", kind.as_str())),
+                IdempotencyKey::new(
+                    context.scoped_name(&format!("{}-concurrent-cap-{suffix}", kind.as_str())),
+                )
+                .unwrap(),
             ),
             request_hash: Some(
                 context.scoped_name(&format!("{}-concurrent-cap-{suffix}-hash", kind.as_str())),

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_event_deliveries_terminal_retention;

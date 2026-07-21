@@ -24,6 +24,7 @@ COPY crates/hubuum-event-sinks-common/Cargo.toml ./crates/hubuum-event-sinks-com
 COPY crates/hubuum-events-core/Cargo.toml ./crates/hubuum-events-core/Cargo.toml
 COPY crates/hubuum-outbound-http/Cargo.toml ./crates/hubuum-outbound-http/Cargo.toml
 COPY crates/hubuum-query/Cargo.toml ./crates/hubuum-query/Cargo.toml
+COPY crates/hubuum-task-core/Cargo.toml ./crates/hubuum-task-core/Cargo.toml
 COPY crates/hubuum-templates/Cargo.toml ./crates/hubuum-templates/Cargo.toml
 
 # Build dependencies against dummy targets. Benchmark targets are removed from
