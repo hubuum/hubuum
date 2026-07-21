@@ -206,7 +206,7 @@ where
             execution.personal_owner_id,
         )
         .await?;
-    if !execution.paging.spec.has_computed_dimension() {
+    if !execution.paging.spec.has_computed_field() {
         return aggregate_visible_filtered_objects_with_sql(execution).await;
     }
     aggregate_visible_filtered_objects_with_local_batches(execution).await
@@ -264,7 +264,7 @@ async fn aggregate_visible_filtered_objects_with_local_batches(
                     let plan = SnapshotAggregatePlan::new(&paging.spec, definitions);
                     let grouped =
                         aggregate_snapshot_rows(connection, candidate_page.items, plan).await?;
-                    merge_aggregate_rows(connection, grouped).await?;
+                    merge_aggregate_rows(connection, grouped, &paging.spec).await?;
                 }
 
                 object_cursor = candidate_page.next_cursor;
@@ -322,7 +322,7 @@ where
         &resources,
     )?;
     let mut computed_definitions =
-        (!paging.spec.has_computed_dimension()).then(ComputedAggregateDefinitions::default);
+        (!paging.spec.has_computed_field()).then(ComputedAggregateDefinitions::default);
     let mut accumulator = ExternalAggregateAccumulator::default();
     let filters_computed_values = paging.has_computed_filter();
     let mut chunk_options = object_aggregate_authorization_chunk_options(&paging.query_options);
@@ -383,7 +383,7 @@ where
                 aggregate_snapshot_rows(connection, authorized, plan).await
             })
             .await?;
-            accumulator.add_rows(pool, grouped).await?;
+            accumulator.add_rows(pool, grouped, &paging.spec).await?;
         }
 
         object_cursor = candidate_page.next_cursor;
@@ -392,7 +392,7 @@ where
         }
     }
 
-    let groups = accumulator.finish(pool).await?;
+    let groups = accumulator.finish(pool, &paging.spec).await?;
     if groups.is_empty() {
         return empty_aggregate_page(&paging.query_options);
     }

@@ -457,6 +457,14 @@ The purge path is the only application path allowed to bypass the append-only
 before deleting eligible event rows. Normal `DELETE` statements against
 `events` continue to fail.
 
+Worker replicas coordinate each retention batch with a transaction-scoped
+PostgreSQL advisory lock. One replica selects and locks eligible events through
+optional archival and deletion; other replicas skip that iteration instead of
+duplicating archive records or competing over the same rows. The configured
+batch size bounds both event deletion and independent terminal-delivery
+cleanup. A partial index on terminal delivery age keeps the latter lookup
+bounded to its eligible queue.
+
 Events become purge-eligible after `HUBUUM_EVENT_RETENTION_DAYS`, but the purge
 will not delete an event while it has active `pending`, `failed`, or
 `in_flight` deliveries. Deleting an eligible event cascades to its remaining

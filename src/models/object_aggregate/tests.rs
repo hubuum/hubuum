@@ -12,6 +12,7 @@ fn encoded_cursor(dimension: &str, sort_key: serde_json::Value, object_count: i6
     let token = ObjectAggregateCursorToken {
         version: 1,
         dimensions: vec![dimension.to_string()],
+        measures: Vec::new(),
         sort: ObjectAggregateSort::DimensionsAscending,
         sort_key,
         object_count,
@@ -41,7 +42,11 @@ fn parses_ordered_multidimensional_group_query() {
 #[test]
 fn rejects_missing_group_dimensions() {
     let error = parse_object_aggregate_query("").unwrap_err();
-    assert!(error.to_string().contains("between 1 and 3"));
+    assert!(
+        error
+            .to_string()
+            .contains("group_by dimension or aggregate")
+    );
 }
 
 #[test]
@@ -50,7 +55,44 @@ fn rejects_more_than_three_group_dimensions() {
         "group_by=name&group_by=description&group_by=collection_id&group_by=created_at",
     )
     .unwrap_err();
-    assert!(error.to_string().contains("between 1 and 3"));
+    assert!(error.to_string().contains("at most 3"));
+}
+
+#[test]
+fn parses_global_numeric_measures_without_grouping() {
+    let query = parse_object_aggregate_query(
+        "aggregate=sum:json_data.cost&aggregate=average:computed.shared.score",
+    )
+    .unwrap();
+
+    assert!(query.spec().dimensions().is_empty());
+    assert_eq!(query.spec().measures().len(), 2);
+    assert_eq!(query.spec().measures()[0].canonical(), "sum:json_data.cost");
+    assert!(query.uses_computed_values());
+}
+
+#[test]
+fn rejects_duplicate_or_excessive_measures() {
+    let duplicate =
+        parse_object_aggregate_query("aggregate=sum:json_data.cost&aggregate=sum:json_data.cost")
+            .unwrap_err();
+    assert!(duplicate.to_string().contains("Duplicate"));
+
+    let excessive = parse_object_aggregate_query(
+        "aggregate=sum:json_data.a&aggregate=sum:json_data.b&aggregate=sum:json_data.c&aggregate=sum:json_data.d&aggregate=sum:json_data.e",
+    )
+    .unwrap_err();
+    assert!(excessive.to_string().contains("at most 4"));
+}
+
+#[rstest::rstest]
+#[case("aggregate=count:json_data.cost")]
+#[case("aggregate=sum:name")]
+#[case("aggregate=sum:json_data.cost%27%29%3BDROP%20TABLE%20hubuumobject%3B--")]
+#[case("aggregate=sum:computed.shared.score%27%3BSELECT%20pg_sleep%2810%29%3B--")]
+#[case("group_by=json_data.cost%5C%27%3BDROP%20TABLE%20hubuumobject%3B--")]
+fn rejects_invalid_or_injection_shaped_aggregate_syntax(#[case] query: &str) {
+    assert!(parse_object_aggregate_query(query).is_err());
 }
 
 #[test]
@@ -84,7 +126,8 @@ fn cursor_is_bound_to_dimension_and_sort_spec() {
     )
     .unwrap();
     let row = ObjectAggregateRow::from_database(
-        serde_json::json!([{"field": "name", "state": "value", "value": "a"}]),
+        &first,
+        serde_json::json!([]),
         1,
         serde_json::json!([[0, "a"]]),
     )
@@ -95,12 +138,82 @@ fn cursor_is_bound_to_dimension_and_sort_spec() {
     assert!(error.to_string().contains("does not match"));
 }
 
+#[test]
+fn cursor_is_bound_to_measure_spec() {
+    let dimensions = vec![ObjectAggregateDimension::from_str("name").unwrap()];
+    let first = ObjectAggregateSpec::with_measures(
+        dimensions.clone(),
+        vec![ObjectAggregateMeasure::from_str("sum:json_data.cost").unwrap()],
+        ObjectAggregateSort::DimensionsAscending,
+    )
+    .unwrap();
+    let second = ObjectAggregateSpec::with_measures(
+        dimensions,
+        vec![ObjectAggregateMeasure::from_str("max:json_data.cost").unwrap()],
+        ObjectAggregateSort::DimensionsAscending,
+    )
+    .unwrap();
+    let row = ObjectAggregateRow::from_database(
+        &first,
+        serde_json::json!([{
+            "state": "value",
+            "value_count": 1,
+            "skipped_count": 0,
+            "value": 42
+        }]),
+        1,
+        serde_json::json!([[0, "a"]]),
+    )
+    .unwrap();
+
+    let cursor = first.encode_cursor(&row, cursor_budget()).unwrap();
+    let error = second.decode_cursor(&cursor, cursor_budget()).unwrap_err();
+
+    assert!(error.to_string().contains("does not match"));
+}
+
+#[test]
+fn database_measure_values_gain_typed_request_metadata() {
+    let spec = ObjectAggregateSpec::with_measures(
+        Vec::new(),
+        vec![ObjectAggregateMeasure::from_str("average:json_data.cost").unwrap()],
+        ObjectAggregateSort::DimensionsAscending,
+    )
+    .unwrap();
+    let row = ObjectAggregateRow::from_database(
+        &spec,
+        serde_json::json!([{
+            "state": "value",
+            "value_count": 2,
+            "skipped_count": 1,
+            "value": 12.5
+        }]),
+        3,
+        serde_json::json!([]),
+    )
+    .unwrap();
+
+    assert!(row.dimensions().is_empty());
+    assert_eq!(row.measures()[0].field(), "json_data.cost");
+    assert_eq!(
+        row.measures()[0].operation(),
+        ObjectAggregateMeasureOperation::Average
+    );
+    assert_eq!(row.measures()[0].value(), Some(&serde_json::json!(12.5)));
+}
+
 #[rstest::rstest]
 #[case(0)]
 #[case(-1)]
 fn rejects_non_positive_object_counts(#[case] object_count: i64) {
+    let spec = ObjectAggregateSpec::new(
+        vec![ObjectAggregateDimension::from_str("name").unwrap()],
+        ObjectAggregateSort::DimensionsAscending,
+    )
+    .unwrap();
     let error = ObjectAggregateRow::from_database(
-        serde_json::json!([{"field": "name", "state": "value", "value": "a"}]),
+        &spec,
+        serde_json::json!([]),
         object_count,
         serde_json::json!([[0, "a"]]),
     )
@@ -122,11 +235,8 @@ fn refuses_to_emit_an_unreplayable_group_cursor() {
     .unwrap();
     let large_value = "x".repeat(MAX_OBJECT_AGGREGATE_CURSOR_LENGTH);
     let row = ObjectAggregateRow::from_database(
-        serde_json::json!([{
-            "field": "json_data.large",
-            "state": "value",
-            "value": large_value.clone(),
-        }]),
+        &spec,
+        serde_json::json!([]),
         1,
         serde_json::json!([[0, large_value]]),
     )
@@ -185,11 +295,8 @@ fn cursor_emission_uses_the_request_specific_budget() {
     .unwrap();
     let boundary_value = "x".repeat(1_000);
     let row = ObjectAggregateRow::from_database(
-        serde_json::json!([{
-            "field": "json_data.large",
-            "state": "value",
-            "value": boundary_value.clone(),
-        }]),
+        &spec,
+        serde_json::json!([]),
         1,
         serde_json::json!([[0, boundary_value]]),
     )

@@ -21,7 +21,7 @@ use crate::db::traits::event_fanout::{
     fanout_events,
 };
 use crate::db::traits::event_retention::{
-    EventRetentionSettings, purge_event_retention_without_archive,
+    EventRetentionSettings, purge_event_retention_without_archive, try_acquire_event_retention_lock,
 };
 use crate::db::traits::event_subscription::{SaveEventSinkRecord, SaveEventSubscriptionRecord};
 use crate::db::traits::remote_target::{
@@ -30,6 +30,7 @@ use crate::db::traits::remote_target::{
 };
 use crate::db::{capture_queries, with_connection, with_transaction};
 use crate::errors::ApiError;
+use crate::events::retention::process_event_retention_batch;
 use crate::events::{
     Action, ActorKind, EntityType, Event, EventContext, NewEvent, RequestProvenance, emit_event,
 };
@@ -195,6 +196,31 @@ async fn fanout_backlog_index_exists() {
         .await
         .map(|r| r.exists)?;
         assert!(exists, "events_fanout_backlog_idx partial index is missing");
+        Ok::<_, diesel::result::Error>(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn event_delivery_terminal_retention_index_exists() {
+    let scope = test_scope();
+    with_connection(&scope.pool, async |conn| {
+        let exists: bool = diesel::sql_query(
+            "SELECT EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'event_deliveries'
+                  AND indexname = 'idx_event_deliveries_terminal_retention'
+                  AND indexdef LIKE '%(updated_at, id)%'
+                  AND indexdef LIKE '%succeeded%'
+                  AND indexdef LIKE '%dead%'
+            )",
+        )
+        .get_result::<IndexExistsRow>(conn)
+        .await
+        .map(|row| row.exists)?;
+        assert!(exists, "terminal event-delivery retention index is missing");
         Ok::<_, diesel::result::Error>(())
     })
     .await
@@ -619,6 +645,42 @@ async fn ordinary_event_delete_is_rejected_by_append_only_trigger() {
 }
 
 #[actix_web::test]
+async fn event_retention_skips_a_batch_while_another_replica_holds_the_coordinator_lock() {
+    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
+    let scope = test_scope();
+    let old_event = insert_collection_created_event_at(
+        &scope,
+        1,
+        chrono::Utc::now().naive_utc() - chrono::Duration::days(400),
+    )
+    .await;
+    mark_event_dispatched(&scope, old_event.id).await;
+
+    with_transaction(&scope.pool, async |conn| -> Result<(), ApiError> {
+        assert!(try_acquire_event_retention_lock(conn).await?);
+
+        let skipped =
+            process_event_retention_batch(&scope.pool, make_retention_settings(), None).await?;
+
+        assert_eq!(skipped, Default::default());
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    let remaining = with_connection(&scope.pool, async |conn| {
+        events
+            .filter(crate::schema::events::dsl::id.eq(old_event.id))
+            .count()
+            .get_result::<i64>(conn)
+            .await
+    })
+    .await
+    .unwrap();
+    assert_eq!(remaining, 1);
+}
+
+#[actix_web::test]
 async fn event_retention_purge_deletes_old_events_through_guarded_path() {
     let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
     let scope = test_scope();
@@ -759,6 +821,74 @@ async fn event_retention_purge_deletes_old_terminal_deliveries_without_deleting_
     .await
     .unwrap();
     assert_eq!(remaining_events, 1);
+}
+
+#[actix_web::test]
+async fn event_retention_bounds_terminal_delivery_deletes_to_the_batch_size() {
+    let _lock = lock_test_mutex(&EVENT_RETENTION_TEST_LOCK).await;
+    let scope = test_scope();
+    let fixture = scope.with_collection().await;
+    let subscription_id = create_collection_event_subscription(
+        &scope,
+        fixture.collection.id,
+        "retention_bounded_terminal",
+        true,
+    )
+    .await;
+    let mut event_ids = Vec::new();
+    for _ in 0..3 {
+        event_ids.push(
+            emit_collection_created_event(&scope, fixture.collection.id)
+                .await
+                .id,
+        );
+    }
+    let old_timestamp = chrono::Utc::now().naive_utc() - chrono::Duration::days(40);
+    use crate::schema::event_deliveries::dsl::{
+        created_at, event_deliveries, event_id, status,
+        subscription_id as delivery_subscription_id, updated_at,
+    };
+    with_connection(
+        &scope.pool,
+        async |conn| -> Result<(), diesel::result::Error> {
+            for event_id_value in &event_ids {
+                diesel::insert_into(event_deliveries)
+                    .values((
+                        event_id.eq(event_id_value),
+                        delivery_subscription_id.eq(subscription_id),
+                        status.eq(EventDeliveryStatus::Succeeded.as_str()),
+                        created_at.eq(old_timestamp),
+                        updated_at.eq(old_timestamp),
+                    ))
+                    .execute(&mut *conn)
+                    .await?;
+            }
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+    let settings = EventRetentionSettings {
+        batch_size: 2,
+        ..make_retention_settings()
+    };
+
+    let first = purge_event_retention_without_archive(&scope.pool, settings)
+        .await
+        .unwrap();
+
+    assert_eq!(first.purged_terminal_deliveries, 2);
+    assert_eq!(
+        count_event_deliveries_for_event(&scope.pool, event_ids[2])
+            .await
+            .unwrap(),
+        1
+    );
+
+    let second = purge_event_retention_without_archive(&scope.pool, settings)
+        .await
+        .unwrap();
+    assert_eq!(second.purged_terminal_deliveries, 1);
 }
 
 #[actix_web::test]

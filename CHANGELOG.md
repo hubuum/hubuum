@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Extended permission-aware object aggregation with up to four ordered
+  `sum`, `average`, `min`, or `max` measures over nested JSON and numeric
+  computed fields, optional global aggregation without `group_by`, explicit
+  contributing/skipped value counts, and backend-consistent bounded merging.
+
 ### Changed
 
 - JSON filters and object-aggregate dimensions now share one typed JSON-path
@@ -15,6 +22,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Event-retention workers now coordinate one transaction-scoped batch across
+  replicas, keep selected event rows locked through archival and deletion, and
+  limit terminal-delivery cleanup to the configured batch size. A partial
+  retention index is added for old `succeeded` and `dead` deliveries.
 - Unified search now uses the shared form-query decoder, so `+` and percent
   escapes are interpreted consistently with other list and search endpoints.
 

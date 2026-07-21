@@ -52,7 +52,8 @@ async fn fixture(context: &TestContext, label: &str) -> ObjectFixture {
                         "location": {"country": "NO"},
                         "typed": "text",
                         "nullable": "present",
-                        "bucket": "a"
+                        "bucket": "a",
+                        "amount": 10
                     }),
                 ),
                 object(
@@ -63,7 +64,8 @@ async fn fixture(context: &TestContext, label: &str) -> ObjectFixture {
                         "location": {"country": "NO"},
                         "typed": 7,
                         "nullable": null,
-                        "bucket": null
+                        "bucket": null,
+                        "amount": 20.5
                     }),
                 ),
                 object(
@@ -73,7 +75,8 @@ async fn fixture(context: &TestContext, label: &str) -> ObjectFixture {
                         "status": "inactive",
                         "location": {"country": "SE"},
                         "typed": true,
-                        "bucket": 12
+                        "bucket": 12,
+                        "amount": null
                     }),
                 ),
                 object(
@@ -82,7 +85,8 @@ async fn fixture(context: &TestContext, label: &str) -> ObjectFixture {
                     serde_json::json!({
                         "status": "active",
                         "location": {"country": ["NO"]},
-                        "typed": ["x"]
+                        "typed": ["x"],
+                        "amount": "not numeric"
                     }),
                 ),
                 object(
@@ -164,6 +168,22 @@ fn computed_definition(key: &str, path: &str, enabled: bool) -> ComputedFieldDef
         "description": "",
         "operation": {"type": "first_non_null", "paths": [path]},
         "result_type": "string",
+        "enabled": enabled
+    }))
+    .unwrap()
+}
+
+fn numeric_computed_definition(
+    key: &str,
+    path: &str,
+    enabled: bool,
+) -> ComputedFieldDefinitionRequest {
+    serde_json::from_value(serde_json::json!({
+        "key": key,
+        "label": key,
+        "description": "",
+        "operation": {"type": "first_non_null", "paths": [path]},
+        "result_type": "number",
         "enabled": enabled
     }))
     .unwrap()

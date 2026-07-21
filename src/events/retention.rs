@@ -17,9 +17,10 @@ use crate::config::{
 };
 use crate::db::DbPool;
 use crate::db::traits::event_retention::{
-    EventRetentionPurgeSummary, EventRetentionSettings, purge_event_retention_batch,
-    select_events_for_retention_purge,
+    EventRetentionPurgeSummary, EventRetentionSettings, purge_event_retention_batch_conn,
+    select_events_for_retention_purge_conn, try_acquire_event_retention_lock,
 };
+use crate::db::with_transaction;
 use crate::errors::ApiError;
 use crate::events::Event;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
@@ -77,15 +78,22 @@ pub async fn process_event_retention_batch(
     if maintenance_state(pool).await? != "normal" {
         return Ok(EventRetentionPurgeSummary::default());
     }
-    let events = select_events_for_retention_purge(pool, settings).await?;
-    if let Some(path) = archive_path
-        && !events.is_empty()
-    {
-        append_event_archive(path, &events)?;
-    }
+    with_transaction(pool, async |conn| -> Result<_, ApiError> {
+        if !try_acquire_event_retention_lock(conn).await? {
+            return Ok(EventRetentionPurgeSummary::default());
+        }
 
-    let event_ids = events.iter().map(|event| event.id).collect::<Vec<_>>();
-    purge_event_retention_batch(pool, settings, &event_ids).await
+        let events = select_events_for_retention_purge_conn(conn, settings).await?;
+        if let Some(path) = archive_path
+            && !events.is_empty()
+        {
+            append_event_archive(path, &events)?;
+        }
+
+        let event_ids = events.iter().map(|event| event.id).collect::<Vec<_>>();
+        purge_event_retention_batch_conn(conn, settings, &event_ids).await
+    })
+    .await
 }
 
 fn retention_worker_should_continue(result: &Result<EventRetentionPurgeSummary, ApiError>) -> bool {
