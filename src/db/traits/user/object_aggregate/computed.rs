@@ -8,8 +8,9 @@ use crate::db::traits::computed_field::{ComputedQuerySnapshot, evaluate_definiti
 use crate::errors::ApiError;
 use crate::models::computed_field::{
     COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED, ComputedFieldDefinition,
+    ComputedResultType,
 };
-use crate::models::object_aggregate::{ObjectAggregateDimension, ObjectAggregateSpec};
+use crate::models::object_aggregate::{ComputedFieldSelector, ObjectAggregateSpec};
 use crate::models::search::ComputedFieldScope;
 
 #[derive(Default)]
@@ -25,11 +26,7 @@ pub(super) async fn load_computed_aggregate_definitions(
     personal_owner_id: Option<i32>,
     computed_filter_snapshot: Option<&ComputedQuerySnapshot>,
 ) -> Result<ComputedAggregateDefinitions, ApiError> {
-    let selectors = spec
-        .dimensions()
-        .iter()
-        .filter_map(ObjectAggregateDimension::computed_selector)
-        .collect::<Vec<_>>();
+    let selectors = spec.computed_selectors().collect::<Vec<_>>();
     if selectors.is_empty() {
         return Ok(ComputedAggregateDefinitions::default());
     }
@@ -85,13 +82,29 @@ pub(super) async fn load_computed_aggregate_definitions(
             })
             .ok_or_else(|| {
                 ApiError::BadRequest(format!(
-                    "Computed aggregate dimension '{}' does not name an accessible field in class {class_id_value}",
+                    "Computed aggregate field '{}' does not name an accessible field in class {class_id_value}",
                     selector.canonical()
                 ))
             })?;
         if !definition.enabled {
             return Err(ApiError::BadRequest(format!(
-                "Computed aggregate dimension '{}' is disabled",
+                "Computed aggregate field '{}' is disabled",
+                selector.canonical()
+            )));
+        }
+        let is_measure = spec.measures().iter().any(|measure| {
+            measure
+                .computed_selector()
+                .is_some_and(|candidate| candidate.canonical() == selector.canonical())
+        });
+        if is_measure
+            && !matches!(
+                ComputedResultType::from_db(&definition.result_type)?,
+                ComputedResultType::Number | ComputedResultType::Integer
+            )
+        {
+            return Err(ApiError::BadRequest(format!(
+                "Computed aggregate measure '{}' must select a numeric field",
                 selector.canonical()
             )));
         }
@@ -164,7 +177,7 @@ pub(super) fn computed_aggregate_payload(
     for object in &candidates {
         let data = object.data.as_ref().ok_or_else(|| {
             ApiError::InternalServerError(
-                "Computed grouping candidate is missing its JSON data snapshot".to_string(),
+                "Computed aggregation candidate is missing its JSON data snapshot".to_string(),
             )
         })?;
         let shared = evaluate_aggregate_definitions(
@@ -180,13 +193,15 @@ pub(super) fn computed_aggregate_payload(
             "personal_group",
         )?;
         let values = spec
-            .dimensions()
-            .iter()
-            .map(|dimension| {
-                computed_dimension_value(shared.as_ref(), personal.as_ref(), dimension)
+            .computed_selectors()
+            .map(|selector| {
+                (
+                    selector.canonical(),
+                    computed_selector_value(shared.as_ref(), personal.as_ref(), selector),
+                )
             })
-            .collect::<Vec<_>>();
-        payload.insert(object.id.to_string(), serde_json::Value::Array(values));
+            .collect::<serde_json::Map<_, _>>();
+        payload.insert(object.id.to_string(), serde_json::Value::Object(values));
     }
     Ok((candidates, serde_json::Value::Object(payload)))
 }
@@ -202,14 +217,11 @@ fn evaluate_aggregate_definitions(
         .transpose()
 }
 
-fn computed_dimension_value(
+fn computed_selector_value(
     shared: Option<&EvaluationResult>,
     personal: Option<&EvaluationResult>,
-    dimension: &ObjectAggregateDimension,
+    selector: &ComputedFieldSelector,
 ) -> serde_json::Value {
-    let Some(selector) = dimension.computed_selector() else {
-        return serde_json::Value::Null;
-    };
     let result = match selector.scope() {
         ComputedFieldScope::Shared => shared,
         ComputedFieldScope::Personal => personal,

@@ -41,6 +41,41 @@ async fn shared_computed_groups_evaluate_snapshots_and_use_unavailable_bucket(
 
 #[rstest::rstest]
 #[tokio::test]
+async fn shared_computed_numeric_measure_uses_the_definition_snapshot(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = fixture(&test_context, "shared computed measure").await;
+    create_shared_definition(
+        &test_context.pool,
+        fixture.class.id,
+        fixture.class.collection_id,
+        test_context.admin_user.id,
+        numeric_computed_definition("shared_amount", "/amount", true),
+        &EventContext::system(),
+    )
+    .await
+    .unwrap();
+
+    let page = aggregate_rows(
+        &test_context,
+        &fixture,
+        &test_context.admin_token,
+        "aggregate=sum:computed.shared.shared_amount",
+    )
+    .await;
+
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(page.rows[0]["measures"][0]["value"], 30.5);
+    assert_eq!(page.rows[0]["measures"][0]["value_count"], 2);
+    assert_eq!(page.rows[0]["measures"][0]["skipped_count"], 3);
+    assert_eq!(page.cache_control.as_deref(), Some("private, no-store"));
+
+    finish_active_rebuild(&test_context, fixture.class.id).await;
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
 async fn shared_computed_filters_apply_before_scalar_aggregation(
     #[future(awt)] test_context: TestContext,
 ) {

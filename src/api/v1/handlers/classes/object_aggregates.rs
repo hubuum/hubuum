@@ -25,16 +25,17 @@ use crate::traits::{Search, SelfAccessors};
     get,
     path = "/api/v1/classes/{class_id}/object-aggregates",
     tag = "classes",
-    description = "Permission-scoped object aggregation. Normal object filters and up to two enabled shared or owned personal computed filters are applied before grouping.",
+    description = "Permission-scoped object aggregation. Normal object filters and up to two enabled shared or owned personal computed filters are applied before optional grouping and numeric measures.",
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Class ID"),
-        ("group_by" = Vec<String>, Query, description = "One to three repeated ordered dimensions: name, description, collection_id, created_at, updated_at, json_data.<comma-separated-path>, computed.shared.<key>, or computed.personal.<key>"),
+        ("group_by" = Option<Vec<String>>, Query, description = "Up to three repeated ordered dimensions: name, description, collection_id, created_at, updated_at, json_data.<comma-separated-path>, computed.shared.<key>, or computed.personal.<key>"),
+        ("aggregate" = Option<Vec<String>>, Query, description = "Up to four repeated numeric measures in operation:field form. Operations are sum, average, min, and max; fields are json_data.<comma-separated-path>, computed.shared.<key>, or computed.personal.<key>. At least one group_by or aggregate parameter is required."),
         ("sort" = Option<String>, Query, description = "Aggregate ordering: dimensions.asc, dimensions.desc, object_count.asc, or object_count.desc")
     ),
     responses(
-        (status = 200, description = "Permission-scoped aggregated object counts. Value states distinguish value, JSON null, a missing JSON path, and an unavailable computed result.", body = [ObjectAggregateRow]),
-        (status = 400, description = "Invalid filter, dimension, path, sort, cursor, or computed selector", body = ApiErrorResponse),
+        (status = 200, description = "Permission-scoped grouped or global aggregate rows. Dimension states preserve null, missing, and unavailable values; numeric measures report contributing and skipped source counts.", body = [ObjectAggregateRow]),
+        (status = 400, description = "Invalid filter, dimension, measure, path, sort, cursor, or computed selector", body = ApiErrorResponse),
         (status = 413, description = "An aggregate value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate aggregates exceed their memory bounds", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse)
@@ -60,16 +61,17 @@ pub(crate) async fn get_object_aggregates(
     path = "/api/v1/classes/by-name/{class_name}/object-aggregates",
     tag = "classes",
     summary = "Aggregate objects in a class by class name",
-    description = "Name-addressed alias for permission-scoped object aggregation. Numeric-looking class names remain names. Normal object filters and up to two enabled shared or owned personal computed filters are applied before grouping.",
+    description = "Name-addressed alias for permission-scoped object aggregation. Numeric-looking class names remain names. Normal object filters and up to two enabled shared or owned personal computed filters are applied before optional grouping and numeric measures.",
     security(("bearer_auth" = [])),
     params(
         ("class_name" = String, Path, description = "Globally unique class name"),
-        ("group_by" = Vec<String>, Query, description = "One to three repeated ordered dimensions: name, description, collection_id, created_at, updated_at, json_data.<comma-separated-path>, computed.shared.<key>, or computed.personal.<key>"),
+        ("group_by" = Option<Vec<String>>, Query, description = "Up to three repeated ordered dimensions: name, description, collection_id, created_at, updated_at, json_data.<comma-separated-path>, computed.shared.<key>, or computed.personal.<key>"),
+        ("aggregate" = Option<Vec<String>>, Query, description = "Up to four repeated numeric measures in operation:field form. Operations are sum, average, min, and max; fields are json_data.<comma-separated-path>, computed.shared.<key>, or computed.personal.<key>. At least one group_by or aggregate parameter is required."),
         ("sort" = Option<String>, Query, description = "Aggregate ordering: dimensions.asc, dimensions.desc, object_count.asc, or object_count.desc")
     ),
     responses(
-        (status = 200, description = "Permission-scoped aggregated object counts. Value states distinguish value, JSON null, a missing JSON path, and an unavailable computed result.", body = [ObjectAggregateRow]),
-        (status = 400, description = "Invalid filter, dimension, path, sort, cursor, or computed selector", body = ApiErrorResponse),
+        (status = 200, description = "Permission-scoped grouped or global aggregate rows. Dimension states preserve null, missing, and unavailable values; numeric measures report contributing and skipped source counts.", body = [ObjectAggregateRow]),
+        (status = 400, description = "Invalid filter, dimension, measure, path, sort, cursor, or computed selector", body = ApiErrorResponse),
         (status = 413, description = "An aggregate value is too large for a replay-safe cursor, or source snapshots or externally authorized intermediate aggregates exceed their memory bounds", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse)
@@ -105,7 +107,8 @@ async fn read_object_aggregates(
     let personal_owner_id = if query.requires_personal_owner() {
         if !requestor.principal.is_human() {
             return Err(ApiError::BadRequest(
-                "Service accounts cannot filter or group by personal computed fields".to_string(),
+                "Service accounts cannot filter, group by, or measure personal computed fields"
+                    .to_string(),
             ));
         }
         Some(UserID::new(
@@ -113,7 +116,7 @@ async fn read_object_aggregates(
                 .await?
                 .ok_or_else(|| {
                     ApiError::BadRequest(
-                        "Personal computed grouping requires ReadClass access to the requested class"
+                        "Personal computed aggregation requires ReadClass access to the requested class"
                             .to_string(),
                     )
                 })?,

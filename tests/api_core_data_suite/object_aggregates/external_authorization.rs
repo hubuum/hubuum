@@ -90,6 +90,115 @@ async fn non_pushdown_authorization_filters_objects_before_aggregation(
 
 #[rstest::rstest]
 #[tokio::test]
+async fn non_pushdown_authorization_excludes_hidden_measure_inputs(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = fixture(&test_context, "external permission measures").await;
+    let group = create_test_group(&test_context.pool).await;
+    group
+        .add_member_without_events(&test_context.pool, &test_context.normal_user)
+        .await
+        .unwrap();
+    let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
+    for object in fixture.objects.iter().take(2) {
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(object.id),
+            attrs: ResourceAttrs::default(),
+        });
+    }
+
+    let response = get_with_permission_backend(
+        &test_context,
+        &test_context.normal_token,
+        backend,
+        &format!(
+            "/api/v1/classes/{}/object-aggregates?aggregate=sum:json_data.amount",
+            fixture.class.id
+        ),
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["object_count"], 2);
+    assert_eq!(rows[0]["measures"][0]["value"], 30.5);
+    assert_eq!(rows[0]["measures"][0]["value_count"], 2);
+    assert_eq!(rows[0]["measures"][0]["skipped_count"], 0);
+
+    fixture.cleanup().await.unwrap();
+    group
+        .delete_without_events(&test_context.pool)
+        .await
+        .unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn non_pushdown_aggregation_preserves_large_internal_sums(
+    #[future(awt)] test_context: TestContext,
+) {
+    let fixture = fixture(&test_context, "external large numeric measure").await;
+    for object in fixture.objects.iter().take(2) {
+        UpdateHubuumObject {
+            name: None,
+            collection_id: None,
+            hubuum_class_id: None,
+            data: Some(serde_json::from_str(r#"{"amount":9e308}"#).unwrap()),
+            description: None,
+        }
+        .update_without_events(&test_context.pool, object.id)
+        .await
+        .unwrap();
+    }
+    let group = create_test_group(&test_context.pool).await;
+    group
+        .add_member_without_events(&test_context.pool, &test_context.normal_user)
+        .await
+        .unwrap();
+    let backend = Arc::new(MockTreetopBackend::new());
+    allow_read_collection(&backend, group.id, fixture.collection.collection.id);
+    for object in fixture.objects.iter().take(2) {
+        backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(object.id),
+            attrs: ResourceAttrs::default(),
+        });
+    }
+
+    let response = get_with_permission_backend(
+        &test_context,
+        &test_context.normal_token,
+        backend,
+        &format!(
+            "/api/v1/classes/{}/object-aggregates?aggregate=sum:json_data.amount",
+            fixture.class.id
+        ),
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["measures"][0]["state"], "value");
+    assert_eq!(rows[0]["measures"][0]["value_count"], 2);
+    assert!(rows[0]["measures"][0]["value"].is_number());
+
+    fixture.cleanup().await.unwrap();
+    group
+        .delete_without_events(&test_context.pool)
+        .await
+        .unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
 async fn non_pushdown_authorization_requires_collection_read_access(
     #[future(awt)] test_context: TestContext,
 ) {
