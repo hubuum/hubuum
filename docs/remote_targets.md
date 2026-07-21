@@ -95,7 +95,7 @@ Fields:
 | `description` | string | yes | Human-readable description. |
 | `method` | string | yes | One of `get`, `post`, `patch`, `delete`. |
 | `url_template` | string | yes | MiniJinja template. Rendered URL must be HTTPS. |
-| `headers_template` | object | no | JSON object whose values are string export_templates. Defaults to `{}`. |
+| `headers_template` | object | no | JSON object whose values are string export_templates. Defaults to `{}`. Transport-controlled fields are rejected. |
 | `body_template` | string or null | no | Optional template rendered to the outbound request body. |
 | `auth_config` | object | no | Defaults to `{ "type": "none" }`. |
 | `allowed_subject_types` | array | yes | Non-empty list of allowed subject types. Values are `collection`, `class`, `object`, `class_relation`, and `object_relation`. |
@@ -208,6 +208,12 @@ Example body:
 
 The template string must render to the exact outbound body. If the remote endpoint expects JSON,
 set `Content-Type` yourself in `headers_template` and render valid JSON from `body_template`.
+
+Header templates and API-key authentication may not set routing, framing,
+connection-specific, or proxy-authentication fields controlled by Hubuum's HTTP
+client. This includes `Host`, `Content-Length`, `Transfer-Encoding`,
+`Connection`, `Keep-Alive`, `Proxy-Connection`, `Proxy-Authorization`, `TE`,
+`Trailer`, `Upgrade`, and `HTTP2-Settings`.
 
 ## Create target
 

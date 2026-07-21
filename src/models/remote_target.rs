@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use crate::db::prelude::*;
 use chrono::NaiveDateTime;
+use hubuum_outbound_http::OutboundHeaderName;
 use hubuum_templates::prepare_template;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -926,8 +927,7 @@ fn validate_header_templates(value: &serde_json::Value) -> Result<(), ApiError> 
                 "header names must not be empty".to_string(),
             ));
         }
-        reqwest::header::HeaderName::from_bytes(name.as_bytes())
-            .map_err(|_| ApiError::BadRequest(format!("Invalid header name: {name}")))?;
+        OutboundHeaderName::new(name).map_err(|error| ApiError::BadRequest(error.to_string()))?;
         match value {
             serde_json::Value::String(template) => validate_template("header template", template)?,
             _ => {
@@ -950,10 +950,8 @@ fn validate_auth_config(auth_config: &RemoteAuthConfig) -> Result<(), ApiError> 
     let secret = match auth_config {
         RemoteAuthConfig::None => return Ok(()),
         RemoteAuthConfig::ApiKeySecret { header, secret } => {
-            // Reject an unusable header name now rather than at invocation time.
-            reqwest::header::HeaderName::from_bytes(header.as_bytes()).map_err(|_| {
-                ApiError::BadRequest(format!("Invalid API key header name: {header}"))
-            })?;
+            OutboundHeaderName::new(header)
+                .map_err(|error| ApiError::BadRequest(error.to_string()))?;
             secret
         }
         RemoteAuthConfig::BearerSecret { secret }
@@ -1238,6 +1236,41 @@ mod tests {
                 secret: "inventory_api_key".to_string(),
             })
             .is_err()
+        );
+    }
+
+    #[test]
+    fn transport_controlled_header_template_is_rejected() {
+        let error = validate_target_parts(
+            Some(1),
+            "https://example.com",
+            &serde_json::json!({ "Host": "internal.example" }),
+            None,
+            &RemoteAuthConfig::None,
+            &[RemoteTargetSubjectType::Object],
+            1000,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("controlled by the HTTP transport")
+        );
+    }
+
+    #[test]
+    fn transport_controlled_api_key_header_is_rejected() {
+        let error = validate_auth_config(&RemoteAuthConfig::ApiKeySecret {
+            header: "Proxy-Authorization".to_string(),
+            secret: "inventory_api_key".to_string(),
+        })
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("controlled by the HTTP transport")
         );
     }
 }

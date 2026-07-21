@@ -22,6 +22,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Single-host rolling updates no longer force Caddy to reprovision an unchanged
+  configuration after every replica replacement, avoiding transient public
+  request failures while still applying changed Caddyfiles.
 - Event-retention workers now coordinate one transaction-scoped batch across
   replicas, keep selected event rows locked through archival and deletion, and
   limit terminal-delivery cleanup to the configured batch size. A partial
@@ -31,6 +34,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- **Breaking:** Remote target header templates and API-key authentication now
+  reject HTTP routing, framing, connection-specific, and proxy-authentication
+  fields. Existing targets using these transport-controlled headers must remove
+  them and let Hubuum's HTTP client derive them from the target URL and body.
 - **Breaking:** Async task submission endpoints now require `Idempotency-Key`
   values to contain between 1 and 255 bytes. Clients using empty or longer keys
   must replace them with bounded identifiers. Oversized client-controlled keys

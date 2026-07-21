@@ -130,10 +130,10 @@ hubuum_remove_legacy_caddy_dependencies() {
 hubuum_reload_caddy() {
   local output
 
-  echo "Reloading Caddy to refresh its upstream health state..."
+  echo "Reloading Caddy if its configuration changed..."
   if ! output="$(
     "${COMPOSE_CMD[@]}" exec -T caddy \
-      caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1
+      caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1
   )"; then
     echo "ERROR: Caddy reload failed" >&2
     printf '%s\n' "$output" >&2
@@ -211,11 +211,11 @@ hubuum_rollout() {
     hubuum_reload_caddy
   fi
 
-  # Upgrade every standby while its primary remains available. Caddy can retain
-  # a passive failure mark for a container that was unavailable during
-  # replacement, so reload only after all standbys are proven healthy. The
-  # configured stream_close_delay protects long-lived connections across this
-  # zero-downtime configuration reload.
+  # Upgrade every standby while its primary remains available. Reload only
+  # after all standbys are proven healthy. Caddy skips an unchanged config,
+  # avoiding needless module reprovisioning while active health checks recover
+  # replaced upstreams. A changed Caddyfile, such as a legacy upgrade, is still
+  # applied before replacing the primary.
   hubuum_roll_service hubuum-api-standby
   if [[ "$INSTALL_MODE" == "all" ]]; then
     hubuum_roll_service hubuum-web-standby

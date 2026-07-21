@@ -324,6 +324,7 @@ fn remote_error_outcome(error: &OutboundHttpError) -> &'static str {
         | OutboundHttpError::MissingHost
         | OutboundHttpError::MissingKnownPort
         | OutboundHttpError::InvalidHeaderName { .. }
+        | OutboundHttpError::TransportControlledHeader { .. }
         | OutboundHttpError::InvalidHeaderValue { .. } => "validation_rejected",
         OutboundHttpError::DnsResolution { .. }
         | OutboundHttpError::EmptyDnsResolution { .. }
@@ -455,6 +456,9 @@ fn apply_auth(
                     OutboundHttpError::InvalidHeaderName { .. } => {
                         ApiError::BadRequest(format!("Invalid API key header name: {header}"))
                     }
+                    error @ OutboundHttpError::TransportControlledHeader { .. } => {
+                        ApiError::BadRequest(outbound_error_to_api_message(error))
+                    }
                     OutboundHttpError::InvalidHeaderValue { .. } => ApiError::BadRequest(
                         "Resolved API key secret is not a valid header".to_string(),
                     ),
@@ -526,6 +530,9 @@ fn outbound_error_to_api_message(error: OutboundHttpError) -> String {
         OutboundHttpError::Connect => "Remote connection failed".to_string(),
         OutboundHttpError::Request(error) => format!("Remote call failed: {error}"),
         OutboundHttpError::InvalidHeaderName { name } => format!("Invalid header name: {name}"),
+        OutboundHttpError::TransportControlledHeader { name } => {
+            format!("Header is controlled by the HTTP transport: {name}")
+        }
         OutboundHttpError::InvalidHeaderValue { name } => {
             format!("Invalid header value for {name}")
         }
@@ -582,6 +589,12 @@ mod tests {
     #[case(
         OutboundHttpError::InvalidHeaderValue {
             name: "x-test".to_string(),
+        },
+        "validation_rejected"
+    )]
+    #[case(
+        OutboundHttpError::TransportControlledHeader {
+            name: "content-length".to_string(),
         },
         "validation_rejected"
     )]
