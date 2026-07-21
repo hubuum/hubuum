@@ -5,9 +5,16 @@
 //! [`QueryError`] into its public error surface at the boundary.
 
 use chrono::{DateTime, NaiveDate};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
+
+/// Maximum number of unique integers accepted from one list or range filter.
+///
+/// This bound is enforced while ranges are expanded so compact inputs cannot
+/// force unbounded allocation before an endpoint applies its operator-specific
+/// limits.
+pub const MAX_INTEGER_FILTER_VALUES: usize = 1_024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryError {
@@ -152,19 +159,24 @@ fn parse_sort_param(piece: &str) -> Result<SortParam, QueryError> {
     }
 }
 
-fn decode_query_parameter_pairs(qs: &str) -> Result<Vec<(String, String)>, QueryError> {
+/// Decode an `application/x-www-form-urlencoded` query string into owned pairs.
+///
+/// Both percent escapes and `+` space encoding are handled consistently for
+/// keys and values so endpoint-specific parsers can reuse the common transport
+/// grammar without depending on a web framework.
+pub fn decode_query_parameter_pairs(qs: &str) -> Result<Vec<(String, String)>, QueryError> {
     let mut pairs = Vec::new();
+    if qs.is_empty() {
+        return Ok(pairs);
+    }
 
     for chunk in qs.split('&') {
-        let parts: Vec<_> = chunk.splitn(2, '=').collect();
-        if parts.len() != 2 {
-            return Err(QueryError::BadRequest(format!(
-                "Invalid query parameter: '{chunk}'"
-            )));
-        }
+        let (raw_key, raw_value) = chunk
+            .split_once('=')
+            .ok_or_else(|| QueryError::BadRequest(format!("Invalid query parameter: '{chunk}'")))?;
 
-        let key = decode_query_component(parts[0], chunk, "key")?;
-        let value = decode_query_component(parts[1], chunk, "value")?;
+        let key = decode_query_component(raw_key, chunk, "key")?;
+        let value = decode_query_component(raw_value, chunk, "value")?;
         pairs.push((key, value));
     }
 
@@ -276,6 +288,65 @@ pub struct QueryOptions {
     pub limit: Option<usize>,
     pub cursor: Option<String>,
     pub include_total: bool,
+}
+
+/// A validated, comma-separated path into a JSON object.
+///
+/// Paths are kept app-neutral here so query filters, aggregate dimensions, and
+/// future query-planning features share one grammar. Each segment must be
+/// non-empty and contain only ASCII letters, digits, `_`, or `$`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct JsonFieldPath {
+    segments: Vec<String>,
+}
+
+impl JsonFieldPath {
+    pub fn new(value: &str) -> Result<Self, QueryError> {
+        let segments = value.split(',').map(str::to_string).collect::<Vec<_>>();
+        let valid = !value.is_empty()
+            && segments.iter().all(|segment| {
+                !segment.is_empty()
+                    && segment
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
+            });
+        if !valid {
+            return Err(QueryError::BadRequest(format!(
+                "Invalid JSON path '{value}'; use non-empty comma-separated ASCII path segments containing only letters, digits, '_', or '$'"
+            )));
+        }
+        Ok(Self { segments })
+    }
+
+    pub fn segments(&self) -> &[String] {
+        &self.segments
+    }
+
+    pub fn canonical(&self) -> String {
+        self.segments.join(",")
+    }
+}
+
+impl FromStr for JsonFieldPath {
+    type Err = QueryError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::new(value)
+    }
+}
+
+impl fmt::Display for JsonFieldPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut segments = self.segments.iter();
+        if let Some(first) = segments.next() {
+            f.write_str(first)?;
+        }
+        for segment in segments {
+            f.write_str(",")?;
+            f.write_str(segment)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -728,10 +799,11 @@ pub fn get_jsonb_field_type_from_json_schema(
     schema: &serde_json::Value,
     key: &str,
 ) -> Option<SQLMappedType> {
+    let path = JsonFieldPath::new(key).ok()?;
     use serde_json::Value;
     let mut current_schema = schema;
 
-    for key in key.split(',') {
+    for key in path.segments() {
         match current_schema {
             Value::Object(map) => {
                 if let Some(sub_schema) = map.get("properties").and_then(|p| p.get(key)) {
@@ -991,33 +1063,40 @@ filter_fields!(
 );
 
 pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, QueryError> {
-    let mut numbers = Vec::new();
+    parse_integer_list_with_limit(input, MAX_INTEGER_FILTER_VALUES)
+}
+
+/// Parse an integer list while enforcing a caller-provided unique-value cap.
+///
+/// The limit is checked during insertion rather than after collecting and
+/// sorting, which keeps very large ranges and heavily duplicated inputs
+/// bounded in both memory and work.
+pub fn parse_integer_list_with_limit(
+    input: &str,
+    max_values: usize,
+) -> Result<Vec<i32>, QueryError> {
+    let mut numbers = BTreeSet::new();
 
     for segment in input.split(',') {
-        if segment.contains("--") {
-            let parts: Vec<&str> = segment.split("--").collect();
-            if parts.len() != 2 {
+        if let Some((start, negative_end)) = segment.split_once("--") {
+            if negative_end.contains("--") {
                 return Err(QueryError::InvalidIntegerRange(format!(
                     "Invalid format: '{segment}'"
                 )));
             }
-            let start = parts[0].parse::<i32>().map_err(|_| {
-                QueryError::InvalidIntegerRange(format!("Invalid start of range: '{}'", parts[0]))
+            let start = start.parse::<i32>().map_err(|_| {
+                QueryError::InvalidIntegerRange(format!("Invalid start of range: '{start}'"))
             })?;
-            let end = format!("-{}", parts[1]).parse::<i32>().map_err(|_| {
-                QueryError::InvalidIntegerRange(format!("Invalid end of range: '{}'", parts[1]))
+            let end = format!("-{negative_end}").parse::<i32>().map_err(|_| {
+                QueryError::InvalidIntegerRange(format!("Invalid end of range: '{negative_end}'"))
             })?;
-            if start > end {
-                return Err(QueryError::InvalidIntegerRange(format!(
-                    "Range start is greater than end: '{segment}'"
-                )));
-            }
-            numbers.extend(start..=end);
+            insert_integer_range(&mut numbers, start, end, max_values, input, segment)?;
         } else if let Some(idx) = segment.find('-') {
             if idx == 0 {
-                numbers.push(segment.parse::<i32>().map_err(|_| {
+                let value = segment.parse::<i32>().map_err(|_| {
                     QueryError::InvalidIntegerRange(format!("Invalid number: '{segment}'"))
-                })?);
+                })?;
+                insert_integer(&mut numbers, value, max_values, input)?;
             } else {
                 let (start, end) = segment.split_at(idx);
                 let end = &end[1..];
@@ -1027,23 +1106,51 @@ pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, QueryError> {
                 let end = end.parse::<i32>().map_err(|_| {
                     QueryError::InvalidIntegerRange(format!("Invalid end of range: '{end}'"))
                 })?;
-                if start > end {
-                    return Err(QueryError::InvalidIntegerRange(format!(
-                        "Range start is greater than end: '{segment}'"
-                    )));
-                }
-                numbers.extend(start..=end);
+                insert_integer_range(&mut numbers, start, end, max_values, input, segment)?;
             }
         } else {
-            numbers.push(segment.parse::<i32>().map_err(|_| {
+            let value = segment.parse::<i32>().map_err(|_| {
                 QueryError::InvalidIntegerRange(format!("Invalid number: '{segment}'"))
-            })?);
+            })?;
+            insert_integer(&mut numbers, value, max_values, input)?;
         }
     }
 
-    numbers.sort_unstable();
-    numbers.dedup();
-    Ok(numbers)
+    Ok(numbers.into_iter().collect())
+}
+
+fn insert_integer_range(
+    numbers: &mut BTreeSet<i32>,
+    start: i32,
+    end: i32,
+    max_values: usize,
+    input: &str,
+    segment: &str,
+) -> Result<(), QueryError> {
+    if start > end {
+        return Err(QueryError::InvalidIntegerRange(format!(
+            "Range start is greater than end: '{segment}'"
+        )));
+    }
+    for value in start..=end {
+        insert_integer(numbers, value, max_values, input)?;
+    }
+    Ok(())
+}
+
+fn insert_integer(
+    numbers: &mut BTreeSet<i32>,
+    value: i32,
+    max_values: usize,
+    input: &str,
+) -> Result<(), QueryError> {
+    numbers.insert(value);
+    if numbers.len() > max_values {
+        return Err(QueryError::InvalidIntegerRange(format!(
+            "Integer filter '{input}' expands to more than {max_values} unique values"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1276,10 +1383,79 @@ mod tests {
     }
 
     #[test]
+    fn shared_query_decoder_decodes_keys_and_values() {
+        let pairs = decode_query_parameter_pairs("search+term=core+router%2Fedge").unwrap();
+
+        assert_eq!(
+            pairs,
+            [("search term".to_string(), "core router/edge".to_string())]
+        );
+    }
+
+    #[test]
+    fn shared_query_decoder_accepts_an_empty_query_string() {
+        assert_eq!(decode_query_parameter_pairs("").unwrap(), []);
+    }
+
+    #[test]
     fn parses_integer_ranges() {
         assert_eq!(
             parse_integer_list("1-4,3,8,-4--2").unwrap(),
             vec![-4, -3, -2, 1, 2, 3, 4, 8]
+        );
+    }
+
+    #[test]
+    fn rejects_integer_ranges_above_the_expansion_limit() {
+        let error = parse_integer_list("0-2147483647").unwrap_err();
+
+        assert_eq!(
+            error,
+            QueryError::InvalidIntegerRange(format!(
+                "Integer filter '0-2147483647' expands to more than {MAX_INTEGER_FILTER_VALUES} unique values"
+            ))
+        );
+    }
+
+    #[test]
+    fn integer_list_limit_counts_unique_values() {
+        assert_eq!(
+            parse_integer_list_with_limit("1-3,1-3,2", 3).unwrap(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn rejects_an_integer_list_when_the_unique_value_limit_is_zero() {
+        let error = parse_integer_list_with_limit("1", 0).unwrap_err();
+
+        assert_eq!(
+            error,
+            QueryError::InvalidIntegerRange(
+                "Integer filter '1' expands to more than 0 unique values".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn json_path_preserves_valid_nested_segments() {
+        let path = JsonFieldPath::new("network,address_v4,$value").unwrap();
+
+        assert_eq!(path.segments(), ["network", "address_v4", "$value"]);
+        assert_eq!(path.canonical(), "network,address_v4,$value");
+        assert_eq!(path.to_string(), "network,address_v4,$value");
+    }
+
+    #[test]
+    fn json_path_rejects_empty_segments() {
+        let error = JsonFieldPath::new("network,,address").unwrap_err();
+
+        assert_eq!(
+            error,
+            QueryError::BadRequest(
+                "Invalid JSON path 'network,,address'; use non-empty comma-separated ASCII path segments containing only letters, digits, '_', or '$'"
+                    .to_string()
+            )
         );
     }
 

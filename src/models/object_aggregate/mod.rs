@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 use base64::Engine;
 use hubuum_computed_fields::FieldKey;
+use hubuum_query::JsonFieldPath;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -93,37 +94,7 @@ impl ObjectAggregateScalarField {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ObjectAggregateJsonPath {
-    segments: Vec<String>,
-}
-
-impl ObjectAggregateJsonPath {
-    pub fn new(value: &str) -> Result<Self, ApiError> {
-        let segments = value.split(',').map(str::to_string).collect::<Vec<_>>();
-        let valid = !value.is_empty()
-            && segments.iter().all(|segment| {
-                !segment.is_empty()
-                    && segment
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
-            });
-        if !valid {
-            return Err(ApiError::BadRequest(format!(
-                "Invalid object aggregate JSON path '{value}'; use non-empty comma-separated ASCII path segments"
-            )));
-        }
-        Ok(Self { segments })
-    }
-
-    pub fn segments(&self) -> &[String] {
-        &self.segments
-    }
-
-    pub fn canonical(&self) -> String {
-        self.segments.join(",")
-    }
-}
+pub type ObjectAggregateJsonPath = JsonFieldPath;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComputedFieldSelector {
