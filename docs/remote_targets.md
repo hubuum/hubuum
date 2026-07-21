@@ -343,6 +343,8 @@ Location: /api/v1/tasks/42
 
 `Idempotency-Key` is supported. Reusing the same key with the same rendered task submission returns
 the same task. Reusing it with a different submission returns `409 Conflict`.
+Keys must contain between 1 and 255 bytes; empty or longer keys return
+`400 Bad Request`.
 
 ## Execution and result handling
 

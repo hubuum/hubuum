@@ -20,6 +20,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- **Breaking:** Async task submission endpoints now require `Idempotency-Key`
+  values to contain between 1 and 255 bytes. Clients using empty or longer keys
+  must replace them with bounded identifiers. Oversized client-controlled keys
+  are rejected before they can fail in PostgreSQL's unique task index.
 - Integer list and range filters are limited to 1,024 unique expanded values,
   and oversized ranges fail during bounded parsing instead of allocating an
   attacker-controlled number of integers.

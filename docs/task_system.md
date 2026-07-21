@@ -138,7 +138,9 @@ Submission flow:
 
 1. The handler serializes the request payload.
 2. It computes a SHA-256 request hash.
-3. It reads `Idempotency-Key` if present.
+3. It reads and validates `Idempotency-Key` if present. Keys must contain
+   between 1 and 255 bytes; invalid keys return `400 Bad Request` before task
+   persistence.
 4. It either reuses an existing task for that submitter/idempotency key or inserts a new one.
 5. It returns `202 Accepted` with `Location: /api/v1/tasks/{id}`.
 6. It kicks the worker so the queue starts draining immediately.

@@ -1,4 +1,5 @@
 use actix_web::http::header::HeaderMap;
+use hubuum_task_core::{IdempotencyKey, IdempotencyKeyError};
 use sha2::{Digest, Sha256};
 use tracing::debug;
 
@@ -26,17 +27,24 @@ pub fn request_hash(payload: &serde_json::Value) -> Result<String, ApiError> {
         .collect())
 }
 
-pub fn idempotency_key_from_headers(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+pub fn idempotency_key_from_headers(
+    headers: &HeaderMap,
+) -> Result<Option<IdempotencyKey>, ApiError> {
     headers
         .get("Idempotency-Key")
         .map(|value| {
-            value.to_str().map(str::to_string).map_err(|_| {
+            let value = value.to_str().map_err(|_| {
                 ApiError::BadRequest(
                     "Idempotency-Key must be a valid HTTP header value".to_string(),
                 )
-            })
+            })?;
+            IdempotencyKey::new(value).map_err(idempotency_key_error)
         })
         .transpose()
+}
+
+fn idempotency_key_error(error: IdempotencyKeyError) -> ApiError {
+    ApiError::BadRequest(format!("Invalid Idempotency-Key: {error}"))
 }
 
 fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
@@ -202,6 +210,7 @@ pub(super) fn normalize_pair(left: i32, right: i32) -> (i32, i32) {
 #[cfg(test)]
 mod tests {
     use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+    use hubuum_task_core::MAX_IDEMPOTENCY_KEY_BYTES;
 
     use super::idempotency_key_from_headers;
 
@@ -228,6 +237,30 @@ mod tests {
 
         let key = idempotency_key_from_headers(&headers).unwrap();
 
-        assert_eq!(key.as_deref(), Some("same-task"));
+        assert_eq!(key.as_ref().map(|key| key.as_str()), Some("same-task"));
+    }
+
+    #[test]
+    fn idempotency_key_from_headers_rejects_an_empty_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("idempotency-key"),
+            HeaderValue::from_static(""),
+        );
+
+        let error = idempotency_key_from_headers(&headers).unwrap_err();
+
+        assert!(error.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn idempotency_key_from_headers_rejects_an_oversized_value() {
+        let mut headers = HeaderMap::new();
+        let value = HeaderValue::from_str(&"x".repeat(MAX_IDEMPOTENCY_KEY_BYTES + 1)).unwrap();
+        headers.insert(HeaderName::from_static("idempotency-key"), value);
+
+        let error = idempotency_key_from_headers(&headers).unwrap_err();
+
+        assert!(error.to_string().contains("the maximum is 255 bytes"));
     }
 }

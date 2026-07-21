@@ -26,6 +26,7 @@ members = [
     "crates/hubuum-events-core",
     "crates/hubuum-outbound-http",
     "crates/hubuum-query",
+    "crates/hubuum-task-core",
     "crates/hubuum-templates",
 ]
 
@@ -75,6 +76,7 @@ hubuum-templates = { path = "crates/hubuum-templates" }
 hubuum-events-core = { path = "crates/hubuum-events-core", features = ["schema"] }
 hubuum-outbound-http = { path = "crates/hubuum-outbound-http" }
 hubuum-query = { path = "crates/hubuum-query" }
+hubuum-task-core = { path = "crates/hubuum-task-core" }
 minijinja = { version = "2", features = ["loader", "fuel"] }
 opentelemetry = { version = "0.32", default-features = false, features = ["metrics"] }
 opentelemetry-prometheus = "0.32"
