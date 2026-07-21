@@ -15,6 +15,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- AMQP, SMTP, and Valkey event-sink client pools now retain at most 128 resolved
+  URIs per transport, preventing sink edits and secret rotations from
+  accumulating connections and credential-bearing cache keys for process life.
 - Unified search now uses the shared form-query decoder, so `+` and percent
   escapes are interpreted consistently with other list and search endpoints.
 

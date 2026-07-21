@@ -38,6 +38,8 @@ impl From<EventSinkSecretError> for SinkError {
 }
 
 pub const DEFAULT_MAX_ENVELOPE_BYTES: usize = 1_000_000;
+/// Maximum number of resolved sink URIs retained by each transport instance.
+pub const MAX_CACHED_SINK_URIS: usize = 128;
 
 pub fn serialize_envelope_to_string(
     envelope: &EventEnvelope,
@@ -159,16 +161,84 @@ fn uri_userinfo(uri: &str) -> Option<&str> {
     (!userinfo.is_empty() && !host.is_empty()).then_some(userinfo)
 }
 
+/// A bounded client/connection cache keyed by a resolved transport URI.
 #[derive(Debug)]
 pub struct UriConnectionPool<K, V> {
-    entries: Mutex<std::collections::HashMap<K, V>>,
+    state: Mutex<UriConnectionPoolState<K, V>>,
 }
 
 impl<K, V> Default for UriConnectionPool<K, V> {
     fn default() -> Self {
         Self {
-            entries: Mutex::new(std::collections::HashMap::new()),
+            state: Mutex::new(UriConnectionPoolState::default()),
         }
+    }
+}
+
+#[derive(Debug)]
+struct CachedUriConnection<V> {
+    value: V,
+    last_used: u64,
+}
+
+#[derive(Debug)]
+struct UriConnectionPoolState<K, V> {
+    entries: std::collections::HashMap<K, CachedUriConnection<V>>,
+    clock: u64,
+}
+
+impl<K, V> Default for UriConnectionPoolState<K, V> {
+    fn default() -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            clock: 0,
+        }
+    }
+}
+
+impl<K, V> UriConnectionPoolState<K, V>
+where
+    K: Eq + Hash + Clone,
+    V: Clone,
+{
+    fn get(&mut self, key: &K) -> Option<V> {
+        let last_used = self.next_usage();
+        self.entries.get_mut(key).map(|entry| {
+            entry.last_used = last_used;
+            entry.value.clone()
+        })
+    }
+
+    fn insert_or_get(&mut self, key: K, created: V, capacity: usize) -> V {
+        let last_used = self.next_usage();
+        if let Some(entry) = self.entries.get_mut(&key) {
+            entry.last_used = last_used;
+            return entry.value.clone();
+        }
+
+        if self.entries.len() >= capacity
+            && let Some(stalest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| key.clone())
+        {
+            self.entries.remove(&stalest);
+        }
+        self.entries.insert(
+            key,
+            CachedUriConnection {
+                value: created.clone(),
+                last_used,
+            },
+        );
+        created
+    }
+
+    fn next_usage(&mut self) -> u64 {
+        let current = self.clock;
+        self.clock = self.clock.saturating_add(1);
+        current
     }
 }
 
@@ -183,24 +253,60 @@ where
         Fut: Future<Output = Result<V, SinkError>>,
     {
         {
-            let entries = self.entries.lock().await;
-            if let Some(value) = entries.get(&key) {
-                return Ok(value.clone());
+            let mut state = self.state.lock().await;
+            if let Some(value) = state.get(&key) {
+                return Ok(value);
             }
         }
 
         let created = create(key.clone()).await?;
 
-        let mut entries = self.entries.lock().await;
-        if let Some(value) = entries.get(&key) {
-            Ok(value.clone())
-        } else {
-            entries.insert(key, created.clone());
-            Ok(created)
-        }
+        let mut state = self.state.lock().await;
+        Ok(state.insert_or_get(key, created, MAX_CACHED_SINK_URIS))
     }
 
     pub async fn remove(&self, key: &K) {
-        self.entries.lock().await.remove(key);
+        self.state.lock().await.entries.remove(key);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uri_connection_pool_state_evicts_the_least_recently_used_entry() {
+        let mut state = UriConnectionPoolState::default();
+        state.insert_or_get("first", 1, 2);
+        state.insert_or_get("second", 2, 2);
+        assert_eq!(state.get(&"first"), Some(1));
+
+        state.insert_or_get("third", 3, 2);
+
+        assert_eq!(state.get(&"second"), None);
+        assert_eq!(state.get(&"first"), Some(1));
+        assert_eq!(state.get(&"third"), Some(3));
+    }
+
+    #[test]
+    fn uri_connection_pool_state_keeps_the_winner_of_a_racing_insert() {
+        let mut state = UriConnectionPoolState::default();
+        state.insert_or_get("same", 1, 2);
+
+        let selected = state.insert_or_get("same", 2, 2);
+
+        assert_eq!(selected, 1);
+        assert_eq!(state.entries.len(), 1);
+    }
+
+    #[test]
+    fn uri_connection_pool_state_never_exceeds_the_production_capacity() {
+        let mut state = UriConnectionPoolState::default();
+        for key in 0..=MAX_CACHED_SINK_URIS {
+            state.insert_or_get(key, key, MAX_CACHED_SINK_URIS);
+        }
+
+        assert_eq!(state.entries.len(), MAX_CACHED_SINK_URIS);
+        assert_eq!(state.get(&0), None);
     }
 }

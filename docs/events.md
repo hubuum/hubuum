@@ -399,6 +399,11 @@ processes and fall back to the configured poll intervals for eventual progress.
 Event writes notify the fan-out channel only after commit, and fan-out notifies
 delivery workers when it creates delivery rows.
 
+AMQP, SMTP, and Valkey transports reuse clients by resolved sink URI. Each
+transport keeps at most 128 URI entries per process; least-recently-used entries
+are dropped and recreated lazily if they are needed again. This bounds live
+connections and retained credential-bearing URIs when sinks or secrets change.
+
 ## Operational Health
 
 The admin endpoint `GET /api/v1/event-deliveries/health` returns a delivery
