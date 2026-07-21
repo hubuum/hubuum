@@ -14,8 +14,8 @@ use crate::models::search::{
 };
 use crate::models::{CollectionID, HubuumClass, HubuumClassID, Permissions, UserID};
 
-pub const MIN_OBJECT_AGGREGATE_DIMENSIONS: usize = 1;
 pub const MAX_OBJECT_AGGREGATE_DIMENSIONS: usize = 3;
+pub const MAX_OBJECT_AGGREGATE_MEASURES: usize = 4;
 const COMMON_HTTP_LINE_LIMIT_BYTES: usize = 8 * 1024;
 const NEXT_CURSOR_HEADER_PREFIX: &str = "X-Next-Cursor: ";
 const HTTP_LINE_TERMINATOR: &str = "\r\n";
@@ -185,6 +185,129 @@ impl FromStr for ObjectAggregateDimension {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ObjectAggregateMeasureOperation {
+    Sum,
+    Average,
+    Min,
+    Max,
+}
+
+impl ObjectAggregateMeasureOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::Average => "average",
+            Self::Min => "min",
+            Self::Max => "max",
+        }
+    }
+}
+
+impl FromStr for ObjectAggregateMeasureOperation {
+    type Err = ApiError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "sum" => Ok(Self::Sum),
+            "average" => Ok(Self::Average),
+            "min" => Ok(Self::Min),
+            "max" => Ok(Self::Max),
+            _ => Err(ApiError::BadRequest(format!(
+                "Invalid object aggregate operation '{value}'; use sum, average, min, or max"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObjectAggregateMeasureField {
+    JsonData(ObjectAggregateJsonPath),
+    Computed(ComputedFieldSelector),
+}
+
+impl ObjectAggregateMeasureField {
+    pub fn canonical(&self) -> String {
+        match self {
+            Self::JsonData(path) => format!("json_data.{}", path.canonical()),
+            Self::Computed(selector) => selector.canonical(),
+        }
+    }
+
+    pub const fn computed_selector(&self) -> Option<&ComputedFieldSelector> {
+        match self {
+            Self::Computed(selector) => Some(selector),
+            Self::JsonData(_) => None,
+        }
+    }
+}
+
+impl FromStr for ObjectAggregateMeasureField {
+    type Err = ApiError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if let Some(path) = value.strip_prefix("json_data.") {
+            return Ok(Self::JsonData(ObjectAggregateJsonPath::new(path)?));
+        }
+        if let Some(key) = value.strip_prefix("computed.shared.") {
+            return Ok(Self::Computed(ComputedFieldSelector::new(
+                ComputedFieldScope::Shared,
+                key,
+            )?));
+        }
+        if let Some(key) = value.strip_prefix("computed.personal.") {
+            return Ok(Self::Computed(ComputedFieldSelector::new(
+                ComputedFieldScope::Personal,
+                key,
+            )?));
+        }
+        Err(ApiError::BadRequest(format!(
+            "Invalid object aggregate measure field '{value}'; use a json_data path or computed selector"
+        )))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectAggregateMeasure {
+    operation: ObjectAggregateMeasureOperation,
+    field: ObjectAggregateMeasureField,
+}
+
+impl ObjectAggregateMeasure {
+    pub const fn operation(&self) -> ObjectAggregateMeasureOperation {
+        self.operation
+    }
+
+    pub const fn field(&self) -> &ObjectAggregateMeasureField {
+        &self.field
+    }
+
+    pub const fn computed_selector(&self) -> Option<&ComputedFieldSelector> {
+        self.field.computed_selector()
+    }
+
+    pub fn canonical(&self) -> String {
+        format!("{}:{}", self.operation.as_str(), self.field.canonical())
+    }
+}
+
+impl FromStr for ObjectAggregateMeasure {
+    type Err = ApiError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (operation, field) = value.split_once(':').ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "Invalid object aggregate measure '{value}'; use operation:field"
+            ))
+        })?;
+        Ok(Self {
+            operation: ObjectAggregateMeasureOperation::from_str(operation)?,
+            field: ObjectAggregateMeasureField::from_str(field)?,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObjectAggregateSort {
@@ -213,6 +336,7 @@ impl ObjectAggregateSort {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectAggregateSpec {
     dimensions: Vec<ObjectAggregateDimension>,
+    measures: Vec<ObjectAggregateMeasure>,
     sort: ObjectAggregateSort,
 }
 
@@ -221,11 +345,28 @@ impl ObjectAggregateSpec {
         dimensions: Vec<ObjectAggregateDimension>,
         sort: ObjectAggregateSort,
     ) -> Result<Self, ApiError> {
-        if !(MIN_OBJECT_AGGREGATE_DIMENSIONS..=MAX_OBJECT_AGGREGATE_DIMENSIONS)
-            .contains(&dimensions.len())
-        {
+        Self::with_measures(dimensions, Vec::new(), sort)
+    }
+
+    pub fn with_measures(
+        dimensions: Vec<ObjectAggregateDimension>,
+        measures: Vec<ObjectAggregateMeasure>,
+        sort: ObjectAggregateSort,
+    ) -> Result<Self, ApiError> {
+        if dimensions.is_empty() && measures.is_empty() {
+            return Err(ApiError::BadRequest(
+                "Object aggregation requires at least one group_by dimension or aggregate measure"
+                    .to_string(),
+            ));
+        }
+        if dimensions.len() > MAX_OBJECT_AGGREGATE_DIMENSIONS {
             return Err(ApiError::BadRequest(format!(
-                "Object aggregation requires between {MIN_OBJECT_AGGREGATE_DIMENSIONS} and {MAX_OBJECT_AGGREGATE_DIMENSIONS} group_by dimensions"
+                "Object aggregation supports at most {MAX_OBJECT_AGGREGATE_DIMENSIONS} group_by dimensions"
+            )));
+        }
+        if measures.len() > MAX_OBJECT_AGGREGATE_MEASURES {
+            return Err(ApiError::BadRequest(format!(
+                "Object aggregation supports at most {MAX_OBJECT_AGGREGATE_MEASURES} aggregate measures"
             )));
         }
         let mut seen = HashSet::with_capacity(dimensions.len());
@@ -238,11 +379,29 @@ impl ObjectAggregateSpec {
                 "Duplicate object aggregate dimension '{duplicate}'"
             )));
         }
-        Ok(Self { dimensions, sort })
+        let mut seen = HashSet::with_capacity(measures.len());
+        if let Some(duplicate) = measures
+            .iter()
+            .map(ObjectAggregateMeasure::canonical)
+            .find(|measure| !seen.insert(measure.clone()))
+        {
+            return Err(ApiError::BadRequest(format!(
+                "Duplicate object aggregate measure '{duplicate}'"
+            )));
+        }
+        Ok(Self {
+            dimensions,
+            measures,
+            sort,
+        })
     }
 
     pub fn dimensions(&self) -> &[ObjectAggregateDimension] {
         &self.dimensions
+    }
+
+    pub fn measures(&self) -> &[ObjectAggregateMeasure] {
+        &self.measures
     }
 
     pub const fn sort(&self) -> ObjectAggregateSort {
@@ -255,13 +414,21 @@ impl ObjectAggregateSpec {
             .any(|dimension| dimension.computed_selector().is_some())
     }
 
+    pub fn has_computed_field(&self) -> bool {
+        self.has_computed_dimension()
+            || self
+                .measures
+                .iter()
+                .any(|measure| measure.computed_selector().is_some())
+    }
+
     pub(crate) fn requires_object_data(&self) -> bool {
         self.dimensions.iter().any(|dimension| {
             matches!(
                 dimension,
                 ObjectAggregateDimension::JsonData(_) | ObjectAggregateDimension::Computed(_)
             )
-        })
+        }) || !self.measures.is_empty()
     }
 
     pub fn has_personal_computed_dimension(&self) -> bool {
@@ -272,10 +439,37 @@ impl ObjectAggregateSpec {
         })
     }
 
+    pub fn has_personal_computed_field(&self) -> bool {
+        self.has_personal_computed_dimension()
+            || self.measures.iter().any(|measure| {
+                measure
+                    .computed_selector()
+                    .is_some_and(|selector| selector.scope() == ComputedFieldScope::Personal)
+            })
+    }
+
+    pub(crate) fn computed_selectors(&self) -> impl Iterator<Item = &ComputedFieldSelector> {
+        self.dimensions
+            .iter()
+            .filter_map(ObjectAggregateDimension::computed_selector)
+            .chain(
+                self.measures
+                    .iter()
+                    .filter_map(ObjectAggregateMeasure::computed_selector),
+            )
+    }
+
     fn dimension_names(&self) -> Vec<String> {
         self.dimensions
             .iter()
             .map(ObjectAggregateDimension::canonical)
+            .collect()
+    }
+
+    fn measure_names(&self) -> Vec<String> {
+        self.measures
+            .iter()
+            .map(ObjectAggregateMeasure::canonical)
             .collect()
     }
 
@@ -297,10 +491,12 @@ impl ObjectAggregateSpec {
             .map_err(|error| ApiError::BadRequest(format!("invalid aggregate cursor: {error}")))?;
         if token.version != 1
             || token.dimensions != self.dimension_names()
+            || token.measures != self.measure_names()
             || token.sort != self.sort
         {
             return Err(ApiError::BadRequest(
-                "aggregate cursor does not match the current dimensions and sort".to_string(),
+                "aggregate cursor does not match the current dimensions, measures, and sort"
+                    .to_string(),
             ));
         }
         let sort_key_is_valid = token.sort_key.as_array().is_some_and(|values| {
@@ -329,6 +525,7 @@ impl ObjectAggregateSpec {
         let token = ObjectAggregateCursorToken {
             version: 1,
             dimensions: self.dimension_names(),
+            measures: self.measure_names(),
             sort: self.sort,
             sort_key: row.sort_key.clone(),
             object_count: row.object_count,
@@ -394,6 +591,8 @@ fn valid_cursor_present_value(
 struct ObjectAggregateCursorToken {
     version: u8,
     dimensions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    measures: Vec<String>,
     sort: ObjectAggregateSort,
     sort_key: serde_json::Value,
     object_count: i64,
@@ -412,6 +611,59 @@ pub enum ObjectAggregateValueState {
     Null,
     Missing,
     Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ObjectAggregateMeasureState {
+    Value,
+    Empty,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ObjectAggregateMeasureValue {
+    field: String,
+    operation: ObjectAggregateMeasureOperation,
+    state: ObjectAggregateMeasureState,
+    value_count: i64,
+    skipped_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Value>)]
+    value: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct ObjectAggregateDatabaseMeasureValue {
+    state: ObjectAggregateMeasureState,
+    value_count: i64,
+    skipped_count: i64,
+    value: Option<serde_json::Value>,
+}
+
+impl ObjectAggregateMeasureValue {
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+
+    pub const fn operation(&self) -> ObjectAggregateMeasureOperation {
+        self.operation
+    }
+
+    pub const fn state(&self) -> ObjectAggregateMeasureState {
+        self.state
+    }
+
+    pub const fn value_count(&self) -> i64 {
+        self.value_count
+    }
+
+    pub const fn skipped_count(&self) -> i64 {
+        self.skipped_count
+    }
+
+    pub fn value(&self) -> Option<&serde_json::Value> {
+        self.value.as_ref()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -440,6 +692,8 @@ impl ObjectAggregateDimensionValue {
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct ObjectAggregateRow {
     dimensions: Vec<ObjectAggregateDimensionValue>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    measures: Vec<ObjectAggregateMeasureValue>,
     object_count: i64,
     #[serde(skip)]
     #[schema(ignore)]
@@ -448,23 +702,68 @@ pub struct ObjectAggregateRow {
 
 impl ObjectAggregateRow {
     pub(crate) fn from_database(
-        dimensions: serde_json::Value,
+        spec: &ObjectAggregateSpec,
+        measures: serde_json::Value,
         object_count: i64,
         sort_key: serde_json::Value,
     ) -> Result<Self, ApiError> {
-        let dimensions = serde_json::from_value::<Vec<ObjectAggregateDimensionValue>>(dimensions)
-            .map_err(|error| {
+        let dimensions = dimensions_from_sort_key(spec, &sort_key)?;
+        let database_measures = serde_json::from_value::<Vec<ObjectAggregateDatabaseMeasureValue>>(
+            measures,
+        )
+        .map_err(|error| {
             ApiError::InternalServerError(format!(
-                "Database returned invalid object aggregate dimensions: {error}"
+                "Database returned invalid object aggregate measures: {error}"
             ))
         })?;
+        if database_measures.len() != spec.measures().len() {
+            return Err(ApiError::InternalServerError(
+                "Database returned an object aggregate row with the wrong measure count"
+                    .to_string(),
+            ));
+        }
+        let measures = spec
+            .measures()
+            .iter()
+            .zip(database_measures)
+            .map(|(measure, value)| ObjectAggregateMeasureValue {
+                field: measure.field().canonical(),
+                operation: measure.operation(),
+                state: value.state,
+                value_count: value.value_count,
+                skipped_count: value.skipped_count,
+                value: value.value,
+            })
+            .collect::<Vec<_>>();
         if object_count <= 0 || !sort_key.is_array() {
             return Err(ApiError::InternalServerError(
                 "Database returned invalid object aggregate ordering data".to_string(),
             ));
         }
+        if measures.iter().any(|measure| {
+            measure.value_count < 0
+                || measure.skipped_count < 0
+                || measure.value_count + measure.skipped_count != object_count
+                || match measure.state {
+                    ObjectAggregateMeasureState::Value => {
+                        measure.value_count == 0
+                            || !measure
+                                .value
+                                .as_ref()
+                                .is_some_and(serde_json::Value::is_number)
+                    }
+                    ObjectAggregateMeasureState::Empty => {
+                        measure.value_count != 0 || measure.value.is_some()
+                    }
+                }
+        }) {
+            return Err(ApiError::InternalServerError(
+                "Database returned invalid object aggregate measure data".to_string(),
+            ));
+        }
         Ok(Self {
             dimensions,
+            measures,
             object_count,
             sort_key,
         })
@@ -474,9 +773,70 @@ impl ObjectAggregateRow {
         &self.dimensions
     }
 
+    pub fn measures(&self) -> &[ObjectAggregateMeasureValue] {
+        &self.measures
+    }
+
     pub const fn object_count(&self) -> i64 {
         self.object_count
     }
+}
+
+fn dimensions_from_sort_key(
+    spec: &ObjectAggregateSpec,
+    sort_key: &serde_json::Value,
+) -> Result<Vec<ObjectAggregateDimensionValue>, ApiError> {
+    let values = sort_key.as_array().ok_or_else(|| {
+        ApiError::InternalServerError(
+            "Database returned a non-array object aggregate sort key".to_string(),
+        )
+    })?;
+    if values.len() != spec.dimensions().len() {
+        return Err(ApiError::InternalServerError(
+            "Database returned an object aggregate sort key with the wrong dimension count"
+                .to_string(),
+        ));
+    }
+    spec.dimensions()
+        .iter()
+        .zip(values)
+        .map(|(dimension, item)| dimension_from_sort_item(dimension, item))
+        .collect()
+}
+
+fn dimension_from_sort_item(
+    dimension: &ObjectAggregateDimension,
+    item: &serde_json::Value,
+) -> Result<ObjectAggregateDimensionValue, ApiError> {
+    let pair = item
+        .as_array()
+        .filter(|pair| pair.len() == 2)
+        .ok_or_else(|| {
+            ApiError::InternalServerError(
+                "Database returned an invalid object aggregate sort key".to_string(),
+            )
+        })?;
+    let state = pair[0].as_i64().ok_or_else(|| {
+        ApiError::InternalServerError(
+            "Database returned an invalid object aggregate value state".to_string(),
+        )
+    })?;
+    let (state, value) = match state {
+        0 => (ObjectAggregateValueState::Value, Some(pair[1].clone())),
+        1 => (ObjectAggregateValueState::Null, None),
+        2 => (ObjectAggregateValueState::Missing, None),
+        3 => (ObjectAggregateValueState::Unavailable, None),
+        _ => {
+            return Err(ApiError::InternalServerError(
+                "Database returned an unknown object aggregate value state".to_string(),
+            ));
+        }
+    };
+    Ok(ObjectAggregateDimensionValue {
+        field: dimension.canonical(),
+        state,
+        value,
+    })
 }
 
 #[derive(Debug)]
@@ -560,11 +920,11 @@ impl ObjectAggregateQuery {
     }
 
     pub fn uses_computed_values(&self) -> bool {
-        self.spec.has_computed_dimension() || self.has_computed_filter()
+        self.spec.has_computed_field() || self.has_computed_filter()
     }
 
     pub fn requires_personal_owner(&self) -> bool {
-        self.spec.has_personal_computed_dimension() || self.has_personal_computed_filter()
+        self.spec.has_personal_computed_field() || self.has_personal_computed_filter()
     }
 }
 
@@ -687,7 +1047,7 @@ impl ObjectAggregateBackendRequestBuilder {
             &self.target.collection_id.id().to_string(),
         );
         let (query_options, spec) = self.query.into_parts();
-        let requires_personal_owner = spec.has_personal_computed_dimension()
+        let requires_personal_owner = spec.has_personal_computed_field()
             || query_options.filters.iter().any(|filter| {
                 filter
                     .field
@@ -714,7 +1074,7 @@ pub fn parse_object_aggregate_query(query_string: &str) -> Result<ObjectAggregat
     let (query_options, mut passthrough) =
         parse_query_parameter_with_computed_filters_and_passthrough(
             query_string,
-            &["group_by", "sort"],
+            &["group_by", "aggregate", "sort"],
         )?;
     if !query_options.sort.is_empty() {
         return Err(ApiError::BadRequest(
@@ -728,6 +1088,12 @@ pub fn parse_object_aggregate_query(query_string: &str) -> Result<ObjectAggregat
         .unwrap_or_default()
         .into_iter()
         .map(|value| ObjectAggregateDimension::from_str(&value))
+        .collect::<Result<Vec<_>, _>>()?;
+    let measures = passthrough
+        .remove("aggregate")
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| ObjectAggregateMeasure::from_str(&value))
         .collect::<Result<Vec<_>, _>>()?;
 
     let sort_values = passthrough.remove("sort").unwrap_or_default();
@@ -752,7 +1118,7 @@ pub fn parse_object_aggregate_query(query_string: &str) -> Result<ObjectAggregat
 
     Ok(ObjectAggregateQuery {
         query_options,
-        spec: ObjectAggregateSpec::new(dimensions, sort)?,
+        spec: ObjectAggregateSpec::with_measures(dimensions, measures, sort)?,
     })
 }
 

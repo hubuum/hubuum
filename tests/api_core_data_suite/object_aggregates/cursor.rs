@@ -48,6 +48,64 @@ async fn count_sort_cursor_is_deterministic_across_duplicate_counts(
 
 #[rstest::rstest]
 #[tokio::test]
+async fn cursor_values_are_bound_as_data_even_when_the_group_key_looks_like_sql(
+    #[future(awt)] test_context: TestContext,
+) {
+    let hostile = "a'); SELECT pg_sleep(10); DROP TABLE hubuumobject; --";
+    let fixture = test_context
+        .object_fixture(
+            "aggregate cursor sql data",
+            NewHubuumClass {
+                collection_id: 0,
+                name: test_context.scoped_name("aggregate cursor sql data class"),
+                description: "Cursor SQL data".to_string(),
+                json_schema: None,
+                validate_schema: Some(false),
+            },
+            vec![
+                NewHubuumObject {
+                    collection_id: 0,
+                    hubuum_class_id: 0,
+                    name: test_context.scoped_name("hostile cursor value"),
+                    description: String::new(),
+                    data: serde_json::json!({"group_key": hostile}),
+                },
+                NewHubuumObject {
+                    collection_id: 0,
+                    hubuum_class_id: 0,
+                    name: test_context.scoped_name("safe cursor value"),
+                    description: String::new(),
+                    data: serde_json::json!({"group_key": "z"}),
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    let endpoint = format!(
+        "/api/v1/classes/{}/object-aggregates?group_by=json_data.group_key&limit=1",
+        fixture.class.id
+    );
+    let response = get_request(&test_context.pool, &test_context.admin_token, &endpoint).await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let cursor = header_value(&response, NEXT_CURSOR_HEADER).unwrap();
+    let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+    assert_eq!(rows[0]["dimensions"][0]["value"], hostile);
+
+    let response = get_request(
+        &test_context.pool,
+        &test_context.admin_token,
+        &format!("{endpoint}&cursor={cursor}"),
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let rows: Vec<serde_json::Value> = test::read_body_json(response).await;
+    assert_eq!(rows[0]["dimensions"][0]["value"], "z");
+
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
 async fn oversized_group_key_is_rejected_before_a_cursor_is_emitted(
     #[future(awt)] test_context: TestContext,
 ) {

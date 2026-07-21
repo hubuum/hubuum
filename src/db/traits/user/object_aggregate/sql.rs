@@ -5,7 +5,9 @@ use diesel_async::RunQueryDsl;
 use futures::TryStreamExt;
 
 use super::ObjectAggregateExecution;
-use super::accumulator::{AggregateRows, ObjectAggregateDatabaseRow, finish_aggregate_page};
+use super::accumulator::{
+    AggregateRows, ObjectAggregateDatabaseRow, PartialObjectAggregateRow, finish_aggregate_page,
+};
 use super::candidate::ObjectAggregateCandidate;
 use super::computed::{ComputedAggregateDefinitions, computed_aggregate_payload};
 use super::filters::apply_object_aggregate_source_filters;
@@ -14,8 +16,10 @@ use crate::db::traits::search::JsonPredicateExt;
 use crate::db::{DbConnection, with_connection};
 use crate::errors::ApiError;
 use crate::models::object_aggregate::{
-    DecodedObjectAggregateCursor, ObjectAggregateDimension, ObjectAggregateScalarField,
-    ObjectAggregateSort, ObjectAggregateSpec,
+    ComputedFieldSelector, DecodedObjectAggregateCursor, ObjectAggregateDimension,
+    ObjectAggregateJsonPath, ObjectAggregateMeasure, ObjectAggregateMeasureField,
+    ObjectAggregateMeasureOperation, ObjectAggregateScalarField, ObjectAggregateSort,
+    ObjectAggregateSpec,
 };
 use crate::models::search::{FilterField, QueryOptions, QueryParamsExt, SQLValue};
 use crate::pagination::SKIPPED_TOTAL_COUNT;
@@ -88,7 +92,7 @@ macro_rules! visible_filtered_object_query {
 }
 
 macro_rules! visible_filtered_aggregate_query {
-    ($collection_id:expr, $query_options:expr, $sort_key_sql:expr, $computed_filter_snapshot:expr) => {{
+    ($collection_id:expr, $query_options:expr, $sort_key_sql:expr, $measures_sql:expr, $computed_filter_snapshot:expr) => {{
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
@@ -97,7 +101,11 @@ macro_rules! visible_filtered_aggregate_query {
 
         let mut query = hubuumobject
             .group_by(sql::<Jsonb>($sort_key_sql))
-            .select((sql::<Jsonb>($sort_key_sql), sql::<BigInt>("COUNT(*)")))
+            .select((
+                sql::<Jsonb>($sort_key_sql),
+                sql::<BigInt>("COUNT(*)"),
+                sql::<Jsonb>($measures_sql),
+            ))
             .into_boxed()
             .filter(object_collection_id.eq($collection_id));
         apply_object_aggregate_source_filters!(query, $query_options, $computed_filter_snapshot);
@@ -118,6 +126,7 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
     let spec = &paging.spec;
     let computed_filter_snapshot = paging.computed_filter_snapshot.as_ref();
     let sort_key_sql = direct_aggregate_sort_key(spec);
+    let measures_sql = direct_measure_response_sql(spec, "hubuumobject");
     let total_count = if query_options.include_total {
         let query = visible_filtered_object_query!(
             target.collection_id,
@@ -139,14 +148,38 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
         target.collection_id,
         query_options,
         &sort_key_sql,
+        &measures_sql,
         computed_filter_snapshot
     );
     if let Some(cursor) = paging.decoded_cursor.as_ref() {
-        query = query.having(sql::<Bool>(&inline_cursor_clause(
-            spec.sort(),
-            cursor,
-            &sort_key_sql,
-        )?));
+        query = match spec.sort() {
+            ObjectAggregateSort::DimensionsAscending => query.having(
+                sql::<Bool>(&format!("{sort_key_sql} > "))
+                    .bind::<Jsonb, _>(cursor.sort_key.clone()),
+            ),
+            ObjectAggregateSort::DimensionsDescending => query.having(
+                sql::<Bool>(&format!("{sort_key_sql} < "))
+                    .bind::<Jsonb, _>(cursor.sort_key.clone()),
+            ),
+            ObjectAggregateSort::ObjectCountAscending => query.having(
+                sql::<Bool>("(COUNT(*) > ")
+                    .bind::<BigInt, _>(cursor.object_count)
+                    .sql(" OR (COUNT(*) = ")
+                    .bind::<BigInt, _>(cursor.object_count)
+                    .sql(&format!(" AND {sort_key_sql} > "))
+                    .bind::<Jsonb, _>(cursor.sort_key.clone())
+                    .sql("))"),
+            ),
+            ObjectAggregateSort::ObjectCountDescending => query.having(
+                sql::<Bool>("(COUNT(*) < ")
+                    .bind::<BigInt, _>(cursor.object_count)
+                    .sql(" OR (COUNT(*) = ")
+                    .bind::<BigInt, _>(cursor.object_count)
+                    .sql(&format!(" AND {sort_key_sql} > "))
+                    .bind::<Jsonb, _>(cursor.sort_key.clone())
+                    .sql("))"),
+            ),
+        };
     }
     query = match spec.sort() {
         ObjectAggregateSort::DimensionsAscending => {
@@ -164,14 +197,16 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
     };
     query = query.limit(page_query_limit(paging.effective_limit)?);
     let database_rows = with_connection(pool, async |connection| {
-        query.load::<(serde_json::Value, i64)>(connection).await
+        query
+            .load::<(serde_json::Value, i64, serde_json::Value)>(connection)
+            .await
     })
     .await?
     .into_iter()
-    .map(|(sort_key, object_count)| {
-        Ok(ObjectAggregateDatabaseRow {
-            dimensions: dimensions_from_sort_key(spec, &sort_key)?,
+    .map(|(sort_key, object_count, measures)| {
+        Ok::<_, ApiError>(ObjectAggregateDatabaseRow {
             sort_key,
+            measures,
             object_count,
         })
     })
@@ -187,7 +222,7 @@ pub(super) async fn aggregate_snapshot_rows(
     if candidates.is_empty() {
         return Ok(AggregateRows::default());
     }
-    let (candidates, computed_payload) = if plan.spec.has_computed_dimension() {
+    let (candidates, computed_payload) = if plan.spec.has_computed_field() {
         let (candidates, payload) =
             computed_aggregate_payload(candidates, plan.spec, plan.computed_definitions)?;
         (candidates, Some(payload))
@@ -197,9 +232,9 @@ pub(super) async fn aggregate_snapshot_rows(
     let mut query = build_aggregate_ctes(candidates, computed_payload, &plan)?;
     query
         .sql
-        .push_str("\nSELECT dimensions, sort_key, object_count FROM aggregate_rows");
+        .push_str("\nSELECT sort_key, measure_state, object_count FROM aggregate_rows");
     let stream = bind_object_aggregate_query!(query)
-        .load_stream::<ObjectAggregateDatabaseRow>(connection)
+        .load_stream::<PartialObjectAggregateRow>(connection)
         .await?;
     futures::pin_mut!(stream);
     let mut groups = AggregateRows::default();
@@ -281,24 +316,41 @@ fn build_aggregate_ctes(
                 format!("{value} AS d{index}_value"),
             ]
         })
+        .collect::<Vec<_>>();
+    let measure_select = plan
+        .spec
+        .measures()
+        .iter()
+        .enumerate()
+        .map(|(index, measure)| {
+            format!(
+                "{} AS m{index}_value",
+                measure_numeric_sql(measure, "object")
+            )
+        });
+    let projected_values = dimension_select
+        .into_iter()
+        .chain(measure_select)
         .collect::<Vec<_>>()
         .join(",\n        ");
     let group_columns = (0..expressions.len())
         .flat_map(|index| [format!("d{index}_state"), format!("d{index}_value")])
-        .collect::<Vec<_>>()
-        .join(", ");
-    let response_dimensions = plan
-        .spec
-        .dimensions()
-        .iter()
-        .enumerate()
-        .map(|(index, dimension)| response_dimension_sql(index, dimension))
-        .collect::<Vec<_>>()
-        .join(",\n            ");
+        .collect::<Vec<_>>();
     let sort_dimensions = (0..expressions.len())
         .map(|index| format!("jsonb_build_array(d{index}_state, d{index}_value)"))
         .collect::<Vec<_>>()
         .join(", ");
+    let grouped_dimensions = if group_columns.is_empty() {
+        String::new()
+    } else {
+        format!("{},\n        ", group_columns.join(", "))
+    };
+    let group_by = if group_columns.is_empty() {
+        "GROUP BY ()\n    HAVING COUNT(*) > 0".to_string()
+    } else {
+        format!("GROUP BY {}", group_columns.join(", "))
+    };
+    let measure_state = partial_measure_state_sql(plan.spec, "m");
     let sql = format!(
         r#"WITH query_input AS (
     SELECT ?::jsonb AS objects{computed_input}
@@ -310,22 +362,20 @@ visible_filtered_objects AS (
 ),
 dimensioned_objects AS (
     SELECT
-        {dimension_select}
+        {projected_values}
     FROM visible_filtered_objects AS object
 ),
 grouped_objects AS (
     SELECT
-        {group_columns},
-        COUNT(*) AS object_count
+        {grouped_dimensions}COUNT(*) AS object_count,
+        {measure_state} AS measure_state
     FROM dimensioned_objects
-    GROUP BY {group_columns}
+    {group_by}
 ),
 aggregate_rows AS (
     SELECT
-        jsonb_build_array(
-            {response_dimensions}
-        ) AS dimensions,
         jsonb_build_array({sort_dimensions}) AS sort_key,
+        measure_state,
         object_count
     FROM grouped_objects
 )"#
@@ -366,7 +416,7 @@ fn dimension_sql(index: usize, dimension: &ObjectAggregateDimension) -> (String,
 }
 
 fn dimension_sql_for_source(
-    index: usize,
+    _index: usize,
     dimension: &ObjectAggregateDimension,
     source: &str,
 ) -> (String, String) {
@@ -385,11 +435,7 @@ fn dimension_sql_for_source(
             )
         }
         ObjectAggregateDimension::JsonData(path) => {
-            let path = path
-                .segments()
-                .map(sql_string_literal)
-                .collect::<Vec<_>>()
-                .join(", ");
+            let path = json_path_sql(path);
             let value = format!("{source}.data #> ARRAY[{path}]::text[]");
             (
                 format!(
@@ -398,14 +444,170 @@ fn dimension_sql_for_source(
                 format!("COALESCE({value}, 'null'::jsonb)"),
             )
         }
-        ObjectAggregateDimension::Computed(_) => {
-            let value = format!("{source}.computed_values -> {source}.id::text -> {index}");
+        ObjectAggregateDimension::Computed(selector) => {
+            let key = computed_selector_sql(selector);
+            let value = format!("{source}.computed_values -> {source}.id::text -> {key}");
             (
                 format!("(({value}) ->> 'state')::smallint"),
                 format!("COALESCE(({value}) -> 'value', 'null'::jsonb)"),
             )
         }
     }
+}
+
+fn measure_numeric_sql(measure: &ObjectAggregateMeasure, source: &str) -> String {
+    let value = match measure.field() {
+        ObjectAggregateMeasureField::JsonData(path) => {
+            let path = json_path_sql(path);
+            format!("{source}.data #> ARRAY[{path}]::text[]")
+        }
+        ObjectAggregateMeasureField::Computed(selector) => {
+            let key = computed_selector_sql(selector);
+            format!("{source}.computed_values -> {source}.id::text -> {key} -> 'value'")
+        }
+    };
+    format!("hubuum_computed_numeric({value})")
+}
+
+fn partial_measure_state_sql(spec: &ObjectAggregateSpec, prefix: &str) -> String {
+    let values = spec
+        .measures()
+        .iter()
+        .enumerate()
+        .map(|(index, measure)| {
+            let source = format!("{prefix}{index}_value");
+            let value = grouped_measure_value_sql(measure.operation(), &source);
+            format!(
+                "jsonb_build_object('value_count', COUNT({source}), 'value', to_jsonb(trim_scale({value})))"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("jsonb_build_array({values})")
+}
+
+fn direct_measure_response_sql(spec: &ObjectAggregateSpec, source: &str) -> String {
+    let values = spec
+        .measures()
+        .iter()
+        .map(|measure| {
+            let numeric = measure_numeric_sql(measure, source);
+            let value_count = format!("COUNT({numeric})");
+            let aggregate_value = grouped_measure_value_sql(measure.operation(), &numeric);
+            let value = match measure.operation() {
+                ObjectAggregateMeasureOperation::Average => {
+                    format!("{aggregate_value} / NULLIF({value_count}, 0)::numeric")
+                }
+                ObjectAggregateMeasureOperation::Sum
+                | ObjectAggregateMeasureOperation::Min
+                | ObjectAggregateMeasureOperation::Max => aggregate_value,
+            };
+            response_measure_sql(&value_count, &value, "COUNT(*)")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("jsonb_build_array({values})")
+}
+
+fn grouped_measure_value_sql(operation: ObjectAggregateMeasureOperation, source: &str) -> String {
+    match operation {
+        ObjectAggregateMeasureOperation::Sum | ObjectAggregateMeasureOperation::Average => {
+            format!("SUM({source})")
+        }
+        ObjectAggregateMeasureOperation::Min => format!("MIN({source})"),
+        ObjectAggregateMeasureOperation::Max => format!("MAX({source})"),
+    }
+}
+
+pub(super) fn merged_measure_state_sql(
+    spec: &ObjectAggregateSpec,
+    left: &str,
+    right: &str,
+) -> String {
+    let values = spec
+        .measures()
+        .iter()
+        .enumerate()
+        .map(|(index, measure)| {
+            let left_count = format!("({left} #>> '{{{index},value_count}}')::bigint");
+            let right_count = format!("({right} #>> '{{{index},value_count}}')::bigint");
+            let total_count = format!("({left_count} + {right_count})");
+            let left_value = aggregate_state_numeric_sql(left, index);
+            let right_value = aggregate_state_numeric_sql(right, index);
+            let merged = match measure.operation() {
+                ObjectAggregateMeasureOperation::Sum
+                | ObjectAggregateMeasureOperation::Average => format!(
+                    "COALESCE({left_value}, 0::numeric) + COALESCE({right_value}, 0::numeric)"
+                ),
+                ObjectAggregateMeasureOperation::Min => {
+                    format!("LEAST({left_value}, {right_value})")
+                }
+                ObjectAggregateMeasureOperation::Max => {
+                    format!("GREATEST({left_value}, {right_value})")
+                }
+            };
+            format!(
+                "jsonb_build_object('value_count', {total_count}, 'value', CASE WHEN {total_count} = 0 THEN 'null'::jsonb ELSE to_jsonb(trim_scale({merged})) END)"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("jsonb_build_array({values})")
+}
+
+pub(super) fn grouped_measure_state_sql(spec: &ObjectAggregateSpec, source: &str) -> String {
+    let values = spec
+        .measures()
+        .iter()
+        .enumerate()
+        .map(|(index, measure)| {
+            let value_count = format!("SUM(({source} #>> '{{{index},value_count}}')::bigint)");
+            let source_value = aggregate_state_numeric_sql(source, index);
+            let value = grouped_measure_value_sql(measure.operation(), &source_value);
+            format!(
+                "jsonb_build_object('value_count', {value_count}, 'value', to_jsonb(trim_scale({value})))"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("jsonb_build_array({values})")
+}
+
+pub(super) fn measure_response_sql(
+    spec: &ObjectAggregateSpec,
+    state: &str,
+    object_count: &str,
+) -> String {
+    let values = spec
+        .measures()
+        .iter()
+        .enumerate()
+        .map(|(index, measure)| {
+            let value_count = format!("({state} #>> '{{{index},value_count}}')::bigint");
+            let stored_value = aggregate_state_numeric_sql(state, index);
+            let value = match measure.operation() {
+                ObjectAggregateMeasureOperation::Average => {
+                    format!("{stored_value} / NULLIF({value_count}, 0)::numeric")
+                }
+                ObjectAggregateMeasureOperation::Sum
+                | ObjectAggregateMeasureOperation::Min
+                | ObjectAggregateMeasureOperation::Max => stored_value,
+            };
+            response_measure_sql(&value_count, &value, object_count)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("jsonb_build_array({values})")
+}
+
+fn response_measure_sql(value_count: &str, value: &str, object_count: &str) -> String {
+    format!(
+        "jsonb_strip_nulls(jsonb_build_object('state', CASE WHEN {value_count} = 0 THEN 'empty' ELSE 'value' END, 'value_count', {value_count}, 'skipped_count', {object_count} - {value_count}, 'value', CASE WHEN {value_count} = 0 THEN NULL ELSE to_jsonb(trim_scale({value})) END))"
+    )
+}
+
+fn aggregate_state_numeric_sql(state: &str, index: usize) -> String {
+    format!("({state} #>> '{{{index},value}}')::numeric")
 }
 
 fn direct_aggregate_sort_key(spec: &ObjectAggregateSpec) -> String {
@@ -420,107 +622,29 @@ fn direct_aggregate_sort_key(spec: &ObjectAggregateSpec) -> String {
     format!("jsonb_build_array({sort_key})")
 }
 
-fn dimensions_from_sort_key(
-    spec: &ObjectAggregateSpec,
-    sort_key: &serde_json::Value,
-) -> Result<serde_json::Value, ApiError> {
-    let values = sort_key.as_array().ok_or_else(|| {
-        ApiError::InternalServerError(
-            "Database returned a non-array object aggregate sort key".to_string(),
-        )
-    })?;
-    if values.len() != spec.dimensions().len() {
-        return Err(ApiError::InternalServerError(
-            "Database returned an object aggregate sort key with the wrong dimension count"
-                .to_string(),
-        ));
-    }
-    let dimensions = spec
-        .dimensions()
-        .iter()
-        .zip(values)
-        .map(|(dimension, item)| dimension_from_sort_item(dimension, item))
-        .collect::<Result<Vec<_>, ApiError>>()?;
-    Ok(serde_json::Value::Array(dimensions))
+fn json_path_sql(path: &ObjectAggregateJsonPath) -> String {
+    path.segments()
+        .map(|segment| {
+            assert!(
+                segment
+                    .bytes()
+                    .all(|byte| { byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') })
+            );
+            format!("'{segment}'")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-fn dimension_from_sort_item(
-    dimension: &ObjectAggregateDimension,
-    item: &serde_json::Value,
-) -> Result<serde_json::Value, ApiError> {
-    let pair = item
-        .as_array()
-        .filter(|pair| pair.len() == 2)
-        .ok_or_else(|| {
-            ApiError::InternalServerError(
-                "Database returned an invalid object aggregate sort key".to_string(),
-            )
-        })?;
-    let state = pair[0].as_i64().ok_or_else(|| {
-        ApiError::InternalServerError(
-            "Database returned an invalid object aggregate value state".to_string(),
-        )
-    })?;
-    let field = dimension.canonical();
-    Ok(match state {
-        0 => serde_json::json!({"field": field, "state": "value", "value": pair[1].clone()}),
-        1 => serde_json::json!({"field": field, "state": "null"}),
-        2 => serde_json::json!({"field": field, "state": "missing"}),
-        3 => serde_json::json!({"field": field, "state": "unavailable"}),
-        _ => {
-            return Err(ApiError::InternalServerError(
-                "Database returned an unknown object aggregate value state".to_string(),
-            ));
-        }
-    })
-}
-
-fn response_dimension_sql(index: usize, dimension: &ObjectAggregateDimension) -> String {
-    response_dimension_expression(
-        dimension,
-        &format!("d{index}_state"),
-        &format!("d{index}_value"),
-    )
-}
-
-fn response_dimension_expression(
-    dimension: &ObjectAggregateDimension,
-    state: &str,
-    value: &str,
-) -> String {
-    let field = sql_string_literal(&dimension.canonical());
+fn computed_selector_sql(selector: &ComputedFieldSelector) -> String {
+    assert!(selector.key().bytes().enumerate().all(|(index, byte)| {
+        matches!((index, byte), (0, b'a'..=b'z') | (_, b'a'..=b'z' | b'0'..=b'9' | b'_'))
+    }));
     format!(
-        "CASE {state} WHEN 0 THEN jsonb_build_object('field', {field}, 'state', 'value', 'value', {value}) WHEN 1 THEN jsonb_build_object('field', {field}, 'state', 'null') WHEN 2 THEN jsonb_build_object('field', {field}, 'state', 'missing') ELSE jsonb_build_object('field', {field}, 'state', 'unavailable') END"
+        "'computed.{}.{}'",
+        selector.scope().as_str(),
+        selector.key()
     )
-}
-
-fn sql_string_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
-fn inline_cursor_clause(
-    sort: ObjectAggregateSort,
-    cursor: &DecodedObjectAggregateCursor,
-    sort_key_sql: &str,
-) -> Result<String, ApiError> {
-    let sort_key = serde_json::to_string(&cursor.sort_key).map_err(|error| {
-        ApiError::BadRequest(format!(
-            "aggregate cursor contains invalid ordering values: {error}"
-        ))
-    })?;
-    let sort_key = format!("{}::jsonb", sql_string_literal(&sort_key));
-    Ok(match sort {
-        ObjectAggregateSort::DimensionsAscending => format!("{sort_key_sql} > {sort_key}"),
-        ObjectAggregateSort::DimensionsDescending => format!("{sort_key_sql} < {sort_key}"),
-        ObjectAggregateSort::ObjectCountAscending => format!(
-            "(COUNT(*) > {count} OR (COUNT(*) = {count} AND {sort_key_sql} > {sort_key}))",
-            count = cursor.object_count,
-        ),
-        ObjectAggregateSort::ObjectCountDescending => format!(
-            "(COUNT(*) < {count} OR (COUNT(*) = {count} AND {sort_key_sql} > {sort_key}))",
-            count = cursor.object_count,
-        ),
-    })
 }
 
 pub(super) fn append_page_options(
