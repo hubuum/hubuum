@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-07-21
+
 ### Added
 
 - Added permission-aware aggregated object queries at
