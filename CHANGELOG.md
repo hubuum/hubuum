@@ -22,6 +22,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Single-host rolling updates no longer force Caddy to reprovision an unchanged
+  configuration after every replica replacement, avoiding transient public
+  request failures while still applying changed Caddyfiles.
 - Event-retention workers now coordinate one transaction-scoped batch across
   replicas, keep selected event rows locked through archival and deletion, and
   limit terminal-delivery cleanup to the configured batch size. A partial
