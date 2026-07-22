@@ -102,6 +102,44 @@ assert_commands() {
   diff -u "$expected" "$actual"
 }
 
+assert_caddy_upstream_status_eligibility() {
+  local expected="$1"
+  local upstreams="$2"
+  local actual="false"
+
+  if hubuum_caddy_upstream_status_is_eligible "$upstreams"; then
+    actual="true"
+  fi
+  [[ "$actual" == "$expected" ]] || {
+    printf 'unexpected Caddy upstream eligibility for %s\n' "$upstreams" >&2
+    exit 1
+  }
+}
+
+assert_rollout_rejects_timeout_setting() {
+  local setting_name="$1"
+  local value="$2"
+  local output
+
+  printf -v "$setting_name" '%s' "$value"
+  : > "$COMMAND_LOG"
+  if output="$(hubuum_rollout 2>&1)"; then
+    echo "rollout with invalid $setting_name unexpectedly succeeded" >&2
+    exit 1
+  fi
+  [[ "$output" == "ERROR: $setting_name must be a positive integer; got '$value'" ]]
+  [[ ! -s "$COMMAND_LOG" ]] || {
+    echo "rollout changed state before validating $setting_name" >&2
+    exit 1
+  }
+  unset "$setting_name"
+}
+
+assert_caddy_upstream_status_eligibility "false" '[]'
+assert_caddy_upstream_status_eligibility "false" '[{"address":"hubuum-api:8080"}]'
+assert_caddy_upstream_status_eligibility "true" '[{"fails": 0}, {"fails":0}]'
+assert_caddy_upstream_status_eligibility "false" '[{"fails":0}, {"fails":2}]'
+
 FAKE_CADDY_RUNNING="true"
 FAKE_CADDY_DEPENDENCIES="true"
 INSTALL_MODE="all"
@@ -199,6 +237,21 @@ unset -f sleep
   exit 1
 }
 rm -f "$TEST_ROOT/caddy-failure-polls"
+
+if timeout_output="$(hubuum_wait_for_caddy_upstreams invalid 2>&1)"; then
+  echo "invalid Caddy upstream timeout unexpectedly succeeded" >&2
+  exit 1
+fi
+[[ "$timeout_output" == "ERROR: Caddy upstream timeout must be a positive integer; got 'invalid'" ]]
+
+if timeout_output="$(hubuum_wait_for_healthy hubuum-api 0 2>&1)"; then
+  echo "zero health timeout unexpectedly succeeded" >&2
+  exit 1
+fi
+[[ "$timeout_output" == "ERROR: health timeout must be a positive integer; got '0'" ]]
+
+assert_rollout_rejects_timeout_setting HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS invalid
+assert_rollout_rejects_timeout_setting HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS 0
 
 reload_output="$(hubuum_reload_caddy 2>&1)"
 [[ "$reload_output" == "Reloading Caddy if its configuration changed..." ]] || {

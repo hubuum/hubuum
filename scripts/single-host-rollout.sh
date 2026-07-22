@@ -4,6 +4,25 @@
 # The caller must define COMPOSE_CMD, ENGINE_PATH, and INSTALL_MODE before
 # invoking hubuum_rollout. DATABASE_MANAGED defaults to true for legacy callers.
 
+hubuum_require_positive_seconds() {
+  local setting_name="$1"
+  local value="$2"
+
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: $setting_name must be a positive integer; got '$value'" >&2
+    return 1
+  fi
+}
+
+hubuum_validate_rollout_timeouts() {
+  hubuum_require_positive_seconds \
+    "HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS" \
+    "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}" || return 1
+  hubuum_require_positive_seconds \
+    "HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS" \
+    "${HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS:-180}"
+}
+
 hubuum_service_container_id() {
   local service="$1"
   local container_id
@@ -44,8 +63,11 @@ hubuum_service_health() {
 hubuum_wait_for_healthy() {
   local service="$1"
   local timeout_seconds="${2:-180}"
-  local deadline=$((SECONDS + timeout_seconds))
+  local deadline
   local health
+
+  hubuum_require_positive_seconds "health timeout" "$timeout_seconds" || return 1
+  deadline=$((SECONDS + timeout_seconds))
 
   while (( SECONDS < deadline )); do
     health="$(hubuum_service_health "$service")"
@@ -67,6 +89,10 @@ hubuum_wait_for_healthy() {
   return 1
 }
 
+hubuum_wait_for_rollout_health() {
+  hubuum_wait_for_healthy "$1" "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
+}
+
 hubuum_service_is_healthy() {
   local health
 
@@ -81,7 +107,7 @@ hubuum_ensure_infrastructure_service() {
     echo "Starting required infrastructure service $service..."
     "${COMPOSE_CMD[@]}" up -d --no-deps --no-recreate "$service"
   fi
-  hubuum_wait_for_healthy "$service" "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
+  hubuum_wait_for_rollout_health "$service"
 }
 
 hubuum_ensure_infrastructure() {
@@ -98,7 +124,7 @@ hubuum_roll_service() {
 
   echo "Rolling $service..."
   "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate "$service"
-  hubuum_wait_for_healthy "$service" "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
+  hubuum_wait_for_rollout_health "$service"
 }
 
 hubuum_caddy_is_running() {
@@ -124,7 +150,7 @@ hubuum_remove_legacy_caddy_dependencies() {
 
   echo "Recreating Caddy once to remove legacy Podman container dependencies..."
   "${COMPOSE_CMD[@]}" up -d --no-deps --force-recreate caddy
-  hubuum_wait_for_healthy caddy "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
+  hubuum_wait_for_rollout_health caddy
 }
 
 hubuum_reload_caddy() {
@@ -141,16 +167,14 @@ hubuum_reload_caddy() {
   fi
 }
 
-hubuum_caddy_upstreams_have_no_failures() {
-  local upstreams
+hubuum_caddy_upstreams() {
+  "${COMPOSE_CMD[@]}" exec -T caddy \
+    wget -qO- \
+    http://127.0.0.1:2019/reverse_proxy/upstreams
+}
 
-  if ! upstreams="$(
-    "${COMPOSE_CMD[@]}" exec -T caddy \
-      wget -qO- \
-      http://127.0.0.1:2019/reverse_proxy/upstreams 2>/dev/null
-  )"; then
-    return 1
-  fi
+hubuum_caddy_upstream_status_is_eligible() {
+  local upstreams="$1"
 
   # The endpoint returns one entry per configured upstream. Require at least
   # one entry so an unavailable or not-yet-provisioned proxy cannot pass.
@@ -158,23 +182,39 @@ hubuum_caddy_upstreams_have_no_failures() {
   ! grep -Eq '"fails"[[:space:]]*:[[:space:]]*[1-9][0-9]*' <<<"$upstreams"
 }
 
+hubuum_caddy_upstreams_are_eligible() {
+  local upstreams
+
+  if ! upstreams="$(hubuum_caddy_upstreams 2>/dev/null)"; then
+    return 1
+  fi
+
+  hubuum_caddy_upstream_status_is_eligible "$upstreams"
+}
+
 hubuum_wait_for_caddy_upstreams() {
   local timeout_seconds="${1:-${HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS:-180}}"
-  local deadline=$((SECONDS + timeout_seconds))
+  local deadline
+
+  hubuum_require_positive_seconds "Caddy upstream timeout" "$timeout_seconds" || return 1
+  deadline=$((SECONDS + timeout_seconds))
 
   echo "Waiting for Caddy to clear upstream failure marks..."
   while (( SECONDS < deadline )); do
-    if hubuum_caddy_upstreams_have_no_failures; then
+    if hubuum_caddy_upstreams_are_eligible; then
       return 0
     fi
     sleep 2
   done
 
   echo "ERROR: Caddy did not report all upstreams eligible within ${timeout_seconds}s" >&2
-  "${COMPOSE_CMD[@]}" exec -T caddy \
-    wget -qO- \
-    http://127.0.0.1:2019/reverse_proxy/upstreams >&2 || true
+  hubuum_caddy_upstreams >&2 || true
   return 1
+}
+
+hubuum_reload_caddy_and_wait_for_upstreams() {
+  hubuum_reload_caddy || return 1
+  hubuum_wait_for_caddy_upstreams
 }
 
 hubuum_run_migrations() {
@@ -189,15 +229,15 @@ hubuum_start_stack() {
   # Start the migration-owning primary first. Starting both API containers at
   # once could make two fresh containers race to apply the same migrations.
   "${COMPOSE_CMD[@]}" up -d hubuum-api
-  hubuum_wait_for_healthy hubuum-api "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
+  hubuum_wait_for_rollout_health hubuum-api
 
   "${COMPOSE_CMD[@]}" up -d --no-deps hubuum-api-standby
-  hubuum_wait_for_healthy hubuum-api-standby "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
+  hubuum_wait_for_rollout_health hubuum-api-standby
 
   if [[ "$INSTALL_MODE" == "all" ]]; then
     "${COMPOSE_CMD[@]}" up -d hubuum-web hubuum-web-standby
-    hubuum_wait_for_healthy hubuum-web "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
-    hubuum_wait_for_healthy hubuum-web-standby "${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-180}"
+    hubuum_wait_for_rollout_health hubuum-web
+    hubuum_wait_for_rollout_health hubuum-web-standby
   fi
 
   "${COMPOSE_CMD[@]}" up -d --no-deps caddy
@@ -209,6 +249,8 @@ hubuum_rollout() {
   local web_primary_recovered="false"
   local web_primary_health
   local web_standby_health
+
+  hubuum_validate_rollout_timeouts || return 1
 
   if ! hubuum_caddy_is_running; then
     hubuum_start_stack
@@ -244,8 +286,7 @@ hubuum_rollout() {
   fi
 
   if [[ "$api_primary_recovered" == "true" || "$web_primary_recovered" == "true" ]]; then
-    hubuum_reload_caddy
-    hubuum_wait_for_caddy_upstreams
+    hubuum_reload_caddy_and_wait_for_upstreams
   fi
 
   # Upgrade every standby while its primary remains available. Reload only
@@ -257,8 +298,7 @@ hubuum_rollout() {
   if [[ "$INSTALL_MODE" == "all" ]]; then
     hubuum_roll_service hubuum-web-standby
   fi
-  hubuum_reload_caddy
-  hubuum_wait_for_caddy_upstreams
+  hubuum_reload_caddy_and_wait_for_upstreams
 
   if [[ "$api_primary_recovered" != "true" ]]; then
     hubuum_roll_service hubuum-api
@@ -269,7 +309,6 @@ hubuum_rollout() {
     primary_rolled="true"
   fi
   if [[ "$primary_rolled" == "true" ]]; then
-    hubuum_reload_caddy
-    hubuum_wait_for_caddy_upstreams
+    hubuum_reload_caddy_and_wait_for_upstreams
   fi
 }
