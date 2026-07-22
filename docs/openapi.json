@@ -19405,7 +19405,8 @@
               "integer",
               "null"
             ],
-            "format": "int32"
+            "format": "int32",
+            "minimum": 1
           },
           "kind": {
             "$ref": "#/components/schemas/ExportScopeKind"
@@ -19415,7 +19416,8 @@
               "integer",
               "null"
             ],
-            "format": "int32"
+            "format": "int32",
+            "minimum": 1
           }
         },
         "example": {

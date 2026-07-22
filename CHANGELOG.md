@@ -25,6 +25,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `PageLimits` value object instead of `(usize, usize)` tuples. Downstream Rust
   callers must use `default_limit()`, `maximum_limit()`, `resolve()`, and
   `clamp()`, and pass `PageLimits` to the config-free unified-search parser.
+- **Breaking:** Export scope `class_id` and `object_id` values must now be
+  positive integers. Clients sending zero or negative export scope IDs must
+  replace them with valid resource IDs.
+- **Breaking (Rust API):** `ExportScope::validate` now returns a
+  `ValidatedExportScope`, and the raw `class_id_required` and
+  `object_id_required` helpers have been removed. Integrations should validate
+  once and retain the returned typed scope during execution.
 - JSON filters and object-aggregate dimensions now share one typed JSON-path
   parser. Empty segments, whitespace, and characters outside ASCII letters,
   digits, `_`, and `$` are rejected consistently before SQL generation.
