@@ -16,7 +16,7 @@ use crate::extractors::Authenticated;
 use crate::models::search::QueryOptions;
 use crate::models::{
     HubuumClass, HubuumClassID, HubuumObject, HubuumObjectComputedResponse,
-    HubuumObjectReadResponse, Permissions,
+    HubuumObjectReadResponse, Permissions, TokenScope,
 };
 use crate::pagination::{
     Page, SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, encode_cursor,
@@ -191,10 +191,10 @@ async fn can_list_objects_in_class(
         return Ok(false);
     }
 
-    let has_class_or_collection_scope = requestor.scopes().is_some_and(|scope| {
-        scope.collection_ids().is_some_and(|ids| !ids.is_empty())
-            || scope.class_ids().is_some_and(|ids| !ids.is_empty())
-    });
+    let has_class_or_collection_scope = requestor
+        .scopes()
+        .and_then(TokenScope::resource_ids)
+        .is_some_and(|ids| ids.has_collection_or_class_entries());
     if has_class_or_collection_scope || requestor.scopes().is_none() {
         return Ok(authorize_resources(
             pool.permission_backend(),

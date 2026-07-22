@@ -3,6 +3,9 @@ use crate::db::traits::authz::scope_allows;
 use crate::db::traits::computed_field::{
     ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
 };
+use crate::db::traits::resource_scope::{
+    class_scope_predicate, collection_scope_predicate, object_scope_predicate, resource_scope_ids,
+};
 use crate::db::traits::search::JsonPredicateExt;
 use crate::models::RelatedObjectForRootRow;
 use crate::models::permissions::PermissionFilter;
@@ -12,60 +15,7 @@ use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::traits::PrincipalIdAccessor;
 use crate::traits::{CursorPaginated, CursorSqlMapping};
 use crate::utilities::extensions::CustomStringExtensions;
-use diesel::BoolExpressionMethods;
 use diesel_async::RunQueryDsl;
-
-type CollectionScopePredicate<'a> = diesel::dsl::EqAny<crate::schema::collections::id, &'a [i32]>;
-type ClassScopePredicate<'a> = diesel::dsl::Or<
-    diesel::dsl::EqAny<crate::schema::hubuumclass::collection_id, &'a [i32]>,
-    diesel::dsl::EqAny<crate::schema::hubuumclass::id, &'a [i32]>,
->;
-type ObjectScopePredicate<'a> = diesel::dsl::Or<
-    diesel::dsl::Or<
-        diesel::dsl::EqAny<crate::schema::hubuumobject::collection_id, &'a [i32]>,
-        diesel::dsl::EqAny<crate::schema::hubuumobject::hubuum_class_id, &'a [i32]>,
-    >,
-    diesel::dsl::EqAny<crate::schema::hubuumobject::id, &'a [i32]>,
->;
-
-#[derive(Clone, Copy)]
-struct ResourceScopeIds<'a> {
-    collection_ids: &'a [i32],
-    class_ids: &'a [i32],
-    object_ids: &'a [i32],
-}
-
-fn resource_scope_ids(scopes: Option<&TokenScope>) -> Option<ResourceScopeIds<'_>> {
-    let scope = scopes.filter(|scope| scope.is_resource_scoped())?;
-    Some(ResourceScopeIds {
-        collection_ids: scope.collection_ids().unwrap_or_default(),
-        class_ids: scope.class_ids().unwrap_or_default(),
-        object_ids: scope.object_ids().unwrap_or_default(),
-    })
-}
-
-fn collection_scope_predicate(scope: ResourceScopeIds<'_>) -> CollectionScopePredicate<'_> {
-    use crate::schema::collections::dsl::id;
-
-    id.eq_any(scope.collection_ids)
-}
-
-fn class_scope_predicate(scope: ResourceScopeIds<'_>) -> ClassScopePredicate<'_> {
-    use crate::schema::hubuumclass::dsl::{collection_id, id};
-
-    collection_id
-        .eq_any(scope.collection_ids)
-        .or(id.eq_any(scope.class_ids))
-}
-
-fn object_scope_predicate(scope: ResourceScopeIds<'_>) -> ObjectScopePredicate<'_> {
-    use crate::schema::hubuumobject::dsl::{collection_id, hubuum_class_id, id};
-
-    collection_id
-        .eq_any(scope.collection_ids)
-        .or(hubuum_class_id.eq_any(scope.class_ids))
-        .or(id.eq_any(scope.object_ids))
-}
 
 #[derive(diesel::QueryableByName)]
 struct CountRow {
@@ -2533,9 +2483,9 @@ fn build_root_graph_walk_query(spec: RootGraphWalkSpec) -> RawSqlQuerySpec {
     let mut bind_variables = Vec::<SQLValue>::new();
     let collection_array_sql = sql_integer_array(spec.collection_ids, &mut bind_variables);
     let valid_scope_objects_sql = if let Some(scope) = resource_scope_ids(spec.scope) {
-        let collection_scope_sql = sql_integer_array(scope.collection_ids, &mut bind_variables);
-        let class_scope_sql = sql_integer_array(scope.class_ids, &mut bind_variables);
-        let object_scope_sql = sql_integer_array(scope.object_ids, &mut bind_variables);
+        let collection_scope_sql = sql_integer_array(scope.collection_ids(), &mut bind_variables);
+        let class_scope_sql = sql_integer_array(scope.class_ids(), &mut bind_variables);
+        let object_scope_sql = sql_integer_array(scope.object_ids(), &mut bind_variables);
         format!(
             "SELECT id AS object_id FROM hubuumobject WHERE collection_id = ANY({collection_scope_sql}) OR hubuum_class_id = ANY({class_scope_sql}) OR id = ANY({object_scope_sql})"
         )
@@ -2929,8 +2879,8 @@ fn append_related_class_scope_clause(
     let Some(scope) = resource_scope_ids(scopes) else {
         return;
     };
-    let collection_sql = sql_integer_array(scope.collection_ids, bind_variables);
-    let class_sql = sql_integer_array(scope.class_ids, bind_variables);
+    let collection_sql = sql_integer_array(scope.collection_ids(), bind_variables);
+    let class_sql = sql_integer_array(scope.class_ids(), bind_variables);
     where_clauses.push(format!(
         "NOT EXISTS (SELECT 1 FROM unnest(related_classes.path) AS path_class_id JOIN hubuumclass path_class ON path_class.id = path_class_id WHERE NOT (path_class.collection_id = ANY({collection_sql}) OR path_class.id = ANY({class_sql})))"
     ));
@@ -2944,9 +2894,9 @@ fn append_related_object_scope_clause(
     let Some(scope) = resource_scope_ids(scopes) else {
         return;
     };
-    let collection_sql = sql_integer_array(scope.collection_ids, bind_variables);
-    let class_sql = sql_integer_array(scope.class_ids, bind_variables);
-    let object_sql = sql_integer_array(scope.object_ids, bind_variables);
+    let collection_sql = sql_integer_array(scope.collection_ids(), bind_variables);
+    let class_sql = sql_integer_array(scope.class_ids(), bind_variables);
+    let object_sql = sql_integer_array(scope.object_ids(), bind_variables);
     where_clauses.push(format!(
         "NOT EXISTS (SELECT 1 FROM unnest(related_objects.path) AS path_object_id JOIN hubuumobject path_object ON path_object.id = path_object_id WHERE NOT (path_object.collection_id = ANY({collection_sql}) OR path_object.hubuum_class_id = ANY({class_sql}) OR path_object.id = ANY({object_sql})))"
     ));

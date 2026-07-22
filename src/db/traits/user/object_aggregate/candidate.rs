@@ -8,6 +8,7 @@ use super::bounded_json::ObjectAggregateJsonBound;
 use super::filters::apply_object_aggregate_source_filters;
 use crate::db::DbConnection;
 use crate::db::traits::computed_field::ComputedQuerySnapshot;
+use crate::db::traits::resource_scope::{object_scope_predicate, resource_scope_ids};
 use crate::db::traits::search::JsonPredicateExt;
 use crate::errors::ApiError;
 use crate::models::object_aggregate::ObjectAggregateSpec;
@@ -133,13 +134,8 @@ pub(super) async fn load_aggregate_candidate_batch(
     let mut query = hubuumobject
         .filter(object_collection_id.eq(collection_id))
         .into_boxed();
-    if let Some(scope) = token_scope.filter(|scope| scope.is_resource_scoped()) {
-        query = query.filter(
-            object_collection_id
-                .eq_any(scope.collection_ids().unwrap_or_default())
-                .or(hubuum_class_id.eq_any(scope.class_ids().unwrap_or_default()))
-                .or(object_id.eq_any(scope.object_ids().unwrap_or_default())),
-        );
+    if let Some(scope) = resource_scope_ids(token_scope) {
+        query = query.filter(object_scope_predicate(scope));
     }
     apply_object_aggregate_source_filters!(query, query_options, computed_filter_snapshot);
     crate::apply_query_options!(query, query_options, HubuumObject);

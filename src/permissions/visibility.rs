@@ -61,6 +61,42 @@ impl AuthorizedObjectIds {
     }
 }
 
+struct ResourceScopedCandidate<T> {
+    value: T,
+    resource: ResourceRef,
+}
+
+fn resource_scoped_candidates<T, F>(
+    candidates: Vec<T>,
+    scope: Option<&TokenScope>,
+    to_resource: &F,
+) -> Vec<ResourceScopedCandidate<T>>
+where
+    F: Fn(&T) -> ResourceRef,
+{
+    candidates
+        .into_iter()
+        .filter_map(|value| {
+            let resource = to_resource(&value);
+            scope_allows_resource(scope, &resource)
+                .then_some(ResourceScopedCandidate { value, resource })
+        })
+        .collect()
+}
+
+fn permission_requests<T>(
+    candidates: &[ResourceScopedCandidate<T>],
+    permissions: &[Permissions],
+) -> Vec<PermissionRequest> {
+    candidates
+        .iter()
+        .map(|candidate| PermissionRequest {
+            resource: candidate.resource.clone(),
+            permissions: permissions.to_vec(),
+        })
+        .collect()
+}
+
 pub async fn authorize_all_candidates<T, F>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,
@@ -72,23 +108,14 @@ pub async fn authorize_all_candidates<T, F>(
 where
     F: Fn(&T) -> ResourceRef,
 {
-    let candidates = candidates
-        .into_iter()
-        .filter(|candidate| scope_allows_resource(scope, &to_resource(candidate)))
-        .collect::<Vec<_>>();
-    let requests = candidates
-        .iter()
-        .map(|candidate| PermissionRequest {
-            resource: to_resource(candidate),
-            permissions: permissions.clone(),
-        })
-        .collect();
+    let candidates = resource_scoped_candidates(candidates, scope, &to_resource);
+    let requests = permission_requests(&candidates, &permissions);
     let decisions = backend.authorize_many(principal, requests).await?;
     Ok(candidates
         .into_iter()
         .zip(decisions)
         .filter_map(|(candidate, decision)| {
-            (decision == PermissionDecision::Allow).then_some(candidate)
+            (decision == PermissionDecision::Allow).then_some(candidate.value)
         })
         .collect())
 }
@@ -109,23 +136,14 @@ where
     let start = Instant::now();
     let backend_kind = backend.kind();
     let candidate_count = candidates.len();
-    let candidates = candidates
-        .into_iter()
-        .filter(|candidate| scope_allows_resource(scope, &to_resource(candidate)))
-        .collect::<Vec<_>>();
-    let requests = candidates
-        .iter()
-        .map(|candidate| PermissionRequest {
-            resource: to_resource(candidate),
-            permissions: permissions.clone(),
-        })
-        .collect();
+    let candidates = resource_scoped_candidates(candidates, scope, &to_resource);
+    let requests = permission_requests(&candidates, &permissions);
     let decisions = backend.authorize_many(principal, requests).await?;
     let authorized = candidates
         .into_iter()
         .zip(decisions)
         .filter_map(|(candidate, decision)| {
-            (decision == PermissionDecision::Allow).then_some(candidate)
+            (decision == PermissionDecision::Allow).then_some(candidate.value)
         })
         .collect::<Vec<_>>();
     let authorized_count = authorized.len();
@@ -180,10 +198,7 @@ where
     let start = Instant::now();
     let backend_kind = backend.kind();
     let candidate_count = candidates.len();
-    let candidates = candidates
-        .into_iter()
-        .filter(|candidate| scope_allows_resource(scope, &to_resource(candidate)))
-        .collect::<Vec<_>>();
+    let candidates = resource_scoped_candidates(candidates, scope, &to_resource);
 
     if candidates.is_empty() {
         record_paginate_authorized(backend_kind, 0, 0, offset, limit, 0, start.elapsed());
@@ -193,13 +208,7 @@ where
         });
     }
 
-    let requests: Vec<PermissionRequest> = candidates
-        .iter()
-        .map(|c| PermissionRequest {
-            resource: to_resource(c),
-            permissions: permissions.clone(),
-        })
-        .collect();
+    let requests = permission_requests(&candidates, &permissions);
 
     let decisions = backend.authorize_candidates(principal, requests).await?;
 
@@ -208,7 +217,7 @@ where
         .zip(decisions)
         .filter_map(|(row, result)| {
             if result.decision == PermissionDecision::Allow {
-                Some(row)
+                Some(row.value)
             } else {
                 None
             }

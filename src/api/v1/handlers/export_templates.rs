@@ -132,11 +132,8 @@ pub async fn get_templates(
                 .into_iter()
                 .map(|collection| collection.id)
                 .collect::<Vec<_>>();
-        if let Some(scoped_collection_ids) = requestor
-            .scopes()
-            .and_then(crate::models::TokenScope::collection_ids)
-        {
-            allowed_collection_ids.retain(|id| scoped_collection_ids.contains(id));
+        if let Some(scope) = requestor.scopes() {
+            scope.retain_allowed_collection_ids(&mut allowed_collection_ids);
         }
         ExportTemplate::list_with_total_count(&pool, &allowed_collection_ids, &search_params)
             .await?

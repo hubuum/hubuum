@@ -24,6 +24,7 @@ pub mod permissions;
 pub mod principal;
 pub mod relations;
 pub mod remote_target;
+pub(crate) mod resource_scope;
 pub mod restore;
 pub mod search;
 pub mod service_account;

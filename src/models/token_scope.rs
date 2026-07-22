@@ -121,6 +121,35 @@ pub struct TokenScope {
     resources: Option<TokenResourceScopeSet>,
 }
 
+/// Borrowed, normalized resource IDs from one token scope.
+///
+/// The fields stay private so callers consume the hierarchy through
+/// the explicit accessors instead of depending on its storage representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenResourceScopeIds<'a> {
+    collection_ids: &'a [i32],
+    class_ids: &'a [i32],
+    object_ids: &'a [i32],
+}
+
+impl<'a> TokenResourceScopeIds<'a> {
+    pub fn collection_ids(self) -> &'a [i32] {
+        self.collection_ids
+    }
+
+    pub fn class_ids(self) -> &'a [i32] {
+        self.class_ids
+    }
+
+    pub fn object_ids(self) -> &'a [i32] {
+        self.object_ids
+    }
+
+    pub fn has_collection_or_class_entries(self) -> bool {
+        !self.collection_ids.is_empty() || !self.class_ids.is_empty()
+    }
+}
+
 pub(crate) struct TokenScopeParts {
     pub(crate) permissions: Option<Vec<Permissions>>,
     pub(crate) resource_scopes: Option<Vec<TokenResourceScope>>,
@@ -226,22 +255,33 @@ impl TokenScope {
             .transpose()
     }
 
-    pub fn collection_ids(&self) -> Option<&[i32]> {
+    pub fn resource_ids(&self) -> Option<TokenResourceScopeIds<'_>> {
         self.resources
             .as_ref()
-            .map(|resources| resources.collections.as_slice())
+            .map(|resources| TokenResourceScopeIds {
+                collection_ids: resources.collections.as_slice(),
+                class_ids: resources.classes.as_slice(),
+                object_ids: resources.objects.as_slice(),
+            })
+    }
+
+    pub fn collection_ids(&self) -> Option<&[i32]> {
+        self.resource_ids()
+            .map(TokenResourceScopeIds::collection_ids)
     }
 
     pub fn class_ids(&self) -> Option<&[i32]> {
-        self.resources
-            .as_ref()
-            .map(|resources| resources.classes.as_slice())
+        self.resource_ids().map(TokenResourceScopeIds::class_ids)
     }
 
     pub fn object_ids(&self) -> Option<&[i32]> {
-        self.resources
-            .as_ref()
-            .map(|resources| resources.objects.as_slice())
+        self.resource_ids().map(TokenResourceScopeIds::object_ids)
+    }
+
+    pub(crate) fn retain_allowed_collection_ids(&self, candidate_ids: &mut Vec<i32>) {
+        if let Some(resource_ids) = self.resource_ids() {
+            candidate_ids.retain(|id| resource_ids.collection_ids().contains(id));
+        }
     }
 
     pub fn allows_permissions(&self, requested: &[Permissions]) -> bool {
@@ -467,6 +507,45 @@ mod tests {
         let scope = scope(Vec::new());
 
         assert!(!scope.allows_resource(&ResourceRef::collection(7)));
+    }
+
+    #[test]
+    fn resource_ids_are_grouped_by_kind() {
+        let scope = scope(vec![
+            TokenResourceScope::Object(HubuumObjectID::new(11).unwrap()),
+            TokenResourceScope::Collection(CollectionID::new(7).unwrap()),
+            TokenResourceScope::Class(HubuumClassID::new(9).unwrap()),
+        ]);
+
+        let ids = scope.resource_ids().unwrap();
+
+        assert_eq!(ids.collection_ids(), &[7]);
+        assert_eq!(ids.class_ids(), &[9]);
+        assert_eq!(ids.object_ids(), &[11]);
+    }
+
+    #[test]
+    fn collection_candidates_are_intersected_with_resource_scope() {
+        let scope = scope(vec![
+            TokenResourceScope::Collection(CollectionID::new(7).unwrap()),
+            TokenResourceScope::Class(HubuumClassID::new(9).unwrap()),
+        ]);
+        let mut candidate_ids = vec![6, 7, 8, 9];
+
+        scope.retain_allowed_collection_ids(&mut candidate_ids);
+
+        assert_eq!(candidate_ids, vec![7]);
+    }
+
+    #[test]
+    fn permission_only_scope_does_not_filter_collection_candidates() {
+        let scope =
+            TokenScope::from_stored_parts(Some(vec![Permissions::ReadCollection]), None).unwrap();
+        let mut candidate_ids = vec![6, 7, 8];
+
+        scope.retain_allowed_collection_ids(&mut candidate_ids);
+
+        assert_eq!(candidate_ids, vec![6, 7, 8]);
     }
 
     #[test]

@@ -119,10 +119,54 @@ fn bounded_limit(limit: usize) -> i64 {
     i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX)
 }
 
-fn cursor_values(cursor: Option<&UnifiedSearchCursorToken>) -> (bool, i32, String, i32) {
-    match cursor {
-        Some(cursor) => (false, cursor.rank, cursor.name.clone(), cursor.id),
-        None => (true, 0, String::new(), 0),
+struct UnifiedSearchCursorSqlBinds {
+    absent: bool,
+    rank: i32,
+    name: String,
+    id: i32,
+}
+
+impl UnifiedSearchCursorSqlBinds {
+    fn from_cursor(cursor: Option<&UnifiedSearchCursorToken>) -> Self {
+        match cursor {
+            Some(cursor) => Self {
+                absent: false,
+                rank: cursor.rank,
+                name: cursor.name.clone(),
+                id: cursor.id,
+            },
+            None => Self {
+                absent: true,
+                rank: 0,
+                name: String::new(),
+                id: 0,
+            },
+        }
+    }
+}
+
+struct ResourceScopeSqlBinds {
+    unrestricted: bool,
+    collection_ids: Vec<i32>,
+    class_ids: Vec<i32>,
+    object_ids: Vec<i32>,
+}
+
+impl ResourceScopeSqlBinds {
+    fn from_scope(scope: Option<&TokenScope>) -> Self {
+        let resource_ids = scope.and_then(TokenScope::resource_ids);
+        Self {
+            unrestricted: resource_ids.is_none(),
+            collection_ids: resource_ids
+                .map(|ids| ids.collection_ids().to_vec())
+                .unwrap_or_default(),
+            class_ids: resource_ids
+                .map(|ids| ids.class_ids().to_vec())
+                .unwrap_or_default(),
+            object_ids: resource_ids
+                .map(|ids| ids.object_ids().to_vec())
+                .unwrap_or_default(),
+        }
     }
 }
 
@@ -156,13 +200,9 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
 
         let principal_id = self.principal_id();
         let query = params.query.clone();
-        let resource_unscoped = scopes.and_then(TokenScope::collection_ids).is_none();
-        let scoped_collection_ids = scopes
-            .and_then(TokenScope::collection_ids)
-            .unwrap_or_default()
-            .to_vec();
-        let (no_cursor, cursor_rank, cursor_name, cursor_id) =
-            cursor_values(params.collection_cursor.as_ref());
+        let scope_binds = ResourceScopeSqlBinds::from_scope(scopes);
+        let cursor_binds =
+            UnifiedSearchCursorSqlBinds::from_cursor(params.collection_cursor.as_ref());
         let limit = bounded_limit(params.limit_per_kind);
 
         with_connection_async(pool.clone(), async move |conn| {
@@ -170,12 +210,12 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Text, _>(query)
                 .bind::<Bool, _>(is_unscoped_admin)
                 .bind::<Integer, _>(principal_id)
-                .bind::<Bool, _>(resource_unscoped)
-                .bind::<Array<Integer>, _>(scoped_collection_ids)
-                .bind::<Bool, _>(no_cursor)
-                .bind::<Integer, _>(cursor_rank)
-                .bind::<Text, _>(cursor_name)
-                .bind::<Integer, _>(cursor_id)
+                .bind::<Bool, _>(scope_binds.unrestricted)
+                .bind::<Array<Integer>, _>(scope_binds.collection_ids)
+                .bind::<Bool, _>(cursor_binds.absent)
+                .bind::<Integer, _>(cursor_binds.rank)
+                .bind::<Text, _>(cursor_binds.name)
+                .bind::<Integer, _>(cursor_binds.id)
                 .bind::<BigInt, _>(limit)
                 .load::<Collection>(conn)
                 .await
@@ -216,17 +256,8 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         let principal_id = self.principal_id();
         let query = params.query.clone();
         let search_schema = params.search_class_schema;
-        let resource_unscoped = scopes.and_then(TokenScope::collection_ids).is_none();
-        let scoped_collection_ids = scopes
-            .and_then(TokenScope::collection_ids)
-            .unwrap_or_default()
-            .to_vec();
-        let scoped_class_ids = scopes
-            .and_then(TokenScope::class_ids)
-            .unwrap_or_default()
-            .to_vec();
-        let (no_cursor, cursor_rank, cursor_name, cursor_id) =
-            cursor_values(params.class_cursor.as_ref());
+        let scope_binds = ResourceScopeSqlBinds::from_scope(scopes);
+        let cursor_binds = UnifiedSearchCursorSqlBinds::from_cursor(params.class_cursor.as_ref());
         let limit = bounded_limit(params.limit_per_kind);
 
         let classes = with_connection_async(pool.clone(), async move |conn| {
@@ -235,13 +266,13 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Bool, _>(search_schema)
                 .bind::<Bool, _>(is_unscoped_admin)
                 .bind::<Integer, _>(principal_id)
-                .bind::<Bool, _>(resource_unscoped)
-                .bind::<Array<Integer>, _>(scoped_collection_ids)
-                .bind::<Array<Integer>, _>(scoped_class_ids)
-                .bind::<Bool, _>(no_cursor)
-                .bind::<Integer, _>(cursor_rank)
-                .bind::<Text, _>(cursor_name)
-                .bind::<Integer, _>(cursor_id)
+                .bind::<Bool, _>(scope_binds.unrestricted)
+                .bind::<Array<Integer>, _>(scope_binds.collection_ids)
+                .bind::<Array<Integer>, _>(scope_binds.class_ids)
+                .bind::<Bool, _>(cursor_binds.absent)
+                .bind::<Integer, _>(cursor_binds.rank)
+                .bind::<Text, _>(cursor_binds.name)
+                .bind::<Integer, _>(cursor_binds.id)
                 .bind::<BigInt, _>(limit)
                 .load::<HubuumClass>(conn)
                 .await
@@ -305,21 +336,8 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         let principal_id = self.principal_id();
         let query = params.query.clone();
         let search_data = params.search_object_data;
-        let resource_unscoped = scopes.and_then(TokenScope::collection_ids).is_none();
-        let scoped_collection_ids = scopes
-            .and_then(TokenScope::collection_ids)
-            .unwrap_or_default()
-            .to_vec();
-        let scoped_class_ids = scopes
-            .and_then(TokenScope::class_ids)
-            .unwrap_or_default()
-            .to_vec();
-        let scoped_object_ids = scopes
-            .and_then(TokenScope::object_ids)
-            .unwrap_or_default()
-            .to_vec();
-        let (no_cursor, cursor_rank, cursor_name, cursor_id) =
-            cursor_values(params.object_cursor.as_ref());
+        let scope_binds = ResourceScopeSqlBinds::from_scope(scopes);
+        let cursor_binds = UnifiedSearchCursorSqlBinds::from_cursor(params.object_cursor.as_ref());
         let limit = bounded_limit(params.limit_per_kind);
 
         with_connection_async(pool.clone(), async move |conn| {
@@ -328,14 +346,14 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Bool, _>(search_data)
                 .bind::<Bool, _>(is_unscoped_admin)
                 .bind::<Integer, _>(principal_id)
-                .bind::<Bool, _>(resource_unscoped)
-                .bind::<Array<Integer>, _>(scoped_collection_ids)
-                .bind::<Array<Integer>, _>(scoped_class_ids)
-                .bind::<Array<Integer>, _>(scoped_object_ids)
-                .bind::<Bool, _>(no_cursor)
-                .bind::<Integer, _>(cursor_rank)
-                .bind::<Text, _>(cursor_name)
-                .bind::<Integer, _>(cursor_id)
+                .bind::<Bool, _>(scope_binds.unrestricted)
+                .bind::<Array<Integer>, _>(scope_binds.collection_ids)
+                .bind::<Array<Integer>, _>(scope_binds.class_ids)
+                .bind::<Array<Integer>, _>(scope_binds.object_ids)
+                .bind::<Bool, _>(cursor_binds.absent)
+                .bind::<Integer, _>(cursor_binds.rank)
+                .bind::<Text, _>(cursor_binds.name)
+                .bind::<Integer, _>(cursor_binds.id)
                 .bind::<BigInt, _>(limit)
                 .load::<HubuumObject>(conn)
                 .await

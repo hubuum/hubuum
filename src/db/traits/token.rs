@@ -4,7 +4,7 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::principal::PrincipalKind;
-use crate::models::{Permissions, PrincipalToken, Token, TokenResourceScope, TokenScope};
+use crate::models::{Permissions, PrincipalToken, Token, TokenScope};
 use crate::schema::{
     principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
     token_scopes, tokens,
@@ -192,32 +192,16 @@ pub async fn create_principal_token_with_scope_db(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let resource_scopes = scope
-        .map(TokenScope::resource_scopes)
-        .transpose()?
-        .flatten()
+    let resource_ids = scope.and_then(TokenScope::resource_ids);
+    let collection_scope_ids = resource_ids
+        .map(|ids| ids.collection_ids().to_vec())
         .unwrap_or_default();
-    let collection_scope_ids = resource_scopes
-        .iter()
-        .filter_map(|resource| match resource {
-            TokenResourceScope::Collection(id) => Some(id.id()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let class_scope_ids = resource_scopes
-        .iter()
-        .filter_map(|resource| match resource {
-            TokenResourceScope::Class(id) => Some(id.id()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let object_scope_ids = resource_scopes
-        .iter()
-        .filter_map(|resource| match resource {
-            TokenResourceScope::Object(id) => Some(id.id()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let class_scope_ids = resource_ids
+        .map(|ids| ids.class_ids().to_vec())
+        .unwrap_or_default();
+    let object_scope_ids = resource_ids
+        .map(|ids| ids.object_ids().to_vec())
+        .unwrap_or_default();
     let name = name.map(ToOwned::to_owned);
     let description = description.map(ToOwned::to_owned);
 

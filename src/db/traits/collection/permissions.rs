@@ -246,6 +246,7 @@ pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
     scopes: Option<&TokenScope>,
 ) -> Result<Vec<Collection>, ApiError> {
     use crate::db::traits::authz::scope_allows;
+    use crate::db::traits::resource_scope::{collection_scope_predicate, resource_scope_ids};
     use crate::schema::collection_closure::dsl::{
         ancestor_collection_id, collection_closure, descendant_collection_id,
     };
@@ -280,14 +281,14 @@ pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
     };
 
     let filtered_query = permission_type.create_boxed_filter(base_query, true);
-    if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+    if let Some(scope) = resource_scope_ids(scopes) {
         return with_connection(pool, async |conn| {
             filtered_query
                 .inner_join(
                     collection_closure.on(permission_collection_id.eq(ancestor_collection_id)),
                 )
                 .inner_join(collections.on(collection_table_id.eq(descendant_collection_id)))
-                .filter(collection_table_id.eq_any(scoped_collection_ids))
+                .filter(collection_scope_predicate(scope))
                 .select(collections::all_columns())
                 .distinct()
                 .load::<Collection>(conn)
