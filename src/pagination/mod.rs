@@ -60,52 +60,87 @@ struct CursorSort {
     descending: bool,
 }
 
-pub fn page_limits() -> Result<(usize, usize), ApiError> {
-    let config = get_config()?;
-    Ok((config.default_page_limit, config.max_page_limit))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageLimits {
+    default: usize,
+    maximum: usize,
 }
 
-pub fn page_limits_or_defaults() -> (usize, usize) {
-    page_limits().unwrap_or((DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT))
+impl PageLimits {
+    pub fn new(default: usize, maximum: usize) -> Result<Self, ApiError> {
+        if default == 0 {
+            return Err(ApiError::BadRequest(
+                "default_page_limit must be greater than 0".to_string(),
+            ));
+        }
+        if maximum == 0 {
+            return Err(ApiError::BadRequest(
+                "max_page_limit must be greater than 0".to_string(),
+            ));
+        }
+        if default > maximum {
+            return Err(ApiError::BadRequest(format!(
+                "default_page_limit ({default}) must be less than or equal to max_page_limit ({maximum})"
+            )));
+        }
+
+        Ok(Self { default, maximum })
+    }
+
+    pub fn default_limit(self) -> usize {
+        self.default
+    }
+
+    pub fn maximum_limit(self) -> usize {
+        self.maximum
+    }
+
+    pub fn clamp(self, limit: usize) -> usize {
+        limit.min(self.maximum)
+    }
+
+    pub fn resolve(self, requested: Option<usize>) -> Result<usize, ApiError> {
+        let limit = requested.unwrap_or(self.default);
+        if limit == 0 {
+            return Err(ApiError::BadRequest(
+                "limit must be greater than 0".to_string(),
+            ));
+        }
+        Ok(self.clamp(limit))
+    }
+}
+
+impl Default for PageLimits {
+    fn default() -> Self {
+        Self {
+            default: DEFAULT_PAGE_LIMIT,
+            maximum: MAX_PAGE_LIMIT,
+        }
+    }
+}
+
+pub fn page_limits() -> Result<PageLimits, ApiError> {
+    let config = get_config()?;
+    PageLimits::new(config.default_page_limit, config.max_page_limit)
+}
+
+pub fn page_limits_or_defaults() -> PageLimits {
+    page_limits().unwrap_or_default()
 }
 
 pub fn validate_page_limit(limit: usize) -> Result<usize, ApiError> {
-    let (_, max_page_limit) = page_limits()?;
-    validate_page_limit_with_max(limit, max_page_limit)
-}
-
-/// Config-free variant of [`validate_page_limit`] that takes the maximum limit
-/// explicitly instead of reading it from the global configuration. Useful where
-/// the caller already holds the limits, or wants to avoid touching global config
-/// (for example, benchmarks).
-pub fn validate_page_limit_with_max(
-    limit: usize,
-    max_page_limit: usize,
-) -> Result<usize, ApiError> {
-    if limit == 0 {
-        return Err(ApiError::BadRequest(
-            "limit must be greater than 0".to_string(),
-        ));
-    }
-    if max_page_limit == 0 {
-        return Err(ApiError::BadRequest(
-            "max_page_limit must be greater than 0".to_string(),
-        ));
-    }
-
-    Ok(limit.min(max_page_limit))
+    page_limits()?.resolve(Some(limit))
 }
 
 pub fn effective_page_limit(query_options: &QueryOptions) -> Result<usize, ApiError> {
-    validate_page_limit(query_options.limit.unwrap_or(page_limits()?.0))
+    page_limits()?.resolve(query_options.limit)
 }
 
 pub fn prepare_db_pagination<T>(query_options: &QueryOptions) -> Result<QueryOptions, ApiError>
 where
     T: CursorPaginated,
 {
-    let (default_page_limit, _) = page_limits()?;
-    let limit = validate_page_limit(query_options.limit.unwrap_or(default_page_limit))?;
+    let limit = page_limits()?.resolve(query_options.limit)?;
     let sorts = normalized_sorts::<T>(&query_options.sort)?;
 
     if let Some(cursor) = &query_options.cursor {

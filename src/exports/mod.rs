@@ -869,14 +869,14 @@ fn prepare_query_options(export: &ExportRequest) -> Result<QueryOptions, ApiErro
 
     validate_export_limits(export)?;
 
-    let (default_page_limit, max_page_limit) = page_limits_or_defaults();
+    let page_limits = page_limits_or_defaults();
     let configured_limit = export
         .limits
         .as_ref()
         .and_then(|limits| limits.max_items)
-        .unwrap_or(default_page_limit);
+        .unwrap_or(page_limits.default_limit());
     let requested_limit = query_options.limit.unwrap_or(configured_limit);
-    let effective_limit = requested_limit.min(configured_limit).min(max_page_limit);
+    let effective_limit = page_limits.clamp(requested_limit.min(configured_limit));
 
     query_options.limit = Some(effective_limit.saturating_add(1));
     Ok(query_options)

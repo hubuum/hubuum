@@ -952,7 +952,7 @@ mod tests {
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
-        let max_page_limit = page_limits().unwrap().1;
+        let max_page_limit = page_limits().unwrap().maximum_limit();
         let resp = get_request(
             &context.pool,
             &context.admin_token,

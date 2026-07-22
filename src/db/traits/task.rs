@@ -172,7 +172,7 @@ pub trait TaskBackend: TaskIdentifier {
         let task_id_value = self.task_id();
         let limit = query_options
             .limit
-            .unwrap_or(page_limits_or_defaults().0.saturating_add(1));
+            .unwrap_or(page_limits_or_defaults().default_limit().saturating_add(1));
         let descending = query_options
             .sort
             .as_slice()
@@ -239,7 +239,7 @@ pub trait TaskBackend: TaskIdentifier {
         let task_id_value = self.task_id();
         let limit = query_options
             .limit
-            .unwrap_or(page_limits_or_defaults().0.saturating_add(1));
+            .unwrap_or(page_limits_or_defaults().default_limit().saturating_add(1));
         let descending = query_options
             .sort
             .as_slice()

@@ -9,7 +9,7 @@ use crate::db::traits::authz::scope_allows;
 use crate::db::traits::user::UnifiedSearchBackend;
 use crate::errors::ApiError;
 use crate::models::{Collection, HubuumClassExpanded, HubuumObject, Permissions};
-use crate::pagination::{page_limits, validate_page_limit_with_max};
+use crate::pagination::{PageLimits, page_limits};
 use crate::permissions::{
     PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs,
     ResourceKind, ResourceRef,
@@ -260,11 +260,8 @@ impl UnifiedSearchQueryParts {
         Ok(())
     }
 
-    fn build(self, default_limit: usize, max_limit: usize) -> Result<UnifiedSearchQuery, ApiError> {
-        let limit_per_kind = match self.limit_per_kind {
-            Some(limit) => validate_page_limit_with_max(limit, max_limit)?,
-            None => default_limit,
-        };
+    fn build(self, page_limits: PageLimits) -> Result<UnifiedSearchQuery, ApiError> {
+        let limit_per_kind = page_limits.resolve(self.limit_per_kind)?;
 
         Ok(UnifiedSearchQuery {
             query: self
@@ -282,8 +279,7 @@ impl UnifiedSearchQueryParts {
 }
 
 pub fn parse_unified_search_query(qs: &str) -> Result<UnifiedSearchQuery, ApiError> {
-    let (default_limit, max_limit) = page_limits()?;
-    parse_unified_search_query_with_limits(qs, default_limit, max_limit)
+    parse_unified_search_query_with_limits(qs, page_limits()?)
 }
 
 /// Config-free variant of [`parse_unified_search_query`]. The page limits are
@@ -292,8 +288,7 @@ pub fn parse_unified_search_query(qs: &str) -> Result<UnifiedSearchQuery, ApiErr
 /// any caller that already holds the limits).
 pub fn parse_unified_search_query_with_limits(
     qs: &str,
-    default_limit: usize,
-    max_limit: usize,
+    page_limits: PageLimits,
 ) -> Result<UnifiedSearchQuery, ApiError> {
     let mut parts = UnifiedSearchQueryParts::default();
 
@@ -304,7 +299,7 @@ pub fn parse_unified_search_query_with_limits(
         }
     }
 
-    parts.build(default_limit, max_limit)
+    parts.build(page_limits)
 }
 
 fn default_kinds() -> BTreeSet<UnifiedSearchKind> {
@@ -832,7 +827,10 @@ mod tests {
     fn parse_unified_search_defaults() {
         let parsed = parse_unified_search_query("q=server").unwrap();
         assert_eq!(parsed.query, "server");
-        assert_eq!(parsed.limit_per_kind, page_limits().unwrap().0);
+        assert_eq!(
+            parsed.limit_per_kind,
+            page_limits().unwrap().default_limit()
+        );
         assert!(parsed.includes(UnifiedSearchKind::Collection));
         assert!(parsed.includes(UnifiedSearchKind::Class));
         assert!(parsed.includes(UnifiedSearchKind::Object));
@@ -912,18 +910,22 @@ mod tests {
 
     #[test]
     fn parse_with_limits_uses_default_when_absent() {
-        let parsed = parse_unified_search_query_with_limits("q=server", 25, 100).unwrap();
+        let page_limits = PageLimits::new(25, 100).unwrap();
+        let parsed = parse_unified_search_query_with_limits("q=server", page_limits).unwrap();
         assert_eq!(parsed.limit_per_kind, 25);
     }
 
     #[test]
     fn parse_with_limits_validates_against_provided_max() {
+        let page_limits = PageLimits::new(25, 100).unwrap();
         let parsed =
-            parse_unified_search_query_with_limits("q=server&limit_per_kind=50", 25, 100).unwrap();
+            parse_unified_search_query_with_limits("q=server&limit_per_kind=50", page_limits)
+                .unwrap();
         assert_eq!(parsed.limit_per_kind, 50);
 
         let clamped =
-            parse_unified_search_query_with_limits("q=server&limit_per_kind=101", 25, 100).unwrap();
+            parse_unified_search_query_with_limits("q=server&limit_per_kind=101", page_limits)
+                .unwrap();
         assert_eq!(clamped.limit_per_kind, 100);
     }
 
