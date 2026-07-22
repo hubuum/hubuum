@@ -644,17 +644,17 @@ fn init_pool_with_timeouts(
     statement_timeout_ms: u64,
     acquire_timeout_ms: u64,
 ) -> DbPool {
-    let database_host = match DatabaseUrlComponents::new(database_url) {
+    let database_host = match database_url.parse::<DatabaseUrlComponents>() {
         Ok(components) => {
             debug!(
                 message = "Database URL parsed.",
-                vendor = components.vendor,
-                username = components.username,
-                host = components.host,
-                port = components.port,
-                database = components.database,
+                vendor = %components.vendor(),
+                username = components.username(),
+                host = components.host(),
+                port = components.port(),
+                database = components.database(),
             );
-            components.host
+            components.host().to_string()
         }
         Err(err) => fatal_error(
             &format!("Failed to parse database URL: {}", err),

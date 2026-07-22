@@ -1,111 +1,186 @@
+use std::fmt;
+use std::str::FromStr;
+
 use urlparse::urlparse;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatabaseVendor {
+    Postgres,
+    MySql,
+    Sqlite,
+}
+
+impl DatabaseVendor {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Postgres => "postgres",
+            Self::MySql => "mysql",
+            Self::Sqlite => "sqlite",
+        }
+    }
+
+    const fn default_port(self) -> u16 {
+        match self {
+            Self::Postgres => 5432,
+            Self::MySql => 3306,
+            Self::Sqlite => 0,
+        }
+    }
+}
+
+impl fmt::Display for DatabaseVendor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for DatabaseVendor {
+    type Err = DatabaseUrlParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "postgres" => Ok(Self::Postgres),
+            "mysql" => Ok(Self::MySql),
+            "sqlite" => Ok(Self::Sqlite),
+            _ => Err(DatabaseUrlParseError::UnsupportedDatabaseType),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatabaseUrlParseError {
+    UnsupportedDatabaseType,
+    MissingHost,
+}
+
+impl fmt::Display for DatabaseUrlParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedDatabaseType => formatter.write_str("Unsupported database type"),
+            Self::MissingHost => formatter.write_str("Missing host"),
+        }
+    }
+}
+
+impl std::error::Error for DatabaseUrlParseError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseUrlComponents {
-    pub vendor: String,
-    pub username: String,
-    pub host: String,
-    pub port: u16,
-    pub database: String,
+    vendor: DatabaseVendor,
+    username: String,
+    host: String,
+    port: u16,
+    database: String,
 }
 
 impl DatabaseUrlComponents {
-    pub fn new(database_url: &str) -> Result<DatabaseUrlComponents, String> {
+    pub fn vendor(&self) -> DatabaseVendor {
+        self.vendor
+    }
+
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn database(&self) -> &str {
+        &self.database
+    }
+}
+
+impl FromStr for DatabaseUrlComponents {
+    type Err = DatabaseUrlParseError;
+
+    fn from_str(database_url: &str) -> Result<Self, Self::Err> {
         let url = urlparse(database_url);
-
-        let lowercase = url.scheme.to_lowercase();
-        let scheme = lowercase.as_str();
-        let port = match scheme {
-            "postgres" => Ok(5432),
-            "mysql" => Ok(3306),
-            "sqlite" => Ok(0),
-            _ => Err("Unsupported database type".to_string()),
-        }?;
-
+        let vendor = url.scheme.parse::<DatabaseVendor>()?;
         let username = url.username.unwrap_or_default().to_string();
-        let host = url.hostname.ok_or("Missing host".to_string())?.to_string();
-        let path = url.path.trim_start_matches('/').to_string();
+        let host = url
+            .hostname
+            .ok_or(DatabaseUrlParseError::MissingHost)?
+            .to_string();
+        let database = url.path.trim_start_matches('/').to_string();
 
-        Ok(DatabaseUrlComponents {
-            vendor: scheme.to_lowercase(),
+        Ok(Self {
+            vendor,
             username,
             host,
-            port,
-            database: path,
+            port: vendor.default_port(),
+            database,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
-    fn test_database_url(url: &str, expected: Result<DatabaseUrlComponents, &str>) {
-        let result = DatabaseUrlComponents::new(url);
+    #[rstest]
+    #[case(
+        "postgres://test:test@localhost:5432/testdb",
+        DatabaseVendor::Postgres,
+        "test",
+        "localhost",
+        5432,
+        "testdb"
+    )]
+    #[case(
+        "postgres://localhost:5432/testdb",
+        DatabaseVendor::Postgres,
+        "",
+        "localhost",
+        5432,
+        "testdb"
+    )]
+    #[case(
+        "mysql://test:test@example.internal/example",
+        DatabaseVendor::MySql,
+        "test",
+        "example.internal",
+        3306,
+        "example"
+    )]
+    fn parses_supported_database_urls(
+        #[case] database_url: &str,
+        #[case] vendor: DatabaseVendor,
+        #[case] username: &str,
+        #[case] host: &str,
+        #[case] port: u16,
+        #[case] database: &str,
+    ) {
+        let components = database_url.parse::<DatabaseUrlComponents>().unwrap();
 
-        match expected {
-            Ok(expected_components) => match result {
-                Ok(components) => {
-                    assert_eq!(components.vendor, expected_components.vendor);
-                    assert_eq!(components.username, expected_components.username);
-                    assert_eq!(components.host, expected_components.host);
-                    assert_eq!(components.port, expected_components.port);
-                    assert_eq!(components.database, expected_components.database);
-                }
-                Err(err) => panic!("Test case expected Ok but got error: {}", err),
-            },
-            Err(expected_err) => {
-                assert!(
-                    result.is_err(),
-                    "Test case expected error but got Ok result"
-                );
-                assert_eq!(result.unwrap_err(), expected_err);
-            }
-        }
+        assert_eq!(components.vendor(), vendor);
+        assert_eq!(components.username(), username);
+        assert_eq!(components.host(), host);
+        assert_eq!(components.port(), port);
+        assert_eq!(components.database(), database);
     }
 
     #[test]
-    fn test_database_url_variants() {
-        // Test with all fields present
-        test_database_url(
-            "postgres://test:test@localhost:5432/testdb",
-            Ok(DatabaseUrlComponents {
-                vendor: "postgres".to_string(),
-                username: "test".to_string(),
-                host: "localhost".to_string(),
-                port: 5432,
-                database: "testdb".to_string(),
-            }),
-        );
+    fn rejects_an_unsupported_database_type() {
+        let error = "mongodb://test:test@localhost:5432/testdb"
+            .parse::<DatabaseUrlComponents>()
+            .unwrap_err();
 
-        // Test with missing username and password
-        test_database_url(
-            "postgres://localhost:5432/testdb",
-            Ok(DatabaseUrlComponents {
-                vendor: "postgres".to_string(),
-                username: "".to_string(),
-                host: "localhost".to_string(),
-                port: 5432,
-                database: "testdb".to_string(),
-            }),
-        );
+        assert_eq!(error, DatabaseUrlParseError::UnsupportedDatabaseType);
+    }
 
-        // Test with missing port
-        test_database_url(
-            "postgres://test:test@localhost/testdb",
-            Ok(DatabaseUrlComponents {
-                vendor: "postgres".to_string(),
-                username: "test".to_string(),
-                host: "localhost".to_string(),
-                port: 5432,
-                database: "testdb".to_string(),
-            }),
-        );
+    #[test]
+    fn rejects_a_database_url_without_a_host() {
+        let error = "postgres:///testdb"
+            .parse::<DatabaseUrlComponents>()
+            .unwrap_err();
 
-        // Test with unsupported database type
-        test_database_url(
-            "mongodb://test:test@localhost:5432/testdb",
-            Err("Unsupported database type"),
-        );
+        assert_eq!(error, DatabaseUrlParseError::MissingHost);
     }
 }
