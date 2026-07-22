@@ -4,7 +4,10 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::principal::PrincipalKind;
-use crate::models::{Permissions, PrincipalToken, Token, TokenScope};
+use crate::models::{
+    Permissions, PrincipalID, PrincipalToken, PrincipalTokenCreateParts,
+    PrincipalTokenCreateRequest, Token, TokenScope,
+};
 use crate::schema::{
     principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
     token_scopes, tokens,
@@ -146,6 +149,8 @@ pub async fn revoke_token_by_id_for_principal_db(
     .await
 }
 
+/// Compatibility entry point for permission-only token creation. New callers
+/// should prefer [`PrincipalTokenCreateRequest`].
 pub async fn create_principal_token_db(
     pool: &DbPool,
     principal: i32,
@@ -170,6 +175,8 @@ pub async fn create_principal_token_db(
     .await
 }
 
+/// Compatibility entry point for callers that have not moved to the typed
+/// token creation request yet.
 pub async fn create_principal_token_with_scope_db(
     pool: &DbPool,
     principal: i32,
@@ -179,6 +186,28 @@ pub async fn create_principal_token_with_scope_db(
     scope: Option<&TokenScope>,
     context: Option<&EventContext>,
 ) -> Result<Token, ApiError> {
+    let request = PrincipalTokenCreateRequest::new(PrincipalID::new(principal)?)
+        .name(name.map(ToOwned::to_owned))
+        .description(description.map(ToOwned::to_owned))
+        .expires_at(expires_at)
+        .scope(scope.cloned());
+    create_principal_token_request_db(pool, request, context).await
+}
+
+pub(crate) async fn create_principal_token_request_db(
+    pool: &DbPool,
+    request: PrincipalTokenCreateRequest,
+    context: Option<&EventContext>,
+) -> Result<Token, ApiError> {
+    let PrincipalTokenCreateParts {
+        principal_id,
+        name,
+        description,
+        expires_at,
+        scope,
+    } = request.into_parts();
+    let principal = principal_id.id();
+    let scope = scope.as_ref();
     let raw = crate::utilities::auth::generate_token();
     let hash = raw.storage_hash();
     let permission_scoped = scope.is_some_and(TokenScope::is_permission_scoped);
@@ -202,9 +231,6 @@ pub async fn create_principal_token_with_scope_db(
     let object_scope_ids = resource_ids
         .map(|ids| ids.object_ids().to_vec())
         .unwrap_or_default();
-    let name = name.map(ToOwned::to_owned);
-    let description = description.map(ToOwned::to_owned);
-
     with_transaction(pool, async |conn| -> Result<(), ApiError> {
         let principal_kind = principals::table
             .filter(principals::id.eq(principal))

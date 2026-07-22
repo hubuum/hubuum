@@ -7,7 +7,7 @@
 use crate::errors::ApiError;
 use crate::models::{
     CollectionID, ExportTemplateID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
-    HubuumObjectRelationID, TaskID, UserID,
+    HubuumObjectRelationID, TaskID, TokenID, UserID,
 };
 
 macro_rules! assert_id_newtype_validates {
@@ -47,5 +47,6 @@ fn all_id_newtypes_reject_invalid_ids() {
         GroupID,
         ExportTemplateID,
         TaskID,
+        TokenID,
     );
 }

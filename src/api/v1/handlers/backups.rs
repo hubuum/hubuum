@@ -9,7 +9,8 @@ use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot}
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::{
-    BackupDocument, BackupOutputLookup, BackupRequest, TaskID, TaskKind, TaskRecord, TaskResponse,
+    BackupDocument, BackupOutputLookup, BackupRequest, PrincipalID, TaskID, TaskKind, TaskRecord,
+    TaskResponse,
 };
 use crate::permissions::{AppContext, AuthzTarget, PermissionDecision, PrincipalRef};
 use crate::tasks::{idempotency_key_from_headers, kick_task_worker, request_hash};
@@ -101,23 +102,22 @@ pub async fn create_backup(
     let request = request.into_inner();
     authorize_backup_request(&context, &requestor.principal, requestor.scopes()).await?;
     let payload = serde_json::to_value(&request)?;
-    let task = (TaskCreateRequest {
-        kind: TaskKind::Backup,
-        submitted_by: requestor.principal.id,
-        idempotency_key: idempotency_key_from_headers(req.headers())?,
-        request_hash: Some(request_hash(&payload)?),
-        request_payload: payload,
-        total_items: 1,
-        submitted_token_id: Some(requestor.token_meta.id),
-        submitted_token_scoped: requestor.scopes().is_some(),
-        submitted_token_scopes: TaskScopeSnapshot::from_request(
-            Some(requestor.token_meta.id),
-            requestor.scopes(),
-        )
-        .scopes,
-    })
-    .create_idempotently_with_active_limit(&context, settings.max_active_tasks_per_user())
-    .await?;
+    let hash = request_hash(&payload)?;
+    let scope_snapshot =
+        TaskScopeSnapshot::from_request(Some(requestor.token_meta.id), requestor.scopes());
+    let task_request = TaskCreateRequest::builder(
+        TaskKind::Backup,
+        PrincipalID::new(requestor.principal.id)?,
+        payload,
+        1,
+    )
+    .idempotency_key(idempotency_key_from_headers(req.headers())?)
+    .request_hash(Some(hash))
+    .scope_snapshot(scope_snapshot)
+    .build();
+    let task = task_request
+        .create_idempotently_with_active_limit(&context, settings.max_active_tasks_per_user())
+        .await?;
     let response = task.to_response()?;
     kick_task_worker(context.clone());
     Ok(ApiResponse::accepted_at(

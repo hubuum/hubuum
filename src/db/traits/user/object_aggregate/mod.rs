@@ -13,9 +13,9 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::object::HubuumObject;
 use crate::models::object_aggregate::{
-    DecodedObjectAggregateCursor, ObjectAggregateBackendParts, ObjectAggregateBackendRequest,
-    ObjectAggregateCursorBudget, ObjectAggregateDimension, ObjectAggregatePage,
-    ObjectAggregateSpec,
+    DecodedObjectAggregateCursor, ObjectAggregateAuthorizationParts, ObjectAggregateBackendParts,
+    ObjectAggregateBackendRequest, ObjectAggregateCursorBudget, ObjectAggregateDimension,
+    ObjectAggregatePage, ObjectAggregateSpec, ObjectAggregateTargetParts,
 };
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{CollectionID, Permissions, TokenScope, UserID};
@@ -116,8 +116,15 @@ pub trait ObjectAggregateBackend: UserCollectionAccessors {
             authorization,
             cursor_budget,
         } = request.into_parts();
-        let (class_id, class_name, collection_id) = target.into_parts();
-        let (required_permissions, token_scopes) = authorization.into_parts();
+        let ObjectAggregateTargetParts {
+            class_id,
+            class_name,
+            collection_id,
+        } = target.into_parts();
+        let ObjectAggregateAuthorizationParts {
+            required_permissions,
+            token_scopes,
+        } = authorization.into_parts();
         let effective_limit = effective_page_limit(&query_options)?;
         let decoded_cursor = query_options
             .cursor

@@ -22,6 +22,13 @@ pub enum TokenResourceScope {
     Object(HubuumObjectID),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TokenResourceScopeKey {
+    Collection(i32),
+    Class(i32),
+    Object(i32),
+}
+
 impl TokenResourceScope {
     pub fn id(self) -> i32 {
         match self {
@@ -31,11 +38,11 @@ impl TokenResourceScope {
         }
     }
 
-    fn key(self) -> (&'static str, i32) {
+    fn key(self) -> TokenResourceScopeKey {
         match self {
-            Self::Collection(id) => ("collection", id.id()),
-            Self::Class(id) => ("class", id.id()),
-            Self::Object(id) => ("object", id.id()),
+            Self::Collection(id) => TokenResourceScopeKey::Collection(id.id()),
+            Self::Class(id) => TokenResourceScopeKey::Class(id.id()),
+            Self::Object(id) => TokenResourceScopeKey::Object(id.id()),
         }
     }
 }
@@ -126,26 +133,26 @@ pub struct TokenScope {
 /// The fields stay private so callers consume the hierarchy through
 /// the explicit accessors instead of depending on its storage representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TokenResourceScopeIds<'a> {
+pub(crate) struct TokenResourceScopeIds<'a> {
     collection_ids: &'a [i32],
     class_ids: &'a [i32],
     object_ids: &'a [i32],
 }
 
 impl<'a> TokenResourceScopeIds<'a> {
-    pub fn collection_ids(self) -> &'a [i32] {
+    pub(crate) fn collection_ids(self) -> &'a [i32] {
         self.collection_ids
     }
 
-    pub fn class_ids(self) -> &'a [i32] {
+    pub(crate) fn class_ids(self) -> &'a [i32] {
         self.class_ids
     }
 
-    pub fn object_ids(self) -> &'a [i32] {
+    pub(crate) fn object_ids(self) -> &'a [i32] {
         self.object_ids
     }
 
-    pub fn has_collection_or_class_entries(self) -> bool {
+    pub(crate) fn has_collection_or_class_entries(self) -> bool {
         !self.collection_ids.is_empty() || !self.class_ids.is_empty()
     }
 }
@@ -255,7 +262,7 @@ impl TokenScope {
             .transpose()
     }
 
-    pub fn resource_ids(&self) -> Option<TokenResourceScopeIds<'_>> {
+    pub(crate) fn resource_ids(&self) -> Option<TokenResourceScopeIds<'_>> {
         self.resources
             .as_ref()
             .map(|resources| TokenResourceScopeIds {
@@ -263,19 +270,6 @@ impl TokenScope {
                 class_ids: resources.classes.as_slice(),
                 object_ids: resources.objects.as_slice(),
             })
-    }
-
-    pub fn collection_ids(&self) -> Option<&[i32]> {
-        self.resource_ids()
-            .map(TokenResourceScopeIds::collection_ids)
-    }
-
-    pub fn class_ids(&self) -> Option<&[i32]> {
-        self.resource_ids().map(TokenResourceScopeIds::class_ids)
-    }
-
-    pub fn object_ids(&self) -> Option<&[i32]> {
-        self.resource_ids().map(TokenResourceScopeIds::object_ids)
     }
 
     pub(crate) fn retain_allowed_collection_ids(&self, candidate_ids: &mut Vec<i32>) {

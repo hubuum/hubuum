@@ -10,8 +10,8 @@ use crate::config::token_hash_key_bytes;
 use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::events::EventContext;
-use crate::models::TokenScope;
 use crate::models::search::{FilterField, SortParam};
+use crate::models::{PrincipalID, TokenScope};
 use crate::schema::tokens;
 use crate::traits::{
     BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -33,6 +33,91 @@ pub struct PrincipalToken {
     pub revoked_at: Option<NaiveDateTime>,
     pub permission_scoped: bool,
     pub resource_scoped: bool,
+}
+
+crate::int_id_newtype! {
+    /// Identifier wrapper for a [`PrincipalToken`].
+    pub struct TokenID;
+    noun = "token id";
+}
+
+#[derive(Debug, Clone)]
+pub struct PrincipalTokenCreateRequest {
+    principal_id: PrincipalID,
+    name: Option<String>,
+    description: Option<String>,
+    expires_at: Option<NaiveDateTime>,
+    scope: Option<TokenScope>,
+}
+
+pub(crate) struct PrincipalTokenCreateParts {
+    pub principal_id: PrincipalID,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub expires_at: Option<NaiveDateTime>,
+    pub scope: Option<TokenScope>,
+}
+
+impl PrincipalTokenCreateRequest {
+    pub fn new(principal_id: PrincipalID) -> Self {
+        Self {
+            principal_id,
+            name: None,
+            description: None,
+            expires_at: None,
+            scope: None,
+        }
+    }
+
+    pub fn name(mut self, name: Option<String>) -> Self {
+        self.name = name;
+        self
+    }
+
+    pub fn description(mut self, description: Option<String>) -> Self {
+        self.description = description;
+        self
+    }
+
+    pub fn expires_at(mut self, expires_at: Option<NaiveDateTime>) -> Self {
+        self.expires_at = expires_at;
+        self
+    }
+
+    pub fn scope(mut self, scope: Option<TokenScope>) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    pub fn is_scoped(&self) -> bool {
+        self.scope.is_some()
+    }
+
+    pub async fn create<C>(
+        self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<Token, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        crate::db::traits::token::create_principal_token_request_db(
+            backend.db_pool(),
+            self,
+            context,
+        )
+        .await
+    }
+
+    pub(crate) fn into_parts(self) -> PrincipalTokenCreateParts {
+        PrincipalTokenCreateParts {
+            principal_id: self.principal_id,
+            name: self.name,
+            description: self.description,
+            expires_at: self.expires_at,
+            scope: self.scope,
+        }
+    }
 }
 
 /// Public, hash-free projection of a token for listing.

@@ -24,9 +24,9 @@ use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    CollectionID, HubuumClassID, NewRemoteTarget, Permissions, RemoteTarget, RemoteTargetHistory,
-    RemoteTargetID, RemoteTargetInvokeRequest, StoredRemoteCallTaskPayload, TaskKind, TaskRecord,
-    TaskResponse, UpdateRemoteTarget, authorize_remote_invocation,
+    CollectionID, HubuumClassID, NewRemoteTarget, Permissions, PrincipalID, RemoteTarget,
+    RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest, StoredRemoteCallTaskPayload,
+    TaskKind, TaskRecord, TaskResponse, UpdateRemoteTarget, authorize_remote_invocation,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, PrincipalRef};
@@ -375,17 +375,16 @@ async fn find_or_create_remote_call_task(
         message = "Creating remote call task",
         submitted_by = submitted_by
     );
-    (TaskCreateRequest {
-        kind: TaskKind::RemoteCall,
-        submitted_by,
-        idempotency_key,
-        request_hash: Some(hash),
-        request_payload: payload,
-        total_items: 1,
-        submitted_token_id: snapshot.token_id,
-        submitted_token_scoped: snapshot.scoped,
-        submitted_token_scopes: snapshot.scopes,
-    })
+    TaskCreateRequest::builder(
+        TaskKind::RemoteCall,
+        PrincipalID::new(submitted_by)?,
+        payload,
+        1,
+    )
+    .idempotency_key(idempotency_key)
+    .request_hash(Some(hash))
+    .scope_snapshot(snapshot)
+    .build()
     .create_idempotently_with_active_limit(pool, max_active_remote_call_tasks_per_user())
     .await
 }

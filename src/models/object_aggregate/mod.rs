@@ -852,6 +852,12 @@ pub struct ObjectAggregateTarget {
     collection_id: CollectionID,
 }
 
+pub(crate) struct ObjectAggregateTargetParts {
+    pub class_id: HubuumClassID,
+    pub class_name: String,
+    pub collection_id: CollectionID,
+}
+
 impl ObjectAggregateTarget {
     pub fn from_class(class: &HubuumClass) -> Result<Self, ApiError> {
         Ok(Self {
@@ -861,8 +867,12 @@ impl ObjectAggregateTarget {
         })
     }
 
-    pub(crate) fn into_parts(self) -> (HubuumClassID, String, CollectionID) {
-        (self.class_id, self.class_name, self.collection_id)
+    pub(crate) fn into_parts(self) -> ObjectAggregateTargetParts {
+        ObjectAggregateTargetParts {
+            class_id: self.class_id,
+            class_name: self.class_name,
+            collection_id: self.collection_id,
+        }
     }
 }
 
@@ -959,6 +969,11 @@ pub struct ObjectAggregateAuthorization {
     token_scopes: Option<TokenScope>,
 }
 
+pub(crate) struct ObjectAggregateAuthorizationParts {
+    pub required_permissions: Vec<Permissions>,
+    pub token_scopes: Option<TokenScope>,
+}
+
 impl ObjectAggregateAuthorization {
     pub fn new(
         required_permissions: Vec<Permissions>,
@@ -978,8 +993,11 @@ impl ObjectAggregateAuthorization {
         })
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<Permissions>, Option<TokenScope>) {
-        (self.required_permissions, self.token_scopes)
+    pub(crate) fn into_parts(self) -> ObjectAggregateAuthorizationParts {
+        ObjectAggregateAuthorizationParts {
+            required_permissions: self.required_permissions,
+            token_scopes: self.token_scopes,
+        }
     }
 }
 

@@ -97,6 +97,24 @@ fn permission_requests<T>(
         .collect()
 }
 
+fn allowed_candidate_values<T>(
+    candidates: Vec<ResourceScopedCandidate<T>>,
+    decisions: Vec<PermissionDecision>,
+) -> Result<Vec<T>, ApiError> {
+    if candidates.len() != decisions.len() {
+        return Err(ApiError::InternalServerError(
+            "Permission backend returned an unexpected number of decisions".to_string(),
+        ));
+    }
+    Ok(candidates
+        .into_iter()
+        .zip(decisions)
+        .filter_map(|(candidate, decision)| {
+            (decision == PermissionDecision::Allow).then_some(candidate.value)
+        })
+        .collect())
+}
+
 pub async fn authorize_all_candidates<T, F>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,
@@ -111,13 +129,7 @@ where
     let candidates = resource_scoped_candidates(candidates, scope, &to_resource);
     let requests = permission_requests(&candidates, &permissions);
     let decisions = backend.authorize_many(principal, requests).await?;
-    Ok(candidates
-        .into_iter()
-        .zip(decisions)
-        .filter_map(|(candidate, decision)| {
-            (decision == PermissionDecision::Allow).then_some(candidate.value)
-        })
-        .collect())
+    allowed_candidate_values(candidates, decisions)
 }
 
 pub async fn authorize_cursor_page<T, F>(
@@ -139,13 +151,7 @@ where
     let candidates = resource_scoped_candidates(candidates, scope, &to_resource);
     let requests = permission_requests(&candidates, &permissions);
     let decisions = backend.authorize_many(principal, requests).await?;
-    let authorized = candidates
-        .into_iter()
-        .zip(decisions)
-        .filter_map(|(candidate, decision)| {
-            (decision == PermissionDecision::Allow).then_some(candidate.value)
-        })
-        .collect::<Vec<_>>();
+    let authorized = allowed_candidate_values(candidates, decisions)?;
     let authorized_count = authorized.len();
     let total_count = known_count_or_skipped(query_options, authorized_count as i64);
     let rows = paginate_in_memory(authorized, query_options)?;
@@ -212,6 +218,12 @@ where
 
     let decisions = backend.authorize_candidates(principal, requests).await?;
 
+    if candidates.len() != decisions.len() {
+        return Err(ApiError::InternalServerError(
+            "Permission backend returned an unexpected number of decisions".to_string(),
+        ));
+    }
+
     let authorized: Vec<T> = candidates
         .into_iter()
         .zip(decisions)
@@ -240,4 +252,26 @@ where
     );
 
     Ok(AuthorizedPage { rows, total_count })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidate_decision_count_mismatch_fails_closed() {
+        let candidates = vec![ResourceScopedCandidate {
+            value: 7,
+            resource: ResourceRef::collection(7),
+        }];
+
+        let error = allowed_candidate_values(candidates, Vec::new()).unwrap_err();
+
+        assert_eq!(
+            error,
+            ApiError::InternalServerError(
+                "Permission backend returned an unexpected number of decisions".to_string()
+            )
+        );
+    }
 }

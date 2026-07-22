@@ -6,14 +6,14 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::traits::authz::{scope_allows, scope_allows_resource};
+use crate::db::traits::authz::scope_allows;
 use crate::db::traits::user::UnifiedSearchBackend;
 use crate::errors::ApiError;
 use crate::models::{Collection, HubuumClassExpanded, HubuumObject, Permissions};
 use crate::pagination::{PageLimits, page_limits};
+use crate::permissions::visibility::authorize_all_candidates;
 use crate::permissions::{
-    PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs,
-    ResourceKind, ResourceRef,
+    PermissionBackend, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
 };
 use crate::traits::{BackendContext, Search};
 use crate::utilities::extensions::CustomStringExtensions;
@@ -470,26 +470,15 @@ where
                     true,
                 )
                 .await?;
-            let requests = candidates
-                .iter()
-                .map(|collection| PermissionRequest {
-                    resource: ResourceRef::collection(collection.id),
-                    permissions: vec![Permissions::ReadCollection],
-                })
-                .collect();
-            let decisions = permission_backend
-                .authorize_many(principal, requests)
-                .await?;
-            candidates
-                .into_iter()
-                .zip(decisions)
-                .filter_map(|(candidate, decision)| {
-                    let resource = ResourceRef::collection(candidate.id);
-                    (decision == PermissionDecision::Allow
-                        && scope_allows_resource(scopes, &resource))
-                    .then_some(candidate)
-                })
-                .collect()
+            authorize_all_candidates(
+                permission_backend,
+                principal,
+                candidates,
+                scopes,
+                vec![Permissions::ReadCollection],
+                |collection| ResourceRef::collection(collection.id),
+            )
+            .await?
         }
     } else {
         user.search_unified_collections(backend, search_spec, scopes)
@@ -553,41 +542,23 @@ where
                     true,
                 )
                 .await?;
-            let requests = candidates
-                .iter()
-                .map(|class| PermissionRequest {
-                    resource: ResourceRef {
-                        kind: ResourceKind::Class,
-                        id: class.id,
-                        attrs: ResourceAttrs {
-                            collection_id: Some(class.collection.id),
-                            name: Some(class.name.clone()),
-                            ..Default::default()
-                        },
+            authorize_all_candidates(
+                permission_backend,
+                principal,
+                candidates,
+                scopes,
+                vec![Permissions::ReadClass],
+                |class| ResourceRef {
+                    kind: ResourceKind::Class,
+                    id: class.id,
+                    attrs: ResourceAttrs {
+                        collection_id: Some(class.collection.id),
+                        name: Some(class.name.clone()),
+                        ..Default::default()
                     },
-                    permissions: vec![Permissions::ReadClass],
-                })
-                .collect();
-            let decisions = permission_backend
-                .authorize_many(principal, requests)
-                .await?;
-            candidates
-                .into_iter()
-                .zip(decisions)
-                .filter_map(|(candidate, decision)| {
-                    let resource = ResourceRef {
-                        kind: ResourceKind::Class,
-                        id: candidate.id,
-                        attrs: ResourceAttrs {
-                            collection_id: Some(candidate.collection.id),
-                            ..Default::default()
-                        },
-                    };
-                    (decision == PermissionDecision::Allow
-                        && scope_allows_resource(scopes, &resource))
-                    .then_some(candidate)
-                })
-                .collect()
+                },
+            )
+            .await?
         }
     } else {
         user.search_unified_classes(backend, search_spec, scopes)
@@ -649,43 +620,24 @@ where
                     true,
                 )
                 .await?;
-            let requests = candidates
-                .iter()
-                .map(|object| PermissionRequest {
-                    resource: ResourceRef {
-                        kind: ResourceKind::Object,
-                        id: object.id,
-                        attrs: ResourceAttrs {
-                            collection_id: Some(object.collection_id),
-                            class_id: Some(object.hubuum_class_id),
-                            name: Some(object.name.clone()),
-                            ..Default::default()
-                        },
+            authorize_all_candidates(
+                permission_backend,
+                principal,
+                candidates,
+                scopes,
+                vec![Permissions::ReadObject],
+                |object| ResourceRef {
+                    kind: ResourceKind::Object,
+                    id: object.id,
+                    attrs: ResourceAttrs {
+                        collection_id: Some(object.collection_id),
+                        class_id: Some(object.hubuum_class_id),
+                        name: Some(object.name.clone()),
+                        ..Default::default()
                     },
-                    permissions: vec![Permissions::ReadObject],
-                })
-                .collect();
-            let decisions = permission_backend
-                .authorize_many(principal, requests)
-                .await?;
-            candidates
-                .into_iter()
-                .zip(decisions)
-                .filter_map(|(candidate, decision)| {
-                    let resource = ResourceRef {
-                        kind: ResourceKind::Object,
-                        id: candidate.id,
-                        attrs: ResourceAttrs {
-                            collection_id: Some(candidate.collection_id),
-                            class_id: Some(candidate.hubuum_class_id),
-                            ..Default::default()
-                        },
-                    };
-                    (decision == PermissionDecision::Allow
-                        && scope_allows_resource(scopes, &resource))
-                    .then_some(candidate)
-                })
-                .collect()
+                },
+            )
+            .await?
         }
     } else {
         user.search_unified_objects(backend, search_spec, scopes)

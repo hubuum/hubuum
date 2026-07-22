@@ -19,8 +19,8 @@ use crate::models::{
     BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
     ExportTaskOutputRecord, ExportTaskOutputSummaryRecord, ImportTaskResultRecord,
     NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewImportTaskResultRecord,
-    NewTaskEventRecord, NewTaskRecord, TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResponse,
-    TaskResultCounts, TaskStatus,
+    NewTaskEventRecord, NewTaskRecord, PrincipalID, TaskEventRecord, TaskID, TaskKind, TaskRecord,
+    TaskResponse, TaskResultCounts, TaskStatus,
 };
 use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
@@ -48,7 +48,8 @@ pub struct TaskCreateRequest {
     pub request_hash: Option<String>,
     pub request_payload: serde_json::Value,
     pub total_items: i32,
-    /// Scope snapshot of the submitting token (see `TaskRecord`).
+    /// Persisted scope snapshot fields. Prefer [`TaskCreateRequest::builder`]
+    /// so these values are derived atomically from [`TaskScopeSnapshot`].
     pub submitted_token_id: Option<i32>,
     pub submitted_token_scoped: bool,
     pub submitted_token_scopes: serde_json::Value,
@@ -74,6 +75,16 @@ pub struct TaskScopeSnapshot {
     pub scopes: serde_json::Value,
 }
 
+pub struct TaskCreateRequestBuilder {
+    kind: TaskKind,
+    submitted_by: PrincipalID,
+    request_payload: serde_json::Value,
+    total_items: i32,
+    idempotency_key: Option<IdempotencyKey>,
+    request_hash: Option<String>,
+    scope_snapshot: TaskScopeSnapshot,
+}
+
 impl TaskScopeSnapshot {
     /// Build from the submitting token id and its live scope set.
     pub fn from_request(token_id: Option<i32>, scopes: Option<&TokenScope>) -> Self {
@@ -81,6 +92,65 @@ impl TaskScopeSnapshot {
             token_id,
             scoped: scopes.is_some(),
             scopes: scope_snapshot_json(scopes),
+        }
+    }
+
+    pub fn unscoped() -> Self {
+        Self::from_request(None, None)
+    }
+}
+
+impl TaskCreateRequest {
+    pub fn builder(
+        kind: TaskKind,
+        submitted_by: PrincipalID,
+        request_payload: serde_json::Value,
+        total_items: i32,
+    ) -> TaskCreateRequestBuilder {
+        TaskCreateRequestBuilder {
+            kind,
+            submitted_by,
+            request_payload,
+            total_items,
+            idempotency_key: None,
+            request_hash: None,
+            scope_snapshot: TaskScopeSnapshot::unscoped(),
+        }
+    }
+}
+
+impl TaskCreateRequestBuilder {
+    pub fn idempotency_key(mut self, idempotency_key: Option<IdempotencyKey>) -> Self {
+        self.idempotency_key = idempotency_key;
+        self
+    }
+
+    pub fn request_hash(mut self, request_hash: Option<String>) -> Self {
+        self.request_hash = request_hash;
+        self
+    }
+
+    pub fn scope_snapshot(mut self, scope_snapshot: TaskScopeSnapshot) -> Self {
+        self.scope_snapshot = scope_snapshot;
+        self
+    }
+
+    pub fn build(self) -> TaskCreateRequest {
+        let TaskScopeSnapshot {
+            token_id,
+            scoped,
+            scopes,
+        } = self.scope_snapshot;
+        TaskCreateRequest {
+            kind: self.kind,
+            submitted_by: self.submitted_by.id(),
+            idempotency_key: self.idempotency_key,
+            request_hash: self.request_hash,
+            request_payload: self.request_payload,
+            total_items: self.total_items,
+            submitted_token_id: token_id,
+            submitted_token_scoped: scoped,
+            submitted_token_scopes: scopes,
         }
     }
 }
@@ -1604,8 +1674,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        TaskBackend, TaskCreateRequest, TaskStateUpdate, claim_next_queued_task, database_now,
-        insert_import_results, recover_expired_task_lease, renew_task_lease,
+        TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate, claim_next_queued_task,
+        database_now, insert_import_results, recover_expired_task_lease, renew_task_lease,
         task_capacity_lock_key, task_kind_claim_order,
     };
     use crate::db::traits::user::DeleteUserRecord;
@@ -1614,9 +1684,9 @@ mod tests {
     use crate::models::search::QueryOptions;
     use crate::models::{
         CollectionID, NewBackupTaskOutputRecord, NewImportTaskResultRecord, NewTaskEventRecord,
-        NewTaskRecord, RemoteInvocationBodyOverride, RemoteInvocationParameters,
-        RemoteInvocationSubject, RemoteTargetID, StoredRemoteCallTaskPayload, TaskID, TaskKind,
-        TaskStatus,
+        NewTaskRecord, Permissions, PrincipalID, RemoteInvocationBodyOverride,
+        RemoteInvocationParameters, RemoteInvocationSubject, RemoteTargetID,
+        StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskStatus, TokenScope,
     };
     use crate::tests::{TestContext, create_test_user};
 
@@ -1626,6 +1696,39 @@ mod tests {
         valid: bool,
         #[diesel(sql_type = diesel::sql_types::Text)]
         definition: String,
+    }
+
+    #[test]
+    fn task_request_builder_derives_unscoped_persistence_fields() {
+        let request = TaskCreateRequest::builder(
+            TaskKind::Export,
+            PrincipalID::new(7).unwrap(),
+            serde_json::json!({}),
+            1,
+        )
+        .build();
+
+        assert_eq!(request.submitted_token_id, None);
+        assert!(!request.submitted_token_scoped);
+        assert_eq!(request.submitted_token_scopes, serde_json::json!([]));
+    }
+
+    #[test]
+    fn task_request_builder_derives_scoped_persistence_fields() {
+        let scope =
+            TokenScope::from_stored_parts(Some(vec![Permissions::ReadObject]), None).unwrap();
+        let request = TaskCreateRequest::builder(
+            TaskKind::Export,
+            PrincipalID::new(7).unwrap(),
+            serde_json::json!({}),
+            1,
+        )
+        .scope_snapshot(TaskScopeSnapshot::from_request(Some(11), Some(&scope)))
+        .build();
+
+        assert_eq!(request.submitted_token_id, Some(11));
+        assert!(request.submitted_token_scoped);
+        assert_eq!(request.submitted_token_scopes, scope.snapshot_json());
     }
 
     #[tokio::test]
