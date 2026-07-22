@@ -22,6 +22,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Single-host rolling updates now wait for Caddy's passive upstream failure
+  marks to clear between replica replacements, preserving continuous routing
+  without reprovisioning an unchanged proxy configuration.
 - Single-host rolling updates no longer force Caddy to reprovision an unchanged
   configuration after every replica replacement, avoiding transient public
   request failures while still applying changed Caddyfiles.

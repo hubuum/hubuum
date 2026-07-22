@@ -20,6 +20,21 @@ if [[ "$*" == *" exec -T caddy caddy reload "* ]]; then
   exit
 fi
 
+if [[ "$*" == *" exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams"* ]]; then
+  failure_polls_file="$TEST_ROOT/caddy-failure-polls"
+  failure_polls=0
+  if [[ -f "$failure_polls_file" ]]; then
+    read -r failure_polls < "$failure_polls_file"
+  fi
+  if (( failure_polls > 0 )); then
+    printf '[{"address":"hubuum-api:8080","num_requests":0,"fails":1}]\n'
+    printf '%s\n' "$((failure_polls - 1))" > "$failure_polls_file"
+  else
+    printf '[{"address":"hubuum-api:8080","num_requests":0,"fails":0}]\n'
+  fi
+  exit 0
+fi
+
 if [[ "${1:-}" == "inspect" && "$*" == *".Dependencies"* ]]; then
   if [[ "$FAKE_CADDY_DEPENDENCIES" == "true" && "${*: -1}" == "container-caddy" ]]; then
     printf 'container-hubuum-api\n'
@@ -98,9 +113,11 @@ compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/l
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 EOF
 assert_commands "$TEST_ROOT/expected-rolling.log"
 
@@ -112,8 +129,10 @@ cat > "$TEST_ROOT/expected-reload.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 EOF
 assert_commands "$TEST_ROOT/expected-reload.log"
 
@@ -127,11 +146,14 @@ cat > "$TEST_ROOT/expected-recovery.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 EOF
 assert_commands "$TEST_ROOT/expected-recovery.log"
 
@@ -146,9 +168,11 @@ compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/l
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 EOF
 assert_commands "$TEST_ROOT/expected-missing-infrastructure.log"
 
@@ -164,6 +188,17 @@ compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps caddy
 EOF
 assert_commands "$TEST_ROOT/expected-initial.log"
+
+printf '2\n' > "$TEST_ROOT/caddy-failure-polls"
+: > "$COMMAND_LOG"
+sleep() { :; }
+hubuum_wait_for_caddy_upstreams 1
+unset -f sleep
+[[ "$(grep -c 'reverse_proxy/upstreams' "$COMMAND_LOG")" -eq 3 ]] || {
+  echo "Caddy upstream wait did not poll until passive failures cleared" >&2
+  exit 1
+}
+rm -f "$TEST_ROOT/caddy-failure-polls"
 
 reload_output="$(hubuum_reload_caddy 2>&1)"
 [[ "$reload_output" == "Reloading Caddy if its configuration changed..." ]] || {

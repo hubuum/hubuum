@@ -141,6 +141,42 @@ hubuum_reload_caddy() {
   fi
 }
 
+hubuum_caddy_upstreams_have_no_failures() {
+  local upstreams
+
+  if ! upstreams="$(
+    "${COMPOSE_CMD[@]}" exec -T caddy \
+      wget -qO- \
+      http://127.0.0.1:2019/reverse_proxy/upstreams 2>/dev/null
+  )"; then
+    return 1
+  fi
+
+  # The endpoint returns one entry per configured upstream. Require at least
+  # one entry so an unavailable or not-yet-provisioned proxy cannot pass.
+  [[ "$upstreams" == *'"fails"'* ]] || return 1
+  ! grep -Eq '"fails"[[:space:]]*:[[:space:]]*[1-9][0-9]*' <<<"$upstreams"
+}
+
+hubuum_wait_for_caddy_upstreams() {
+  local timeout_seconds="${1:-${HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS:-180}}"
+  local deadline=$((SECONDS + timeout_seconds))
+
+  echo "Waiting for Caddy to clear upstream failure marks..."
+  while (( SECONDS < deadline )); do
+    if hubuum_caddy_upstreams_have_no_failures; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "ERROR: Caddy did not report all upstreams eligible within ${timeout_seconds}s" >&2
+  "${COMPOSE_CMD[@]}" exec -T caddy \
+    wget -qO- \
+    http://127.0.0.1:2019/reverse_proxy/upstreams >&2 || true
+  return 1
+}
+
 hubuum_run_migrations() {
   echo "Running one-shot database migrations while the primary remains online..."
   "${COMPOSE_CMD[@]}" run --rm --no-deps -T \
@@ -209,18 +245,20 @@ hubuum_rollout() {
 
   if [[ "$api_primary_recovered" == "true" || "$web_primary_recovered" == "true" ]]; then
     hubuum_reload_caddy
+    hubuum_wait_for_caddy_upstreams
   fi
 
   # Upgrade every standby while its primary remains available. Reload only
-  # after all standbys are proven healthy. Caddy skips an unchanged config,
-  # avoiding needless module reprovisioning while active health checks recover
-  # replaced upstreams. A changed Caddyfile, such as a legacy upgrade, is still
-  # applied before replacing the primary.
+  # after all standbys are proven healthy, then wait for Caddy's passive failure
+  # window to clear before replacing a primary. A changed Caddyfile, such as a
+  # legacy upgrade, is still applied without forcing unchanged configs to be
+  # reprovisioned.
   hubuum_roll_service hubuum-api-standby
   if [[ "$INSTALL_MODE" == "all" ]]; then
     hubuum_roll_service hubuum-web-standby
   fi
   hubuum_reload_caddy
+  hubuum_wait_for_caddy_upstreams
 
   if [[ "$api_primary_recovered" != "true" ]]; then
     hubuum_roll_service hubuum-api
@@ -232,5 +270,6 @@ hubuum_rollout() {
   fi
   if [[ "$primary_rolled" == "true" ]]; then
     hubuum_reload_caddy
+    hubuum_wait_for_caddy_upstreams
   fi
 }
