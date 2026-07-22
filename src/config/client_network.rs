@@ -1,18 +1,26 @@
+use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
 
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use serde::{Deserialize, Serialize};
 
-use crate::errors::ApiError;
-
-pub fn parse_client_allowlist(s: &str) -> Result<ClientAllowlist, String> {
-    ClientAllowlist::from_str(s).map_err(|e| e.to_string())
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientNetworkParseError {
+    EmptyClientAllowlist,
+    InvalidIpOrCidr(String),
 }
 
-pub fn parse_trusted_proxies(s: &str) -> Result<TrustedProxies, String> {
-    TrustedProxies::from_str(s).map_err(|e| e.to_string())
+impl fmt::Display for ClientNetworkParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyClientAllowlist => formatter.write_str("client allowlist cannot be empty"),
+            Self::InvalidIpOrCidr(value) => write!(formatter, "Invalid IP/CIDR: {value}"),
+        }
+    }
 }
+
+impl std::error::Error for ClientNetworkParseError {}
 
 /// Client IP allowlist - either allow all (`*`) or specific IPs/CIDRs
 #[derive(Debug, Clone)]
@@ -51,8 +59,39 @@ impl<'de> Deserialize<'de> for ClientAllowlist {
 }
 
 impl ClientAllowlist {
-    /// Parse a CLI/env string into a ClientAllowlist
-    pub fn parse_cli(input: &str) -> Result<Self, ApiError> {
+    /// Check if an IP address is allowed
+    pub fn allows(&self, ip: IpAddr) -> bool {
+        match self {
+            ClientAllowlist::Any => true,
+            ClientAllowlist::Nets(nets) => nets.iter().any(|net| match (net, ip) {
+                (IpNet::V4(net), IpAddr::V4(addr)) => net.contains(&addr),
+                (IpNet::V6(net), IpAddr::V6(addr)) => net.contains(&addr),
+                _ => false,
+            }),
+        }
+    }
+
+    /// Parse a network CIDR or single IP
+    fn parse_net(raw: &str) -> Result<IpNet, ClientNetworkParseError> {
+        IpNet::from_str(raw)
+            .or_else(|_| Self::ip_to_host_net(raw))
+            .map_err(|_| ClientNetworkParseError::InvalidIpOrCidr(raw.to_string()))
+    }
+
+    /// Convert a single IP address to a /32 or /128 network
+    fn ip_to_host_net(raw: &str) -> Result<IpNet, ()> {
+        let ip: IpAddr = raw.parse().map_err(|_| ())?;
+        match ip {
+            IpAddr::V4(addr) => Ipv4Net::new(addr, 32).map(IpNet::from).map_err(|_| ()),
+            IpAddr::V6(addr) => Ipv6Net::new(addr, 128).map(IpNet::from).map_err(|_| ()),
+        }
+    }
+}
+
+impl FromStr for ClientAllowlist {
+    type Err = ClientNetworkParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
         let trimmed = input.trim();
 
         if trimmed == "*" {
@@ -67,48 +106,10 @@ impl ClientAllowlist {
             .collect::<Result<_, _>>()?;
 
         if nets.is_empty() {
-            return Err(ApiError::BadRequest(
-                "client allowlist cannot be empty".into(),
-            ));
+            return Err(ClientNetworkParseError::EmptyClientAllowlist);
         }
 
         Ok(Self::Nets(nets))
-    }
-
-    /// Check if an IP address is allowed
-    pub fn allows(&self, ip: IpAddr) -> bool {
-        match self {
-            ClientAllowlist::Any => true,
-            ClientAllowlist::Nets(nets) => nets.iter().any(|net| match (net, ip) {
-                (IpNet::V4(net), IpAddr::V4(addr)) => net.contains(&addr),
-                (IpNet::V6(net), IpAddr::V6(addr)) => net.contains(&addr),
-                _ => false,
-            }),
-        }
-    }
-
-    /// Parse a network CIDR or single IP
-    fn parse_net(raw: &str) -> Result<IpNet, ApiError> {
-        IpNet::from_str(raw)
-            .or_else(|_| Self::ip_to_host_net(raw))
-            .map_err(|_| ApiError::BadRequest(format!("Invalid IP/CIDR: {}", raw)))
-    }
-
-    /// Convert a single IP address to a /32 or /128 network
-    fn ip_to_host_net(raw: &str) -> Result<IpNet, ()> {
-        let ip: IpAddr = raw.parse().map_err(|_| ())?;
-        match ip {
-            IpAddr::V4(addr) => Ipv4Net::new(addr, 32).map(IpNet::from).map_err(|_| ()),
-            IpAddr::V6(addr) => Ipv6Net::new(addr, 128).map(IpNet::from).map_err(|_| ()),
-        }
-    }
-}
-
-impl FromStr for ClientAllowlist {
-    type Err = ApiError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse_cli(s)
     }
 }
 
@@ -126,7 +127,7 @@ impl TrustedProxies {
 }
 
 impl FromStr for TrustedProxies {
-    type Err = ApiError;
+    type Err = ClientNetworkParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let nets = s
