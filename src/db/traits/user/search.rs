@@ -2809,21 +2809,7 @@ where
     };
 
     let mut where_clauses = Vec::new();
-    if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-        let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
-        let ancestor_collection_scope_sql =
-            sql_integer_array(scoped_collection_ids, &mut bind_variables);
-        let ancestor_class_scope_sql = sql_integer_array(scoped_class_ids, &mut bind_variables);
-        where_clauses.push(format!(
-            "(ancestor_collection_id = ANY({ancestor_collection_scope_sql}) OR ancestor_class_id = ANY({ancestor_class_scope_sql}))"
-        ));
-        let descendant_collection_scope_sql =
-            sql_integer_array(scoped_collection_ids, &mut bind_variables);
-        let descendant_class_scope_sql = sql_integer_array(scoped_class_ids, &mut bind_variables);
-        where_clauses.push(format!(
-            "(descendant_collection_id = ANY({descendant_collection_scope_sql}) OR descendant_class_id = ANY({descendant_class_scope_sql}))"
-        ));
-    }
+    append_related_class_scope_clause(&mut where_clauses, scopes, &mut bind_variables);
     for param in &query_params {
         let clause = build_related_classes_clause(param, &mut bind_variables)?;
         if let Some(clause) = clause {
@@ -2913,24 +2899,7 @@ where
     };
 
     let mut where_clauses = Vec::new();
-    if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-        let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
-        let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
-        let ancestor_collection_scope_sql =
-            sql_integer_array(scoped_collection_ids, &mut bind_variables);
-        let ancestor_class_scope_sql = sql_integer_array(scoped_class_ids, &mut bind_variables);
-        let ancestor_object_scope_sql = sql_integer_array(scoped_object_ids, &mut bind_variables);
-        where_clauses.push(format!(
-            "(ancestor_collection_id = ANY({ancestor_collection_scope_sql}) OR ancestor_class_id = ANY({ancestor_class_scope_sql}) OR ancestor_object_id = ANY({ancestor_object_scope_sql}))"
-        ));
-        let descendant_collection_scope_sql =
-            sql_integer_array(scoped_collection_ids, &mut bind_variables);
-        let descendant_class_scope_sql = sql_integer_array(scoped_class_ids, &mut bind_variables);
-        let descendant_object_scope_sql = sql_integer_array(scoped_object_ids, &mut bind_variables);
-        where_clauses.push(format!(
-            "(descendant_collection_id = ANY({descendant_collection_scope_sql}) OR descendant_class_id = ANY({descendant_class_scope_sql}) OR descendant_object_id = ANY({descendant_object_scope_sql}))"
-        ));
-    }
+    append_related_object_scope_clause(&mut where_clauses, scopes, &mut bind_variables);
     for param in &query_params {
         let clause = build_related_objects_clause(param, &mut bind_variables)?;
         if let Some(clause) = clause {
@@ -2959,6 +2928,40 @@ fn sql_integer_array(values: &[i32], bind_variables: &mut Vec<SQLValue>) -> Stri
         .collect::<Vec<_>>()
         .join(", ");
     format!("ARRAY[{placeholders}]::integer[]")
+}
+
+fn append_related_class_scope_clause(
+    where_clauses: &mut Vec<String>,
+    scopes: Option<&TokenScope>,
+    bind_variables: &mut Vec<SQLValue>,
+) {
+    let Some(collection_ids) = scopes.and_then(TokenScope::collection_ids) else {
+        return;
+    };
+    let class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+    let collection_sql = sql_integer_array(collection_ids, bind_variables);
+    let class_sql = sql_integer_array(class_ids, bind_variables);
+    where_clauses.push(format!(
+        "NOT EXISTS (SELECT 1 FROM unnest(related_classes.path) AS path_class_id JOIN hubuumclass path_class ON path_class.id = path_class_id WHERE NOT (path_class.collection_id = ANY({collection_sql}) OR path_class.id = ANY({class_sql})))"
+    ));
+}
+
+fn append_related_object_scope_clause(
+    where_clauses: &mut Vec<String>,
+    scopes: Option<&TokenScope>,
+    bind_variables: &mut Vec<SQLValue>,
+) {
+    let Some(collection_ids) = scopes.and_then(TokenScope::collection_ids) else {
+        return;
+    };
+    let class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+    let object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
+    let collection_sql = sql_integer_array(collection_ids, bind_variables);
+    let class_sql = sql_integer_array(class_ids, bind_variables);
+    let object_sql = sql_integer_array(object_ids, bind_variables);
+    where_clauses.push(format!(
+        "NOT EXISTS (SELECT 1 FROM unnest(related_objects.path) AS path_object_id JOIN hubuumobject path_object ON path_object.id = path_object_id WHERE NOT (path_object.collection_id = ANY({collection_sql}) OR path_object.hubuum_class_id = ANY({class_sql}) OR path_object.id = ANY({object_sql})))"
+    ));
 }
 
 fn related_depth_upper_bound(

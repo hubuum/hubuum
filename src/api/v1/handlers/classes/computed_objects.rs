@@ -23,7 +23,9 @@ use crate::pagination::{
     known_count_or_skipped, page_request, prepare_db_pagination,
 };
 use crate::permissions::visibility::{AuthorizedObjectIds, authorize_all_candidates};
-use crate::permissions::{AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef};
+use crate::permissions::{
+    AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef, authorize_resources,
+};
 use crate::traits::BackendContext;
 
 enum ComputedListVisibility {
@@ -187,6 +189,31 @@ async fn can_list_objects_in_class(
     let required = [Permissions::ReadObject, Permissions::ReadCollection];
     if !scope_allows(requestor.scopes(), &required) {
         return Ok(false);
+    }
+
+    let has_class_or_collection_scope = requestor.scopes().is_some_and(|scope| {
+        scope.collection_ids().is_some_and(|ids| !ids.is_empty())
+            || scope.class_ids().is_some_and(|ids| !ids.is_empty())
+    });
+    if has_class_or_collection_scope || requestor.scopes().is_none() {
+        return Ok(authorize_resources(
+            pool.permission_backend(),
+            pool.db_pool(),
+            &requestor.principal,
+            requestor.scopes(),
+            vec![Permissions::ReadObject, Permissions::ReadCollection],
+            vec![ResourceRef {
+                kind: ResourceKind::Class,
+                id: class.id,
+                attrs: ResourceAttrs {
+                    collection_id: Some(class.collection_id),
+                    class_id: Some(class.id),
+                    ..Default::default()
+                },
+            }],
+        )
+        .await
+        .is_ok());
     }
 
     let mut visibility_query = QueryOptions {
