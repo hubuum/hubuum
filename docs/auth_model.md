@@ -163,6 +163,7 @@ source of truth rather than child-row presence:
 | Resource dimension present | Grants are intersected with its resource rows |
 | A flagged dimension has **zero** rows | That dimension denies everything |
 | Request body `scopes: []` or `resource_scopes: []` | **Rejected with `400`** — an empty list is a client bug, not "grant nothing" |
+| More than 1,000 `resource_scopes` entries | **Rejected with `400`** — resource boundaries are bounded for persistence and per-request authorization work |
 
 Enforcement details:
 

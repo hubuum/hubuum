@@ -748,6 +748,20 @@ mod tests {
         assert_eq!(REQUIRED_DATABASE_MIGRATION_VERSION, latest);
     }
 
+    #[test]
+    fn resource_scope_rollback_revokes_tokens_before_dropping_scope_tables() {
+        let rollback =
+            include_str!("../../migrations/2026-07-22-000001_token_resource_scopes/down.sql");
+        let revoke = rollback
+            .find("WHERE resource_scoped")
+            .expect("rollback revokes resource-scoped tokens");
+        let first_drop = rollback
+            .find("DROP TABLE token_object_scopes")
+            .expect("rollback drops resource-scope tables");
+
+        assert!(revoke < first_drop);
+    }
+
     #[tokio::test]
     async fn database_schema_readiness_accepts_the_migrated_test_database() {
         let config = get_config().expect("Failed to load config for test");

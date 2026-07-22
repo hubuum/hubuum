@@ -2,8 +2,6 @@ use std::collections::HashMap;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::can;
-use crate::db::traits::UserPermissions;
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::relations::{
     class_relation_authorization_resources, object_relation_authorization_resources,
@@ -19,7 +17,7 @@ use crate::models::{
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, AuthzTarget, PrincipalRef, authorize_resources};
-use crate::traits::{CanDelete, CanSave, CollectionAccessors, SelfAccessors};
+use crate::traits::{CanDelete, CanSave, SelfAccessors};
 
 use actix_web::delete;
 use tracing::debug;
@@ -137,28 +135,16 @@ async fn get_class_relation(
     );
 
     let relation = relation_id.instance(&pool).await?;
-    if pool.permission_backend().uses_sql_permission_store() {
-        let collections = relation_id.collection(&pool).await?;
-        can!(
-            &pool,
-            user,
-            requestor.scopes(),
-            [Permissions::ReadClassRelation],
-            collections.0,
-            collections.1
-        );
-    } else {
-        let resource = relation.to_resource_ref(&pool).await?;
-        authorize_resources(
-            pool.permission_backend(),
-            &pool,
-            user,
-            requestor.scopes(),
-            vec![Permissions::ReadClassRelation],
-            vec![resource],
-        )
-        .await?;
-    }
+    let resource = relation.to_resource_ref(&pool).await?;
+    authorize_resources(
+        pool.permission_backend(),
+        &pool,
+        user,
+        requestor.scopes(),
+        vec![Permissions::ReadClassRelation],
+        vec![resource],
+    )
+    .await?;
 
     Ok(ApiResponse::new(relation, StatusCode::OK))
 }
@@ -195,28 +181,16 @@ async fn create_class_relation(
         to_class = relation.to_hubuum_class_id,
     );
 
-    if pool.permission_backend().uses_sql_permission_store() {
-        let collections = relation.collection(&pool).await?;
-        can!(
-            &pool,
-            user,
-            requestor.scopes(),
-            [Permissions::CreateClassRelation],
-            collections.0,
-            collections.1
-        );
-    } else {
-        let resource = relation.to_resource_ref(&pool).await?;
-        authorize_resources(
-            pool.permission_backend(),
-            &pool,
-            user,
-            requestor.scopes(),
-            vec![Permissions::CreateClassRelation],
-            vec![resource],
-        )
-        .await?;
-    }
+    let resource = relation.to_resource_ref(&pool).await?;
+    authorize_resources(
+        pool.permission_backend(),
+        &pool,
+        user,
+        requestor.scopes(),
+        vec![Permissions::CreateClassRelation],
+        vec![resource],
+    )
+    .await?;
 
     let event_context = requestor.event_context(&req);
     let relation = relation.save(&pool, &event_context).await?;
@@ -254,29 +228,17 @@ async fn delete_class_relation(
         relation_id = ?relation_id,
     );
 
-    if pool.permission_backend().uses_sql_permission_store() {
-        let collections = relation_id.collection(&pool).await?;
-        can!(
-            &pool,
-            user,
-            requestor.scopes(),
-            [Permissions::DeleteClassRelation],
-            collections.0,
-            collections.1
-        );
-    } else {
-        let relation = relation_id.instance(&pool).await?;
-        let resource = relation.to_resource_ref(&pool).await?;
-        authorize_resources(
-            pool.permission_backend(),
-            &pool,
-            user,
-            requestor.scopes(),
-            vec![Permissions::DeleteClassRelation],
-            vec![resource],
-        )
-        .await?;
-    }
+    let relation = relation_id.instance(&pool).await?;
+    let resource = relation.to_resource_ref(&pool).await?;
+    authorize_resources(
+        pool.permission_backend(),
+        &pool,
+        user,
+        requestor.scopes(),
+        vec![Permissions::DeleteClassRelation],
+        vec![resource],
+    )
+    .await?;
 
     let event_context = requestor.event_context(&req);
     relation_id.delete(&pool, &event_context).await?;
@@ -394,28 +356,16 @@ async fn get_object_relation(
     );
 
     let relation = relation_id.instance(&pool).await?;
-    if pool.permission_backend().uses_sql_permission_store() {
-        let collections = relation_id.collection(&pool).await?;
-        can!(
-            &pool,
-            user,
-            requestor.scopes(),
-            [Permissions::ReadObjectRelation],
-            collections.0,
-            collections.1
-        );
-    } else {
-        let resource = relation.to_resource_ref(&pool).await?;
-        authorize_resources(
-            pool.permission_backend(),
-            &pool,
-            user,
-            requestor.scopes(),
-            vec![Permissions::ReadObjectRelation],
-            vec![resource],
-        )
-        .await?;
-    }
+    let resource = relation.to_resource_ref(&pool).await?;
+    authorize_resources(
+        pool.permission_backend(),
+        &pool,
+        user,
+        requestor.scopes(),
+        vec![Permissions::ReadObjectRelation],
+        vec![resource],
+    )
+    .await?;
 
     Ok(ApiResponse::new(relation, StatusCode::OK))
 }
@@ -452,28 +402,16 @@ async fn create_object_relation(
         to_object = relation.to_hubuum_object_id,
     );
 
-    if pool.permission_backend().uses_sql_permission_store() {
-        let collections = relation.collection(&pool).await?;
-        can!(
-            &pool,
-            user,
-            requestor.scopes(),
-            [Permissions::CreateObjectRelation],
-            collections.0,
-            collections.1
-        );
-    } else {
-        let resource = relation.to_resource_ref(&pool).await?;
-        authorize_resources(
-            pool.permission_backend(),
-            &pool,
-            user,
-            requestor.scopes(),
-            vec![Permissions::CreateObjectRelation],
-            vec![resource],
-        )
-        .await?;
-    }
+    let resource = relation.to_resource_ref(&pool).await?;
+    authorize_resources(
+        pool.permission_backend(),
+        &pool,
+        user,
+        requestor.scopes(),
+        vec![Permissions::CreateObjectRelation],
+        vec![resource],
+    )
+    .await?;
 
     let event_context = requestor.event_context(&req);
     let relation = relation.save(&pool, &event_context).await?;
@@ -511,29 +449,17 @@ async fn delete_object_relation(
         relation_id = ?relation_id,
     );
 
-    if pool.permission_backend().uses_sql_permission_store() {
-        let collections = relation_id.collection(&pool).await?;
-        can!(
-            &pool,
-            user,
-            requestor.scopes(),
-            [Permissions::DeleteObjectRelation],
-            collections.0,
-            collections.1
-        );
-    } else {
-        let relation = relation_id.instance(&pool).await?;
-        let resource = relation.to_resource_ref(&pool).await?;
-        authorize_resources(
-            pool.permission_backend(),
-            &pool,
-            user,
-            requestor.scopes(),
-            vec![Permissions::DeleteObjectRelation],
-            vec![resource],
-        )
-        .await?;
-    }
+    let relation = relation_id.instance(&pool).await?;
+    let resource = relation.to_resource_ref(&pool).await?;
+    authorize_resources(
+        pool.permission_backend(),
+        &pool,
+        user,
+        requestor.scopes(),
+        vec![Permissions::DeleteObjectRelation],
+        vec![resource],
+    )
+    .await?;
 
     let event_context = requestor.event_context(&req);
     relation_id.delete(&pool, &event_context).await?;

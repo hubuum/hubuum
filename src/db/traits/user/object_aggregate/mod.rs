@@ -198,6 +198,11 @@ where
         Err(error) => return Err(error),
     }
 
+    if execution.paging.has_computed_filter()
+        && !local_computed_filter_has_visible_candidates(&execution).await?
+    {
+        return empty_aggregate_page(&execution.paging.query_options);
+    }
     execution
         .paging
         .resolve_computed_filters(
@@ -210,6 +215,28 @@ where
         return aggregate_visible_filtered_objects_with_sql(execution).await;
     }
     aggregate_visible_filtered_objects_with_local_batches(execution).await
+}
+
+async fn local_computed_filter_has_visible_candidates(
+    execution: &ObjectAggregateExecution<'_>,
+) -> Result<bool, ApiError> {
+    let mut candidate_options =
+        object_aggregate_authorization_chunk_options(&execution.paging.query_options);
+    candidate_options.limit = Some(1);
+    let database_options = prepare_db_pagination::<HubuumObject>(&candidate_options)?;
+    let candidate_query = ObjectAggregateCandidateQuery::new(
+        &database_options,
+        execution.target.collection_id,
+        &execution.paging.spec,
+    )
+    .token_scope(execution.token_scopes);
+    let candidates = with_connection(execution.pool, async |connection| {
+        load_aggregate_candidate_batch(connection, candidate_query).await
+    })
+    .await?
+    .into_page(&candidate_options)?;
+    validate_candidate_target(&candidates.items, &execution.target)?;
+    Ok(!candidates.items.is_empty())
 }
 
 async fn aggregate_visible_filtered_objects_with_local_batches(

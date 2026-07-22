@@ -34,10 +34,11 @@ mod tests {
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
         CollectionID, GroupResponse, HubuumClassID, HubuumObject, HubuumObjectID,
-        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewServiceAccount,
-        NewTaskRecord, Permissions, PrincipalID, PrincipalMemberResponse, PrincipalTokenMetadata,
-        ServiceAccount, ServiceAccountID, ServiceAccountResponse, TaskID, TaskKind, TaskRecord,
-        TaskStatus, TokenResourceScope, TokenScope,
+        MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClassRelation, NewHubuumObject,
+        NewHubuumObjectRelation, NewServiceAccount, NewTaskRecord, Permissions, PrincipalID,
+        PrincipalMemberResponse, PrincipalTokenMetadata, ServiceAccount, ServiceAccountID,
+        ServiceAccountResponse, TaskID, TaskKind, TaskRecord, TaskStatus, TokenResourceScope,
+        TokenScope,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
     use crate::test_support::{
@@ -508,6 +509,26 @@ mod tests {
             &context.admin_token,
             &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
             &serde_json::json!({ "resource_scopes": [] }),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_token_mint_resource_scope_limit_rejected() {
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        let sa = create_test_service_account(&context.pool, &group, None).await;
+        let resource_scopes = (1..=MAX_TOKEN_RESOURCE_SCOPES + 1)
+            .map(|id| serde_json::json!({"kind": "object", "id": id}))
+            .collect::<Vec<_>>();
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
+            &serde_json::json!({ "resource_scopes": resource_scopes }),
         )
         .await;
 
@@ -1124,6 +1145,182 @@ mod tests {
 
         let expected_total = if expected_visible { 1 } else { 0 };
         assert_eq!((total, visible), (expected_total, expected_visible));
+    }
+
+    #[derive(Clone, Copy)]
+    enum ScopedRelationKind {
+        Class,
+        Object,
+    }
+
+    #[derive(Clone, Copy)]
+    enum ScopedRelationOperation {
+        Create,
+        Read,
+        Delete,
+    }
+
+    #[rstest]
+    #[case::create_class(
+        ScopedRelationKind::Class,
+        ScopedRelationOperation::Create,
+        StatusCode::CREATED
+    )]
+    #[case::read_class(
+        ScopedRelationKind::Class,
+        ScopedRelationOperation::Read,
+        StatusCode::OK
+    )]
+    #[case::delete_class(
+        ScopedRelationKind::Class,
+        ScopedRelationOperation::Delete,
+        StatusCode::NO_CONTENT
+    )]
+    #[case::create_object(
+        ScopedRelationKind::Object,
+        ScopedRelationOperation::Create,
+        StatusCode::CREATED
+    )]
+    #[case::read_object(
+        ScopedRelationKind::Object,
+        ScopedRelationOperation::Read,
+        StatusCode::OK
+    )]
+    #[case::delete_object(
+        ScopedRelationKind::Object,
+        ScopedRelationOperation::Delete,
+        StatusCode::NO_CONTENT
+    )]
+    #[actix_web::test]
+    async fn test_local_relation_operations_authorize_scoped_endpoints(
+        #[case] kind: ScopedRelationKind,
+        #[case] operation: ScopedRelationOperation,
+        #[case] expected: StatusCode,
+    ) {
+        let context = TestContext::new().await;
+        let (classes, objects, sa) = resource_hierarchy_fixture(&context).await;
+        let class_relation_input = NewHubuumClassRelation {
+            from_hubuum_class_id: classes[0].id,
+            to_hubuum_class_id: classes[1].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+        };
+        let class_relation = if matches!(
+            (kind, operation),
+            (ScopedRelationKind::Class, ScopedRelationOperation::Create)
+        ) {
+            None
+        } else {
+            Some(
+                class_relation_input
+                    .clone()
+                    .save_without_events(&context.pool)
+                    .await
+                    .unwrap(),
+            )
+        };
+        let object_relation_input = NewHubuumObjectRelation {
+            from_hubuum_object_id: objects[0].id,
+            to_hubuum_object_id: objects[1].id,
+            class_relation_id: class_relation
+                .as_ref()
+                .map(|relation| relation.id)
+                .unwrap_or(0),
+        };
+        let object_relation = if matches!(kind, ScopedRelationKind::Object)
+            && !matches!(operation, ScopedRelationOperation::Create)
+        {
+            Some(
+                NewHubuumObjectRelation {
+                    from_hubuum_object_id: object_relation_input.from_hubuum_object_id,
+                    to_hubuum_object_id: object_relation_input.to_hubuum_object_id,
+                    class_relation_id: object_relation_input.class_relation_id,
+                }
+                .save_without_events(&context.pool)
+                .await
+                .unwrap(),
+            )
+        } else {
+            None
+        };
+        let resource_scopes = match kind {
+            ScopedRelationKind::Class => vec![
+                TokenResourceScope::Class(HubuumClassID::new(classes[0].id).unwrap()),
+                TokenResourceScope::Class(HubuumClassID::new(classes[1].id).unwrap()),
+            ],
+            ScopedRelationKind::Object => vec![
+                TokenResourceScope::Object(HubuumObjectID::new(objects[0].id).unwrap()),
+                TokenResourceScope::Object(HubuumObjectID::new(objects[1].id).unwrap()),
+            ],
+        };
+        let token = resource_scoped_token(&context.pool, sa.id, resource_scopes).await;
+
+        let resp = match (kind, operation) {
+            (ScopedRelationKind::Class, ScopedRelationOperation::Create) => {
+                post_request(
+                    &context.pool,
+                    &token,
+                    "/api/v1/relations/classes",
+                    &class_relation_input,
+                )
+                .await
+            }
+            (ScopedRelationKind::Class, ScopedRelationOperation::Read) => {
+                get_request(
+                    &context.pool,
+                    &token,
+                    &format!(
+                        "/api/v1/relations/classes/{}",
+                        class_relation.as_ref().unwrap().id
+                    ),
+                )
+                .await
+            }
+            (ScopedRelationKind::Class, ScopedRelationOperation::Delete) => {
+                delete_request(
+                    &context.pool,
+                    &token,
+                    &format!(
+                        "/api/v1/relations/classes/{}",
+                        class_relation.as_ref().unwrap().id
+                    ),
+                )
+                .await
+            }
+            (ScopedRelationKind::Object, ScopedRelationOperation::Create) => {
+                post_request(
+                    &context.pool,
+                    &token,
+                    "/api/v1/relations/objects",
+                    &object_relation_input,
+                )
+                .await
+            }
+            (ScopedRelationKind::Object, ScopedRelationOperation::Read) => {
+                get_request(
+                    &context.pool,
+                    &token,
+                    &format!(
+                        "/api/v1/relations/objects/{}",
+                        object_relation.as_ref().unwrap().id
+                    ),
+                )
+                .await
+            }
+            (ScopedRelationKind::Object, ScopedRelationOperation::Delete) => {
+                delete_request(
+                    &context.pool,
+                    &token,
+                    &format!(
+                        "/api/v1/relations/objects/{}",
+                        object_relation.as_ref().unwrap().id
+                    ),
+                )
+                .await
+            }
+        };
+
+        assert_eq!(resp.status(), expected);
     }
 
     /// #9 / #36: the human/admin extractors reject non-human/scoped callers. An

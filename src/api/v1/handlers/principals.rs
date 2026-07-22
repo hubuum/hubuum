@@ -64,7 +64,9 @@ pub struct NewTokenRequest {
     /// rejected (almost certainly a client bug, not "grant nothing").
     pub scopes: Option<Vec<Permissions>>,
     /// Optional resource boundary. Entries are additive within the boundary
-    /// and are always intersected with the principal's live group grants.
+    /// and are always intersected with the principal's live group grants. At
+    /// most 1,000 entries are accepted.
+    #[schema(max_items = 1000)]
     pub resource_scopes: Option<Vec<TokenResourceScope>>,
 }
 

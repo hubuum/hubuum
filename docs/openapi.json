@@ -23123,7 +23123,8 @@
             "items": {
               "$ref": "#/components/schemas/TokenResourceScope"
             },
-            "description": "Optional resource boundary. Entries are additive within the boundary\nand are always intersected with the principal's live group grants."
+            "description": "Optional resource boundary. Entries are additive within the boundary\nand are always intersected with the principal's live group grants. At\nmost 1,000 entries are accepted.",
+            "maxItems": 1000
           },
           "scopes": {
             "type": [

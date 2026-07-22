@@ -5,6 +5,9 @@ use crate::errors::ApiError;
 use crate::models::{CollectionID, HubuumClassID, HubuumObjectID, Permissions};
 use crate::permissions::{ResourceKind, ResourceRef};
 
+/// Maximum number of collection, class, and object entries in one token boundary.
+pub const MAX_TOKEN_RESOURCE_SCOPES: usize = 1_000;
+
 /// One resource explicitly included in a token's resource boundary.
 ///
 /// Resource scopes are additive within the boundary: a collection entry covers
@@ -135,6 +138,14 @@ impl TokenScope {
                 "Scoped token has no scoped dimensions".to_string(),
             ));
         }
+        if resources
+            .as_ref()
+            .is_some_and(|resources| resources.len() > MAX_TOKEN_RESOURCE_SCOPES)
+        {
+            return Err(ApiError::InternalServerError(format!(
+                "Stored token resource scope exceeds the {MAX_TOKEN_RESOURCE_SCOPES}-entry limit"
+            )));
+        }
         Ok(Self {
             permissions,
             resources: resources.map(TokenResourceScopeSet::new),
@@ -157,6 +168,14 @@ impl TokenScope {
             return Err(ApiError::BadRequest(
                 "resource_scopes must be non-empty when provided".to_string(),
             ));
+        }
+        if resources
+            .as_ref()
+            .is_some_and(|resources| resources.len() > MAX_TOKEN_RESOURCE_SCOPES)
+        {
+            return Err(ApiError::BadRequest(format!(
+                "resource_scopes must contain at most {MAX_TOKEN_RESOURCE_SCOPES} entries"
+            )));
         }
         if let Some(permissions) = &permissions {
             let mut unique = permissions.clone();
@@ -493,5 +512,41 @@ mod tests {
         .unwrap();
 
         assert_eq!(encoded, serde_json::json!({"kind": "collection", "id": 7}));
+    }
+
+    #[test]
+    fn request_resource_scope_count_is_bounded() {
+        let resources = (1..=MAX_TOKEN_RESOURCE_SCOPES + 1)
+            .map(|id| {
+                HubuumObjectID::new(i32::try_from(id).unwrap()).map(TokenResourceScope::Object)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        let error = TokenScope::from_request_parts(None, Some(resources)).unwrap_err();
+
+        assert!(
+            matches!(error, ApiError::BadRequest(message) if message == format!(
+                "resource_scopes must contain at most {MAX_TOKEN_RESOURCE_SCOPES} entries"
+            ))
+        );
+    }
+
+    #[test]
+    fn stored_resource_scope_count_is_bounded() {
+        let resources = (1..=MAX_TOKEN_RESOURCE_SCOPES + 1)
+            .map(|id| {
+                HubuumObjectID::new(i32::try_from(id).unwrap()).map(TokenResourceScope::Object)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        let error = TokenScope::from_stored_parts(None, Some(resources)).unwrap_err();
+
+        assert!(
+            matches!(error, ApiError::InternalServerError(message) if message == format!(
+                "Stored token resource scope exceeds the {MAX_TOKEN_RESOURCE_SCOPES}-entry limit"
+            ))
+        );
     }
 }

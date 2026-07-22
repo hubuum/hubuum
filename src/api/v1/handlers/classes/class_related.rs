@@ -112,7 +112,6 @@ async fn create_class_relation(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::models::NewHubuumClassRelation;
-    use crate::traits::CollectionAccessors;
 
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
@@ -132,28 +131,16 @@ async fn create_class_relation(
         reverse_template_alias: partial_relation.reverse_template_alias.clone(),
     };
 
-    if pool.permission_backend().uses_sql_permission_store() {
-        let ids = relation.collection_id(&pool).await?;
-        can!(
-            &pool,
-            user,
-            requestor.scopes(),
-            [Permissions::CreateClassRelation],
-            ids.0,
-            ids.1
-        );
-    } else {
-        let resource = relation.to_resource_ref(&pool).await?;
-        authorize_resources(
-            pool.permission_backend(),
-            &pool,
-            user,
-            requestor.scopes(),
-            vec![Permissions::CreateClassRelation],
-            vec![resource],
-        )
-        .await?;
-    }
+    let resource = relation.to_resource_ref(&pool).await?;
+    authorize_resources(
+        pool.permission_backend(),
+        &pool,
+        user,
+        requestor.scopes(),
+        vec![Permissions::CreateClassRelation],
+        vec![resource],
+    )
+    .await?;
 
     let event_context = requestor.event_context(&req);
     let relation = relation.save(&pool, &event_context).await?;
@@ -185,8 +172,6 @@ async fn delete_class_relation(
     paths: web::Path<(HubuumClassID, HubuumClassRelationID)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::traits::CollectionAccessors;
-
     let user = &requestor.principal;
     let (class_id, relation_id) = paths.into_inner();
 
@@ -199,28 +184,16 @@ async fn delete_class_relation(
 
     let relation = relation_id.instance(&pool).await?;
 
-    if pool.permission_backend().uses_sql_permission_store() {
-        let ids = relation_id.collection_id(&pool).await?;
-        can!(
-            &pool,
-            user,
-            requestor.scopes(),
-            [Permissions::DeleteClassRelation],
-            ids.0,
-            ids.1
-        );
-    } else {
-        let resource = relation.to_resource_ref(&pool).await?;
-        authorize_resources(
-            pool.permission_backend(),
-            &pool,
-            user,
-            requestor.scopes(),
-            vec![Permissions::DeleteClassRelation],
-            vec![resource],
-        )
-        .await?;
-    }
+    let resource = relation.to_resource_ref(&pool).await?;
+    authorize_resources(
+        pool.permission_backend(),
+        &pool,
+        user,
+        requestor.scopes(),
+        vec![Permissions::DeleteClassRelation],
+        vec![resource],
+    )
+    .await?;
 
     if relation.from_hubuum_class_id == class_id.id()
         || relation.to_hubuum_class_id == class_id.id()
