@@ -85,6 +85,7 @@ pub async fn get_collections(
             pool.permission_backend(),
             &principal,
             candidates,
+            requestor.scopes(),
             vec![Permissions::ReadCollection],
             &search_params,
             |collection| ResourceRef::collection(collection.id),

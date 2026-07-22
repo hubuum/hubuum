@@ -323,6 +323,7 @@ async fn get_classes(
             pool.permission_backend(),
             &principal,
             candidates,
+            requestor.scopes(),
             vec![Permissions::ReadClass],
             &search_params,
             |class| ResourceRef {

@@ -187,13 +187,17 @@ async fn can_list_objects_in_class(
     requestor: &Authenticated,
     class: &HubuumClass,
 ) -> Result<bool, ApiError> {
+    let required = [Permissions::ReadObject, Permissions::ReadCollection];
+    if !scope_allows(requestor.scopes(), &required) {
+        return Ok(false);
+    }
     let resource = class.to_resource_ref(pool.db_pool()).await?;
     match authorize_resources(
         pool.permission_backend(),
         pool,
         &requestor.principal,
-        requestor.scopes(),
-        vec![Permissions::ReadObject, Permissions::ReadCollection],
+        None,
+        required.to_vec(),
         vec![resource],
     )
     .await
@@ -226,6 +230,7 @@ async fn authorized_object_ids_in_class(
         pool.permission_backend(),
         &principal,
         candidates,
+        requestor.scopes(),
         vec![Permissions::ReadObject],
         |object| ResourceRef {
             kind: ResourceKind::Object,

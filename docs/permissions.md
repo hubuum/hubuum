@@ -29,8 +29,9 @@ and all descendant collections. Inheritance is additive only:
 - There are no deny rules and no child override rules.
 - All permission types inherit, including `DelegateCollection`, `DeleteCollection`,
   `ReadAudit`, and remote-target permissions.
-- Token scopes still only narrow by permission type. A scoped token cannot gain
-  collection access outside the principal's group grants.
+- Token scopes can narrow by permission type and by collection, class, or object
+  identity. A scoped token cannot gain access outside the principal's group
+  grants.
 - Combined permission checks are not unioned across rows. If an operation needs
   `ReadCollection` and `UpdateCollection` on a target collection, one permission
   row on the target or one ancestor must contain both flags.

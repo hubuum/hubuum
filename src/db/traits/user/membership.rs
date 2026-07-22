@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::traits::authz::{AuthzSubject, scope_allows};
+use crate::models::token_scope::TokenScope;
 use diesel_async::RunQueryDsl;
 
 pub trait LoadUserGroups: AuthzSubject {
@@ -113,7 +114,7 @@ pub trait LoadPermittedCollections: GroupAccessors + AuthzSubject {
         &self,
         pool: &DbPool,
         permissions_list: &'a I,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError>
     where
         &'a I: IntoIterator<Item = &'a Permissions>,
@@ -133,7 +134,7 @@ pub trait LoadPermittedCollections: GroupAccessors + AuthzSubject {
         pool: &DbPool,
         permissions_list: &'a I,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError>
     where
         &'a I: IntoIterator<Item = &'a Permissions>;
@@ -148,7 +149,7 @@ where
         pool: &DbPool,
         permissions_list: &'a I,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError>
     where
         &'a I: IntoIterator<Item = &'a Permissions>,

@@ -171,6 +171,7 @@ async fn load_raw_object_page(
             pool.permission_backend(),
             &principal,
             candidates,
+            requestor.scopes(),
             vec![Permissions::ReadObject],
             &search_params,
             |object| ResourceRef {

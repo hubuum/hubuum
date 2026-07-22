@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::traits::authz::{AuthzSubject, scope_allows};
+use crate::models::token_scope::TokenScope;
 use diesel_async::RunQueryDsl;
 pub trait UserPermissions: AuthzSubject {
     /// ## Check if a subject has a set of permissions in a set of collections
@@ -21,7 +22,7 @@ pub trait UserPermissions: AuthzSubject {
         pool: &DbPool,
         permissions: P,
         collections: I,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(), ApiError>
     where
         P: IntoIterator<Item = Permissions>,

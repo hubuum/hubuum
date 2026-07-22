@@ -1,3 +1,4 @@
+use crate::models::token_scope::TokenScope;
 use std::iter::IntoIterator;
 
 use crate::models::search::QueryOptions;
@@ -37,7 +38,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -50,7 +51,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -63,7 +64,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -76,7 +77,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -89,7 +90,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -102,7 +103,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -115,7 +116,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -128,7 +129,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
@@ -142,7 +143,7 @@ pub trait Search: UserCollectionAccessors {
         backend: &C,
         class: K,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -157,7 +158,7 @@ pub trait Search: UserCollectionAccessors {
         backend: &C,
         class: K,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
@@ -172,7 +173,7 @@ pub trait Search: UserCollectionAccessors {
         backend: &C,
         class: K,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
@@ -191,7 +192,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         class_ids: &[i32],
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -204,7 +205,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -217,7 +218,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
@@ -231,7 +232,7 @@ pub trait Search: UserCollectionAccessors {
         backend: &C,
         object: O,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -251,7 +252,7 @@ pub trait Search: UserCollectionAccessors {
         backend: &C,
         object: O,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
@@ -266,7 +267,7 @@ pub trait Search: UserCollectionAccessors {
         backend: &C,
         root_object_ids: &[i32],
         include: ExportIncludeRelatedQuery,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -286,7 +287,7 @@ pub trait Search: UserCollectionAccessors {
         root_object_ids: &[i32],
         max_depth: i32,
         per_root_cap: i32,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -306,7 +307,7 @@ pub trait Search: UserCollectionAccessors {
         backend: &C,
         object: O,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
         C: BackendContext + ?Sized,
@@ -325,7 +326,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         object_ids: &[i32],
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -338,7 +339,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query: &UnifiedSearchSpec,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -351,7 +352,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query: &UnifiedSearchSpec,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -364,7 +365,7 @@ pub trait Search: UserCollectionAccessors {
         &self,
         backend: &C,
         query: &UnifiedSearchSpec,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError>
     where
         C: BackendContext + ?Sized,

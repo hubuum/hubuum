@@ -66,8 +66,12 @@ pub async fn run_export(
     req: HttpRequest,
     export: web::Json<ExportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    require_unscoped_runtime_admin(&pool, &requestor.principal, requestor.token_meta.scoped)
-        .await?;
+    require_unscoped_runtime_admin(
+        &pool,
+        &requestor.principal,
+        requestor.token_meta.is_scoped(),
+    )
+    .await?;
     let export = export.into_inner();
     let task = submit_export_task(
         &pool,

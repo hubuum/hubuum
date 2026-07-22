@@ -110,10 +110,16 @@ async fn list_visible_events(
         } else {
             (Vec::new(), false)
         };
-    let accessible_collection_ids = visible_collections
+    let mut accessible_collection_ids = visible_collections
         .iter()
         .map(|collection| collection.id)
         .collect::<Vec<_>>();
+    if let Some(scoped_collection_ids) = requestor
+        .scopes()
+        .and_then(crate::models::TokenScope::collection_ids)
+    {
+        accessible_collection_ids.retain(|id| scoped_collection_ids.contains(id));
+    }
     let (events, total_count) = list_events_with_total_count(
         &pool,
         &accessible_collection_ids,

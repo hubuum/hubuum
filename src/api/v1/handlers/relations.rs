@@ -90,6 +90,7 @@ async fn get_class_relations(
             pool.permission_backend(),
             &principal,
             candidates,
+            requestor.scopes(),
             required,
             &search_params,
             |relation| {
@@ -346,6 +347,7 @@ async fn get_object_relations(
                 pool.permission_backend(),
                 &principal,
                 candidates,
+                requestor.scopes(),
                 required,
                 &search_params,
                 |relation| {

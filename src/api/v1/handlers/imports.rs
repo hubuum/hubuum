@@ -65,8 +65,12 @@ pub async fn create_import(
     req: HttpRequest,
     import_request: web::Json<ImportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    require_unscoped_runtime_admin(&pool, &requestor.principal, requestor.token_meta.scoped)
-        .await?;
+    require_unscoped_runtime_admin(
+        &pool,
+        &requestor.principal,
+        requestor.token_meta.is_scoped(),
+    )
+    .await?;
     ensure_task_worker_running(pool.clone());
 
     let import_request = import_request.into_inner();

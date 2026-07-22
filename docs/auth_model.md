@@ -143,20 +143,26 @@ audit/history. Revoked tokens never validate again.
 
 ## Scopes
 
-A token may be **scoped** to a subset of permissions. Scopes are a least-privilege
-mechanism for automation: they can only *narrow* authority, never widen it.
+A token may be narrowed independently by permission and by resource identity.
+Scopes are a least-privilege mechanism for automation: they can only *narrow*
+authority, never widen it.
 
-> **Effective permission = (the principal's group permissions) ∩ (the token's scopes)**
+> **Effective authority = principal/group grants ∩ permission scope ∩ resource scope**
 
-Scope semantics are **fail-closed**, with `scoped` as the source of truth (never row
-presence):
+The `scopes` request field is the optional permission dimension. The
+`resource_scopes` field is the optional resource dimension. Omitting one dimension
+leaves that dimension unrestricted; omitting both creates an unscoped token.
+
+Scope semantics are **fail-closed**, with the persisted dimension flags as the
+source of truth rather than child-row presence:
 
 | Token state | Meaning |
 | --- | --- |
-| `scoped = false` (request omitted `scopes`) | **Unscoped** — full principal authority |
-| `scoped = true` with one or more scope rows | Effective = grants ∩ scopes |
-| `scoped = true` with **zero** scope rows | **Denies everything** |
-| Request body `scopes: []` (empty array) | **Rejected with `400`** — an empty list is a client bug, not "grant nothing" |
+| Both dimensions omitted | **Unscoped** — full principal authority |
+| Permission dimension present | Grants are intersected with its permission rows |
+| Resource dimension present | Grants are intersected with its resource rows |
+| A flagged dimension has **zero** rows | That dimension denies everything |
+| Request body `scopes: []` or `resource_scopes: []` | **Rejected with `400`** — an empty list is a client bug, not "grant nothing" |
 
 Enforcement details:
 
@@ -166,8 +172,41 @@ Enforcement details:
 - Scopes apply to *every* authority-bearing path, not just `can!` checks:
   search/list/export visibility is intersected with scopes too. An admin's scoped
   token, for example, lists only `scope ∩ grant` collections.
-- Scopes may name permissions the principal does not currently hold — scoping only
-  narrows, so unheld permissions in a scope set are simply inert.
+- Scopes may name permissions or resources the principal does not currently have
+  access to. Those entries are inert: a scope is never a grant. A point request to
+  such a resource returns `403 Forbidden`, while list and search endpoints omit it
+  and compute pagination totals after both grant and scope filtering.
+
+### Resource scopes
+
+Each resource entry uses a tagged object:
+
+```json
+{
+  "resource_scopes": [
+    { "kind": "collection", "id": 17 },
+    { "kind": "class", "id": 42 },
+    { "kind": "object", "id": 99 }
+  ]
+}
+```
+
+IDs must be positive and must name resources that exist when the token is minted.
+Duplicate entries are rejected with `400`.
+
+| Entry | Included authority |
+| --- | --- |
+| `collection` | That collection, its classes, and its objects |
+| `class` | That class and its objects, but not its parent collection or sibling classes |
+| `object` | That object only |
+
+Entries are additive inside the resource boundary. A relation is visible or
+actionable only when **both endpoints** are inside that boundary. Collection-level
+features such as templates, remote targets, audit events, and event subscriptions
+require an explicit collection scope; a class or object entry does not expose its
+parent collection. Runtime-wide system operations remain unavailable to any
+resource-scoped token. Task visibility remains principal-owned rather than part of
+the collection/class/object hierarchy.
 
 ### Valid scope strings
 
@@ -191,9 +230,9 @@ Unknown strings are rejected (fail-closed) wherever scopes are parsed.
 
 Asynchronous work must not later run with more authority than the request that
 enqueued it. Remote-call tasks record a **scope snapshot** at enqueue time: the
-submitting token id, its `scoped` flag, and a JSON array of its effective scope
-strings. The worker reconstructs those scopes fail-closed and enforces them during
-execution.
+submitting token id, its effective scoped flag, and both optional scope dimensions.
+The worker reconstructs that snapshot fail-closed and enforces it during execution.
+Legacy permission-only snapshots remain readable.
 
 Import and export tasks accept only unscoped runtime administrators, so they store
 an unscoped marker instead of resource scopes. The worker rechecks the principal's
@@ -263,7 +302,9 @@ serves both kinds:
 | `GET /api/v1/collections/{collection_id}/permissions/effective/principal/{principal_id}` | Direct and inherited permission rows on a single collection for the principal's groups | collection read authority |
 | `POST` / `DELETE /api/v1/iam/groups/{group_id}/members/{principal_id}` | Add/remove a member (human or SA) | **admin only** |
 
-Mint accepts `name`, `description`, `expires_at`, and `scopes`.
+Mint accepts `name`, `description`, `expires_at`, permission `scopes`, and
+`resource_scopes`. `GET /api/v1/iam/me` returns both dimensions for the current
+token; token-list metadata continues to expose the combined `scoped` boolean.
 
 Two safety properties worth calling out:
 

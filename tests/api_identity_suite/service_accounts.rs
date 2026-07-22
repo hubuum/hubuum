@@ -30,28 +30,63 @@ mod tests {
     use crate::models::Collection;
     use crate::models::collection::user_can_on_any;
     use crate::models::principal::load_principal_by_id;
-    use crate::models::token::{Token, create_principal_token};
+    use crate::models::token::{Token, create_principal_token, create_principal_token_with_scope};
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
-        GroupResponse, NewServiceAccount, NewTaskRecord, Permissions, PrincipalID,
-        PrincipalMemberResponse, PrincipalTokenMetadata, ServiceAccount, ServiceAccountID,
-        ServiceAccountResponse, TaskID, TaskKind, TaskRecord, TaskStatus,
+        CollectionID, GroupResponse, HubuumClassID, HubuumObject, HubuumObjectID,
+        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewServiceAccount,
+        NewTaskRecord, Permissions, PrincipalID, PrincipalMemberResponse, PrincipalTokenMetadata,
+        ServiceAccount, ServiceAccountID, ServiceAccountResponse, TaskID, TaskKind, TaskRecord,
+        TaskStatus, TokenResourceScope, TokenScope,
     };
+    use crate::pagination::TOTAL_COUNT_HEADER;
     use crate::test_support::{
         LOGIN_RATE_LIMIT_TEST_LOCK, reset_login_rate_limit as reset_login_rate_limit_for_tests,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
-    use crate::tests::asserts::assert_response_status;
+    use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
-        TestContext, create_test_group, create_test_service_account, create_test_user,
-        ensure_admin_group, lock_test_mutex, scoped_token, service_account_token,
+        ClassFixture, TestContext, create_test_classes, create_test_group,
+        create_test_service_account, create_test_user, ensure_admin_group, lock_test_mutex,
+        resource_scoped_token, scoped_token, service_account_token,
     };
-    use crate::traits::PermissionController;
+    use crate::traits::{CanSave, PermissionController};
     use crate::utilities::auth::generate_random_password;
 
     const LOGIN_ENDPOINT: &str = "/api/v0/auth/login";
     const ME_ENDPOINT: &str = "/api/v1/iam/me";
     const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
+
+    async fn resource_hierarchy_fixture(
+        context: &TestContext,
+    ) -> (ClassFixture, Vec<HubuumObject>, ServiceAccount) {
+        let classes =
+            create_test_classes(context, &context.scoped_name("token_resource_scope")).await;
+        let mut objects = Vec::new();
+        for (index, class) in classes.iter().take(2).enumerate() {
+            objects.push(
+                NewHubuumObject {
+                    name: context.scoped_name(&format!("token_scope_object_{index}")),
+                    collection_id: class.collection_id,
+                    hubuum_class_id: class.id,
+                    data: serde_json::json!({"index": index}),
+                    description: "resource-scope test object".to_string(),
+                }
+                .save_without_events(&context.pool)
+                .await
+                .unwrap(),
+            );
+        }
+        let sa =
+            create_test_service_account(&context.pool, &classes.collection.owner_group, None).await;
+        classes
+            .collection
+            .owner_group
+            .add_member_without_events(&context.pool, &sa)
+            .await
+            .unwrap();
+        (classes, objects, sa)
+    }
 
     // ----- Batch 1: identity / subtype invariants -----
 
@@ -462,10 +497,70 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
+    #[actix_web::test]
+    async fn test_token_mint_empty_resource_scopes_rejected() {
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        let sa = create_test_service_account(&context.pool, &group, None).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
+            &serde_json::json!({ "resource_scopes": [] }),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_token_mint_duplicate_resource_scopes_rejected() {
+        let context = TestContext::new().await;
+        let fixture = context.with_collection().await;
+        let group = create_test_group(&context.pool).await;
+        let sa = create_test_service_account(&context.pool, &group, None).await;
+        let entry = serde_json::json!({
+            "kind": "collection",
+            "id": fixture.collection.id
+        });
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
+            &serde_json::json!({ "resource_scopes": [entry.clone(), entry] }),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_token_mint_unknown_resource_scope_rejected() {
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        let sa = create_test_service_account(&context.pool, &group, None).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
+            &serde_json::json!({
+                "resource_scopes": [{"kind": "object", "id": i32::MAX}]
+            }),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
     /// #13: omitting `scopes` mints an unscoped token (`scoped = false`).
     #[actix_web::test]
     async fn test_token_mint_omitted_scopes_is_unscoped() {
-        use crate::schema::tokens::dsl::{principal_id, scoped, tokens};
+        use crate::schema::tokens::dsl::{
+            permission_scoped, principal_id, resource_scoped, tokens,
+        };
 
         let context = TestContext::new().await;
         let pool = &context.pool;
@@ -485,17 +580,17 @@ mod tests {
             "precondition: token mint succeeds"
         );
 
-        let scoped_flags: Vec<bool> = with_connection(pool, async |conn| {
+        let scoped_flags: Vec<(bool, bool)> = with_connection(pool, async |conn| {
             tokens
                 .filter(principal_id.eq(sa.id))
-                .select(scoped)
-                .load::<bool>(conn)
+                .select((permission_scoped, resource_scoped))
+                .load::<(bool, bool)>(conn)
                 .await
         })
         .await
         .unwrap();
 
-        assert_eq!(scoped_flags, vec![false]);
+        assert_eq!(scoped_flags, vec![(false, false)]);
     }
 
     /// #2 / #13 (mechanism): scope intersection is fail-closed. `None` (unscoped)
@@ -520,7 +615,9 @@ mod tests {
         #[case] requested: Vec<Permissions>,
         #[case] expected: bool,
     ) {
-        assert_eq!(scope_allows(scopes.as_deref(), &requested), expected);
+        let scope = scopes
+            .map(|permissions| TokenScope::from_stored_parts(Some(permissions), None).unwrap());
+        assert_eq!(scope_allows(scope.as_ref(), &requested), expected);
     }
 
     // ----- Batch 3: authz / scoped behavior -----
@@ -611,6 +708,380 @@ mod tests {
         .await;
 
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[derive(Clone, Copy)]
+    enum CollectionScopeTarget {
+        Collection,
+        DescendantClass,
+        DescendantObject,
+        OtherCollection,
+    }
+
+    #[rstest]
+    #[case::collection(CollectionScopeTarget::Collection, StatusCode::OK)]
+    #[case::descendant_class(CollectionScopeTarget::DescendantClass, StatusCode::OK)]
+    #[case::descendant_object(CollectionScopeTarget::DescendantObject, StatusCode::OK)]
+    #[case::other_collection(CollectionScopeTarget::OtherCollection, StatusCode::FORBIDDEN)]
+    #[actix_web::test]
+    async fn test_collection_resource_scope_covers_only_its_hierarchy(
+        #[case] target: CollectionScopeTarget,
+        #[case] expected: StatusCode,
+    ) {
+        let context = TestContext::new().await;
+        let (classes, objects, sa) = resource_hierarchy_fixture(&context).await;
+        let other = context.with_collection().await;
+        other
+            .owner_group
+            .add_member_without_events(&context.pool, &sa)
+            .await
+            .unwrap();
+        let collection_id = classes.collection.collection.id;
+        let token = resource_scoped_token(
+            &context.pool,
+            sa.id,
+            vec![TokenResourceScope::Collection(
+                CollectionID::new(collection_id).unwrap(),
+            )],
+        )
+        .await;
+        let endpoint = match target {
+            CollectionScopeTarget::Collection => {
+                format!("{COLLECTIONS_ENDPOINT}/{collection_id}")
+            }
+            CollectionScopeTarget::DescendantClass => {
+                format!("/api/v1/classes/{}", classes[0].id)
+            }
+            CollectionScopeTarget::DescendantObject => {
+                format!("/api/v1/classes/{}/{}", classes[0].id, objects[0].id)
+            }
+            CollectionScopeTarget::OtherCollection => {
+                format!("{COLLECTIONS_ENDPOINT}/{}", other.collection.id)
+            }
+        };
+
+        let resp = get_request(&context.pool, &token, &endpoint).await;
+
+        assert_eq!(resp.status(), expected);
+    }
+
+    #[derive(Clone, Copy)]
+    enum CombinedScopeTarget {
+        PermissionAndResourceMatch,
+        PermissionMismatch,
+        ResourceMismatch,
+    }
+
+    #[rstest]
+    #[case::match_both(CombinedScopeTarget::PermissionAndResourceMatch, StatusCode::OK)]
+    #[case::permission_mismatch(CombinedScopeTarget::PermissionMismatch, StatusCode::FORBIDDEN)]
+    #[case::resource_mismatch(CombinedScopeTarget::ResourceMismatch, StatusCode::FORBIDDEN)]
+    #[actix_web::test]
+    async fn test_permission_and_resource_scope_dimensions_intersect(
+        #[case] target: CombinedScopeTarget,
+        #[case] expected: StatusCode,
+    ) {
+        let context = TestContext::new().await;
+        let (classes, _objects, sa) = resource_hierarchy_fixture(&context).await;
+        let other = context.with_collection().await;
+        other
+            .owner_group
+            .add_member_without_events(&context.pool, &sa)
+            .await
+            .unwrap();
+        let collection_id = classes.collection.collection.id;
+        let scope = TokenScope::from_request_parts(
+            Some(vec![Permissions::ReadCollection]),
+            Some(vec![TokenResourceScope::Collection(
+                CollectionID::new(collection_id).unwrap(),
+            )]),
+        )
+        .unwrap()
+        .unwrap();
+        let token = create_principal_token_with_scope(
+            &context.pool,
+            sa.id,
+            None,
+            None,
+            None,
+            Some(&scope),
+            None,
+        )
+        .await
+        .unwrap()
+        .get_token();
+        let endpoint = match target {
+            CombinedScopeTarget::PermissionAndResourceMatch => {
+                format!("{COLLECTIONS_ENDPOINT}/{collection_id}")
+            }
+            CombinedScopeTarget::PermissionMismatch => {
+                format!("/api/v1/classes/{}", classes[0].id)
+            }
+            CombinedScopeTarget::ResourceMismatch => {
+                format!("{COLLECTIONS_ENDPOINT}/{}", other.collection.id)
+            }
+        };
+
+        let resp = get_request(&context.pool, &token, &endpoint).await;
+
+        assert_eq!(resp.status(), expected);
+    }
+
+    #[derive(Clone, Copy)]
+    enum ClassScopeTarget {
+        Class,
+        DescendantObject,
+        ParentCollection,
+        SiblingClass,
+        SiblingObject,
+    }
+
+    #[rstest]
+    #[case::class(ClassScopeTarget::Class, StatusCode::OK)]
+    #[case::descendant_object(ClassScopeTarget::DescendantObject, StatusCode::OK)]
+    #[case::parent_collection(ClassScopeTarget::ParentCollection, StatusCode::FORBIDDEN)]
+    #[case::sibling_class(ClassScopeTarget::SiblingClass, StatusCode::FORBIDDEN)]
+    #[case::sibling_object(ClassScopeTarget::SiblingObject, StatusCode::FORBIDDEN)]
+    #[actix_web::test]
+    async fn test_class_resource_scope_covers_only_class_and_objects(
+        #[case] target: ClassScopeTarget,
+        #[case] expected: StatusCode,
+    ) {
+        let context = TestContext::new().await;
+        let (classes, objects, sa) = resource_hierarchy_fixture(&context).await;
+        let token = resource_scoped_token(
+            &context.pool,
+            sa.id,
+            vec![TokenResourceScope::Class(
+                HubuumClassID::new(classes[0].id).unwrap(),
+            )],
+        )
+        .await;
+        let endpoint = match target {
+            ClassScopeTarget::Class => format!("/api/v1/classes/{}", classes[0].id),
+            ClassScopeTarget::DescendantObject => {
+                format!("/api/v1/classes/{}/{}", classes[0].id, objects[0].id)
+            }
+            ClassScopeTarget::ParentCollection => {
+                format!(
+                    "{COLLECTIONS_ENDPOINT}/{}",
+                    classes.collection.collection.id
+                )
+            }
+            ClassScopeTarget::SiblingClass => format!("/api/v1/classes/{}", classes[1].id),
+            ClassScopeTarget::SiblingObject => {
+                format!("/api/v1/classes/{}/{}", classes[1].id, objects[1].id)
+            }
+        };
+
+        let resp = get_request(&context.pool, &token, &endpoint).await;
+
+        assert_eq!(resp.status(), expected);
+    }
+
+    #[derive(Clone, Copy)]
+    enum ObjectScopeTarget {
+        Object,
+        SiblingObject,
+        Class,
+        Collection,
+    }
+
+    #[rstest]
+    #[case::object(ObjectScopeTarget::Object, StatusCode::OK)]
+    #[case::sibling_object(ObjectScopeTarget::SiblingObject, StatusCode::FORBIDDEN)]
+    #[case::class(ObjectScopeTarget::Class, StatusCode::FORBIDDEN)]
+    #[case::collection(ObjectScopeTarget::Collection, StatusCode::FORBIDDEN)]
+    #[actix_web::test]
+    async fn test_object_resource_scope_covers_only_named_object(
+        #[case] target: ObjectScopeTarget,
+        #[case] expected: StatusCode,
+    ) {
+        let context = TestContext::new().await;
+        let (classes, objects, sa) = resource_hierarchy_fixture(&context).await;
+        let token = resource_scoped_token(
+            &context.pool,
+            sa.id,
+            vec![TokenResourceScope::Object(
+                HubuumObjectID::new(objects[0].id).unwrap(),
+            )],
+        )
+        .await;
+        let endpoint = match target {
+            ObjectScopeTarget::Object => {
+                format!("/api/v1/classes/{}/{}", classes[0].id, objects[0].id)
+            }
+            ObjectScopeTarget::SiblingObject => {
+                format!("/api/v1/classes/{}/{}", classes[1].id, objects[1].id)
+            }
+            ObjectScopeTarget::Class => format!("/api/v1/classes/{}", classes[0].id),
+            ObjectScopeTarget::Collection => {
+                format!(
+                    "{COLLECTIONS_ENDPOINT}/{}",
+                    classes.collection.collection.id
+                )
+            }
+        };
+
+        let resp = get_request(&context.pool, &token, &endpoint).await;
+
+        assert_eq!(resp.status(), expected);
+    }
+
+    #[actix_web::test]
+    async fn test_resource_scope_cannot_grant_missing_group_access() {
+        let context = TestContext::new().await;
+        let fixture = context.with_collection().await;
+        let unrelated_group = create_test_group(&context.pool).await;
+        let sa = create_test_service_account(&context.pool, &unrelated_group, None).await;
+        let token = resource_scoped_token(
+            &context.pool,
+            sa.id,
+            vec![TokenResourceScope::Collection(
+                CollectionID::new(fixture.collection.id).unwrap(),
+            )],
+        )
+        .await;
+
+        let resp = get_request(
+            &context.pool,
+            &token,
+            &format!("{COLLECTIONS_ENDPOINT}/{}", fixture.collection.id),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[actix_web::test]
+    async fn test_object_resource_scope_filters_list_and_total_count() {
+        let context = TestContext::new().await;
+        let (classes, objects, sa) = resource_hierarchy_fixture(&context).await;
+        let _second = NewHubuumObject {
+            name: context.scoped_name("token_scope_same_class_sibling"),
+            collection_id: classes[0].collection_id,
+            hubuum_class_id: classes[0].id,
+            data: serde_json::json!({"index": 2}),
+            description: "resource-scope sibling object".to_string(),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let token = resource_scoped_token(
+            &context.pool,
+            sa.id,
+            vec![TokenResourceScope::Object(
+                HubuumObjectID::new(objects[0].id).unwrap(),
+            )],
+        )
+        .await;
+
+        let resp = get_request(
+            &context.pool,
+            &token,
+            &format!("/api/v1/classes/{}/", classes[0].id),
+        )
+        .await;
+        let total = header_value(&resp, TOTAL_COUNT_HEADER)
+            .unwrap()
+            .parse::<i64>()
+            .unwrap();
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let ids = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|object| object.get("id").and_then(serde_json::Value::as_i64))
+            .collect::<Vec<_>>();
+
+        assert_eq!((total, ids), (1, vec![i64::from(objects[0].id)]));
+    }
+
+    #[derive(Clone, Copy)]
+    enum RelationScopeTarget {
+        OneClass,
+        BothClasses,
+        OneObject,
+        BothObjects,
+    }
+
+    #[rstest]
+    #[case::one_class(RelationScopeTarget::OneClass, false)]
+    #[case::both_classes(RelationScopeTarget::BothClasses, true)]
+    #[case::one_object(RelationScopeTarget::OneObject, false)]
+    #[case::both_objects(RelationScopeTarget::BothObjects, true)]
+    #[actix_web::test]
+    async fn test_resource_scoped_relations_require_both_endpoints(
+        #[case] target: RelationScopeTarget,
+        #[case] expected_visible: bool,
+    ) {
+        let context = TestContext::new().await;
+        let (classes, objects, sa) = resource_hierarchy_fixture(&context).await;
+        let class_relation = NewHubuumClassRelation {
+            from_hubuum_class_id: classes[0].id,
+            to_hubuum_class_id: classes[1].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let object_relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: objects[0].id,
+            to_hubuum_object_id: objects[1].id,
+            class_relation_id: class_relation.id,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let (resource_scopes, endpoint, relation_id) = match target {
+            RelationScopeTarget::OneClass => (
+                vec![TokenResourceScope::Class(
+                    HubuumClassID::new(classes[0].id).unwrap(),
+                )],
+                "/api/v1/relations/classes",
+                class_relation.id,
+            ),
+            RelationScopeTarget::BothClasses => (
+                vec![
+                    TokenResourceScope::Class(HubuumClassID::new(classes[0].id).unwrap()),
+                    TokenResourceScope::Class(HubuumClassID::new(classes[1].id).unwrap()),
+                ],
+                "/api/v1/relations/classes",
+                class_relation.id,
+            ),
+            RelationScopeTarget::OneObject => (
+                vec![TokenResourceScope::Object(
+                    HubuumObjectID::new(objects[0].id).unwrap(),
+                )],
+                "/api/v1/relations/objects",
+                object_relation.id,
+            ),
+            RelationScopeTarget::BothObjects => (
+                vec![
+                    TokenResourceScope::Object(HubuumObjectID::new(objects[0].id).unwrap()),
+                    TokenResourceScope::Object(HubuumObjectID::new(objects[1].id).unwrap()),
+                ],
+                "/api/v1/relations/objects",
+                object_relation.id,
+            ),
+        };
+        let token = resource_scoped_token(&context.pool, sa.id, resource_scopes).await;
+
+        let resp = get_request(&context.pool, &token, endpoint).await;
+        let total = header_value(&resp, TOTAL_COUNT_HEADER)
+            .unwrap()
+            .parse::<i64>()
+            .unwrap();
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let visible = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|relation| relation["id"].as_i64() == Some(i64::from(relation_id)));
+
+        let expected_total = if expected_visible { 1 } else { 0 };
+        assert_eq!((total, visible), (expected_total, expected_visible));
     }
 
     /// #9 / #36: the human/admin extractors reject non-human/scoped callers. An
@@ -833,6 +1304,48 @@ mod tests {
         assert_eq!(body.principal.kind, "service_account");
         assert!(body.token.scoped);
         assert_eq!(body.token.scopes, Some(vec![Permissions::ReadCollection]));
+        assert_eq!(body.token.resource_scopes, None);
+    }
+
+    #[actix_web::test]
+    async fn test_resource_only_token_round_trips_through_mint_and_me() {
+        let context = TestContext::new().await;
+        let fixture = context.with_collection().await;
+        let sa = create_test_service_account(&context.pool, &fixture.owner_group, None).await;
+        fixture
+            .owner_group
+            .add_member_without_events(&context.pool, &sa)
+            .await
+            .unwrap();
+        let mint = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
+            &serde_json::json!({
+                "name": "resource-only",
+                "resource_scopes": [{
+                    "kind": "collection",
+                    "id": fixture.collection.id
+                }]
+            }),
+        )
+        .await;
+        let mint = assert_response_status(mint, StatusCode::CREATED).await;
+        let raw: serde_json::Value = test::read_body_json(mint).await;
+        let token = raw["token"].as_str().unwrap();
+
+        let me = get_request(&context.pool, token, ME_ENDPOINT).await;
+        let me = assert_response_status(me, StatusCode::OK).await;
+        let body: MeResponse = test::read_body_json(me).await;
+
+        assert!(body.token.scoped);
+        assert_eq!(body.token.scopes, None);
+        assert_eq!(
+            body.token.resource_scopes,
+            Some(vec![TokenResourceScope::Collection(
+                CollectionID::new(fixture.collection.id).unwrap()
+            )])
+        );
     }
 
     /// `/iam/me/groups` is self-service and accepts service-account tokens; it
@@ -1073,13 +1586,16 @@ mod tests {
         idempotency_key: Option<String>,
         scopes: Option<&[Permissions]>,
     ) -> TaskRecord {
+        let scope = scopes.map(|permissions| {
+            TokenScope::from_stored_parts(Some(permissions.to_vec()), None).unwrap()
+        });
         NewTaskRecord {
             kind: kind.as_str().to_string(),
             status: status.as_str().to_string(),
             submitted_by: Some(submitted_by),
             submitted_token_id: None,
             submitted_token_scoped: scopes.is_some(),
-            submitted_token_scopes: scope_snapshot_json(scopes),
+            submitted_token_scopes: scope_snapshot_json(scope.as_ref()),
             idempotency_key,
             request_hash: None,
             request_payload: None,
@@ -1282,13 +1798,53 @@ mod tests {
         let sa = create_test_service_account(pool, &group, None).await;
         group.add_member_without_events(pool, &sa).await.unwrap();
 
-        let visible = user_can_on_any(pool, &sa, Permissions::ReadTemplate, scope.as_deref())
+        let scope = scope
+            .map(|permissions| TokenScope::from_stored_parts(Some(permissions), None).unwrap());
+        let visible = user_can_on_any(pool, &sa, Permissions::ReadTemplate, scope.as_ref())
             .await
             .unwrap()
             .iter()
             .any(|n| n.id == fixture.collection.id);
 
         assert_eq!(visible, expect_visible);
+    }
+
+    #[actix_web::test]
+    async fn test_user_can_on_any_respects_collection_resource_scope() {
+        let context = TestContext::new().await;
+        let pool = &context.pool;
+        let mut collections = context.with_collections(2).await;
+        let excluded = collections.pop().unwrap();
+        let included = collections.pop().unwrap();
+        let group = create_test_group(pool).await;
+        for collection in [&included.collection, &excluded.collection] {
+            collection
+                .grant_one(pool, group.id, Permissions::ReadTemplate)
+                .await
+                .unwrap();
+        }
+        let sa = create_test_service_account(pool, &group, None).await;
+        group.add_member_without_events(pool, &sa).await.unwrap();
+        let scope = TokenScope::from_request_parts(
+            None,
+            Some(vec![TokenResourceScope::Collection(
+                CollectionID::new(included.collection.id).unwrap(),
+            )]),
+        )
+        .unwrap()
+        .unwrap();
+
+        let visible = user_can_on_any(pool, &sa, Permissions::ReadTemplate, Some(&scope))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            visible
+                .iter()
+                .map(|collection| collection.id)
+                .collect::<Vec<_>>(),
+            vec![included.collection.id]
+        );
     }
 
     /// Review #2: a service account can read a task it submitted; an unrelated

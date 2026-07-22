@@ -12,7 +12,7 @@ use crate::models::search::{
     ComputedFieldScope, FilterField, QueryOptions, QueryParamsExt, SearchOperator,
     parse_query_parameter_with_computed_filters_and_passthrough,
 };
-use crate::models::{CollectionID, HubuumClass, HubuumClassID, Permissions, UserID};
+use crate::models::{CollectionID, HubuumClass, HubuumClassID, Permissions, TokenScope, UserID};
 
 pub const MAX_OBJECT_AGGREGATE_DIMENSIONS: usize = 3;
 pub const MAX_OBJECT_AGGREGATE_MEASURES: usize = 4;
@@ -956,13 +956,13 @@ pub(crate) struct ObjectAggregateBackendParts {
 
 pub struct ObjectAggregateAuthorization {
     required_permissions: Vec<Permissions>,
-    token_scopes: Option<Vec<Permissions>>,
+    token_scopes: Option<TokenScope>,
 }
 
 impl ObjectAggregateAuthorization {
     pub fn new(
         required_permissions: Vec<Permissions>,
-        token_scopes: Option<Vec<Permissions>>,
+        token_scopes: Option<TokenScope>,
     ) -> Result<Self, ApiError> {
         if !required_permissions.contains(&Permissions::ReadObject)
             || !required_permissions.contains(&Permissions::ReadCollection)
@@ -978,7 +978,7 @@ impl ObjectAggregateAuthorization {
         })
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<Permissions>, Option<Vec<Permissions>>) {
+    pub(crate) fn into_parts(self) -> (Vec<Permissions>, Option<TokenScope>) {
         (self.required_permissions, self.token_scopes)
     }
 }

@@ -11832,7 +11832,7 @@
         "operationId": "getApiV1IamMe",
         "responses": {
           "200": {
-            "description": "Current authenticated principal and token",
+            "description": "Current authenticated principal and token, including permission and resource scope dimensions",
             "content": {
               "application/json": {
                 "schema": {
@@ -18074,6 +18074,15 @@
               "null"
             ]
           },
+          "resource_scopes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/TokenResourceScope"
+            }
+          },
           "scoped": {
             "type": "boolean"
           },
@@ -23106,6 +23115,16 @@
               "null"
             ]
           },
+          "resource_scopes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/TokenResourceScope"
+            },
+            "description": "Optional resource boundary. Entries are additive within the boundary\nand are always intersected with the principal's live group grants."
+          },
           "scopes": {
             "type": [
               "array",
@@ -23957,7 +23976,8 @@
           "token",
           "principal_id",
           "issued",
-          "scoped"
+          "permission_scoped",
+          "resource_scoped"
         ],
         "properties": {
           "description": {
@@ -23994,9 +24014,15 @@
               "null"
             ]
           },
+          "permission_scoped": {
+            "type": "boolean"
+          },
           "principal_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "resource_scoped": {
+            "type": "boolean"
           },
           "revoked_at": {
             "type": [
@@ -24004,9 +24030,6 @@
               "null"
             ],
             "format": "date-time"
-          },
-          "scoped": {
-            "type": "boolean"
           },
           "token": {
             "type": "string"
@@ -25490,6 +25513,65 @@
             "$ref": "#/components/schemas/SecretStatus"
           }
         }
+      },
+      "TokenResourceScope": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/CollectionID"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "collection"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/HubuumClassID"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "class"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/HubuumObjectID"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "object"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "One resource explicitly included in a token's resource boundary.\n\nResource scopes are additive within the boundary: a collection entry covers\nthat collection, its classes, and their objects; a class entry covers that\nclass and its objects; and an object entry covers only that object. The\nboundary is still intersected with the principal's live group grants."
       },
       "UnifiedSearchBatchResponse": {
         "type": "object",

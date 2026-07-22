@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Service-account and human bearer tokens can now be narrowed to specific
+  collections, classes, and objects in addition to permission types. Resource
+  scopes compose hierarchically, filter list totals and relation endpoints, are
+  preserved for asynchronous remote calls, and always intersect with live group
+  grants; naming an ungranted resource never grants access.
 - Extended permission-aware object aggregation with up to four ordered
   `sum`, `average`, `min`, or `max` measures over nested JSON and numeric
   computed fields, optional global aggregation without `group_by`, explicit

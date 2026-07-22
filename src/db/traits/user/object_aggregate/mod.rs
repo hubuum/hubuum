@@ -18,7 +18,7 @@ use crate::models::object_aggregate::{
     ObjectAggregateSpec,
 };
 use crate::models::search::{FilterField, QueryOptions, SortParam};
-use crate::models::{CollectionID, Permissions, UserID};
+use crate::models::{CollectionID, Permissions, TokenScope, UserID};
 use crate::pagination::{
     SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, prepare_db_pagination,
 };
@@ -56,7 +56,7 @@ struct ObjectAggregateExecution<'a> {
     paging: ObjectAggregatePaging,
     personal_owner_id: Option<i32>,
     required_permissions: Vec<Permissions>,
-    token_scopes: Option<&'a [Permissions]>,
+    token_scopes: Option<&'a TokenScope>,
 }
 
 struct ObjectAggregatePaging {
@@ -151,7 +151,7 @@ pub trait ObjectAggregateBackend: UserCollectionAccessors {
             },
             personal_owner_id: personal_owner_id.map(UserID::id),
             required_permissions,
-            token_scopes: token_scopes.as_deref(),
+            token_scopes: token_scopes.as_ref(),
         };
 
         let permission_backend = context.permission_backend();
@@ -220,6 +220,7 @@ async fn aggregate_visible_filtered_objects_with_local_batches(
         target,
         paging,
         personal_owner_id,
+        token_scopes,
         ..
     } = execution;
     with_transaction(
@@ -237,7 +238,8 @@ async fn aggregate_visible_filtered_objects_with_local_batches(
                     &database_options,
                     target.collection_id,
                     &paging.spec,
-                );
+                )
+                .token_scope(token_scopes);
                 let candidate_query =
                     if let Some(snapshot) = paging.computed_filter_snapshot.as_ref() {
                         candidate_query.resolved_computed_filters(snapshot)
@@ -313,7 +315,7 @@ where
         mut paging,
         personal_owner_id,
         required_permissions,
-        token_scopes: _,
+        token_scopes,
     } = execution;
     let authorizer = ExternalObjectAggregateAuthorizer::new(
         backend,
@@ -335,7 +337,8 @@ where
             &database_options,
             target.collection_id,
             &paging.spec,
-        );
+        )
+        .token_scope(token_scopes);
         let candidate_query = if filters_computed_values {
             candidate_query.include_computed_filter_data()
         } else {

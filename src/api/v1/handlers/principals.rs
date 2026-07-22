@@ -15,14 +15,14 @@ use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
 use crate::models::collection::principal_all_permissions;
 use crate::models::principal::{Principal, PrincipalKind, PrincipalSettings};
 use crate::models::search::parse_query_parameter;
-use crate::models::token::{create_principal_token, revoke_token_by_id_for_principal};
+use crate::models::token::{create_principal_token_with_scope, revoke_token_by_id_for_principal};
 use crate::models::{
     Group, GroupResponse, Permissions, PrincipalID, PrincipalToken, PrincipalTokenMetadata,
+    TokenResourceScope, TokenScope,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::traits::{AuthzSubject, GroupAccessors};
 use std::collections::BTreeMap;
-use std::collections::HashSet;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(create_token)
@@ -63,6 +63,9 @@ pub struct NewTokenRequest {
     /// Optional scope set. Omit for an unscoped token; an **empty** array is
     /// rejected (almost certainly a client bug, not "grant nothing").
     pub scopes: Option<Vec<Permissions>>,
+    /// Optional resource boundary. Entries are additive within the boundary
+    /// and are always intersected with the principal's live group grants.
+    pub resource_scopes: Option<Vec<TokenResourceScope>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -164,38 +167,23 @@ pub async fn create_token(
     }
 
     let body = body.into_inner();
-    if let Some(scopes) = &body.scopes
-        && scopes.is_empty()
-    {
-        return Err(ApiError::BadRequest(
-            "scopes must be non-empty when provided".to_string(),
-        ));
-    }
-
-    if let Some(scopes) = &body.scopes {
-        let unique: HashSet<Permissions> = scopes.iter().copied().collect();
-        if unique.len() != scopes.len() {
-            return Err(ApiError::BadRequest(
-                "scopes must not contain duplicates".to_string(),
-            ));
-        }
-    }
+    let scope = TokenScope::from_request_parts(body.scopes, body.resource_scopes)?;
 
     debug!(
         message = "Token mint requested",
         principal = principal.id,
         requestor = requestor.user.id,
-        scoped = body.scopes.is_some()
+        scoped = scope.is_some()
     );
 
     let event_context = requestor.event_context(&req);
-    let raw = create_principal_token(
+    let raw = create_principal_token_with_scope(
         &pool,
         principal.id,
         body.name.as_deref(),
         body.description.as_deref(),
         body.expires_at,
-        body.scopes.as_deref(),
+        scope.as_ref(),
         Some(&event_context),
     )
     .await?;

@@ -1,14 +1,13 @@
 use crate::db::DbPool;
 use crate::db::traits::Status;
-use crate::db::traits::authz::{AuthzSubject, load_token_scopes};
+use crate::db::traits::authz::{AuthzSubject, load_token_scope};
 use crate::db::traits::principal::load_principal_with_user;
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
-use crate::models::permissions::Permissions;
 use crate::models::principal::{Principal, load_principal_by_id};
 use crate::models::token::{PrincipalToken, Token};
 use crate::models::user::User;
-use crate::models::{MAX_OBJECT_DATA_PATCH_BYTES, ObjectDataPatchDocument};
+use crate::models::{MAX_OBJECT_DATA_PATCH_BYTES, ObjectDataPatchDocument, TokenScope};
 use crate::permissions::{AppContext, PrincipalRef};
 
 use actix_web::{
@@ -96,14 +95,14 @@ pub struct Authenticated {
     pub token_meta: PrincipalToken,
     pub principal: Principal,
     /// `None` = unscoped (full principal authority); `Some(..)` = the token's
-    /// scope set (possibly empty = deny-all).
-    pub scopes: Option<Vec<Permissions>>,
+    /// permission and/or resource narrowing boundary.
+    pub scope: Option<TokenScope>,
 }
 
 impl Authenticated {
-    /// The token scope set as a slice, for passing into authz entry points.
-    pub fn scopes(&self) -> Option<&[Permissions]> {
-        self.scopes.as_deref()
+    /// The complete token scope, for passing into authorization entry points.
+    pub fn scopes(&self) -> Option<&TokenScope> {
+        self.scope.as_ref()
     }
 }
 
@@ -220,16 +219,12 @@ async fn build_authenticated_from_meta(
 ) -> Result<Authenticated, ApiError> {
     crate::auth::refresh_principal_if_needed(pool, token_meta.principal_id).await?;
     let principal = load_principal_by_id(pool, token_meta.principal_id).await?;
-    let scopes = if token_meta.scoped {
-        Some(load_token_scopes(pool, token_meta.id).await?)
-    } else {
-        None
-    };
+    let scope = load_token_scope(pool, &token_meta).await?;
     Ok(Authenticated {
         token,
         token_meta,
         principal,
-        scopes,
+        scope,
     })
 }
 
@@ -253,7 +248,7 @@ async fn human_unscoped_user_from_meta(
     pool: &DbPool,
     token_meta: PrincipalToken,
 ) -> Result<User, ApiError> {
-    if token_meta.scoped {
+    if token_meta.is_scoped() {
         return Err(ApiError::Forbidden(
             "Scoped tokens cannot be used on human/management endpoints".to_string(),
         ));

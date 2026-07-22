@@ -1,5 +1,6 @@
 use super::*;
 use crate::db::traits::authz::AuthzSubject;
+use crate::models::token_scope::TokenScope;
 use diesel_async::RunQueryDsl;
 use std::collections::HashMap;
 
@@ -242,7 +243,7 @@ pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
     pool: &DbPool,
     user_id: U,
     permission_type: Permissions,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
 ) -> Result<Vec<Collection>, ApiError> {
     use crate::db::traits::authz::scope_allows;
     use crate::schema::collection_closure::dsl::{
@@ -279,6 +280,21 @@ pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
     };
 
     let filtered_query = permission_type.create_boxed_filter(base_query, true);
+    if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+        return with_connection(pool, async |conn| {
+            filtered_query
+                .inner_join(
+                    collection_closure.on(permission_collection_id.eq(ancestor_collection_id)),
+                )
+                .inner_join(collections.on(collection_table_id.eq(descendant_collection_id)))
+                .filter(collection_table_id.eq_any(scoped_collection_ids))
+                .select(collections::all_columns())
+                .distinct()
+                .load::<Collection>(conn)
+                .await
+        })
+        .await;
+    }
     with_connection(pool, async |conn| {
         filtered_query
             .inner_join(collection_closure.on(permission_collection_id.eq(ancestor_collection_id)))

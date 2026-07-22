@@ -10,6 +10,7 @@ use crate::config::token_hash_key_bytes;
 use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::events::EventContext;
+use crate::models::TokenScope;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::tokens;
 use crate::traits::{
@@ -30,7 +31,8 @@ pub struct PrincipalToken {
     pub expires_at: Option<NaiveDateTime>,
     pub last_used_at: Option<NaiveDateTime>,
     pub revoked_at: Option<NaiveDateTime>,
-    pub scoped: bool,
+    pub permission_scoped: bool,
+    pub resource_scoped: bool,
 }
 
 /// Public, hash-free projection of a token for listing.
@@ -49,6 +51,7 @@ pub struct PrincipalTokenMetadata {
 
 impl From<PrincipalToken> for PrincipalTokenMetadata {
     fn from(value: PrincipalToken) -> Self {
+        let scoped = value.is_scoped();
         Self {
             id: value.id,
             principal_id: value.principal_id,
@@ -58,8 +61,14 @@ impl From<PrincipalToken> for PrincipalTokenMetadata {
             expires_at: value.expires_at,
             last_used_at: value.last_used_at,
             revoked_at: value.revoked_at,
-            scoped: value.scoped,
+            scoped,
         }
+    }
+}
+
+impl PrincipalToken {
+    pub fn is_scoped(&self) -> bool {
+        self.permission_scoped || self.resource_scoped
     }
 }
 
@@ -169,6 +178,32 @@ where
         description,
         expires_at,
         scopes,
+        context,
+    )
+    .await
+}
+
+/// Create a token with independent permission and resource narrowing
+/// dimensions. `None` creates an unscoped token.
+pub async fn create_principal_token_with_scope<C>(
+    backend: &C,
+    principal: i32,
+    name: Option<&str>,
+    description: Option<&str>,
+    expires_at: Option<chrono::NaiveDateTime>,
+    scope: Option<&TokenScope>,
+    context: Option<&EventContext>,
+) -> Result<Token, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    crate::db::traits::token::create_principal_token_with_scope_db(
+        backend.db_pool(),
+        principal,
+        name,
+        description,
+        expires_at,
+        scope,
         context,
     )
     .await

@@ -254,6 +254,7 @@ async fn read_related_object_relations(
             pool.permission_backend(),
             &principal,
             candidates,
+            requestor.scopes(),
             required,
             &search_params,
             |relation| {

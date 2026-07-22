@@ -638,6 +638,27 @@ diesel::table! {
 }
 
 diesel::table! {
+    token_class_scopes (token_id, class_id) {
+        token_id -> Int4,
+        class_id -> Int4,
+    }
+}
+
+diesel::table! {
+    token_collection_scopes (token_id, collection_id) {
+        token_id -> Int4,
+        collection_id -> Int4,
+    }
+}
+
+diesel::table! {
+    token_object_scopes (token_id, object_id) {
+        token_id -> Int4,
+        object_id -> Int4,
+    }
+}
+
+diesel::table! {
     token_scopes (token_id, permission) {
         token_id -> Int4,
         permission -> Varchar,
@@ -655,7 +676,8 @@ diesel::table! {
         expires_at -> Nullable<Timestamp>,
         last_used_at -> Nullable<Timestamp>,
         revoked_at -> Nullable<Timestamp>,
-        scoped -> Bool,
+        permission_scoped -> Bool,
+        resource_scoped -> Bool,
     }
 }
 
@@ -708,6 +730,12 @@ diesel::joinable!(remote_targets -> hubuumclass (class_id));
 diesel::joinable!(service_accounts -> groups (owner_group_id));
 diesel::joinable!(system_maintenance -> restore_jobs (restore_job_id));
 diesel::joinable!(tasks -> tokens (submitted_token_id));
+diesel::joinable!(token_class_scopes -> hubuumclass (class_id));
+diesel::joinable!(token_class_scopes -> tokens (token_id));
+diesel::joinable!(token_collection_scopes -> collections (collection_id));
+diesel::joinable!(token_collection_scopes -> tokens (token_id));
+diesel::joinable!(token_object_scopes -> hubuumobject (object_id));
+diesel::joinable!(token_object_scopes -> tokens (token_id));
 diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
@@ -751,6 +779,9 @@ diesel::allow_tables_to_appear_in_same_query!(
     service_accounts,
     system_maintenance,
     tasks,
+    token_class_scopes,
+    token_collection_scopes,
+    token_object_scopes,
     token_scopes,
     tokens,
     users,

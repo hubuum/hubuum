@@ -4,14 +4,38 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::principal::PrincipalKind;
-use crate::models::{Permissions, PrincipalToken, Token};
-use crate::schema::{principals, service_accounts, token_scopes, tokens};
+use crate::models::{Permissions, PrincipalToken, Token, TokenResourceScope, TokenScope};
+use crate::schema::{
+    principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
+    token_scopes, tokens,
+};
 
 #[derive(Insertable)]
 #[diesel(table_name = token_scopes)]
 struct NewTokenScope<'a> {
     token_id: i32,
     permission: &'a str,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = token_collection_scopes)]
+struct NewTokenCollectionScope {
+    token_id: i32,
+    collection_id: i32,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = token_class_scopes)]
+struct NewTokenClassScope {
+    token_id: i32,
+    class_id: i32,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = token_object_scopes)]
+struct NewTokenObjectScope {
+    token_id: i32,
+    object_id: i32,
 }
 
 fn token_snapshot(token: &PrincipalToken) -> serde_json::Value {
@@ -24,7 +48,9 @@ fn token_snapshot(token: &PrincipalToken) -> serde_json::Value {
         "expires_at": token.expires_at,
         "last_used_at": token.last_used_at,
         "revoked_at": token.revoked_at,
-        "scoped": token.scoped,
+        "scoped": token.is_scoped(),
+        "permission_scoped": token.permission_scoped,
+        "resource_scoped": token.resource_scoped,
     })
 }
 
@@ -41,7 +67,9 @@ fn token_event(
             .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string()))
             .with_metadata(serde_json::json!({
                 "principal_id": token.principal_id,
-                "scoped": token.scoped,
+                "scoped": token.is_scoped(),
+                "permission_scoped": token.permission_scoped,
+                "resource_scoped": token.resource_scoped,
             })),
     )
 }
@@ -127,10 +155,36 @@ pub async fn create_principal_token_db(
     scopes: Option<&[Permissions]>,
     context: Option<&EventContext>,
 ) -> Result<Token, ApiError> {
+    let scope = scopes
+        .map(|permissions| TokenScope::from_stored_parts(Some(permissions.to_vec()), None))
+        .transpose()?;
+    create_principal_token_with_scope_db(
+        pool,
+        principal,
+        name,
+        description,
+        expires_at,
+        scope.as_ref(),
+        context,
+    )
+    .await
+}
+
+pub async fn create_principal_token_with_scope_db(
+    pool: &DbPool,
+    principal: i32,
+    name: Option<&str>,
+    description: Option<&str>,
+    expires_at: Option<chrono::NaiveDateTime>,
+    scope: Option<&TokenScope>,
+    context: Option<&EventContext>,
+) -> Result<Token, ApiError> {
     let raw = crate::utilities::auth::generate_token();
     let hash = raw.storage_hash();
-    let scoped = scopes.is_some();
-    let scope_strings = scopes
+    let permission_scoped = scope.is_some_and(TokenScope::is_permission_scoped);
+    let resource_scoped = scope.is_some_and(TokenScope::is_resource_scoped);
+    let scope_strings = scope
+        .and_then(TokenScope::permissions)
         .map(|permissions| {
             permissions
                 .iter()
@@ -138,6 +192,32 @@ pub async fn create_principal_token_db(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let resource_scopes = scope
+        .map(TokenScope::resource_scopes)
+        .transpose()?
+        .flatten()
+        .unwrap_or_default();
+    let collection_scope_ids = resource_scopes
+        .iter()
+        .filter_map(|resource| match resource {
+            TokenResourceScope::Collection(id) => Some(id.id()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let class_scope_ids = resource_scopes
+        .iter()
+        .filter_map(|resource| match resource {
+            TokenResourceScope::Class(id) => Some(id.id()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let object_scope_ids = resource_scopes
+        .iter()
+        .filter_map(|resource| match resource {
+            TokenResourceScope::Object(id) => Some(id.id()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     let name = name.map(ToOwned::to_owned);
     let description = description.map(ToOwned::to_owned);
 
@@ -162,6 +242,43 @@ pub async fn create_principal_token_db(
             }
         }
 
+        if !collection_scope_ids.is_empty() {
+            let found = crate::schema::collections::table
+                .filter(crate::schema::collections::id.eq_any(&collection_scope_ids))
+                .count()
+                .get_result::<i64>(conn)
+                .await?;
+            if found != collection_scope_ids.len() as i64 {
+                return Err(ApiError::BadRequest(
+                    "resource_scopes contains an unknown collection id".to_string(),
+                ));
+            }
+        }
+        if !class_scope_ids.is_empty() {
+            let found = crate::schema::hubuumclass::table
+                .filter(crate::schema::hubuumclass::id.eq_any(&class_scope_ids))
+                .count()
+                .get_result::<i64>(conn)
+                .await?;
+            if found != class_scope_ids.len() as i64 {
+                return Err(ApiError::BadRequest(
+                    "resource_scopes contains an unknown class id".to_string(),
+                ));
+            }
+        }
+        if !object_scope_ids.is_empty() {
+            let found = crate::schema::hubuumobject::table
+                .filter(crate::schema::hubuumobject::id.eq_any(&object_scope_ids))
+                .count()
+                .get_result::<i64>(conn)
+                .await?;
+            if found != object_scope_ids.len() as i64 {
+                return Err(ApiError::BadRequest(
+                    "resource_scopes contains an unknown object id".to_string(),
+                ));
+            }
+        }
+
         let token = diesel::insert_into(tokens::table)
             .values((
                 tokens::token.eq(&hash),
@@ -169,7 +286,8 @@ pub async fn create_principal_token_db(
                 tokens::name.eq(&name),
                 tokens::description.eq(&description),
                 tokens::expires_at.eq(expires_at),
-                tokens::scoped.eq(scoped),
+                tokens::permission_scoped.eq(permission_scoped),
+                tokens::resource_scoped.eq(resource_scoped),
             ))
             .get_result::<PrincipalToken>(conn)
             .await?;
@@ -183,6 +301,46 @@ pub async fn create_principal_token_db(
                 })
                 .collect::<Vec<_>>();
             diesel::insert_into(token_scopes::table)
+                .values(&rows)
+                .execute(conn)
+                .await?;
+        }
+
+        if !collection_scope_ids.is_empty() {
+            let rows = collection_scope_ids
+                .iter()
+                .map(|collection_id| NewTokenCollectionScope {
+                    token_id: token.id,
+                    collection_id: *collection_id,
+                })
+                .collect::<Vec<_>>();
+            diesel::insert_into(token_collection_scopes::table)
+                .values(&rows)
+                .execute(conn)
+                .await?;
+        }
+        if !class_scope_ids.is_empty() {
+            let rows = class_scope_ids
+                .iter()
+                .map(|class_id| NewTokenClassScope {
+                    token_id: token.id,
+                    class_id: *class_id,
+                })
+                .collect::<Vec<_>>();
+            diesel::insert_into(token_class_scopes::table)
+                .values(&rows)
+                .execute(conn)
+                .await?;
+        }
+        if !object_scope_ids.is_empty() {
+            let rows = object_scope_ids
+                .iter()
+                .map(|object_id| NewTokenObjectScope {
+                    token_id: token.id,
+                    object_id: *object_id,
+                })
+                .collect::<Vec<_>>();
+            diesel::insert_into(token_object_scopes::table)
                 .values(&rows)
                 .execute(conn)
                 .await?;

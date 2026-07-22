@@ -1,4 +1,5 @@
 use crate::db::prelude::*;
+use crate::models::token_scope::TokenScope;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -208,7 +209,7 @@ pub async fn user_can_on_any<C, U>(
     backend: &C,
     user_id: U,
     permission_type: Permissions,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
 ) -> Result<Vec<Collection>, ApiError>
 where
     C: BackendContext + ?Sized,

@@ -1,4 +1,5 @@
 use crate::db::prelude::*;
+use crate::models::token_scope::TokenScope;
 use serde::Serialize;
 
 use crate::db::{DbPool, with_connection, with_transaction};
@@ -302,7 +303,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         pool: &DbPool,
         subject: S,
         permissions_requested: Vec<Permissions>,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<bool, ApiError> {
         let lookup_table = crate::schema::permissions::dsl::permissions;
         let group_id_field = crate::schema::permissions::dsl::group_id;

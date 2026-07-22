@@ -122,10 +122,16 @@ pub async fn get_remote_targets(
     } else {
         Vec::new()
     };
-    let allowed_collection_ids = visible_collections
+    let mut allowed_collection_ids = visible_collections
         .into_iter()
         .map(|collection| collection.id)
         .collect::<Vec<_>>();
+    if let Some(scoped_collection_ids) = requestor
+        .scopes()
+        .and_then(crate::models::TokenScope::collection_ids)
+    {
+        allowed_collection_ids.retain(|id| scoped_collection_ids.contains(id));
+    }
     let (targets, total_count) =
         RemoteTarget::list_with_total_count(&pool, &allowed_collection_ids, &query_options).await?;
 

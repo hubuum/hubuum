@@ -7,10 +7,12 @@ use crate::db::traits::search::JsonPredicateExt;
 use crate::models::RelatedObjectForRootRow;
 use crate::models::permissions::PermissionFilter;
 use crate::models::search::{ParsedQueryParamExt, SQLValue};
+use crate::models::token_scope::TokenScope;
 use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::traits::PrincipalIdAccessor;
 use crate::traits::{CursorPaginated, CursorSqlMapping};
 use crate::utilities::extensions::CustomStringExtensions;
+use diesel::BoolExpressionMethods;
 use diesel_async::RunQueryDsl;
 
 #[derive(diesel::QueryableByName)]
@@ -197,7 +199,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_collections_from_backend_with_admin_status(
@@ -213,7 +215,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.count_collections_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
@@ -225,7 +227,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError> {
         // Fail-closed: a scoped token must carry the resource read permission.
         if !scope_allows(scopes, &[Permissions::ReadCollection]) {
@@ -287,6 +289,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 )
                 .into_boxed()
         };
+        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+            base_query = base_query.filter(collection_id.eq_any(scoped_collection_ids));
+        }
 
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
@@ -331,7 +336,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
         use crate::schema::collection_closure::dsl::{
             ancestor_collection_id, collection_closure, descendant_collection_id,
@@ -387,6 +392,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 )
                 .into_boxed()
         };
+        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+            base_query = base_query.filter(collection_id.eq_any(scoped_collection_ids));
+        }
 
         for param in query_params {
             use crate::{date_search, numeric_search, string_search};
@@ -425,7 +433,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_classes_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
@@ -436,7 +444,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.count_classes_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
@@ -448,7 +456,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         use crate::schema::hubuumclass::dsl::{
             collection_id as class_collection_id, created_at as class_created_at,
@@ -488,6 +496,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let mut base_query = hubuumclass
             .filter(class_collection_id.eq_any(collection_ids))
             .into_boxed();
+        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+            base_query = base_query.filter(
+                class_collection_id
+                    .eq_any(scoped_collection_ids)
+                    .or(class_id.eq_any(scoped_class_ids)),
+            );
+        }
 
         let json_schema_queries = query_params.json_schemas()?;
         if !json_schema_queries.is_empty() {
@@ -559,7 +575,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
         use crate::schema::hubuumclass::dsl::{
             collection_id as class_collection_id, created_at as class_created_at,
@@ -585,6 +601,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let mut base_query = hubuumclass
             .filter(class_collection_id.eq_any(collection_ids))
             .into_boxed();
+        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+            base_query = base_query.filter(
+                class_collection_id
+                    .eq_any(scoped_collection_ids)
+                    .or(class_id.eq_any(scoped_class_ids)),
+            );
+        }
 
         let json_schema_queries = query_params.json_schemas()?;
         if !json_schema_queries.is_empty() {
@@ -640,7 +664,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_objects_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
@@ -651,7 +675,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.count_objects_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
@@ -663,7 +687,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         let plan = ObjectQueryPlan::ordinary(query_options)?;
         self.search_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
@@ -674,7 +698,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
         snapshot: &ComputedQuerySnapshot,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
@@ -688,7 +712,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_plan: ObjectQueryPlan<'_>,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
@@ -731,6 +755,16 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let mut base_query = hubuumobject
             .filter(object_collection_id.eq_any(collection_ids))
             .into_boxed();
+        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+            let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
+            base_query = base_query.filter(
+                object_collection_id
+                    .eq_any(scoped_collection_ids)
+                    .or(hubuum_class_id.eq_any(scoped_class_ids))
+                    .or(object_id.eq_any(scoped_object_ids)),
+            );
+        }
         if let Some(authorized_object_ids) = query_mode.authorized_object_ids() {
             base_query = base_query.filter(object_id.eq_any(authorized_object_ids.as_slice()));
         }
@@ -828,7 +862,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
         let plan = ObjectQueryPlan::ordinary(query_options)?;
         self.count_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
@@ -839,7 +873,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
         snapshot: &ComputedQuerySnapshot,
     ) -> Result<i64, ApiError> {
         let is_admin = self.is_admin(pool).await?;
@@ -853,7 +887,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_plan: ObjectQueryPlan<'_>,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
@@ -882,6 +916,16 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let mut base_query = hubuumobject
             .filter(object_collection_id.eq_any(collection_ids))
             .into_boxed();
+        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+            let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
+            base_query = base_query.filter(
+                object_collection_id
+                    .eq_any(scoped_collection_ids)
+                    .or(hubuum_class_id.eq_any(scoped_class_ids))
+                    .or(object_id.eq_any(scoped_object_ids)),
+            );
+        }
         if let Some(authorized_object_ids) = query_mode.authorized_object_ids() {
             base_query = base_query.filter(object_id.eq_any(authorized_object_ids.as_slice()));
         }
@@ -948,7 +992,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_class_relations_from_backend_with_admin_status(
@@ -964,7 +1008,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.class_relations_page_from_backend_with_admin_status(
@@ -981,7 +1025,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         let (items, _) = self
             .class_relations_page_from_backend_with_admin_status(
@@ -999,7 +1043,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError> {
         use crate::schema::hubuumclass::dsl::{
             collection_id as class_collection_id, hubuumclass, id as class_id,
@@ -1121,6 +1165,19 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     ),
                 )
                 .into_boxed();
+            if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+                let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+                let scoped_class_query = || {
+                    hubuumclass.select(class_id).filter(
+                        class_collection_id
+                            .eq_any(scoped_collection_ids)
+                            .or(class_id.eq_any(scoped_class_ids)),
+                    )
+                };
+                base_query = base_query
+                    .filter(from_hubuum_class_id.eq_any(scoped_class_query()))
+                    .filter(to_hubuum_class_id.eq_any(scoped_class_query()));
+            }
 
             for param in &query_params {
                 use crate::{date_search, numeric_search};
@@ -1191,7 +1248,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         class: K,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
@@ -1213,7 +1270,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
@@ -1266,6 +1323,19 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     ),
                 )
                 .into_boxed();
+            if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+                let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+                let scoped_class_query = || {
+                    hubuumclass.select(class_id).filter(
+                        class_collection_id
+                            .eq_any(scoped_collection_ids)
+                            .or(class_id.eq_any(scoped_class_ids)),
+                    )
+                };
+                base_query = base_query
+                    .filter(from_hubuum_class_id.eq_any(scoped_class_query()))
+                    .filter(to_hubuum_class_id.eq_any(scoped_class_query()));
+            }
 
             for param in &query_params {
                 use crate::{date_search, numeric_search};
@@ -1334,7 +1404,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         class_ids: &[i32],
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_class_relations_between_ids_from_backend_with_admin_status(
@@ -1348,7 +1418,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         class_ids: &[i32],
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         use crate::schema::hubuumclass::dsl::{
             collection_id as class_collection_id, hubuumclass, id as class_id,
@@ -1374,7 +1444,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             .map(|n| n.id)
             .collect();
 
-        let base_query = hubuumclass_relation
+        let mut base_query = hubuumclass_relation
             .filter(from_hubuum_class_id.eq_any(class_ids))
             .filter(to_hubuum_class_id.eq_any(class_ids))
             .filter(
@@ -1391,7 +1461,21 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                         .filter(class_collection_id.eq_any(&collection_ids)),
                 ),
             )
-            .order(relation_id.asc());
+            .into_boxed();
+        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+            let scoped_class_query = || {
+                hubuumclass.select(class_id).filter(
+                    class_collection_id
+                        .eq_any(scoped_collection_ids)
+                        .or(class_id.eq_any(scoped_class_ids)),
+                )
+            };
+            base_query = base_query
+                .filter(from_hubuum_class_id.eq_any(scoped_class_query()))
+                .filter(to_hubuum_class_id.eq_any(scoped_class_query()));
+        }
+        let base_query = base_query.order(relation_id.asc());
 
         trace_query!(base_query, "Searching class relations among class IDs");
 
@@ -1406,7 +1490,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         class: K,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
         K: SelfAccessors<HubuumClass>,
@@ -1427,7 +1511,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         class: K,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
@@ -1449,7 +1533,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
         K: SelfAccessors<HubuumClass>,
@@ -1488,7 +1572,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
         K: SelfAccessors<HubuumClass>,
@@ -1541,7 +1625,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_object_relations_from_backend_with_admin_status(
@@ -1557,7 +1641,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.object_relations_page_from_backend_with_admin_status(
@@ -1574,7 +1658,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         let (items, _) = self
             .object_relations_page_from_backend_with_admin_status(
@@ -1592,7 +1676,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError> {
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, hubuumobject, id as object_id,
@@ -1651,6 +1735,22 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     ),
                 )
                 .into_boxed();
+            if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+                let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+                let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
+                let scoped_object_query = || {
+                    hubuumobject.select(object_id).filter(
+                        object_collection_id
+                            .eq_any(scoped_collection_ids)
+                            .or(crate::schema::hubuumobject::hubuum_class_id
+                                .eq_any(scoped_class_ids))
+                            .or(object_id.eq_any(scoped_object_ids)),
+                    )
+                };
+                base_query = base_query
+                    .filter(from_hubuum_object_id.eq_any(scoped_object_query()))
+                    .filter(to_hubuum_object_id.eq_any(scoped_object_query()));
+            }
 
             for param in &query_params {
                 use crate::{date_search, numeric_search};
@@ -1720,7 +1820,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject>,
@@ -1742,7 +1842,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject>,
@@ -1812,6 +1912,22 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     ),
                 )
                 .into_boxed();
+            if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+                let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+                let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
+                let scoped_object_query = || {
+                    hubuumobject.select(object_id_column).filter(
+                        object_collection_id
+                            .eq_any(scoped_collection_ids)
+                            .or(crate::schema::hubuumobject::hubuum_class_id
+                                .eq_any(scoped_class_ids))
+                            .or(object_id_column.eq_any(scoped_object_ids)),
+                    )
+                };
+                base_query = base_query
+                    .filter(from_hubuum_object_id.eq_any(scoped_object_query()))
+                    .filter(to_hubuum_object_id.eq_any(scoped_object_query()));
+            }
 
             for param in &query_params {
                 use crate::{date_search, numeric_search};
@@ -1883,7 +1999,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         object_ids: &[i32],
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.search_object_relations_between_ids_from_backend_with_admin_status(
@@ -1897,10 +2013,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         object_ids: &[i32],
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         use crate::schema::hubuumobject::dsl::{
-            collection_id as object_collection_id, hubuumobject, id as object_id_column,
+            collection_id as object_collection_id, hubuum_class_id, hubuumobject,
+            id as object_id_column,
         };
         use crate::schema::hubuumobject_relation::dsl::{
             from_hubuum_object_id, hubuumobject_relation, id, to_hubuum_object_id,
@@ -1930,7 +2047,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             collection_ids = ?collection_ids
         );
 
-        let base_query = hubuumobject_relation
+        let mut base_query = hubuumobject_relation
             .filter(from_hubuum_object_id.eq_any(object_ids))
             .filter(to_hubuum_object_id.eq_any(object_ids))
             .filter(
@@ -1947,7 +2064,23 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                         .filter(object_collection_id.eq_any(&collection_ids)),
                 ),
             )
-            .order(id.asc());
+            .into_boxed();
+        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+            let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
+            let scoped_object_query = || {
+                hubuumobject.select(object_id_column).filter(
+                    object_collection_id
+                        .eq_any(scoped_collection_ids)
+                        .or(hubuum_class_id.eq_any(scoped_class_ids))
+                        .or(object_id_column.eq_any(scoped_object_ids)),
+                )
+            };
+            base_query = base_query
+                .filter(from_hubuum_object_id.eq_any(scoped_object_query()))
+                .filter(to_hubuum_object_id.eq_any(scoped_object_query()));
+        }
+        let base_query = base_query.order(id.asc());
 
         trace_query!(base_query, "Searching object relations among object IDs");
 
@@ -1962,7 +2095,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
@@ -1983,7 +2116,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         object: O,
         query_options: QueryOptions,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
@@ -2005,7 +2138,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
@@ -2044,7 +2177,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
         O: SelfAccessors<HubuumObject> + ClassAccessors,
@@ -2098,7 +2231,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         root_object_ids: &[i32],
         include: ExportIncludeRelatedQuery,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.related_objects_for_roots_from_backend_with_admin_status(
@@ -2117,7 +2250,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         root_object_ids: &[i32],
         include: ExportIncludeRelatedQuery,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
         if root_object_ids.is_empty() {
             return Ok(Vec::new());
@@ -2144,6 +2277,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let spec = build_root_graph_walk_query(RootGraphWalkSpec {
             root_object_ids,
             collection_ids: &collection_ids,
+            scope: scopes,
             max_depth: include.max_depth,
             per_root_limit: include.limit,
             edges: GraphWalkEdges::Directional {
@@ -2184,7 +2318,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         root_object_ids: &[i32],
         max_depth: i32,
         per_root_cap: i32,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.bidirectionally_related_objects_for_roots_from_backend_with_admin_status(
@@ -2205,7 +2339,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         max_depth: i32,
         per_root_cap: i32,
         is_admin: bool,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
         if root_object_ids.is_empty() {
             return Ok(Vec::new());
@@ -2232,6 +2366,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let spec = build_root_graph_walk_query(RootGraphWalkSpec {
             root_object_ids,
             collection_ids: &collection_ids,
+            scope: scopes,
             max_depth,
             per_root_limit: per_root_cap,
             edges: GraphWalkEdges::Bidirectional,
@@ -2368,6 +2503,7 @@ enum GraphWalkProjection {
 struct RootGraphWalkSpec<'a> {
     root_object_ids: &'a [i32],
     collection_ids: &'a [i32],
+    scope: Option<&'a TokenScope>,
     max_depth: i32,
     per_root_limit: i32,
     edges: GraphWalkEdges,
@@ -2390,12 +2526,32 @@ fn bidirectional_object_edges_sql() -> &'static str {
 ///
 /// The `root_objects`/`valid_collections`/`graph_walk`/`deduped_walk` CTEs are identical for both
 /// callers; only the edge set, the per-root ranking, and the final projection differ. Bind order
-/// is fixed here: root ids, collection ids, (edge class-relation filter), max_depth ×2,
-/// (target class id), per_root_limit.
+/// is fixed here: collection ids, resource-scope ids, root ids, (edge class-relation filter),
+/// max_depth ×2, (target class id), per_root_limit.
 fn build_root_graph_walk_query(spec: RootGraphWalkSpec) -> RawSqlQuerySpec {
     let mut bind_variables = Vec::<SQLValue>::new();
-    let root_array_sql = sql_integer_array(spec.root_object_ids, &mut bind_variables);
     let collection_array_sql = sql_integer_array(spec.collection_ids, &mut bind_variables);
+    let valid_scope_objects_sql = if let Some(scoped_collection_ids) =
+        spec.scope.and_then(TokenScope::collection_ids)
+    {
+        let scoped_class_ids = spec
+            .scope
+            .and_then(TokenScope::class_ids)
+            .unwrap_or_default();
+        let scoped_object_ids = spec
+            .scope
+            .and_then(TokenScope::object_ids)
+            .unwrap_or_default();
+        let collection_scope_sql = sql_integer_array(scoped_collection_ids, &mut bind_variables);
+        let class_scope_sql = sql_integer_array(scoped_class_ids, &mut bind_variables);
+        let object_scope_sql = sql_integer_array(scoped_object_ids, &mut bind_variables);
+        format!(
+            "SELECT id AS object_id FROM hubuumobject WHERE collection_id = ANY({collection_scope_sql}) OR hubuum_class_id = ANY({class_scope_sql}) OR id = ANY({object_scope_sql})"
+        )
+    } else {
+        "SELECT id AS object_id FROM hubuumobject".to_string()
+    };
+    let root_array_sql = sql_integer_array(spec.root_object_ids, &mut bind_variables);
 
     let object_edges_sql = match spec.edges {
         GraphWalkEdges::Bidirectional => bidirectional_object_edges_sql().to_string(),
@@ -2455,6 +2611,7 @@ JOIN hubuumobject target_object
   ON target_object.id = ranked_walk.descendant_object_id
 WHERE ranked_walk.related_rank <= ?
   AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
+  AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
 ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC"#
             .to_string(),
         GraphWalkProjection::AncestorAndDescendant => r#"SELECT
@@ -2485,6 +2642,8 @@ JOIN hubuumobject target_object
 WHERE ranked_walk.related_rank <= ?
   AND source_object.collection_id IN (SELECT collection_id FROM valid_collections)
   AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
+  AND source_object.id IN (SELECT object_id FROM valid_scope_objects)
+  AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
 ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC"#
             .to_string(),
     };
@@ -2492,11 +2651,16 @@ ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC"#
     let sql = format!(
         r#"
 WITH RECURSIVE
-root_objects AS (
-    SELECT unnest({root_array_sql}) AS root_object_id
-),
 valid_collections AS (
     SELECT unnest({collection_array_sql}) AS collection_id
+),
+valid_scope_objects AS (
+    {valid_scope_objects_sql}
+),
+root_objects AS (
+    SELECT scoped_root.root_object_id
+    FROM unnest({root_array_sql}) AS scoped_root(root_object_id)
+    WHERE scoped_root.root_object_id IN (SELECT object_id FROM valid_scope_objects)
 ),
 object_edges AS (
 {object_edges_sql}
@@ -2515,6 +2679,7 @@ graph_walk AS (
       ON target_object.id = object_edges.target_object_id
     WHERE ? >= 1
       AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
+      AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
 
     UNION ALL
 
@@ -2532,6 +2697,7 @@ graph_walk AS (
     WHERE NOT (object_edges.target_object_id = ANY(graph_walk.path))
       AND graph_walk.depth < ?
       AND target_object.collection_id IN (SELECT collection_id FROM valid_collections)
+      AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
 ),
 deduped_walk AS (
     SELECT DISTINCT ON (root_object_id, descendant_object_id)
@@ -2600,7 +2766,7 @@ async fn build_related_classes_query_spec<U, K>(
     class: K,
     query_options: QueryOptions,
     is_admin: bool,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
 ) -> Result<Option<RawSqlQuerySpec>, ApiError>
 where
     U: UserCollectionAccessors + ?Sized,
@@ -2643,6 +2809,21 @@ where
     };
 
     let mut where_clauses = Vec::new();
+    if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+        let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+        let ancestor_collection_scope_sql =
+            sql_integer_array(scoped_collection_ids, &mut bind_variables);
+        let ancestor_class_scope_sql = sql_integer_array(scoped_class_ids, &mut bind_variables);
+        where_clauses.push(format!(
+            "(ancestor_collection_id = ANY({ancestor_collection_scope_sql}) OR ancestor_class_id = ANY({ancestor_class_scope_sql}))"
+        ));
+        let descendant_collection_scope_sql =
+            sql_integer_array(scoped_collection_ids, &mut bind_variables);
+        let descendant_class_scope_sql = sql_integer_array(scoped_class_ids, &mut bind_variables);
+        where_clauses.push(format!(
+            "(descendant_collection_id = ANY({descendant_collection_scope_sql}) OR descendant_class_id = ANY({descendant_class_scope_sql}))"
+        ));
+    }
     for param in &query_params {
         let clause = build_related_classes_clause(param, &mut bind_variables)?;
         if let Some(clause) = clause {
@@ -2667,7 +2848,7 @@ async fn build_related_objects_query_spec<U, O>(
     object: O,
     query_options: QueryOptions,
     is_admin: bool,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
 ) -> Result<Option<RawSqlQuerySpec>, ApiError>
 where
     U: UserCollectionAccessors + ?Sized,
@@ -2732,6 +2913,24 @@ where
     };
 
     let mut where_clauses = Vec::new();
+    if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
+        let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+        let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
+        let ancestor_collection_scope_sql =
+            sql_integer_array(scoped_collection_ids, &mut bind_variables);
+        let ancestor_class_scope_sql = sql_integer_array(scoped_class_ids, &mut bind_variables);
+        let ancestor_object_scope_sql = sql_integer_array(scoped_object_ids, &mut bind_variables);
+        where_clauses.push(format!(
+            "(ancestor_collection_id = ANY({ancestor_collection_scope_sql}) OR ancestor_class_id = ANY({ancestor_class_scope_sql}) OR ancestor_object_id = ANY({ancestor_object_scope_sql}))"
+        ));
+        let descendant_collection_scope_sql =
+            sql_integer_array(scoped_collection_ids, &mut bind_variables);
+        let descendant_class_scope_sql = sql_integer_array(scoped_class_ids, &mut bind_variables);
+        let descendant_object_scope_sql = sql_integer_array(scoped_object_ids, &mut bind_variables);
+        where_clauses.push(format!(
+            "(descendant_collection_id = ANY({descendant_collection_scope_sql}) OR descendant_class_id = ANY({descendant_class_scope_sql}) OR descendant_object_id = ANY({descendant_object_scope_sql}))"
+        ));
+    }
     for param in &query_params {
         let clause = build_related_objects_clause(param, &mut bind_variables)?;
         if let Some(clause) = clause {

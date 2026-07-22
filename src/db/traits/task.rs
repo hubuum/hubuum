@@ -1,4 +1,5 @@
 use crate::db::prelude::*;
+use crate::models::token_scope::TokenScope;
 use chrono::Utc;
 use diesel::dsl::sql;
 use diesel::expression::AsExpression;
@@ -18,8 +19,8 @@ use crate::models::{
     BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
     ExportTaskOutputRecord, ExportTaskOutputSummaryRecord, ImportTaskResultRecord,
     NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewImportTaskResultRecord,
-    NewTaskEventRecord, NewTaskRecord, Permissions, TaskEventRecord, TaskID, TaskKind, TaskRecord,
-    TaskResponse, TaskResultCounts, TaskStatus,
+    NewTaskEventRecord, NewTaskRecord, TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResponse,
+    TaskResultCounts, TaskStatus,
 };
 use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
@@ -53,13 +54,13 @@ pub struct TaskCreateRequest {
     pub submitted_token_scopes: serde_json::Value,
 }
 
-/// Encode a token scope set as the persisted snapshot JSON (an array of
-/// permission strings; empty array for unscoped or deny-all).
-pub fn scope_snapshot_json(scopes: Option<&[Permissions]>) -> serde_json::Value {
-    let strings: Vec<String> = scopes
-        .map(|s| s.iter().map(|p| p.to_string()).collect())
-        .unwrap_or_default();
-    serde_json::Value::Array(strings.into_iter().map(serde_json::Value::String).collect())
+/// Encode a token scope for asynchronous execution. Unscoped callers retain the
+/// historical empty-array marker; scoped callers use an object that preserves
+/// independent permission and resource dimensions.
+pub fn scope_snapshot_json(scopes: Option<&TokenScope>) -> serde_json::Value {
+    scopes
+        .map(TokenScope::snapshot_json)
+        .unwrap_or_else(|| serde_json::json!([]))
 }
 
 /// The submitting token's scope boundary, captured at task-creation time and
@@ -67,17 +68,15 @@ pub fn scope_snapshot_json(scopes: Option<&[Permissions]>) -> serde_json::Value 
 #[derive(Debug, Clone)]
 pub struct TaskScopeSnapshot {
     pub token_id: Option<i32>,
-    /// Whether the submitting token was scoped. This is NOT derivable from
-    /// `scopes`: an unscoped token (`None`) and a deny-all scoped token
-    /// (`Some(&[])`) both serialize to an empty array, so the boolean is the
-    /// only thing that distinguishes "full authority" from "deny everything".
+    /// Whether the submitting token was scoped. This remains explicit for task
+    /// metadata and for compatibility with legacy permission-array snapshots.
     pub scoped: bool,
     pub scopes: serde_json::Value,
 }
 
 impl TaskScopeSnapshot {
     /// Build from the submitting token id and its live scope set.
-    pub fn from_request(token_id: Option<i32>, scopes: Option<&[Permissions]>) -> Self {
+    pub fn from_request(token_id: Option<i32>, scopes: Option<&TokenScope>) -> Self {
         Self {
             token_id,
             scoped: scopes.is_some(),

@@ -135,10 +135,7 @@ async fn read_object_aggregates(
     let mut required = query.query_options().filters.permissions()?;
     required.ensure_contains(&[Permissions::ReadObject, Permissions::ReadCollection]);
     let required = required.iter().copied().collect::<Vec<_>>();
-    let authorization = ObjectAggregateAuthorization::new(
-        required,
-        requestor.scopes().map(<[Permissions]>::to_vec),
-    )?;
+    let authorization = ObjectAggregateAuthorization::new(required, requestor.scopes().cloned())?;
 
     let effective_limit = effective_page_limit(query.query_options())?;
     let mut request = ObjectAggregateBackendRequest::builder(aggregate_target, query)

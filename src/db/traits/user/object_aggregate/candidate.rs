@@ -10,9 +10,9 @@ use crate::db::DbConnection;
 use crate::db::traits::computed_field::ComputedQuerySnapshot;
 use crate::db::traits::search::JsonPredicateExt;
 use crate::errors::ApiError;
-use crate::models::HubuumObject;
 use crate::models::object_aggregate::ObjectAggregateSpec;
 use crate::models::search::{FilterField, QueryOptions, QueryParamsExt, SortParam};
+use crate::models::{HubuumObject, TokenScope};
 use crate::pagination::{Page, finalize_page, finalize_partial_page};
 use crate::traits::{CursorPaginated, CursorValue};
 
@@ -63,6 +63,7 @@ pub(super) struct ObjectAggregateCandidateBatch {
 pub(super) struct ObjectAggregateCandidateQuery<'a> {
     query_options: &'a QueryOptions,
     collection_id: i32,
+    token_scope: Option<&'a TokenScope>,
     include_object_data: bool,
     computed_filter_snapshot: Option<&'a ComputedQuerySnapshot>,
 }
@@ -76,9 +77,15 @@ impl<'a> ObjectAggregateCandidateQuery<'a> {
         Self {
             query_options,
             collection_id,
+            token_scope: None,
             include_object_data: spec.requires_object_data(),
             computed_filter_snapshot: None,
         }
+    }
+
+    pub(super) fn token_scope(mut self, token_scope: Option<&'a TokenScope>) -> Self {
+        self.token_scope = token_scope;
+        self
     }
 
     pub(super) fn include_computed_filter_data(mut self) -> Self {
@@ -119,12 +126,21 @@ pub(super) async fn load_aggregate_candidate_batch(
     let ObjectAggregateCandidateQuery {
         query_options,
         collection_id,
+        token_scope,
         include_object_data,
         computed_filter_snapshot,
     } = candidate_query;
     let mut query = hubuumobject
         .filter(object_collection_id.eq(collection_id))
         .into_boxed();
+    if let Some(scope) = token_scope.filter(|scope| scope.is_resource_scoped()) {
+        query = query.filter(
+            object_collection_id
+                .eq_any(scope.collection_ids().unwrap_or_default().to_vec())
+                .or(hubuum_class_id.eq_any(scope.class_ids().unwrap_or_default().to_vec()))
+                .or(object_id.eq_any(scope.object_ids().unwrap_or_default().to_vec())),
+        );
+    }
     apply_object_aggregate_source_filters!(query, query_options, computed_filter_snapshot);
     crate::apply_query_options!(query, query_options, HubuumObject);
     let data_projection = if include_object_data {

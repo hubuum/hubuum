@@ -1,3 +1,4 @@
+use crate::models::token_scope::TokenScope;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
@@ -5,7 +6,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::traits::authz::scope_allows;
+use crate::db::traits::authz::{scope_allows, scope_allows_resource};
 use crate::db::traits::user::UnifiedSearchBackend;
 use crate::errors::ApiError;
 use crate::models::{Collection, HubuumClassExpanded, HubuumObject, Permissions};
@@ -448,7 +449,7 @@ async fn search_collections<C, S>(
     backend: &C,
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<Collection>, ApiError>
 where
@@ -483,7 +484,10 @@ where
                 .into_iter()
                 .zip(decisions)
                 .filter_map(|(candidate, decision)| {
-                    (decision == PermissionDecision::Allow).then_some(candidate)
+                    let resource = ResourceRef::collection(candidate.id);
+                    (decision == PermissionDecision::Allow
+                        && scope_allows_resource(scopes, &resource))
+                    .then_some(candidate)
                 })
                 .collect()
         }
@@ -528,7 +532,7 @@ async fn search_classes<C, S>(
     backend: &C,
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<HubuumClassExpanded>, ApiError>
 where
@@ -571,7 +575,17 @@ where
                 .into_iter()
                 .zip(decisions)
                 .filter_map(|(candidate, decision)| {
-                    (decision == PermissionDecision::Allow).then_some(candidate)
+                    let resource = ResourceRef {
+                        kind: ResourceKind::Class,
+                        id: candidate.id,
+                        attrs: ResourceAttrs {
+                            collection_id: Some(candidate.collection.id),
+                            ..Default::default()
+                        },
+                    };
+                    (decision == PermissionDecision::Allow
+                        && scope_allows_resource(scopes, &resource))
+                    .then_some(candidate)
                 })
                 .collect()
         }
@@ -614,7 +628,7 @@ async fn search_objects<C, S>(
     backend: &C,
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<HubuumObject>, ApiError>
 where
@@ -658,7 +672,18 @@ where
                 .into_iter()
                 .zip(decisions)
                 .filter_map(|(candidate, decision)| {
-                    (decision == PermissionDecision::Allow).then_some(candidate)
+                    let resource = ResourceRef {
+                        kind: ResourceKind::Object,
+                        id: candidate.id,
+                        attrs: ResourceAttrs {
+                            collection_id: Some(candidate.collection_id),
+                            class_id: Some(candidate.hubuum_class_id),
+                            ..Default::default()
+                        },
+                    };
+                    (decision == PermissionDecision::Allow
+                        && scope_allows_resource(scopes, &resource))
+                    .then_some(candidate)
                 })
                 .collect()
         }
@@ -696,7 +721,7 @@ pub async fn execute_unified_search<C, S>(
     user: &S,
     backend: &C,
     params: &UnifiedSearchQuery,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
 ) -> Result<UnifiedSearchResponse, ApiError>
 where
     C: BackendContext + ?Sized,
@@ -765,7 +790,7 @@ pub async fn execute_unified_search_batch<C, S>(
     backend: &C,
     params: &UnifiedSearchQuery,
     kind: UnifiedSearchKind,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
 ) -> Result<UnifiedSearchBatchResponse, ApiError>
 where
     C: BackendContext + ?Sized,

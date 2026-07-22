@@ -1,6 +1,7 @@
 use crate::db::prelude::*;
+use crate::models::token_scope::TokenScope;
 use diesel::sql_query;
-use diesel::sql_types::{BigInt, Bool, Integer, Text};
+use diesel::sql_types::{Array, BigInt, Bool, Integer, Text};
 
 use crate::db::traits::authz::{AuthzSubject, scope_allows};
 use crate::db::{DbPool, with_connection_async};
@@ -35,9 +36,10 @@ const COLLECTION_SEARCH_SQL: &str = r#"
             AND cc.descendant_collection_id = c.id
             AND p.has_read_collection
       ))
-      AND ($4 OR (ranked.search_rank, lower(c.name), c.id) > ($5, $6, $7))
+      AND ($4 OR c.id = ANY($5))
+      AND ($6 OR (ranked.search_rank, lower(c.name), c.id) > ($7, $8, $9))
     ORDER BY ranked.search_rank, lower(c.name), c.id
-    LIMIT $8
+    LIMIT $10
 "#;
 
 const CLASS_SEARCH_SQL: &str = r#"
@@ -70,9 +72,10 @@ const CLASS_SEARCH_SQL: &str = r#"
             AND p.has_read_collection
             AND p.has_read_class
       ))
-      AND ($5 OR (ranked.search_rank, lower(c.name), c.id) > ($6, $7, $8))
+      AND ($5 OR c.collection_id = ANY($6) OR c.id = ANY($7))
+      AND ($8 OR (ranked.search_rank, lower(c.name), c.id) > ($9, $10, $11))
     ORDER BY ranked.search_rank, lower(c.name), c.id
-    LIMIT $9
+    LIMIT $12
 "#;
 
 const OBJECT_SEARCH_SQL: &str = r#"
@@ -106,9 +109,10 @@ const OBJECT_SEARCH_SQL: &str = r#"
             AND p.has_read_collection
             AND p.has_read_object
       ))
-      AND ($5 OR (ranked.search_rank, lower(o.name), o.id) > ($6, $7, $8))
+      AND ($5 OR o.collection_id = ANY($6) OR o.hubuum_class_id = ANY($7) OR o.id = ANY($8))
+      AND ($9 OR (ranked.search_rank, lower(o.name), o.id) > ($10, $11, $12))
     ORDER BY ranked.search_rank, lower(o.name), o.id
-    LIMIT $9
+    LIMIT $13
 "#;
 
 fn bounded_limit(limit: usize) -> i64 {
@@ -127,7 +131,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         params: &UnifiedSearchSpec,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError> {
         let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
         self.search_unified_collections_from_backend_with_admin_status(
@@ -143,7 +147,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         params: &UnifiedSearchSpec,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
         is_unscoped_admin: bool,
     ) -> Result<Vec<Collection>, ApiError> {
         if !scope_allows(scopes, &[Permissions::ReadCollection]) {
@@ -152,6 +156,11 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
 
         let principal_id = self.principal_id();
         let query = params.query.clone();
+        let resource_unscoped = scopes.and_then(TokenScope::collection_ids).is_none();
+        let scoped_collection_ids = scopes
+            .and_then(TokenScope::collection_ids)
+            .unwrap_or_default()
+            .to_vec();
         let (no_cursor, cursor_rank, cursor_name, cursor_id) =
             cursor_values(params.collection_cursor.as_ref());
         let limit = bounded_limit(params.limit_per_kind);
@@ -161,6 +170,8 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Text, _>(query)
                 .bind::<Bool, _>(is_unscoped_admin)
                 .bind::<Integer, _>(principal_id)
+                .bind::<Bool, _>(resource_unscoped)
+                .bind::<Array<Integer>, _>(scoped_collection_ids)
                 .bind::<Bool, _>(no_cursor)
                 .bind::<Integer, _>(cursor_rank)
                 .bind::<Text, _>(cursor_name)
@@ -176,7 +187,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         params: &UnifiedSearchSpec,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
         self.search_unified_classes_from_backend_with_admin_status(
@@ -192,7 +203,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         params: &UnifiedSearchSpec,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
         is_unscoped_admin: bool,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         if !scope_allows(
@@ -205,6 +216,15 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         let principal_id = self.principal_id();
         let query = params.query.clone();
         let search_schema = params.search_class_schema;
+        let resource_unscoped = scopes.and_then(TokenScope::collection_ids).is_none();
+        let scoped_collection_ids = scopes
+            .and_then(TokenScope::collection_ids)
+            .unwrap_or_default()
+            .to_vec();
+        let scoped_class_ids = scopes
+            .and_then(TokenScope::class_ids)
+            .unwrap_or_default()
+            .to_vec();
         let (no_cursor, cursor_rank, cursor_name, cursor_id) =
             cursor_values(params.class_cursor.as_ref());
         let limit = bounded_limit(params.limit_per_kind);
@@ -215,6 +235,9 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Bool, _>(search_schema)
                 .bind::<Bool, _>(is_unscoped_admin)
                 .bind::<Integer, _>(principal_id)
+                .bind::<Bool, _>(resource_unscoped)
+                .bind::<Array<Integer>, _>(scoped_collection_ids)
+                .bind::<Array<Integer>, _>(scoped_class_ids)
                 .bind::<Bool, _>(no_cursor)
                 .bind::<Integer, _>(cursor_rank)
                 .bind::<Text, _>(cursor_name)
@@ -253,7 +276,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         params: &UnifiedSearchSpec,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
         self.search_unified_objects_from_backend_with_admin_status(
@@ -269,7 +292,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         &self,
         pool: &DbPool,
         params: &UnifiedSearchSpec,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
         is_unscoped_admin: bool,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         if !scope_allows(
@@ -282,6 +305,19 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         let principal_id = self.principal_id();
         let query = params.query.clone();
         let search_data = params.search_object_data;
+        let resource_unscoped = scopes.and_then(TokenScope::collection_ids).is_none();
+        let scoped_collection_ids = scopes
+            .and_then(TokenScope::collection_ids)
+            .unwrap_or_default()
+            .to_vec();
+        let scoped_class_ids = scopes
+            .and_then(TokenScope::class_ids)
+            .unwrap_or_default()
+            .to_vec();
+        let scoped_object_ids = scopes
+            .and_then(TokenScope::object_ids)
+            .unwrap_or_default()
+            .to_vec();
         let (no_cursor, cursor_rank, cursor_name, cursor_id) =
             cursor_values(params.object_cursor.as_ref());
         let limit = bounded_limit(params.limit_per_kind);
@@ -292,6 +328,10 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
                 .bind::<Bool, _>(search_data)
                 .bind::<Bool, _>(is_unscoped_admin)
                 .bind::<Integer, _>(principal_id)
+                .bind::<Bool, _>(resource_unscoped)
+                .bind::<Array<Integer>, _>(scoped_collection_ids)
+                .bind::<Array<Integer>, _>(scoped_class_ids)
+                .bind::<Array<Integer>, _>(scoped_object_ids)
                 .bind::<Bool, _>(no_cursor)
                 .bind::<Integer, _>(cursor_rank)
                 .bind::<Text, _>(cursor_name)

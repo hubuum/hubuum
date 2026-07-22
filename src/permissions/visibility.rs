@@ -1,8 +1,9 @@
 use std::time::Instant;
 
+use crate::db::traits::authz::scope_allows_resource;
 use crate::errors::ApiError;
-use crate::models::Permissions;
 use crate::models::search::QueryOptions;
+use crate::models::{Permissions, TokenScope};
 use crate::pagination::{known_count_or_skipped, paginate_in_memory};
 use crate::traits::CursorPaginated;
 
@@ -20,6 +21,18 @@ use super::types::{PermissionDecision, PermissionRequest, PrincipalRef, Resource
 pub struct AuthorizedPage<T> {
     pub rows: Vec<T>,
     pub total_count: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AuthorizationPage {
+    offset: usize,
+    limit: usize,
+}
+
+impl AuthorizationPage {
+    pub const fn new(offset: usize, limit: usize) -> Self {
+        Self { offset, limit }
+    }
 }
 
 /// Sorted, deduplicated object ids that have already passed policy authorization.
@@ -52,12 +65,17 @@ pub async fn authorize_all_candidates<T, F>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,
     candidates: Vec<T>,
+    scope: Option<&TokenScope>,
     permissions: Vec<Permissions>,
     to_resource: F,
 ) -> Result<Vec<T>, ApiError>
 where
     F: Fn(&T) -> ResourceRef,
 {
+    let candidates = candidates
+        .into_iter()
+        .filter(|candidate| scope_allows_resource(scope, &to_resource(candidate)))
+        .collect::<Vec<_>>();
     let requests = candidates
         .iter()
         .map(|candidate| PermissionRequest {
@@ -79,6 +97,7 @@ pub async fn authorize_cursor_page<T, F>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,
     candidates: Vec<T>,
+    scope: Option<&TokenScope>,
     permissions: Vec<Permissions>,
     query_options: &QueryOptions,
     to_resource: F,
@@ -90,6 +109,10 @@ where
     let start = Instant::now();
     let backend_kind = backend.kind();
     let candidate_count = candidates.len();
+    let candidates = candidates
+        .into_iter()
+        .filter(|candidate| scope_allows_resource(scope, &to_resource(candidate)))
+        .collect::<Vec<_>>();
     let requests = candidates
         .iter()
         .map(|candidate| PermissionRequest {
@@ -133,7 +156,7 @@ where
 /// required to make a row visible (typically a single permission like
 /// `Permissions::ReadObject`).
 ///
-/// `offset` and `limit` apply AFTER authorization filtering. The
+/// `page` applies its offset and limit AFTER authorization filtering. The
 /// returned `total_count` is the count of authorized rows, NOT the
 /// candidate set count — so paging works correctly under Treetop.
 ///
@@ -145,17 +168,22 @@ pub async fn paginate_authorized<T, F>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,
     candidates: Vec<T>,
+    scope: Option<&TokenScope>,
     permissions: Vec<Permissions>,
-    offset: usize,
-    limit: usize,
+    page: AuthorizationPage,
     to_resource: F,
 ) -> Result<AuthorizedPage<T>, ApiError>
 where
     F: Fn(&T) -> ResourceRef,
 {
+    let AuthorizationPage { offset, limit } = page;
     let start = Instant::now();
     let backend_kind = backend.kind();
     let candidate_count = candidates.len();
+    let candidates = candidates
+        .into_iter()
+        .filter(|candidate| scope_allows_resource(scope, &to_resource(candidate)))
+        .collect::<Vec<_>>();
 
     if candidates.is_empty() {
         record_paginate_authorized(backend_kind, 0, 0, offset, limit, 0, start.elapsed());
