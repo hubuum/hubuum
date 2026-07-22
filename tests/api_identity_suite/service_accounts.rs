@@ -998,6 +998,48 @@ mod tests {
     }
 
     #[derive(Clone, Copy)]
+    enum ComputedQueryClassTarget {
+        ScopedObjectClass,
+        OtherClass,
+    }
+
+    #[rstest]
+    #[case::scoped_object_class(
+        ComputedQueryClassTarget::ScopedObjectClass,
+        StatusCode::BAD_REQUEST
+    )]
+    #[case::other_class(ComputedQueryClassTarget::OtherClass, StatusCode::OK)]
+    #[actix_web::test]
+    async fn test_computed_query_gate_checks_object_scope_against_target_class(
+        #[case] target: ComputedQueryClassTarget,
+        #[case] expected: StatusCode,
+    ) {
+        let context = TestContext::new().await;
+        let (classes, objects, sa) = resource_hierarchy_fixture(&context).await;
+        let token = resource_scoped_token(
+            &context.pool,
+            sa.id,
+            vec![TokenResourceScope::Object(
+                HubuumObjectID::new(objects[0].id).unwrap(),
+            )],
+        )
+        .await;
+        let class_id = match target {
+            ComputedQueryClassTarget::ScopedObjectClass => classes[0].id,
+            ComputedQueryClassTarget::OtherClass => classes[1].id,
+        };
+
+        let resp = get_request(
+            &context.pool,
+            &token,
+            &format!("/api/v1/classes/{class_id}/?sort=computed.shared.missing_scope_probe"),
+        )
+        .await;
+
+        assert_eq!(resp.status(), expected);
+    }
+
+    #[derive(Clone, Copy)]
     enum RelationScopeTarget {
         OneClass,
         BothClasses,

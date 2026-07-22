@@ -23,10 +23,7 @@ use crate::pagination::{
     known_count_or_skipped, page_request, prepare_db_pagination,
 };
 use crate::permissions::visibility::{AuthorizedObjectIds, authorize_all_candidates};
-use crate::permissions::{
-    AppContext, AuthzTarget, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
-    authorize_resources,
-};
+use crate::permissions::{AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::traits::BackendContext;
 
 enum ComputedListVisibility {
@@ -191,21 +188,20 @@ async fn can_list_objects_in_class(
     if !scope_allows(requestor.scopes(), &required) {
         return Ok(false);
     }
-    let resource = class.to_resource_ref(pool.db_pool()).await?;
-    match authorize_resources(
-        pool.permission_backend(),
-        pool,
-        &requestor.principal,
-        None,
-        required.to_vec(),
-        vec![resource],
-    )
-    .await
-    {
-        Ok(()) => Ok(true),
-        Err(ApiError::Forbidden(_)) => Ok(false),
-        Err(error) => Err(error),
-    }
+
+    let mut visibility_query = QueryOptions {
+        filters: Vec::new(),
+        sort: Vec::new(),
+        limit: Some(1),
+        cursor: None,
+        include_total: false,
+    };
+    scope_object_query_to_class(&mut visibility_query, &HubuumClassID::new(class.id)?);
+    let visible_objects = requestor
+        .principal
+        .search_objects_from_backend(pool.db_pool(), visibility_query, requestor.scopes())
+        .await?;
+    Ok(!visible_objects.is_empty())
 }
 
 async fn authorized_object_ids_in_class(

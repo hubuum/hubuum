@@ -89,9 +89,9 @@ macro_rules! visible_filtered_object_query {
         if let Some(scope) = $token_scope.filter(|scope| scope.is_resource_scoped()) {
             query = query.filter(
                 object_collection_id
-                    .eq_any(scope.collection_ids().unwrap_or_default().to_vec())
-                    .or(hubuum_class_id.eq_any(scope.class_ids().unwrap_or_default().to_vec()))
-                    .or(object_id.eq_any(scope.object_ids().unwrap_or_default().to_vec())),
+                    .eq_any(scope.collection_ids().unwrap_or_default())
+                    .or(hubuum_class_id.eq_any(scope.class_ids().unwrap_or_default()))
+                    .or(object_id.eq_any(scope.object_ids().unwrap_or_default())),
             );
         }
         apply_object_aggregate_source_filters!(query, $query_options, $computed_filter_snapshot);
@@ -119,9 +119,9 @@ macro_rules! visible_filtered_aggregate_query {
         if let Some(scope) = $token_scope.filter(|scope| scope.is_resource_scoped()) {
             query = query.filter(
                 object_collection_id
-                    .eq_any(scope.collection_ids().unwrap_or_default().to_vec())
-                    .or(hubuum_class_id.eq_any(scope.class_ids().unwrap_or_default().to_vec()))
-                    .or(object_id.eq_any(scope.object_ids().unwrap_or_default().to_vec())),
+                    .eq_any(scope.collection_ids().unwrap_or_default())
+                    .or(hubuum_class_id.eq_any(scope.class_ids().unwrap_or_default()))
+                    .or(object_id.eq_any(scope.object_ids().unwrap_or_default())),
             );
         }
         apply_object_aggregate_source_filters!(query, $query_options, $computed_filter_snapshot);
