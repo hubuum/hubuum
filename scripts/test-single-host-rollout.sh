@@ -20,6 +20,21 @@ if [[ "$*" == *" exec -T caddy caddy reload "* ]]; then
   exit
 fi
 
+if [[ "$*" == *" exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams"* ]]; then
+  failure_polls_file="$TEST_ROOT/caddy-failure-polls"
+  failure_polls=0
+  if [[ -f "$failure_polls_file" ]]; then
+    read -r failure_polls < "$failure_polls_file"
+  fi
+  if (( failure_polls > 0 )); then
+    printf '[{"address":"hubuum-api:8080","num_requests":0,"fails":1}]\n'
+    printf '%s\n' "$((failure_polls - 1))" > "$failure_polls_file"
+  else
+    printf '[{"address":"hubuum-api:8080","num_requests":0,"fails":0}]\n'
+  fi
+  exit 0
+fi
+
 if [[ "${1:-}" == "inspect" && "$*" == *".Dependencies"* ]]; then
   if [[ "$FAKE_CADDY_DEPENDENCIES" == "true" && "${*: -1}" == "container-caddy" ]]; then
     printf 'container-hubuum-api\n'
@@ -87,6 +102,44 @@ assert_commands() {
   diff -u "$expected" "$actual"
 }
 
+assert_caddy_upstream_status_eligibility() {
+  local expected="$1"
+  local upstreams="$2"
+  local actual="false"
+
+  if hubuum_caddy_upstream_status_is_eligible "$upstreams"; then
+    actual="true"
+  fi
+  [[ "$actual" == "$expected" ]] || {
+    printf 'unexpected Caddy upstream eligibility for %s\n' "$upstreams" >&2
+    exit 1
+  }
+}
+
+assert_rollout_rejects_timeout_setting() {
+  local setting_name="$1"
+  local value="$2"
+  local output
+
+  printf -v "$setting_name" '%s' "$value"
+  : > "$COMMAND_LOG"
+  if output="$(hubuum_rollout 2>&1)"; then
+    echo "rollout with invalid $setting_name unexpectedly succeeded" >&2
+    exit 1
+  fi
+  [[ "$output" == "ERROR: $setting_name must be a positive integer; got '$value'" ]]
+  [[ ! -s "$COMMAND_LOG" ]] || {
+    echo "rollout changed state before validating $setting_name" >&2
+    exit 1
+  }
+  unset "$setting_name"
+}
+
+assert_caddy_upstream_status_eligibility "false" '[]'
+assert_caddy_upstream_status_eligibility "false" '[{"address":"hubuum-api:8080"}]'
+assert_caddy_upstream_status_eligibility "true" '[{"fails": 0}, {"fails":0}]'
+assert_caddy_upstream_status_eligibility "false" '[{"fails":0}, {"fails":2}]'
+
 FAKE_CADDY_RUNNING="true"
 FAKE_CADDY_DEPENDENCIES="true"
 INSTALL_MODE="all"
@@ -98,9 +151,11 @@ compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/l
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 EOF
 assert_commands "$TEST_ROOT/expected-rolling.log"
 
@@ -112,8 +167,10 @@ cat > "$TEST_ROOT/expected-reload.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 EOF
 assert_commands "$TEST_ROOT/expected-reload.log"
 
@@ -127,11 +184,14 @@ cat > "$TEST_ROOT/expected-recovery.log" <<EOF
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 EOF
 assert_commands "$TEST_ROOT/expected-recovery.log"
 
@@ -146,9 +206,11 @@ compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/l
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 EOF
 assert_commands "$TEST_ROOT/expected-missing-infrastructure.log"
 
@@ -164,6 +226,32 @@ compose --env-file .env -f compose.yml up -d --no-deps hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps caddy
 EOF
 assert_commands "$TEST_ROOT/expected-initial.log"
+
+printf '2\n' > "$TEST_ROOT/caddy-failure-polls"
+: > "$COMMAND_LOG"
+sleep() { :; }
+hubuum_wait_for_caddy_upstreams 1
+unset -f sleep
+[[ "$(grep -c 'reverse_proxy/upstreams' "$COMMAND_LOG")" -eq 3 ]] || {
+  echo "Caddy upstream wait did not poll until passive failures cleared" >&2
+  exit 1
+}
+rm -f "$TEST_ROOT/caddy-failure-polls"
+
+if timeout_output="$(hubuum_wait_for_caddy_upstreams invalid 2>&1)"; then
+  echo "invalid Caddy upstream timeout unexpectedly succeeded" >&2
+  exit 1
+fi
+[[ "$timeout_output" == "ERROR: Caddy upstream timeout must be a positive integer; got 'invalid'" ]]
+
+if timeout_output="$(hubuum_wait_for_healthy hubuum-api 0 2>&1)"; then
+  echo "zero health timeout unexpectedly succeeded" >&2
+  exit 1
+fi
+[[ "$timeout_output" == "ERROR: health timeout must be a positive integer; got '0'" ]]
+
+assert_rollout_rejects_timeout_setting HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS invalid
+assert_rollout_rejects_timeout_setting HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS 0
 
 reload_output="$(hubuum_reload_caddy 2>&1)"
 [[ "$reload_output" == "Reloading Caddy if its configuration changed..." ]] || {
