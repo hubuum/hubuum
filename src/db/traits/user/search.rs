@@ -15,6 +15,58 @@ use crate::utilities::extensions::CustomStringExtensions;
 use diesel::BoolExpressionMethods;
 use diesel_async::RunQueryDsl;
 
+type CollectionScopePredicate<'a> = diesel::dsl::EqAny<crate::schema::collections::id, &'a [i32]>;
+type ClassScopePredicate<'a> = diesel::dsl::Or<
+    diesel::dsl::EqAny<crate::schema::hubuumclass::collection_id, &'a [i32]>,
+    diesel::dsl::EqAny<crate::schema::hubuumclass::id, &'a [i32]>,
+>;
+type ObjectScopePredicate<'a> = diesel::dsl::Or<
+    diesel::dsl::Or<
+        diesel::dsl::EqAny<crate::schema::hubuumobject::collection_id, &'a [i32]>,
+        diesel::dsl::EqAny<crate::schema::hubuumobject::hubuum_class_id, &'a [i32]>,
+    >,
+    diesel::dsl::EqAny<crate::schema::hubuumobject::id, &'a [i32]>,
+>;
+
+#[derive(Clone, Copy)]
+struct ResourceScopeIds<'a> {
+    collection_ids: &'a [i32],
+    class_ids: &'a [i32],
+    object_ids: &'a [i32],
+}
+
+fn resource_scope_ids(scopes: Option<&TokenScope>) -> Option<ResourceScopeIds<'_>> {
+    let scope = scopes.filter(|scope| scope.is_resource_scoped())?;
+    Some(ResourceScopeIds {
+        collection_ids: scope.collection_ids().unwrap_or_default(),
+        class_ids: scope.class_ids().unwrap_or_default(),
+        object_ids: scope.object_ids().unwrap_or_default(),
+    })
+}
+
+fn collection_scope_predicate(scope: ResourceScopeIds<'_>) -> CollectionScopePredicate<'_> {
+    use crate::schema::collections::dsl::id;
+
+    id.eq_any(scope.collection_ids)
+}
+
+fn class_scope_predicate(scope: ResourceScopeIds<'_>) -> ClassScopePredicate<'_> {
+    use crate::schema::hubuumclass::dsl::{collection_id, id};
+
+    collection_id
+        .eq_any(scope.collection_ids)
+        .or(id.eq_any(scope.class_ids))
+}
+
+fn object_scope_predicate(scope: ResourceScopeIds<'_>) -> ObjectScopePredicate<'_> {
+    use crate::schema::hubuumobject::dsl::{collection_id, hubuum_class_id, id};
+
+    collection_id
+        .eq_any(scope.collection_ids)
+        .or(hubuum_class_id.eq_any(scope.class_ids))
+        .or(id.eq_any(scope.object_ids))
+}
+
 #[derive(diesel::QueryableByName)]
 struct CountRow {
     #[diesel(sql_type = diesel::sql_types::BigInt)]
@@ -289,8 +341,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 )
                 .into_boxed()
         };
-        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-            base_query = base_query.filter(collection_id.eq_any(scoped_collection_ids));
+        if let Some(scope) = resource_scope_ids(scopes) {
+            base_query = base_query.filter(collection_scope_predicate(scope));
         }
 
         for param in query_params {
@@ -392,8 +444,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 )
                 .into_boxed()
         };
-        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-            base_query = base_query.filter(collection_id.eq_any(scoped_collection_ids));
+        if let Some(scope) = resource_scope_ids(scopes) {
+            base_query = base_query.filter(collection_scope_predicate(scope));
         }
 
         for param in query_params {
@@ -496,13 +548,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let mut base_query = hubuumclass
             .filter(class_collection_id.eq_any(collection_ids))
             .into_boxed();
-        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
-            base_query = base_query.filter(
-                class_collection_id
-                    .eq_any(scoped_collection_ids)
-                    .or(class_id.eq_any(scoped_class_ids)),
-            );
+        if let Some(scope) = resource_scope_ids(scopes) {
+            base_query = base_query.filter(class_scope_predicate(scope));
         }
 
         let json_schema_queries = query_params.json_schemas()?;
@@ -601,13 +648,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let mut base_query = hubuumclass
             .filter(class_collection_id.eq_any(collection_ids))
             .into_boxed();
-        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
-            base_query = base_query.filter(
-                class_collection_id
-                    .eq_any(scoped_collection_ids)
-                    .or(class_id.eq_any(scoped_class_ids)),
-            );
+        if let Some(scope) = resource_scope_ids(scopes) {
+            base_query = base_query.filter(class_scope_predicate(scope));
         }
 
         let json_schema_queries = query_params.json_schemas()?;
@@ -755,15 +797,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let mut base_query = hubuumobject
             .filter(object_collection_id.eq_any(collection_ids))
             .into_boxed();
-        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
-            let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
-            base_query = base_query.filter(
-                object_collection_id
-                    .eq_any(scoped_collection_ids)
-                    .or(hubuum_class_id.eq_any(scoped_class_ids))
-                    .or(object_id.eq_any(scoped_object_ids)),
-            );
+        if let Some(scope) = resource_scope_ids(scopes) {
+            base_query = base_query.filter(object_scope_predicate(scope));
         }
         if let Some(authorized_object_ids) = query_mode.authorized_object_ids() {
             base_query = base_query.filter(object_id.eq_any(authorized_object_ids.as_slice()));
@@ -916,15 +951,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         let mut base_query = hubuumobject
             .filter(object_collection_id.eq_any(collection_ids))
             .into_boxed();
-        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
-            let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
-            base_query = base_query.filter(
-                object_collection_id
-                    .eq_any(scoped_collection_ids)
-                    .or(hubuum_class_id.eq_any(scoped_class_ids))
-                    .or(object_id.eq_any(scoped_object_ids)),
-            );
+        if let Some(scope) = resource_scope_ids(scopes) {
+            base_query = base_query.filter(object_scope_predicate(scope));
         }
         if let Some(authorized_object_ids) = query_mode.authorized_object_ids() {
             base_query = base_query.filter(object_id.eq_any(authorized_object_ids.as_slice()));
@@ -1165,14 +1193,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     ),
                 )
                 .into_boxed();
-            if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-                let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+            if let Some(scope) = resource_scope_ids(scopes) {
                 let scoped_class_query = || {
-                    hubuumclass.select(class_id).filter(
-                        class_collection_id
-                            .eq_any(scoped_collection_ids)
-                            .or(class_id.eq_any(scoped_class_ids)),
-                    )
+                    hubuumclass
+                        .select(class_id)
+                        .filter(class_scope_predicate(scope))
                 };
                 base_query = base_query
                     .filter(from_hubuum_class_id.eq_any(scoped_class_query()))
@@ -1323,14 +1348,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     ),
                 )
                 .into_boxed();
-            if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-                let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+            if let Some(scope) = resource_scope_ids(scopes) {
                 let scoped_class_query = || {
-                    hubuumclass.select(class_id).filter(
-                        class_collection_id
-                            .eq_any(scoped_collection_ids)
-                            .or(class_id.eq_any(scoped_class_ids)),
-                    )
+                    hubuumclass
+                        .select(class_id)
+                        .filter(class_scope_predicate(scope))
                 };
                 base_query = base_query
                     .filter(from_hubuum_class_id.eq_any(scoped_class_query()))
@@ -1462,14 +1484,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 ),
             )
             .into_boxed();
-        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
+        if let Some(scope) = resource_scope_ids(scopes) {
             let scoped_class_query = || {
-                hubuumclass.select(class_id).filter(
-                    class_collection_id
-                        .eq_any(scoped_collection_ids)
-                        .or(class_id.eq_any(scoped_class_ids)),
-                )
+                hubuumclass
+                    .select(class_id)
+                    .filter(class_scope_predicate(scope))
             };
             base_query = base_query
                 .filter(from_hubuum_class_id.eq_any(scoped_class_query()))
@@ -1735,17 +1754,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     ),
                 )
                 .into_boxed();
-            if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-                let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
-                let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
+            if let Some(scope) = resource_scope_ids(scopes) {
                 let scoped_object_query = || {
-                    hubuumobject.select(object_id).filter(
-                        object_collection_id
-                            .eq_any(scoped_collection_ids)
-                            .or(crate::schema::hubuumobject::hubuum_class_id
-                                .eq_any(scoped_class_ids))
-                            .or(object_id.eq_any(scoped_object_ids)),
-                    )
+                    hubuumobject
+                        .select(object_id)
+                        .filter(object_scope_predicate(scope))
                 };
                 base_query = base_query
                     .filter(from_hubuum_object_id.eq_any(scoped_object_query()))
@@ -1912,17 +1925,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     ),
                 )
                 .into_boxed();
-            if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-                let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
-                let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
+            if let Some(scope) = resource_scope_ids(scopes) {
                 let scoped_object_query = || {
-                    hubuumobject.select(object_id_column).filter(
-                        object_collection_id
-                            .eq_any(scoped_collection_ids)
-                            .or(crate::schema::hubuumobject::hubuum_class_id
-                                .eq_any(scoped_class_ids))
-                            .or(object_id_column.eq_any(scoped_object_ids)),
-                    )
+                    hubuumobject
+                        .select(object_id_column)
+                        .filter(object_scope_predicate(scope))
                 };
                 base_query = base_query
                     .filter(from_hubuum_object_id.eq_any(scoped_object_query()))
@@ -2016,8 +2023,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         use crate::schema::hubuumobject::dsl::{
-            collection_id as object_collection_id, hubuum_class_id, hubuumobject,
-            id as object_id_column,
+            collection_id as object_collection_id, hubuumobject, id as object_id_column,
         };
         use crate::schema::hubuumobject_relation::dsl::{
             from_hubuum_object_id, hubuumobject_relation, id, to_hubuum_object_id,
@@ -2065,16 +2071,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 ),
             )
             .into_boxed();
-        if let Some(scoped_collection_ids) = scopes.and_then(TokenScope::collection_ids) {
-            let scoped_class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
-            let scoped_object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
+        if let Some(scope) = resource_scope_ids(scopes) {
             let scoped_object_query = || {
-                hubuumobject.select(object_id_column).filter(
-                    object_collection_id
-                        .eq_any(scoped_collection_ids)
-                        .or(hubuum_class_id.eq_any(scoped_class_ids))
-                        .or(object_id_column.eq_any(scoped_object_ids)),
-                )
+                hubuumobject
+                    .select(object_id_column)
+                    .filter(object_scope_predicate(scope))
             };
             base_query = base_query
                 .filter(from_hubuum_object_id.eq_any(scoped_object_query()))
@@ -2531,20 +2532,10 @@ fn bidirectional_object_edges_sql() -> &'static str {
 fn build_root_graph_walk_query(spec: RootGraphWalkSpec) -> RawSqlQuerySpec {
     let mut bind_variables = Vec::<SQLValue>::new();
     let collection_array_sql = sql_integer_array(spec.collection_ids, &mut bind_variables);
-    let valid_scope_objects_sql = if let Some(scoped_collection_ids) =
-        spec.scope.and_then(TokenScope::collection_ids)
-    {
-        let scoped_class_ids = spec
-            .scope
-            .and_then(TokenScope::class_ids)
-            .unwrap_or_default();
-        let scoped_object_ids = spec
-            .scope
-            .and_then(TokenScope::object_ids)
-            .unwrap_or_default();
-        let collection_scope_sql = sql_integer_array(scoped_collection_ids, &mut bind_variables);
-        let class_scope_sql = sql_integer_array(scoped_class_ids, &mut bind_variables);
-        let object_scope_sql = sql_integer_array(scoped_object_ids, &mut bind_variables);
+    let valid_scope_objects_sql = if let Some(scope) = resource_scope_ids(spec.scope) {
+        let collection_scope_sql = sql_integer_array(scope.collection_ids, &mut bind_variables);
+        let class_scope_sql = sql_integer_array(scope.class_ids, &mut bind_variables);
+        let object_scope_sql = sql_integer_array(scope.object_ids, &mut bind_variables);
         format!(
             "SELECT id AS object_id FROM hubuumobject WHERE collection_id = ANY({collection_scope_sql}) OR hubuum_class_id = ANY({class_scope_sql}) OR id = ANY({object_scope_sql})"
         )
@@ -2935,12 +2926,11 @@ fn append_related_class_scope_clause(
     scopes: Option<&TokenScope>,
     bind_variables: &mut Vec<SQLValue>,
 ) {
-    let Some(collection_ids) = scopes.and_then(TokenScope::collection_ids) else {
+    let Some(scope) = resource_scope_ids(scopes) else {
         return;
     };
-    let class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
-    let collection_sql = sql_integer_array(collection_ids, bind_variables);
-    let class_sql = sql_integer_array(class_ids, bind_variables);
+    let collection_sql = sql_integer_array(scope.collection_ids, bind_variables);
+    let class_sql = sql_integer_array(scope.class_ids, bind_variables);
     where_clauses.push(format!(
         "NOT EXISTS (SELECT 1 FROM unnest(related_classes.path) AS path_class_id JOIN hubuumclass path_class ON path_class.id = path_class_id WHERE NOT (path_class.collection_id = ANY({collection_sql}) OR path_class.id = ANY({class_sql})))"
     ));
@@ -2951,14 +2941,12 @@ fn append_related_object_scope_clause(
     scopes: Option<&TokenScope>,
     bind_variables: &mut Vec<SQLValue>,
 ) {
-    let Some(collection_ids) = scopes.and_then(TokenScope::collection_ids) else {
+    let Some(scope) = resource_scope_ids(scopes) else {
         return;
     };
-    let class_ids = scopes.and_then(TokenScope::class_ids).unwrap_or_default();
-    let object_ids = scopes.and_then(TokenScope::object_ids).unwrap_or_default();
-    let collection_sql = sql_integer_array(collection_ids, bind_variables);
-    let class_sql = sql_integer_array(class_ids, bind_variables);
-    let object_sql = sql_integer_array(object_ids, bind_variables);
+    let collection_sql = sql_integer_array(scope.collection_ids, bind_variables);
+    let class_sql = sql_integer_array(scope.class_ids, bind_variables);
+    let object_sql = sql_integer_array(scope.object_ids, bind_variables);
     where_clauses.push(format!(
         "NOT EXISTS (SELECT 1 FROM unnest(related_objects.path) AS path_object_id JOIN hubuumobject path_object ON path_object.id = path_object_id WHERE NOT (path_object.collection_id = ANY({collection_sql}) OR path_object.hubuum_class_id = ANY({class_sql}) OR path_object.id = ANY({object_sql})))"
     ));
