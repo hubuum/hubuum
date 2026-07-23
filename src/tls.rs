@@ -83,6 +83,16 @@ fn resolve_backend(requested_backend: Option<TlsBackend>) -> std::io::Result<Tls
     }
 }
 
+#[cfg(feature = "tls-openssl")]
+fn validate_openssl_key_pair(builder: &openssl::ssl::SslAcceptorBuilder) -> std::io::Result<()> {
+    builder.check_private_key().map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("TLS private key does not match the certificate: {error}"),
+        )
+    })
+}
+
 pub fn configure_server<F, I, S, B>(
     server: HttpServer<F, I, S, B>,
     bind_address: &str,
@@ -244,6 +254,7 @@ mod tls_openssl {
                 format!("unable to load certificate chain: {e}"),
             )
         })?;
+        validate_openssl_key_pair(&builder)?;
 
         info!("Server binding with openssl to https://{}", bind_address);
         server
@@ -342,5 +353,74 @@ mod tests {
                 .to_string()
                 .contains("TLS backend `rustls` was requested")
         );
+    }
+
+    #[cfg(feature = "tls-openssl")]
+    mod openssl {
+        use openssl::{
+            asn1::Asn1Time,
+            hash::MessageDigest,
+            pkey::{PKey, Private},
+            rsa::Rsa,
+            ssl::{SslAcceptor, SslAcceptorBuilder, SslMethod},
+            x509::{X509, X509NameBuilder},
+        };
+
+        use super::super::validate_openssl_key_pair;
+
+        fn certificate_for(key: &PKey<Private>) -> X509 {
+            let mut name = X509NameBuilder::new().unwrap();
+            name.append_entry_by_text("CN", "localhost").unwrap();
+            let name = name.build();
+
+            let mut certificate = X509::builder().unwrap();
+            certificate.set_version(2).unwrap();
+            certificate.set_subject_name(&name).unwrap();
+            certificate.set_issuer_name(&name).unwrap();
+            certificate
+                .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+                .unwrap();
+            certificate
+                .set_not_after(&Asn1Time::days_from_now(1).unwrap())
+                .unwrap();
+            certificate.set_pubkey(key).unwrap();
+            certificate.sign(key, MessageDigest::sha256()).unwrap();
+            certificate.build()
+        }
+
+        fn acceptor_with_key(
+            certificate_key: &PKey<Private>,
+            configured_key: &PKey<Private>,
+        ) -> SslAcceptorBuilder {
+            let certificate = certificate_for(certificate_key);
+            let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+            builder.set_private_key(configured_key).unwrap();
+            builder.set_certificate(&certificate).unwrap();
+            builder
+        }
+
+        #[test]
+        fn openssl_accepts_a_matching_certificate_and_private_key() {
+            let key = PKey::from_rsa(Rsa::generate(2_048).unwrap()).unwrap();
+            let builder = acceptor_with_key(&key, &key);
+
+            validate_openssl_key_pair(&builder).unwrap();
+        }
+
+        #[test]
+        fn openssl_rejects_a_mismatched_certificate_and_private_key() {
+            let certificate_key = PKey::from_rsa(Rsa::generate(2_048).unwrap()).unwrap();
+            let configured_key = PKey::from_rsa(Rsa::generate(2_048).unwrap()).unwrap();
+            let builder = acceptor_with_key(&certificate_key, &configured_key);
+
+            let error = validate_openssl_key_pair(&builder).unwrap_err();
+
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+            assert!(
+                error
+                    .to_string()
+                    .contains("TLS private key does not match the certificate")
+            );
+        }
     }
 }
