@@ -1246,6 +1246,21 @@ mod tests {
     }
 
     #[test]
+    fn export_scope_ids_document_positive_minimum() {
+        let json = openapi_json();
+
+        for field in ["class_id", "object_id"] {
+            assert_eq!(
+                json.pointer(&format!(
+                    "/components/schemas/ExportScope/properties/{field}/minimum"
+                )),
+                Some(&Value::from(1)),
+                "ExportScope.{field} should document its positive-ID invariant"
+            );
+        }
+    }
+
+    #[test]
     fn object_data_json_patch_media_type_limits_and_statuses_are_documented() {
         let json = openapi_json();
         let operation_pointers = [

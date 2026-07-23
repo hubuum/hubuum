@@ -22,12 +22,12 @@ use crate::models::search::{
 use crate::models::{
     ClassIdSet, Collection, CollectionExportTemplates, CollectionID, ExportContentType,
     ExportIncludeRelatedDirection, ExportIncludeRelatedQuery, ExportIncludeRelatedSort,
-    ExportJsonResponse, ExportMeta, ExportMissingDataPolicy, ExportRequest, ExportScope,
-    ExportScopeKind, ExportTemplate, ExportTemplateID, ExportWarning, HubuumClassExpanded,
-    HubuumClassID, HubuumClassRelation, HubuumObject, HubuumObjectID, HubuumObjectRelation,
-    HubuumObjectWithPath, NewExportTaskOutputRecord, NewTaskEventRecord,
-    RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH, RelatedObjectForRootRow,
-    RelatedObjectGraphRow, RelatedObjectIncludeRow, TaskKind, TaskRecord,
+    ExportJsonResponse, ExportMeta, ExportMissingDataPolicy, ExportRequest, ExportTemplate,
+    ExportTemplateID, ExportWarning, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
+    HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath, NewExportTaskOutputRecord,
+    NewTaskEventRecord, RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH,
+    RelatedObjectForRootRow, RelatedObjectGraphRow, RelatedObjectIncludeRow, TaskKind, TaskRecord,
+    ValidatedExportScope,
 };
 use crate::observability::metrics;
 use crate::pagination::page_limits_or_defaults;
@@ -55,6 +55,7 @@ struct ExportArtifact {
 
 struct ExportRuntime {
     export: ExportRequest,
+    scope: ValidatedExportScope,
     content_type: ExportContentType,
     missing_data_policy: ExportMissingDataPolicy,
     template: Option<ExportTemplate>,
@@ -343,8 +344,8 @@ async fn prepare_export_runtime(
     export: ExportRequest,
     template: Option<ExportTemplate>,
 ) -> Result<ExportRuntime, ApiError> {
-    export.scope.validate()?;
-    validate_export_include(&export)?;
+    let scope = export.scope.validate()?;
+    validate_export_include(&export, scope)?;
 
     let collection_templates = match &template {
         Some(template) => {
@@ -360,6 +361,7 @@ async fn prepare_export_runtime(
         .unwrap_or(ExportContentType::ApplicationJson);
 
     Ok(ExportRuntime {
+        scope,
         content_type,
         missing_data_policy: export
             .missing_data_policy
@@ -477,7 +479,7 @@ pub(crate) async fn execute_export_task(
         event_type: "running".to_string(),
         message: "Query execution started".to_string(),
         data: Some(serde_json::json!({
-            "scope": runtime.export.scope.kind.as_str(),
+            "scope": runtime.scope.kind().as_str(),
             "content_type": runtime.content_type.as_mime(),
         })),
     }
@@ -494,7 +496,7 @@ pub(crate) async fn execute_export_task(
     let query_start = Instant::now();
     let (items, mut warnings, truncated) = with_statement_timeout_scope(
         statement_timeout,
-        execute_scope(pool, subject, &runtime.export.scope, query_options),
+        execute_scope(pool, subject, runtime.scope, query_options),
     )
     .await?;
     let mut items = items;
@@ -671,7 +673,10 @@ fn artifact_to_output_record(
     })
 }
 
-fn validate_export_include(export: &ExportRequest) -> Result<(), ApiError> {
+fn validate_export_include(
+    export: &ExportRequest,
+    scope: ValidatedExportScope,
+) -> Result<(), ApiError> {
     let Some(include) = &export.include else {
         return Ok(());
     };
@@ -680,7 +685,7 @@ fn validate_export_include(export: &ExportRequest) -> Result<(), ApiError> {
         return Ok(());
     };
 
-    if !related_objects.is_empty() && export.scope.kind != ExportScopeKind::ObjectsInClass {
+    if !related_objects.is_empty() && !matches!(scope, ValidatedExportScope::ObjectsInClass(_)) {
         return Err(ApiError::BadRequest(
             "include.related_objects is only supported for scope 'objects_in_class'".to_string(),
         ));
@@ -833,7 +838,7 @@ fn log_export_stage_metrics(
     tracing::info!(
         message = "Export execution timings recorded",
         task_id = task_id,
-        scope = runtime.export.scope.kind.as_str(),
+        scope = runtime.scope.kind().as_str(),
         content_type = runtime.content_type.as_mime(),
         template_name = runtime
             .template
@@ -916,7 +921,7 @@ fn resolve_relation_hydration_plan(
     query_options: &mut QueryOptions,
 ) -> Result<Option<RelationHydrationPlan>, ApiError> {
     let has_template = runtime.template.is_some();
-    let scope = &runtime.export.scope;
+    let scope = runtime.scope;
     let relation_context = runtime.export.relation_context.as_ref();
 
     if relation_context.is_some() && !has_template {
@@ -927,8 +932,8 @@ fn resolve_relation_hydration_plan(
 
     if relation_context.is_some()
         && !matches!(
-            scope.kind,
-            ExportScopeKind::ObjectsInClass | ExportScopeKind::RelatedObjects
+            scope,
+            ValidatedExportScope::ObjectsInClass(_) | ValidatedExportScope::RelatedObjects { .. }
         )
     {
         return Err(ApiError::BadRequest(
@@ -941,8 +946,8 @@ fn resolve_relation_hydration_plan(
         return Ok(None);
     }
 
-    match scope.kind {
-        ExportScopeKind::ObjectsInClass => {
+    match scope {
+        ValidatedExportScope::ObjectsInClass(_) => {
             let Some(context) = relation_context else {
                 return Ok(None);
             };
@@ -951,7 +956,7 @@ fn resolve_relation_hydration_plan(
                 enabled_for_scope: true,
             }))
         }
-        ExportScopeKind::RelatedObjects => {
+        ValidatedExportScope::RelatedObjects { .. } => {
             let depth_limit = validate_relation_depth(
                 relation_context
                     .and_then(|context| context.depth)
@@ -1004,8 +1009,8 @@ async fn build_template_items(
 
     let mut hydration_budget = HydrationBudget::new(max_hydrated_template_objects());
 
-    match runtime.export.scope.kind {
-        ExportScopeKind::ObjectsInClass => {
+    match runtime.scope {
+        ValidatedExportScope::ObjectsInClass(_) => {
             let admin = RuntimeAdminExport::new(user);
             let roots = items
                 .iter()
@@ -1097,10 +1102,8 @@ async fn build_template_items(
 
             Ok((hydrated_items, None))
         }
-        ExportScopeKind::RelatedObjects => {
-            let source_object = HubuumObjectID::new(runtime.export.scope.object_id_required()?)?
-                .instance(pool)
-                .await?;
+        ValidatedExportScope::RelatedObjects { object_id, .. } => {
+            let source_object = object_id.instance(pool).await?;
             let source = object_with_root_path(&source_object);
             let related_objects = items
                 .iter()
@@ -1915,34 +1918,31 @@ fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
 async fn execute_scope(
     pool: &DbPool,
     subject: &impl crate::traits::Search,
-    scope: &ExportScope,
+    scope: ValidatedExportScope,
     mut query_options: QueryOptions,
 ) -> Result<(Vec<serde_json::Value>, Vec<ExportWarning>, bool), ApiError> {
     let item_limit = query_options.limit.unwrap_or(1).saturating_sub(1).max(1);
     let admin = RuntimeAdminExport::new(subject);
 
-    let data = match scope.kind {
-        ExportScopeKind::Collections => {
+    let data = match scope {
+        ValidatedExportScope::Collections => {
             to_json_items(admin.collections(pool, query_options).await?)?
         }
-        ExportScopeKind::Classes => to_json_items(admin.classes(pool, query_options).await?)?,
-        ExportScopeKind::ObjectsInClass => {
-            push_exact_filter(
-                &mut query_options,
-                FilterField::ClassId,
-                scope.class_id_required()?,
-            )?;
+        ValidatedExportScope::Classes => to_json_items(admin.classes(pool, query_options).await?)?,
+        ValidatedExportScope::ObjectsInClass(class_id) => {
+            push_exact_filter(&mut query_options, FilterField::ClassId, class_id.id())?;
             to_json_items(admin.objects(pool, query_options).await?)?
         }
-        ExportScopeKind::ClassRelations => {
+        ValidatedExportScope::ClassRelations => {
             to_json_items(admin.class_relations(pool, query_options).await?)?
         }
-        ExportScopeKind::ObjectRelations => {
+        ValidatedExportScope::ObjectRelations => {
             to_json_items(admin.object_relations(pool, query_options).await?)?
         }
-        ExportScopeKind::RelatedObjects => {
-            let class_id = HubuumClassID::new(scope.class_id_required()?)?;
-            let object_id = HubuumObjectID::new(scope.object_id_required()?)?;
+        ValidatedExportScope::RelatedObjects {
+            class_id,
+            object_id,
+        } => {
             check_if_object_in_class(pool, &class_id, &object_id).await?;
             let related = admin
                 .related_objects(pool, object_id, query_options)
@@ -2288,8 +2288,10 @@ mod tests {
     }
 
     fn export_runtime(export: ExportRequest) -> ExportRuntime {
+        let scope = export.scope.validate().unwrap();
         ExportRuntime {
             export,
+            scope,
             content_type: ExportContentType::TextPlain,
             missing_data_policy: ExportMissingDataPolicy::Strict,
             template: Some(ExportTemplate {

@@ -68,6 +68,43 @@ mod tests {
     }
 
     #[rstest]
+    #[case::zero_class_id(ExportScopeKind::ObjectsInClass, Some(0), None)]
+    #[case::negative_class_id(ExportScopeKind::ObjectsInClass, Some(-1), None)]
+    #[case::zero_object_id(ExportScopeKind::RelatedObjects, Some(1), Some(0))]
+    #[actix_web::test]
+    async fn test_export_rejects_non_positive_scope_ids(
+        #[future(awt)] test_context: TestContext,
+        #[case] kind: ExportScopeKind,
+        #[case] class_id: Option<i32>,
+        #[case] object_id: Option<i32>,
+    ) {
+        let context = test_context;
+        let body = ExportRequest {
+            scope: ExportScope {
+                kind,
+                class_id,
+                object_id,
+            },
+            query: None,
+            missing_data_policy: None,
+            limits: None,
+            include: None,
+            relation_context: None,
+        };
+
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            EXPORTS_ENDPOINT,
+            &body,
+            vec![],
+        )
+        .await;
+
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+    }
+
+    #[rstest]
     #[actix_web::test]
     async fn test_export_accepts_unscoped_admin_service_account(
         #[future(awt)] test_context: TestContext,

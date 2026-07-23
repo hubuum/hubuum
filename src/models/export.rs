@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
+use crate::models::{HubuumClassID, HubuumObjectID};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -21,58 +22,92 @@ pub enum ExportScopeKind {
 #[schema(example = openapi_examples::export_scope_example)]
 pub struct ExportScope {
     pub kind: ExportScopeKind,
+    #[schema(minimum = 1)]
     pub class_id: Option<i32>,
+    #[schema(minimum = 1)]
     pub object_id: Option<i32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidatedExportScope {
+    Collections,
+    Classes,
+    ObjectsInClass(HubuumClassID),
+    ClassRelations,
+    ObjectRelations,
+    RelatedObjects {
+        class_id: HubuumClassID,
+        object_id: HubuumObjectID,
+    },
+}
+
+impl ValidatedExportScope {
+    pub fn kind(self) -> ExportScopeKind {
+        match self {
+            Self::Collections => ExportScopeKind::Collections,
+            Self::Classes => ExportScopeKind::Classes,
+            Self::ObjectsInClass(_) => ExportScopeKind::ObjectsInClass,
+            Self::ClassRelations => ExportScopeKind::ClassRelations,
+            Self::ObjectRelations => ExportScopeKind::ObjectRelations,
+            Self::RelatedObjects { .. } => ExportScopeKind::RelatedObjects,
+        }
+    }
+}
+
 impl ExportScope {
-    pub fn validate(&self) -> Result<(), ApiError> {
+    pub fn validate(&self) -> Result<ValidatedExportScope, ApiError> {
         match self.kind {
-            ExportScopeKind::Collections
-            | ExportScopeKind::Classes
-            | ExportScopeKind::ClassRelations
-            | ExportScopeKind::ObjectRelations => {
-                if self.class_id.is_some() || self.object_id.is_some() {
-                    return Err(ApiError::BadRequest(format!(
-                        "Scope '{}' does not accept class_id or object_id",
-                        self.kind.as_str()
-                    )));
-                }
+            ExportScopeKind::Collections => {
+                self.reject_ids()?;
+                Ok(ValidatedExportScope::Collections)
+            }
+            ExportScopeKind::Classes => {
+                self.reject_ids()?;
+                Ok(ValidatedExportScope::Classes)
             }
             ExportScopeKind::ObjectsInClass => {
-                if self.class_id.is_none() {
-                    return Err(ApiError::BadRequest(
-                        "Scope 'objects_in_class' requires class_id".to_string(),
-                    ));
-                }
+                let class_id = self.class_id.ok_or_else(|| {
+                    ApiError::BadRequest("Scope 'objects_in_class' requires class_id".to_string())
+                })?;
                 if self.object_id.is_some() {
                     return Err(ApiError::BadRequest(
                         "Scope 'objects_in_class' does not accept object_id".to_string(),
                     ));
                 }
+                Ok(ValidatedExportScope::ObjectsInClass(HubuumClassID::new(
+                    class_id,
+                )?))
+            }
+            ExportScopeKind::ClassRelations => {
+                self.reject_ids()?;
+                Ok(ValidatedExportScope::ClassRelations)
+            }
+            ExportScopeKind::ObjectRelations => {
+                self.reject_ids()?;
+                Ok(ValidatedExportScope::ObjectRelations)
             }
             ExportScopeKind::RelatedObjects => {
-                if self.class_id.is_none() || self.object_id.is_none() {
+                let (Some(class_id), Some(object_id)) = (self.class_id, self.object_id) else {
                     return Err(ApiError::BadRequest(
                         "Scope 'related_objects' requires both class_id and object_id".to_string(),
                     ));
-                }
+                };
+                Ok(ValidatedExportScope::RelatedObjects {
+                    class_id: HubuumClassID::new(class_id)?,
+                    object_id: HubuumObjectID::new(object_id)?,
+                })
             }
         }
+    }
 
+    fn reject_ids(&self) -> Result<(), ApiError> {
+        if self.class_id.is_some() || self.object_id.is_some() {
+            return Err(ApiError::BadRequest(format!(
+                "Scope '{}' does not accept class_id or object_id",
+                self.kind.as_str()
+            )));
+        }
         Ok(())
-    }
-
-    pub fn class_id_required(&self) -> Result<i32, ApiError> {
-        self.class_id.ok_or_else(|| {
-            ApiError::BadRequest(format!("Scope '{}' requires class_id", self.kind.as_str()))
-        })
-    }
-
-    pub fn object_id_required(&self) -> Result<i32, ApiError> {
-        self.object_id.ok_or_else(|| {
-            ApiError::BadRequest(format!("Scope '{}' requires object_id", self.kind.as_str()))
-        })
     }
 }
 
@@ -374,6 +409,105 @@ impl FromStr for ExportMissingDataPolicy {
             _ => Err(ApiError::BadRequest(format!(
                 "Unsupported export missing data policy: '{value}'"
             ))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    #[rstest]
+    #[case::collections(
+        ExportScopeKind::Collections,
+        None,
+        None,
+        ValidatedExportScope::Collections
+    )]
+    #[case::objects_in_class(
+        ExportScopeKind::ObjectsInClass,
+        Some(11),
+        None,
+        ValidatedExportScope::ObjectsInClass(HubuumClassID::new(11).unwrap())
+    )]
+    #[case::related_objects(
+        ExportScopeKind::RelatedObjects,
+        Some(11),
+        Some(22),
+        ValidatedExportScope::RelatedObjects {
+            class_id: HubuumClassID::new(11).unwrap(),
+            object_id: HubuumObjectID::new(22).unwrap(),
+        }
+    )]
+    fn scope_validation_returns_typed_domain_state(
+        #[case] kind: ExportScopeKind,
+        #[case] class_id: Option<i32>,
+        #[case] object_id: Option<i32>,
+        #[case] expected: ValidatedExportScope,
+    ) {
+        let scope = ExportScope {
+            kind,
+            class_id,
+            object_id,
+        };
+
+        assert_eq!(scope.validate().unwrap(), expected);
+    }
+
+    #[rstest]
+    #[case::ids_on_collection(
+        ExportScopeKind::Collections,
+        Some(1),
+        None,
+        "Scope 'collections' does not accept class_id or object_id"
+    )]
+    #[case::missing_class(
+        ExportScopeKind::ObjectsInClass,
+        None,
+        None,
+        "Scope 'objects_in_class' requires class_id"
+    )]
+    #[case::extra_object(
+        ExportScopeKind::ObjectsInClass,
+        Some(1),
+        Some(2),
+        "Scope 'objects_in_class' does not accept object_id"
+    )]
+    #[case::incomplete_relation(
+        ExportScopeKind::RelatedObjects,
+        Some(1),
+        None,
+        "Scope 'related_objects' requires both class_id and object_id"
+    )]
+    #[case::invalid_class(
+        ExportScopeKind::ObjectsInClass,
+        Some(0),
+        None,
+        "Invalid class id '0': must be a positive integer"
+    )]
+    #[case::invalid_object(
+        ExportScopeKind::RelatedObjects,
+        Some(1),
+        Some(-1),
+        "Invalid object id '-1': must be a positive integer"
+    )]
+    fn scope_validation_rejects_invalid_domain_state(
+        #[case] kind: ExportScopeKind,
+        #[case] class_id: Option<i32>,
+        #[case] object_id: Option<i32>,
+        #[case] expected_message: &str,
+    ) {
+        let scope = ExportScope {
+            kind,
+            class_id,
+            object_id,
+        };
+
+        match scope.validate().unwrap_err() {
+            ApiError::BadRequest(message) => assert_eq!(message, expected_message),
+            error => panic!("unexpected error: {error:?}"),
         }
     }
 }
