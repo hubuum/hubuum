@@ -17,8 +17,7 @@ mod client_network;
 mod defaults;
 mod tls_backend;
 mod token_hash;
-pub use client_network::{ClientAllowlist, TrustedProxies};
-use client_network::{parse_client_allowlist, parse_trusted_proxies};
+pub use client_network::{ClientAllowlist, ClientNetworkParseError, TrustedProxies};
 pub use defaults::*;
 pub use tls_backend::TlsBackend;
 pub use token_hash::{token_hash_key_bytes, token_hash_key_is_ephemeral};
@@ -833,7 +832,7 @@ pub struct AppConfig {
     /// Trusted reverse-proxy IPs/CIDRs. When `trust_ip_headers` is set, hops in this set
     /// are skipped (from the connection peer inward) and the first untrusted hop is taken
     /// as the client. Comma-separated; empty disables allowlist-based resolution.
-    #[clap(long, default_value = "", env = "HUBUUM_TRUSTED_PROXIES", value_parser = parse_trusted_proxies)]
+    #[clap(long, default_value = "", env = "HUBUUM_TRUSTED_PROXIES")]
     pub trusted_proxies: TrustedProxies,
 
     /// Number of trusted proxy hops in front of the server. Used only when
@@ -847,7 +846,7 @@ pub struct AppConfig {
     pub trusted_proxy_hops: usize,
 
     /// Whitelist of client IPs or CIDRs ("*" allows all)
-    #[clap(long, default_value = "127.0.0.1,::1", env = "HUBUUM_CLIENT_ALLOWLIST", value_parser = parse_client_allowlist)]
+    #[clap(long, default_value = "127.0.0.1,::1", env = "HUBUUM_CLIENT_ALLOWLIST")]
     pub client_allowlist: ClientAllowlist,
 }
 
@@ -1475,14 +1474,14 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         env::var(key)
             .unwrap_or_else(|_| default.to_string())
             .parse()
-            .unwrap_or_else(|e: ApiError| panic!("Invalid client allowlist in {key}: {e}"))
+            .unwrap_or_else(|error| panic!("Invalid client allowlist in {key}: {error}"))
     }
 
     fn env_or_default_trusted_proxies(key: &str, default: &str) -> TrustedProxies {
         env::var(key)
             .unwrap_or_else(|_| default.to_string())
             .parse()
-            .unwrap_or_else(|e: ApiError| panic!("Invalid trusted proxies in {key}: {e}"))
+            .unwrap_or_else(|error| panic!("Invalid trusted proxies in {key}: {error}"))
     }
 
     let config = AppConfig {
