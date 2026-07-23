@@ -12,8 +12,11 @@
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use crate::db::prelude::*;
     use actix_web::{App, http::StatusCode, test, web};
+    use diesel::sql_types::{Bool, Integer};
     use rstest::rstest;
 
     use crate::api;
@@ -24,12 +27,12 @@ mod tests {
         DisableServiceAccount, SaveServiceAccount, cancel_pending_tasks_for_principal,
     };
     use crate::db::traits::task::scope_snapshot_json;
-    use crate::db::with_connection;
+    use crate::db::{DbPool, with_connection, with_transaction};
     use crate::errors::ApiError;
     use crate::events::{Action, EntityType};
     use crate::models::Collection;
     use crate::models::collection::user_can_on_any;
-    use crate::models::principal::load_principal_by_id;
+    use crate::models::principal::{PrincipalKind, load_principal_by_id};
     use crate::models::token::{Token, create_principal_token, create_principal_token_with_scope};
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
@@ -87,6 +90,42 @@ mod tests {
             .await
             .unwrap();
         (classes, objects, sa)
+    }
+
+    #[derive(QueryableByName)]
+    struct BackendPid {
+        #[diesel(sql_type = Integer)]
+        pid: i32,
+    }
+
+    #[derive(QueryableByName)]
+    struct WaitingTransaction {
+        #[diesel(sql_type = Bool)]
+        waiting: bool,
+    }
+
+    async fn wait_for_transaction_blocked_by(pool: &DbPool, blocker_pid: i32) {
+        for _ in 0..100 {
+            let waiting = with_connection(pool, async |conn| {
+                diesel::sql_query(
+                    "SELECT EXISTS (\
+                        SELECT 1 FROM pg_stat_activity AS activity \
+                        WHERE $1 = ANY(pg_blocking_pids(activity.pid))\
+                    ) AS waiting",
+                )
+                .bind::<Integer, _>(blocker_pid)
+                .get_result::<WaitingTransaction>(conn)
+                .await
+            })
+            .await
+            .unwrap()
+            .waiting;
+            if waiting {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("group deletion did not wait for the service-account transaction");
     }
 
     // ----- Batch 1: identity / subtype invariants -----
@@ -2167,6 +2206,101 @@ mod tests {
         .await;
 
         assert_eq!(resp.status(), expected);
+    }
+
+    #[actix_web::test]
+    async fn test_group_delete_rechecks_owners_after_waiting_for_concurrent_creation() {
+        let context = TestContext::new().await;
+        let pool = &context.pool;
+        let group = create_test_group(pool).await;
+        let service_account_name = context.scoped_name("concurrent_group_owner");
+        let (inserted_tx, inserted_rx) = tokio::sync::oneshot::channel();
+        let (commit_tx, commit_rx) = tokio::sync::oneshot::channel();
+        let insert_pool = context.pool.clone();
+        let identity_scope_id = group.identity_scope_id;
+        let owner_group_id = group.id;
+
+        let insert_task = actix_web::rt::spawn(async move {
+            with_transaction(&insert_pool, async move |conn| -> Result<(), ApiError> {
+                use crate::schema::{principals, service_accounts};
+
+                let pid = diesel::sql_query("SELECT pg_backend_pid() AS pid")
+                    .get_result::<BackendPid>(conn)
+                    .await?
+                    .pid;
+                let principal_id = diesel::insert_into(principals::table)
+                    .values((
+                        principals::identity_scope_id.eq(identity_scope_id),
+                        principals::kind.eq(PrincipalKind::ServiceAccount.as_str()),
+                        principals::name.eq(&service_account_name),
+                    ))
+                    .returning(principals::id)
+                    .get_result::<i32>(conn)
+                    .await?;
+                diesel::insert_into(service_accounts::table)
+                    .values((
+                        service_accounts::id.eq(principal_id),
+                        service_accounts::description.eq(""),
+                        service_accounts::owner_group_id.eq(owner_group_id),
+                    ))
+                    .execute(conn)
+                    .await?;
+                inserted_tx
+                    .send(pid)
+                    .expect("group delete test should still be waiting for the insert");
+                commit_rx
+                    .await
+                    .expect("group delete test should release the insert transaction");
+                Ok(())
+            })
+            .await
+        });
+
+        let blocker_pid = inserted_rx
+            .await
+            .expect("service-account transaction ended before inserting");
+        let delete_pool = context.pool.clone();
+        let admin_token = context.admin_token.clone();
+        let endpoint = format!("{IAM_GROUPS_ENDPOINT}/{}", group.id);
+        let delete_task = actix_web::rt::spawn(async move {
+            delete_request(&delete_pool, &admin_token, &endpoint).await
+        });
+
+        wait_for_transaction_blocked_by(pool, blocker_pid).await;
+        commit_tx
+            .send(())
+            .expect("service-account transaction should still be waiting");
+        insert_task
+            .await
+            .expect("service-account insert task should complete")
+            .expect("service-account insert should commit");
+        let response = delete_task
+            .await
+            .expect("group deletion request should complete");
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[actix_web::test]
+    async fn test_group_delete_conflict_caps_service_account_preview() {
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        for _ in 0..11 {
+            create_test_service_account(&context.pool, &group, None).await;
+        }
+
+        let response = delete_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{IAM_GROUPS_ENDPOINT}/{}", group.id),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::CONFLICT).await;
+        let error: serde_json::Value = test::read_body_json(response).await;
+        let message = error["message"].as_str().unwrap_or_default();
+
+        assert_eq!(message.matches("(id ").count(), 10);
+        assert!(message.ends_with("; additional service accounts omitted"));
     }
 
     // ----- Review fixes (round 2) -----

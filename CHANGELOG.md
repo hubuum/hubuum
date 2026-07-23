@@ -47,6 +47,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   match instead of binding a server that cannot complete TLS handshakes.
 - Event-retention file archives are now durably synchronized before the
   database transaction deletes the archived events.
+- Group deletion now checks service-account ownership while holding the group
+  row lock, so concurrent account creation returns a stable `409 Conflict`;
+  conflict diagnostics also cap the number of account names they include.
 - Single-host rolling updates now wait for Caddy's passive upstream failure
   marks to clear between replica replacements, preserving continuous routing
   without reprovisioning an unchanged proxy configuration.
