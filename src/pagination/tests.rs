@@ -581,25 +581,44 @@ fn json_cursor_rejects_nesting_above_the_maximum() {
     );
 }
 
-#[test]
-fn validate_page_limit_with_max_accepts_within_range() {
-    assert_eq!(validate_page_limit_with_max(10, 100).unwrap(), 10);
-    assert_eq!(validate_page_limit_with_max(100, 100).unwrap(), 100);
+#[rstest]
+#[case(None, 10)]
+#[case(Some(1), 1)]
+#[case(Some(100), 100)]
+#[case(Some(101), 100)]
+fn page_limits_resolve_defaults_and_clamp(
+    #[case] requested: Option<usize>,
+    #[case] expected: usize,
+) {
+    let limits = PageLimits::new(10, 100).unwrap();
+
+    assert_eq!(limits.resolve(requested).unwrap(), expected);
+}
+
+#[rstest]
+#[case(0, 100, "default_page_limit must be greater than 0")]
+#[case(10, 0, "max_page_limit must be greater than 0")]
+#[case(
+    101,
+    100,
+    "default_page_limit (101) must be less than or equal to max_page_limit (100)"
+)]
+fn page_limits_reject_invalid_invariants(
+    #[case] default: usize,
+    #[case] maximum: usize,
+    #[case] expected: &str,
+) {
+    let error = PageLimits::new(default, maximum).unwrap_err();
+
+    assert_eq!(error.to_string(), expected);
 }
 
 #[test]
-fn validate_page_limit_with_max_rejects_zero() {
-    let error = validate_page_limit_with_max(0, 100).unwrap_err();
+fn page_limits_reject_a_zero_requested_limit() {
+    let error = PageLimits::new(10, 100)
+        .unwrap()
+        .resolve(Some(0))
+        .unwrap_err();
+
     assert_eq!(error.to_string(), "limit must be greater than 0");
-}
-
-#[test]
-fn validate_page_limit_with_max_rejects_zero_maximum() {
-    let error = validate_page_limit_with_max(1, 0).unwrap_err();
-    assert_eq!(error.to_string(), "max_page_limit must be greater than 0");
-}
-
-#[test]
-fn validate_page_limit_with_max_clamps_above_maximum() {
-    assert_eq!(validate_page_limit_with_max(101, 100).unwrap(), 100);
 }

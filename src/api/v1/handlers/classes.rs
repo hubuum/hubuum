@@ -26,7 +26,7 @@ use crate::models::collection as collection_model;
 use crate::models::traits::{ExpandCollection, ToHubuumObjects, check_if_object_in_class};
 use crate::pagination::{
     SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, page_limits,
-    prepare_db_pagination, validate_page_limit,
+    prepare_db_pagination,
 };
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{
@@ -243,8 +243,7 @@ fn prepare_graph_query_options(
         ));
     }
 
-    let (default_limit, _) = page_limits()?;
-    let limit = validate_page_limit(params.limit.unwrap_or(default_limit))?;
+    let limit = page_limits()?.resolve(params.limit)?;
     params.limit = Some(limit + 1);
 
     Ok((params, limit))

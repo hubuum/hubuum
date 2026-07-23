@@ -1,4 +1,5 @@
 use hubuum::models::parse_unified_search_query_with_limits;
+use hubuum::pagination::PageLimits;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 
@@ -18,7 +19,8 @@ const MAX_LIMIT: usize = 1000;
 
 #[library_benchmark]
 fn bench_parse_unified_search_query() -> usize {
-    let parsed = parse_unified_search_query_with_limits(black_box(QUERY), DEFAULT_LIMIT, MAX_LIMIT)
+    let page_limits = PageLimits::new(DEFAULT_LIMIT, MAX_LIMIT).unwrap();
+    let parsed = parse_unified_search_query_with_limits(black_box(QUERY), page_limits)
         .expect("benchmark unified query should parse");
 
     black_box(parsed.kinds.len() + parsed.limit_per_kind)

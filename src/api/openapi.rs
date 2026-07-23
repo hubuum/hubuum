@@ -733,7 +733,9 @@ fn operation_has_cursor_pagination(operation: &Operation) -> bool {
 }
 
 fn add_cursor_pagination_docs(operation: &mut Operation) {
-    let (default_page_limit, max_page_limit) = page_limits_or_defaults();
+    let limits = page_limits_or_defaults();
+    let default_page_limit = limits.default_limit();
+    let max_page_limit = limits.maximum_limit();
     let parameters = operation.parameters.get_or_insert_with(Vec::new);
     upsert_page_limit_parameter(
         parameters,
@@ -780,7 +782,9 @@ fn add_cursor_pagination_docs(operation: &mut Operation) {
 }
 
 fn add_unified_search_pagination_docs(operation: &mut Operation) {
-    let (default_page_limit, max_page_limit) = page_limits_or_defaults();
+    let limits = page_limits_or_defaults();
+    let default_page_limit = limits.default_limit();
+    let max_page_limit = limits.maximum_limit();
     upsert_page_limit_parameter(
         operation.parameters.get_or_insert_with(Vec::new),
         "limit_per_kind",
@@ -1347,7 +1351,9 @@ mod tests {
     #[test]
     fn openapi_documents_cursor_pagination_for_list_endpoints() {
         let json = openapi_json();
-        let (default_page_limit, max_page_limit) = page_limits_or_defaults();
+        let limits = page_limits_or_defaults();
+        let default_page_limit = limits.default_limit();
+        let max_page_limit = limits.maximum_limit();
 
         for path in CURSOR_PAGINATED_GET_PATHS {
             let pointer_path = path.replace('~', "~0").replace('/', "~1");
