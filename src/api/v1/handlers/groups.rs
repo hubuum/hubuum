@@ -2,7 +2,6 @@ use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
-use crate::db::traits::service_account::service_accounts_owned_by_group;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
@@ -209,20 +208,6 @@ pub async fn delete_group(
         target = group_id.id(),
         requestor = requestor.user.id
     );
-
-    // owner_group_id is ON DELETE RESTRICT: surface a clear 409 listing the owned
-    // service accounts instead of letting the FK violation become an opaque error.
-    let owned = service_accounts_owned_by_group(&pool, group_id.id()).await?;
-    if !owned.is_empty() {
-        let list = owned
-            .iter()
-            .map(|(id, name)| format!("{name} (id {id})"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(ApiError::Conflict(format!(
-            "Group owns service accounts; reassign or delete them first: {list}"
-        )));
-    }
 
     let event_context = requestor.event_context(&req);
     group_id.delete(&pool, Some(&event_context)).await?;

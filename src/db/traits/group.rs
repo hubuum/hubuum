@@ -13,6 +13,8 @@ use crate::models::{
 };
 use crate::{date_search, numeric_search, string_search};
 
+const OWNED_SERVICE_ACCOUNT_PREVIEW_LIMIT: i64 = 10;
+
 fn group_snapshot(group: &Group) -> serde_json::Value {
     serde_json::json!({
         "id": group.id,
@@ -150,6 +152,54 @@ async fn ensure_group_allows_local_write(
     Ok(())
 }
 
+async fn ensure_group_has_no_owned_service_accounts(
+    conn: &mut DbConnection,
+    group_id: i32,
+) -> Result<(), ApiError> {
+    use crate::schema::{principals, service_accounts};
+
+    let mut owned = service_accounts::table
+        .inner_join(principals::table.on(principals::id.eq(service_accounts::id)))
+        .filter(service_accounts::owner_group_id.eq(group_id))
+        .select((service_accounts::id, principals::name))
+        .order(service_accounts::id.asc())
+        .limit(OWNED_SERVICE_ACCOUNT_PREVIEW_LIMIT + 1)
+        .load::<(i32, String)>(conn)
+        .await?;
+    if owned.is_empty() {
+        return Ok(());
+    }
+
+    let additional_accounts_omitted = owned.len() > OWNED_SERVICE_ACCOUNT_PREVIEW_LIMIT as usize;
+    owned.truncate(OWNED_SERVICE_ACCOUNT_PREVIEW_LIMIT as usize);
+    let list = owned
+        .iter()
+        .map(|(id, name)| format!("{name} (id {id})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let suffix = if additional_accounts_omitted {
+        "; additional service accounts omitted"
+    } else {
+        ""
+    };
+    Err(ApiError::Conflict(format!(
+        "Group owns service accounts; reassign or delete them first: {list}{suffix}"
+    )))
+}
+
+async fn lock_group_for_delete(conn: &mut DbConnection, group_id: i32) -> Result<Group, ApiError> {
+    use crate::schema::groups::dsl::{groups, id};
+
+    let group = groups
+        .filter(id.eq(group_id))
+        .for_update()
+        .first::<Group>(conn)
+        .await?;
+    ensure_group_has_no_owned_service_accounts(conn, group.id).await?;
+    ensure_group_allows_local_write(conn, group.id).await?;
+    Ok(group)
+}
+
 pub trait LoadGroupRecord {
     async fn load_group_record(&self, pool: &DbPool) -> Result<Group, ApiError>;
 }
@@ -206,8 +256,8 @@ impl DeleteGroupRecord for GroupID {
     async fn delete_group_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
-        with_connection(pool, async |conn| -> Result<usize, ApiError> {
-            ensure_group_allows_local_write(conn, self.id()).await?;
+        with_transaction(pool, async |conn| -> Result<usize, ApiError> {
+            lock_group_for_delete(conn, self.id()).await?;
             Ok(diesel::delete(groups.filter(id.eq(self.id())))
                 .execute(conn)
                 .await?)
@@ -227,12 +277,7 @@ impl DeleteGroupRecord for GroupID {
         use crate::schema::groups::dsl::{groups, id};
 
         with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-            let group = groups
-                .filter(id.eq(self.id()))
-                .for_update()
-                .first::<Group>(conn)
-                .await?;
-            ensure_group_allows_local_write(conn, group.id).await?;
+            let group = lock_group_for_delete(conn, self.id()).await?;
             let deleted = diesel::delete(groups.filter(id.eq(self.id())))
                 .execute(conn)
                 .await?;
@@ -254,8 +299,8 @@ impl DeleteGroupRecord for Group {
     async fn delete_group_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
         use crate::schema::groups::dsl::{groups, id};
 
-        with_connection(pool, async |conn| -> Result<usize, ApiError> {
-            ensure_group_allows_local_write(conn, self.id).await?;
+        with_transaction(pool, async |conn| -> Result<usize, ApiError> {
+            lock_group_for_delete(conn, self.id).await?;
             Ok(diesel::delete(groups.filter(id.eq(self.id)))
                 .execute(conn)
                 .await?)
@@ -275,12 +320,7 @@ impl DeleteGroupRecord for Group {
         use crate::schema::groups::dsl::{groups, id};
 
         with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-            let before = groups
-                .filter(id.eq(self.id))
-                .for_update()
-                .first::<Group>(conn)
-                .await?;
-            ensure_group_allows_local_write(conn, before.id).await?;
+            let before = lock_group_for_delete(conn, self.id).await?;
             let deleted = diesel::delete(groups.filter(id.eq(self.id)))
                 .execute(conn)
                 .await?;
