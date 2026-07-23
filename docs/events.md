@@ -484,6 +484,6 @@ HUBUUM_EVENT_RETENTION_ARCHIVE_PATH=/var/lib/hubuum/event-archive.jsonl
 ```
 
 Each archive line contains `archived_at` and the full event row. If archive
-writing fails, the worker does not delete that batch. On Unix, newly created
-archive files are created with mode `0600`; existing file permissions are not
-changed.
+writing or durable file synchronization fails, the worker does not delete that
+batch. On Unix, newly created archive files are created with mode `0600`;
+existing file permissions are not changed.

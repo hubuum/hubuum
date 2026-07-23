@@ -45,6 +45,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - OpenSSL TLS startup now rejects a certificate and private key that do not
   match instead of binding a server that cannot complete TLS handshakes.
+- Event-retention file archives are now durably synchronized before the
+  database transaction deletes the archived events.
 - Single-host rolling updates now wait for Caddy's passive upstream failure
   marks to clear between replica replacements, preserving continuous routing
   without reprovisioning an unchanged proxy configuration.
