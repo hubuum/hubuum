@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::db::prelude::{QueryableByName, RunQueryDsl};
 use crate::db::traits::history::{
-    collection_history_paginated_with_total_count, resolve_actor_usernames,
+    HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_actor_usernames,
 };
 use crate::db::traits::user::UserSearchBackend;
 use crate::db::with_actor_scope;
@@ -630,9 +630,13 @@ async fn collection_history_query_count_is_constant_with_page_size() {
         let query = parse_query_parameter(&format!("limit={limit}&sort=history_id.desc"))
             .expect("valid history query");
         async move {
-            let (rows, total) =
-                collection_history_paginated_with_total_count(history_collection_id, &pool, &query)
-                    .await?;
+            let (rows, total) = collection_history_paginated_with_total_count(
+                history_collection_id,
+                &pool,
+                &query,
+                HistoryCollectionFilter::All,
+            )
+            .await?;
             let actor_ids = rows.iter().filter_map(|row| row.actor_id).collect();
             let actors = resolve_actor_usernames(&pool, actor_ids).await?;
             Ok::<_, crate::errors::ApiError>((rows, total, actors))

@@ -9,7 +9,8 @@ use crate::can;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::history::{
-    export_template_as_of, export_template_history_paginated_with_total_count,
+    HistoryCollectionFilter, export_template_as_of,
+    export_template_history_paginated_with_total_count,
 };
 use crate::errors::ApiError;
 use crate::exports::submit_export_task;
@@ -18,7 +19,8 @@ use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     CollectionID, ExportTemplate, ExportTemplateHistory, ExportTemplateID,
-    ExportTemplateRunRequest, NewExportTemplate, Permissions, TaskResponse, UpdateExportTemplate,
+    ExportTemplateRunRequest, HistoryAuthorizationSnapshot, NewExportTemplate, Permissions,
+    TaskResponse, UpdateExportTemplate,
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
@@ -410,7 +412,8 @@ pub async fn get_template_history(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, can_read_deleted_history, resolve_actor_usernames,
+        HistoryResponse, authorize_history_page, can_read_deleted_history,
+        history_candidate_query_options, readable_history_collection_ids, resolve_actor_usernames,
     };
     use crate::models::search::parse_query_parameter;
     use crate::pagination::prepare_db_pagination;
@@ -428,7 +431,14 @@ pub async fn get_template_history(
             );
             (instance.id, false)
         }
-        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+        Err(ApiError::NotFound(_))
+            if can_read_deleted_history(
+                &pool,
+                &requestor.principal,
+                requestor.scopes().is_some(),
+            )
+            .await? =>
+        {
             (template_id.id(), true)
         }
         Err(err) => return Err(err),
@@ -436,9 +446,49 @@ pub async fn get_template_history(
 
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<ExportTemplateHistory>(&params)?;
-    let (rows, total_count) =
-        export_template_history_paginated_with_total_count(entity_id, &pool, &search_params)
-            .await?;
+    let (rows, total_count) = if require_history {
+        export_template_history_paginated_with_total_count(
+            entity_id,
+            &pool,
+            &search_params,
+            HistoryCollectionFilter::All,
+        )
+        .await?
+    } else if pool.permission_backend().supports_sql_visibility_pushdown() {
+        let collection_ids = readable_history_collection_ids(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadTemplate,
+        )
+        .await?;
+        export_template_history_paginated_with_total_count(
+            entity_id,
+            &pool,
+            &search_params,
+            HistoryCollectionFilter::Visible(&collection_ids),
+        )
+        .await?
+    } else {
+        let candidate_params = history_candidate_query_options(&params);
+        let (candidates, _) = export_template_history_paginated_with_total_count(
+            entity_id,
+            &pool,
+            &candidate_params,
+            HistoryCollectionFilter::All,
+        )
+        .await?;
+        authorize_history_page(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadTemplate,
+            candidates,
+            &search_params,
+            |row| HistoryAuthorizationSnapshot::from(row),
+        )
+        .await?
+    };
     if require_history && rows.is_empty() && params.cursor.is_none() {
         return Err(ApiError::NotFound(format!(
             "template {entity_id} not found"
@@ -486,12 +536,13 @@ pub async fn get_template_as_of(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, can_read_deleted_history, parse_as_of, resolve_actor_usernames,
+        HistoryResponse, authorize_history_snapshot, can_read_deleted_history, parse_as_of,
+        resolve_actor_usernames,
     };
 
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
-    let entity_id = match template_id.instance(&pool).await {
+    let (entity_id, deleted) = match template_id.instance(&pool).await {
         Ok(instance) => {
             can!(
                 &pool,
@@ -500,10 +551,17 @@ pub async fn get_template_as_of(
                 [Permissions::ReadTemplate],
                 &instance
             );
-            instance.id
+            (instance.id, false)
         }
-        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
-            template_id.id()
+        Err(ApiError::NotFound(_))
+            if can_read_deleted_history(
+                &pool,
+                &requestor.principal,
+                requestor.scopes().is_some(),
+            )
+            .await? =>
+        {
+            (template_id.id(), true)
         }
         Err(err) => return Err(err),
     };
@@ -512,6 +570,17 @@ pub async fn get_template_as_of(
     let row = export_template_as_of(entity_id, at, &pool)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("no version of template {entity_id} at {at}")))?;
+
+    if !deleted {
+        authorize_history_snapshot(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadTemplate,
+            HistoryAuthorizationSnapshot::from(&row),
+        )
+        .await?;
+    }
 
     let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
     let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());

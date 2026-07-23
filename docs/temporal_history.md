@@ -376,7 +376,8 @@ For each of the five versioned resources (classes, objects, collections, export 
 
 #### 1. List History Versions (Cursor-Paginated)
 
-Returns all historical versions for a specific entity, ordered newest-first by default.
+Returns the historical versions the caller may read for a specific entity,
+ordered newest-first by default.
 
 **Endpoints:**
 - `GET /api/v1/classes/{class_id}/history`
@@ -392,7 +393,7 @@ Returns all historical versions for a specific entity, ordered newest-first by d
 - `?include_total=false` - Skip the exact count query and omit `X-Total-Count`
 
 **Response Headers:**
-- `X-Total-Count` - Total number of history rows for this entity (omitted when `include_total=false`)
+- `X-Total-Count` - Total number of visible history rows for this entity (omitted when `include_total=false`)
 - `X-Next-Cursor` - Opaque cursor for the next page (omitted on last page)
 
 **Response Body:**
@@ -457,7 +458,10 @@ GET /api/v1/classes/42/history/as-of?at=2026-06-30T11:00:00Z
 
 ### Access Control
 
-History read access mirrors the base resource's Read permission:
+History read access mirrors the base resource's Read permission. Live resources
+must pass the normal current-resource check. Each returned historical version
+must also pass authorization using the collection, name, and class attributes
+stored in that version:
 
 - **Classes**: Requires `Permissions::ReadClass` on the class entity
 - **Objects**: Requires `Permissions::ReadObject` on the object entity
@@ -468,8 +472,12 @@ History read access mirrors the base resource's Read permission:
 **Deleted Entity Handling:**
 If an entity has been deleted from the base table, normal callers receive **404 Not Found** because there is no live row to authorize against. Unscoped admins may still read the deleted entity's history and delete tombstone through the same history endpoints for compliance/audit purposes.
 
-**Known Limitation — Cross-Collection History:**
-Because permission is checked against the entity's CURRENT collection, and an entity's `collection_id` can change over time, the returned history may include versions (and the `collection_id`) from when the entity lived in a different collection. This means the history is visible to anyone who can read the entity's current collection, even if those historical versions reflect a time when the entity was in a different collection. This is an accepted limitation of the current permission model.
+**Cross-Collection History:**
+When an entity moves between collections, list endpoints omit versions from
+collections the caller cannot read. Counts and cursors are computed after this
+visibility filter. As-of endpoints authorize only the version selected by the
+requested timestamp and return **403 Forbidden** when that historical version
+is not readable.
 
 ### Limitations and Future Work
 

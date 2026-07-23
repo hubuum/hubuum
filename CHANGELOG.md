@@ -65,6 +65,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- **Breaking:** History endpoints now reauthorize stored versions against their
+  historical collection, name, and class attributes, and deleted-history admin
+  checks use the configured permission backend. History lists omit versions the
+  caller cannot read, with pagination totals and cursors based only on visible
+  versions; as-of reads authorize the selected version. Deleted-resource
+  history continues to require an unscoped configured-backend administrator
+  token. Before upgrading, audit history consumers for partial result sets and
+  grant access to required historical collections; configure deleted-history
+  principals as unscoped administrators in the active permission backend.
 - **Breaking:** Remote target header templates and API-key authentication now
   reject HTTP routing, framing, connection-specific, and proxy-authentication
   fields. Existing targets using these transport-controlled headers must remove

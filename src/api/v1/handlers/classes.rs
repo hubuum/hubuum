@@ -12,7 +12,7 @@ use crate::can;
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::computed_field::enrich_objects_with_computed;
 use crate::db::traits::history::{
-    class_as_of, class_history_paginated_with_total_count, object_as_of,
+    HistoryCollectionFilter, class_as_of, class_history_paginated_with_total_count, object_as_of,
     object_history_paginated_with_total_count,
 };
 use crate::db::traits::relations::{
@@ -39,9 +39,9 @@ use crate::models::traits::{
     ResolveClassTarget, ResolveObjectTarget, UpdateResolvedClass, UpdateResolvedObject,
 };
 use crate::models::{
-    ClassGraphRow, ClassSelector, CollectionID, GroupPermission, HubuumClass, HubuumClassExpanded,
-    HubuumClassHistory, HubuumClassID, HubuumClassRelation, HubuumClassRelationID,
-    HubuumClassWithPath, HubuumObject, HubuumObjectHistory, HubuumObjectID,
+    ClassGraphRow, ClassSelector, CollectionID, GroupPermission, HistoryAuthorizationSnapshot,
+    HubuumClass, HubuumClassExpanded, HubuumClassHistory, HubuumClassID, HubuumClassRelation,
+    HubuumClassRelationID, HubuumClassWithPath, HubuumObject, HubuumObjectHistory, HubuumObjectID,
     HubuumObjectReadResponse, HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass,
     NewHubuumClassRelationFromClass, NewHubuumObjectRelation, NewHubuumObjectRequest,
     ObjectDataPatchDocument, ObjectSelector, Permissions, RelatedClassGraph, RelatedObjectGraph,
