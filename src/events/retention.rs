@@ -1,5 +1,5 @@
-use std::fs::OpenOptions;
-use std::io::Write;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
@@ -41,6 +41,16 @@ struct EventRetentionWorkerConfig {
 struct ArchivedEventRecord<'a> {
     archived_at: chrono::NaiveDateTime,
     event: &'a Event,
+}
+
+trait EventArchiveOutput: Write {
+    fn sync_all(&self) -> io::Result<()>;
+}
+
+impl EventArchiveOutput for File {
+    fn sync_all(&self) -> io::Result<()> {
+        File::sync_all(self)
+    }
 }
 
 fn configured_event_retention_worker() -> EventRetentionWorkerConfig {
@@ -178,9 +188,17 @@ fn append_event_archive(path: &Path, events: &[Event]) -> Result<(), ApiError> {
         ApiError::InternalServerError(format!("Failed to open event archive: {error}"))
     })?;
 
+    write_event_archive(&mut file, archived_at, events)
+}
+
+fn write_event_archive(
+    file: &mut impl EventArchiveOutput,
+    archived_at: chrono::NaiveDateTime,
+    events: &[Event],
+) -> Result<(), ApiError> {
     for event in events {
         let record = ArchivedEventRecord { archived_at, event };
-        serde_json::to_writer(&mut file, &record).map_err(|error| {
+        serde_json::to_writer(&mut *file, &record).map_err(|error| {
             ApiError::InternalServerError(format!("Failed to serialize event archive: {error}"))
         })?;
         file.write_all(b"\n").map_err(|error| {
@@ -190,6 +208,9 @@ fn append_event_archive(path: &Path, events: &[Event]) -> Result<(), ApiError> {
 
     file.flush().map_err(|error| {
         ApiError::InternalServerError(format!("Failed to flush event archive: {error}"))
+    })?;
+    file.sync_all().map_err(|error| {
+        ApiError::InternalServerError(format!("Failed to sync event archive: {error}"))
     })
 }
 
@@ -203,9 +224,37 @@ impl EventRetentionWorkerConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use uuid::Uuid;
 
     use super::*;
+
+    #[derive(Default)]
+    struct ArchiveOutputSpy {
+        bytes: Vec<u8>,
+        sync_called: Cell<bool>,
+        sync_error: Option<io::ErrorKind>,
+    }
+
+    impl Write for ArchiveOutputSpy {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl EventArchiveOutput for ArchiveOutputSpy {
+        fn sync_all(&self) -> io::Result<()> {
+            self.sync_called.set(true);
+            self.sync_error
+                .map_or(Ok(()), |kind| Err(io::Error::from(kind)))
+        }
+    }
 
     fn event() -> Event {
         Event {
@@ -267,5 +316,31 @@ mod tests {
         assert!(archived.contains("\"event\""));
         assert!(archived.contains("\"entity_type\":\"collection\""));
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn event_archive_is_synced_after_writing() {
+        let mut output = ArchiveOutputSpy::default();
+
+        write_event_archive(&mut output, chrono::Utc::now().naive_utc(), &[event()]).unwrap();
+
+        assert!(output.sync_called.get());
+        assert_eq!(output.bytes.last(), Some(&b'\n'));
+    }
+
+    #[test]
+    fn event_archive_sync_failure_is_returned() {
+        let mut output = ArchiveOutputSpy {
+            sync_error: Some(io::ErrorKind::Other),
+            ..ArchiveOutputSpy::default()
+        };
+
+        let result = write_event_archive(&mut output, chrono::Utc::now().naive_utc(), &[event()]);
+
+        assert!(matches!(
+            result,
+            Err(ApiError::InternalServerError(message))
+                if message.starts_with("Failed to sync event archive:")
+        ));
     }
 }
