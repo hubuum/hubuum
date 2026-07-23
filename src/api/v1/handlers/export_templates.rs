@@ -9,7 +9,7 @@ use crate::can;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::history::{
-    export_template_as_of, export_template_history_authorization_snapshots,
+    HistoryCollectionFilter, export_template_as_of,
     export_template_history_paginated_with_total_count,
 };
 use crate::errors::ApiError;
@@ -412,8 +412,8 @@ pub async fn get_template_history(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, authorize_history_snapshots, can_read_deleted_history,
-        resolve_actor_usernames,
+        HistoryResponse, authorize_history_page, can_read_deleted_history,
+        history_candidate_query_options, readable_history_collection_ids, resolve_actor_usernames,
     };
     use crate::models::search::parse_query_parameter;
     use crate::pagination::prepare_db_pagination;
@@ -446,25 +446,53 @@ pub async fn get_template_history(
 
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<ExportTemplateHistory>(&params)?;
-    let (rows, total_count) =
-        export_template_history_paginated_with_total_count(entity_id, &pool, &search_params)
-            .await?;
-    if require_history && rows.is_empty() && params.cursor.is_none() {
-        return Err(ApiError::NotFound(format!(
-            "template {entity_id} not found"
-        )));
-    }
-
-    if !require_history {
-        let snapshots = export_template_history_authorization_snapshots(entity_id, &pool).await?;
-        authorize_history_snapshots(
+    let (rows, total_count) = if require_history {
+        export_template_history_paginated_with_total_count(
+            entity_id,
+            &pool,
+            &search_params,
+            HistoryCollectionFilter::All,
+        )
+        .await?
+    } else if pool.permission_backend().supports_sql_visibility_pushdown() {
+        let collection_ids = readable_history_collection_ids(
             &pool,
             user,
             requestor.scopes(),
             Permissions::ReadTemplate,
-            snapshots,
         )
         .await?;
+        export_template_history_paginated_with_total_count(
+            entity_id,
+            &pool,
+            &search_params,
+            HistoryCollectionFilter::Visible(&collection_ids),
+        )
+        .await?
+    } else {
+        let candidate_params = history_candidate_query_options(&params);
+        let (candidates, _) = export_template_history_paginated_with_total_count(
+            entity_id,
+            &pool,
+            &candidate_params,
+            HistoryCollectionFilter::All,
+        )
+        .await?;
+        authorize_history_page(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadTemplate,
+            candidates,
+            &search_params,
+            |row| HistoryAuthorizationSnapshot::from(row),
+        )
+        .await?
+    };
+    if require_history && rows.is_empty() && params.cursor.is_none() {
+        return Err(ApiError::NotFound(format!(
+            "template {entity_id} not found"
+        )));
     }
 
     let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
@@ -508,7 +536,7 @@ pub async fn get_template_as_of(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, authorize_history_snapshots, can_read_deleted_history, parse_as_of,
+        HistoryResponse, authorize_history_snapshot, can_read_deleted_history, parse_as_of,
         resolve_actor_usernames,
     };
 
@@ -544,12 +572,12 @@ pub async fn get_template_as_of(
         .ok_or_else(|| ApiError::NotFound(format!("no version of template {entity_id} at {at}")))?;
 
     if !deleted {
-        authorize_history_snapshots(
+        authorize_history_snapshot(
             &pool,
             user,
             requestor.scopes(),
             Permissions::ReadTemplate,
-            vec![HistoryAuthorizationSnapshot::from(&row)],
+            HistoryAuthorizationSnapshot::from(&row),
         )
         .await?;
     }

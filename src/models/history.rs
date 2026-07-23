@@ -13,14 +13,12 @@ use super::{
 /// live row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HistoryAuthorizationSnapshot {
-    collection_id: i32,
     resource: ResourceRef,
 }
 
 impl HistoryAuthorizationSnapshot {
     pub fn collection(id: i32, name: String) -> Self {
         Self {
-            collection_id: id,
             resource: ResourceRef {
                 kind: ResourceKind::Collection,
                 id,
@@ -35,7 +33,6 @@ impl HistoryAuthorizationSnapshot {
 
     pub fn class(id: i32, collection_id: i32, name: String) -> Self {
         Self {
-            collection_id,
             resource: ResourceRef {
                 kind: ResourceKind::Class,
                 id,
@@ -50,7 +47,6 @@ impl HistoryAuthorizationSnapshot {
 
     pub fn object(id: i32, collection_id: i32, class_id: i32, name: String) -> Self {
         Self {
-            collection_id,
             resource: ResourceRef {
                 kind: ResourceKind::Object,
                 id,
@@ -66,7 +62,6 @@ impl HistoryAuthorizationSnapshot {
 
     pub fn template(id: i32, collection_id: i32, name: String) -> Self {
         Self {
-            collection_id,
             resource: ResourceRef {
                 kind: ResourceKind::Template,
                 id,
@@ -81,7 +76,6 @@ impl HistoryAuthorizationSnapshot {
 
     pub fn remote_target(id: i32, collection_id: i32, name: String) -> Self {
         Self {
-            collection_id,
             resource: ResourceRef {
                 kind: ResourceKind::RemoteTarget,
                 id,
@@ -92,10 +86,6 @@ impl HistoryAuthorizationSnapshot {
                 },
             },
         }
-    }
-
-    pub fn collection_id(&self) -> i32 {
-        self.collection_id
     }
 
     pub fn into_resource(self) -> ResourceRef {

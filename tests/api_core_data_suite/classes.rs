@@ -29,9 +29,9 @@ pub mod tests {
     const CLASSES_ENDPOINT: &str = "/api/v1/classes";
 
     #[derive(Clone, Copy)]
-    enum ClassHistoryRoute {
-        List,
-        AsOf,
+    enum ClassHistoryVersion {
+        Hidden,
+        Visible,
     }
 
     async fn api_get_classes_with_query_string(
@@ -843,16 +843,10 @@ pub mod tests {
     }
 
     #[rstest]
-    #[case::list(ClassHistoryRoute::List)]
-    #[case::as_of(ClassHistoryRoute::AsOf)]
     #[actix_web::test]
-    async fn class_history_requires_access_to_every_historical_collection(
+    async fn class_history_lists_only_visible_historical_collections(
         #[future(awt)] test_context: TestContext,
-        #[case] route: ClassHistoryRoute,
     ) {
-        use chrono::SecondsFormat;
-
-        use crate::db::with_connection;
         use crate::traits::{CanSave, CanUpdate};
 
         let context = test_context;
@@ -897,31 +891,112 @@ pub mod tests {
         .await;
         assert_response_status(live_response, StatusCode::OK).await;
 
-        let endpoint = match route {
-            ClassHistoryRoute::List => format!("{CLASSES_ENDPOINT}/{}/history", class.id),
-            ClassHistoryRoute::AsOf => {
-                let valid_from = with_connection(&context.pool, async |conn| {
-                    use crate::schema::hubuumclass_history::dsl as history;
+        let history_response = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{CLASSES_ENDPOINT}/{}/history?limit=1", class.id),
+        )
+        .await;
+        let history_response = assert_response_status(history_response, StatusCode::OK).await;
+        let total_count = header_value(&history_response, TOTAL_COUNT_HEADER)
+            .and_then(|value| value.parse::<i64>().ok());
+        let next_cursor = header_value(&history_response, NEXT_CURSOR_HEADER);
+        let history: Vec<serde_json::Value> = test::read_body_json(history_response).await;
 
-                    history::hubuumclass_history
-                        .filter(history::id.eq(class.id))
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["collection_id"], target.collection.id);
+        assert_eq!(history[0]["op"], "U");
+        assert_eq!(total_count, Some(1));
+        assert!(next_cursor.is_none());
+
+        crate::tests::CollectionFixture::cleanup_all(&collections)
+            .await
+            .unwrap();
+    }
+
+    #[rstest]
+    #[case::hidden(ClassHistoryVersion::Hidden, StatusCode::FORBIDDEN)]
+    #[case::visible(ClassHistoryVersion::Visible, StatusCode::OK)]
+    #[actix_web::test]
+    async fn class_history_as_of_checks_the_selected_historical_collection(
+        #[future(awt)] test_context: TestContext,
+        #[case] version: ClassHistoryVersion,
+        #[case] expected_status: StatusCode,
+    ) {
+        use chrono::SecondsFormat;
+
+        use crate::db::with_connection;
+        use crate::traits::{CanSave, CanUpdate};
+
+        let context = test_context;
+        let collections = context
+            .collection_fixtures("class_history_as_of_collection_move", 2)
+            .await;
+        let source = &collections[0];
+        let target = &collections[1];
+        target
+            .owner_group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+
+        let event_context = EventContext::system();
+        let class = NewHubuumClass {
+            name: context.scoped_name("class_history_as_of_collection_move"),
+            description: "historically private".to_string(),
+            collection_id: source.collection.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool, &event_context)
+        .await
+        .unwrap();
+        UpdateHubuumClass {
+            name: None,
+            collection_id: Some(target.collection.id),
+            json_schema: None,
+            validate_schema: None,
+            description: None,
+        }
+        .update(&context.pool, class.id, &event_context)
+        .await
+        .unwrap();
+
+        let valid_from = with_connection(&context.pool, async |conn| {
+            use crate::schema::hubuumclass_history::dsl as history;
+
+            let query = history::hubuumclass_history.filter(history::id.eq(class.id));
+            match version {
+                ClassHistoryVersion::Hidden => {
+                    query
                         .order(history::history_id.asc())
                         .select(history::valid_from)
                         .first::<chrono::DateTime<chrono::Utc>>(conn)
                         .await
-                })
-                .await
-                .unwrap();
-                format!(
-                    "{CLASSES_ENDPOINT}/{}/history/as-of?at={}",
-                    class.id,
-                    valid_from.to_rfc3339_opts(SecondsFormat::Micros, true)
-                )
+                }
+                ClassHistoryVersion::Visible => {
+                    query
+                        .order(history::history_id.desc())
+                        .select(history::valid_from)
+                        .first::<chrono::DateTime<chrono::Utc>>(conn)
+                        .await
+                }
             }
-        };
-        let history_response = get_request(&context.pool, &context.normal_token, &endpoint).await;
+        })
+        .await
+        .unwrap();
+        let response = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!(
+                "{CLASSES_ENDPOINT}/{}/history/as-of?at={}",
+                class.id,
+                valid_from.to_rfc3339_opts(SecondsFormat::Micros, true)
+            ),
+        )
+        .await;
 
-        assert_response_status(history_response, StatusCode::FORBIDDEN).await;
+        assert_response_status(response, expected_status).await;
 
         crate::tests::CollectionFixture::cleanup_all(&collections)
             .await

@@ -3,9 +3,15 @@ use std::collections::HashMap;
 use crate::db::prelude::*;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::models::HistoryAuthorizationSnapshot;
 use crate::models::search::QueryOptions;
 use chrono::{DateTime, Utc};
+
+/// Collection visibility to apply before history rows are counted or paginated.
+#[derive(Clone, Copy)]
+pub enum HistoryCollectionFilter<'a> {
+    All,
+    Visible(&'a [i32]),
+}
 
 /// Batch-resolve a set of actor ids to principal names (anonymized users keep
 /// their tombstoned principal name; ids with no matching principal are absent).
@@ -31,18 +37,33 @@ pub async fn resolve_actor_usernames(
 }
 
 macro_rules! history_db_fns {
-    ($paginate_fn:ident, $as_of_fn:ident, $($schema:tt)::+, $ty:ty) => {
+    (
+        $paginate_fn:ident,
+        $as_of_fn:ident,
+        $($schema:tt)::+,
+        $visibility_column:ident,
+        $ty:ty
+    ) => {
         pub async fn $paginate_fn(
             entity_id: i32,
             pool: &$crate::db::DbPool,
             query_options: &$crate::models::search::QueryOptions,
+            collection_filter: $crate::db::traits::history::HistoryCollectionFilter<'_>,
         ) -> Result<(Vec<$ty>, i64), $crate::errors::ApiError> {
             use $crate::db::prelude::*;
             use $($schema)::+::dsl::*;
             let total = $crate::pagination::exact_count_or_skipped(query_options, async || {
                 $crate::db::with_connection(pool, async |conn| {
-                    $($schema)::+::table
-                        .filter(id.eq(entity_id))
+                    let mut query = $($schema)::+::table
+                        .into_boxed()
+                        .filter(id.eq(entity_id));
+                    if let $crate::db::traits::history::HistoryCollectionFilter::Visible(
+                        collection_ids,
+                    ) = collection_filter
+                    {
+                        query = query.filter($visibility_column.eq_any(collection_ids));
+                    }
+                    query
                         .count()
                         .get_result::<i64>(conn)
                         .await
@@ -50,6 +71,11 @@ macro_rules! history_db_fns {
                 .await
             }).await?;
             let mut query = $($schema)::+::table.into_boxed().filter(id.eq(entity_id));
+            if let $crate::db::traits::history::HistoryCollectionFilter::Visible(collection_ids) =
+                collection_filter
+            {
+                query = query.filter($visibility_column.eq_any(collection_ids));
+            }
             $crate::apply_query_options!(query, query_options, $ty);
             let items = $crate::db::with_connection(pool, async |conn| {
                 query.load::<$ty>(conn).await
@@ -84,6 +110,7 @@ history_db_fns!(
     collection_history_paginated_with_total_count,
     collection_as_of,
     crate::schema::collections_history,
+    id,
     crate::models::CollectionHistory
 );
 
@@ -91,6 +118,7 @@ history_db_fns!(
     class_history_paginated_with_total_count,
     class_as_of,
     crate::schema::hubuumclass_history,
+    collection_id,
     crate::models::HubuumClassHistory
 );
 
@@ -98,6 +126,7 @@ history_db_fns!(
     export_template_history_paginated_with_total_count,
     export_template_as_of,
     crate::schema::export_templates_history,
+    collection_id,
     crate::models::ExportTemplateHistory
 );
 
@@ -105,145 +134,29 @@ history_db_fns!(
     remote_target_history_paginated_with_total_count,
     remote_target_as_of,
     crate::schema::remote_targets_history,
+    collection_id,
     crate::models::RemoteTargetHistory
 );
-
-pub async fn collection_history_authorization_snapshots(
-    entity_id: i32,
-    pool: &DbPool,
-) -> Result<Vec<HistoryAuthorizationSnapshot>, ApiError> {
-    use crate::schema::collections_history::dsl as history;
-
-    let rows = with_connection(pool, async |conn| {
-        history::collections_history
-            .filter(history::id.eq(entity_id))
-            .select((history::id, history::name))
-            .distinct()
-            .load::<(i32, String)>(conn)
-            .await
-    })
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, name)| HistoryAuthorizationSnapshot::collection(id, name))
-        .collect())
-}
-
-pub async fn class_history_authorization_snapshots(
-    entity_id: i32,
-    pool: &DbPool,
-) -> Result<Vec<HistoryAuthorizationSnapshot>, ApiError> {
-    use crate::schema::hubuumclass_history::dsl as history;
-
-    let rows = with_connection(pool, async |conn| {
-        history::hubuumclass_history
-            .filter(history::id.eq(entity_id))
-            .select((history::id, history::collection_id, history::name))
-            .distinct()
-            .load::<(i32, i32, String)>(conn)
-            .await
-    })
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, collection_id, name)| {
-            HistoryAuthorizationSnapshot::class(id, collection_id, name)
-        })
-        .collect())
-}
-
-pub async fn object_history_authorization_snapshots(
-    object_id: i32,
-    class_id: i32,
-    pool: &DbPool,
-) -> Result<Vec<HistoryAuthorizationSnapshot>, ApiError> {
-    use crate::schema::hubuumobject_history::dsl as history;
-
-    let rows = with_connection(pool, async |conn| {
-        history::hubuumobject_history
-            .filter(history::id.eq(object_id))
-            .filter(history::hubuum_class_id.eq(class_id))
-            .select((
-                history::id,
-                history::collection_id,
-                history::hubuum_class_id,
-                history::name,
-            ))
-            .distinct()
-            .load::<(i32, i32, i32, String)>(conn)
-            .await
-    })
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, collection_id, class_id, name)| {
-            HistoryAuthorizationSnapshot::object(id, collection_id, class_id, name)
-        })
-        .collect())
-}
-
-pub async fn export_template_history_authorization_snapshots(
-    entity_id: i32,
-    pool: &DbPool,
-) -> Result<Vec<HistoryAuthorizationSnapshot>, ApiError> {
-    use crate::schema::export_templates_history::dsl as history;
-
-    let rows = with_connection(pool, async |conn| {
-        history::export_templates_history
-            .filter(history::id.eq(entity_id))
-            .select((history::id, history::collection_id, history::name))
-            .distinct()
-            .load::<(i32, i32, String)>(conn)
-            .await
-    })
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, collection_id, name)| {
-            HistoryAuthorizationSnapshot::template(id, collection_id, name)
-        })
-        .collect())
-}
-
-pub async fn remote_target_history_authorization_snapshots(
-    entity_id: i32,
-    pool: &DbPool,
-) -> Result<Vec<HistoryAuthorizationSnapshot>, ApiError> {
-    use crate::schema::remote_targets_history::dsl as history;
-
-    let rows = with_connection(pool, async |conn| {
-        history::remote_targets_history
-            .filter(history::id.eq(entity_id))
-            .select((history::id, history::collection_id, history::name))
-            .distinct()
-            .load::<(i32, i32, String)>(conn)
-            .await
-    })
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, collection_id, name)| {
-            HistoryAuthorizationSnapshot::remote_target(id, collection_id, name)
-        })
-        .collect())
-}
 
 pub async fn object_history_paginated_with_total_count(
     object_id: i32,
     class_id: i32,
     pool: &DbPool,
     query_options: &QueryOptions,
+    collection_filter: HistoryCollectionFilter<'_>,
 ) -> Result<(Vec<crate::models::HubuumObjectHistory>, i64), ApiError> {
     use crate::schema::hubuumobject_history::dsl as history;
 
     let total = crate::pagination::exact_count_or_skipped(query_options, async || {
         with_connection(pool, async |conn| {
-            history::hubuumobject_history
+            let mut query = history::hubuumobject_history
+                .into_boxed()
                 .filter(history::id.eq(object_id))
-                .filter(history::hubuum_class_id.eq(class_id))
-                .count()
-                .get_result::<i64>(conn)
-                .await
+                .filter(history::hubuum_class_id.eq(class_id));
+            if let HistoryCollectionFilter::Visible(collection_ids) = collection_filter {
+                query = query.filter(history::collection_id.eq_any(collection_ids));
+            }
+            query.count().get_result::<i64>(conn).await
         })
         .await
     })
@@ -252,6 +165,9 @@ pub async fn object_history_paginated_with_total_count(
         .into_boxed()
         .filter(history::id.eq(object_id))
         .filter(history::hubuum_class_id.eq(class_id));
+    if let HistoryCollectionFilter::Visible(collection_ids) = collection_filter {
+        query = query.filter(history::collection_id.eq_any(collection_ids));
+    }
     crate::apply_query_options!(query, query_options, crate::models::HubuumObjectHistory);
     let items = with_connection(pool, async |conn| {
         query.load::<crate::models::HubuumObjectHistory>(conn).await

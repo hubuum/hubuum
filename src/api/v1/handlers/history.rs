@@ -5,11 +5,15 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::db::traits::UserPermissions;
+use crate::db::traits::authz::scope_allows;
 use crate::errors::ApiError;
-use crate::models::{CollectionID, HistoryAuthorizationSnapshot, Permissions};
+use crate::models::collection::user_can_on_any;
+use crate::models::search::QueryOptions;
+use crate::models::{HistoryAuthorizationSnapshot, Permissions, TokenScope};
+use crate::pagination::count_query_options;
+use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
-use crate::traits::AuthzSubject;
+use crate::traits::{AuthzSubject, CursorPaginated};
 
 pub use crate::db::traits::history::resolve_actor_usernames;
 
@@ -21,50 +25,90 @@ pub struct HistoryResponse<T: Serialize + ToSchema> {
     pub actor_username: Option<String>,
 }
 
-/// Require the requested permission on every permission-relevant historical
-/// resource shape before returning a history page.
-///
-/// The local backend can decide the distinct collection set in one SQL query.
-/// External policy backends receive the complete historical resource
-/// snapshots so policies that use names or class IDs retain their semantics.
-pub async fn authorize_history_snapshots<S>(
+/// Authorize one historical resource shape, including its stored attributes.
+pub async fn authorize_history_snapshot<S>(
     context: &AppContext,
     subject: &S,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     permission: Permissions,
-    snapshots: Vec<HistoryAuthorizationSnapshot>,
+    snapshot: HistoryAuthorizationSnapshot,
 ) -> Result<(), ApiError>
 where
     S: AuthzSubject + ?Sized,
 {
-    if context.permission_backend().uses_sql_permission_store() {
-        let mut collection_ids = snapshots
-            .iter()
-            .map(HistoryAuthorizationSnapshot::collection_id)
-            .collect::<Vec<_>>();
-        collection_ids.sort_unstable();
-        collection_ids.dedup();
-        let collections = collection_ids
-            .into_iter()
-            .map(CollectionID::new)
-            .collect::<Result<Vec<_>, _>>()?;
-        return subject
-            .can(context, [permission], collections, scopes)
-            .await;
-    }
-
     authorize_resources(
         context.permission_backend(),
         context,
         subject,
         scopes,
         vec![permission],
-        snapshots
-            .into_iter()
-            .map(HistoryAuthorizationSnapshot::into_resource)
-            .collect(),
+        vec![snapshot.into_resource()],
     )
     .await
+}
+
+/// Filter complete historical candidates through the configured policy backend,
+/// then count and paginate only the visible rows.
+pub async fn authorize_history_page<S, T, F>(
+    context: &AppContext,
+    subject: &S,
+    scopes: Option<&TokenScope>,
+    permission: Permissions,
+    candidates: Vec<T>,
+    query_options: &QueryOptions,
+    to_snapshot: F,
+) -> Result<(Vec<T>, i64), ApiError>
+where
+    S: AuthzSubject + ?Sized,
+    T: CursorPaginated,
+    F: Fn(&T) -> HistoryAuthorizationSnapshot,
+{
+    if !scope_allows(scopes, &[permission]) {
+        return Err(ApiError::Forbidden("Permission denied".to_string()));
+    }
+    let principal = PrincipalRef::load(context, subject).await?;
+    let page = authorize_cursor_page(
+        context.permission_backend(),
+        &principal,
+        candidates,
+        scopes,
+        vec![permission],
+        query_options,
+        |candidate| {
+            to_snapshot(candidate)
+                .into_resource()
+                .normalized_for_permission(permission)
+        },
+    )
+    .await?;
+    Ok((page.rows, page.total_count))
+}
+
+/// Load every non-permission-filtered candidate before external authorization.
+pub fn history_candidate_query_options(query_options: &QueryOptions) -> QueryOptions {
+    let mut candidates = count_query_options(query_options);
+    candidates.include_total = false;
+    candidates
+}
+
+/// Resolve the collection ids visible through the local SQL permission store.
+pub async fn readable_history_collection_ids<S>(
+    context: &AppContext,
+    subject: &S,
+    scopes: Option<&TokenScope>,
+    permission: Permissions,
+) -> Result<Vec<i32>, ApiError>
+where
+    S: AuthzSubject + ?Sized,
+{
+    let mut collection_ids = user_can_on_any(context, subject, permission, scopes)
+        .await?
+        .into_iter()
+        .map(|collection| collection.id)
+        .collect::<Vec<_>>();
+    collection_ids.sort_unstable();
+    collection_ids.dedup();
+    Ok(collection_ids)
 }
 
 /// Deleted resources have no live row to authorize against. Only unscoped
@@ -170,6 +214,9 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::models::HubuumClassHistory;
+    use crate::models::search::parse_query_parameter;
+    use crate::pagination::prepare_db_pagination;
     use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
     use crate::permissions::{ResourceAttrs, ResourceKind};
     use crate::tests::{TestContext, create_test_group};
@@ -255,30 +302,55 @@ mod tests {
             },
         });
         let context = AppContext::new(test.pool.get_ref().clone(), backend.clone());
-        let visible = HistoryAuthorizationSnapshot::class(41, 73, "visible-version".to_string());
-        authorize_history_snapshots(
+        let timestamp = Utc::now();
+        let visible = HubuumClassHistory {
+            id: 41,
+            name: "visible-version".to_string(),
+            collection_id: 73,
+            json_schema: None,
+            validate_schema: false,
+            description: "visible".to_string(),
+            created_at: timestamp.naive_utc(),
+            updated_at: timestamp.naive_utc(),
+            op: "U".to_string(),
+            valid_from: timestamp,
+            valid_to: None,
+            actor_id: None,
+            history_id: 2,
+        };
+        authorize_history_snapshot(
             &context,
             &test.normal_user,
             None,
             Permissions::ReadClass,
-            vec![visible.clone()],
+            HistoryAuthorizationSnapshot::from(&visible),
         )
         .await
         .unwrap();
 
-        let result = authorize_history_snapshots(
+        let hidden = HubuumClassHistory {
+            name: "hidden-version".to_string(),
+            description: "hidden".to_string(),
+            history_id: 1,
+            ..visible.clone()
+        };
+        let params = parse_query_parameter("limit=10").unwrap();
+        let query_options = prepare_db_pagination::<HubuumClassHistory>(&params).unwrap();
+        let (rows, total_count) = authorize_history_page(
             &context,
             &test.normal_user,
             None,
             Permissions::ReadClass,
-            vec![
-                visible,
-                HistoryAuthorizationSnapshot::class(41, 73, "hidden-version".to_string()),
-            ],
+            vec![visible, hidden],
+            &query_options,
+            |row| HistoryAuthorizationSnapshot::from(row),
         )
-        .await;
+        .await
+        .unwrap();
 
-        assert!(matches!(result, Err(ApiError::Forbidden(_))));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "visible-version");
+        assert_eq!(total_count, 1);
         assert_eq!(backend.authorization_batch_sizes(), vec![1, 2]);
 
         policy_group

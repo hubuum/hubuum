@@ -12,8 +12,7 @@ use crate::can;
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::computed_field::enrich_objects_with_computed;
 use crate::db::traits::history::{
-    class_as_of, class_history_authorization_snapshots, class_history_paginated_with_total_count,
-    object_as_of, object_history_authorization_snapshots,
+    HistoryCollectionFilter, class_as_of, class_history_paginated_with_total_count, object_as_of,
     object_history_paginated_with_total_count,
 };
 use crate::db::traits::relations::{

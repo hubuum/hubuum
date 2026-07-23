@@ -21,8 +21,8 @@ async fn get_class_history(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, authorize_history_snapshots, can_read_deleted_history,
-        resolve_actor_usernames,
+        HistoryResponse, authorize_history_page, can_read_deleted_history,
+        history_candidate_query_options, readable_history_collection_ids, resolve_actor_usernames,
     };
 
     let user = &requestor.principal;
@@ -53,22 +53,51 @@ async fn get_class_history(
 
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<HubuumClassHistory>(&params)?;
-    let (rows, total_count) =
-        class_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
-    if require_history && rows.is_empty() && params.cursor.is_none() {
-        return Err(ApiError::NotFound(format!("class {entity_id} not found")));
-    }
-
-    if !require_history {
-        let snapshots = class_history_authorization_snapshots(entity_id, &pool).await?;
-        authorize_history_snapshots(
+    let (rows, total_count) = if require_history {
+        class_history_paginated_with_total_count(
+            entity_id,
+            &pool,
+            &search_params,
+            HistoryCollectionFilter::All,
+        )
+        .await?
+    } else if pool.permission_backend().supports_sql_visibility_pushdown() {
+        let collection_ids = readable_history_collection_ids(
             &pool,
             user,
             requestor.scopes(),
             Permissions::ReadClass,
-            snapshots,
         )
         .await?;
+        class_history_paginated_with_total_count(
+            entity_id,
+            &pool,
+            &search_params,
+            HistoryCollectionFilter::Visible(&collection_ids),
+        )
+        .await?
+    } else {
+        let candidate_params = history_candidate_query_options(&params);
+        let (candidates, _) = class_history_paginated_with_total_count(
+            entity_id,
+            &pool,
+            &candidate_params,
+            HistoryCollectionFilter::All,
+        )
+        .await?;
+        authorize_history_page(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadClass,
+            candidates,
+            &search_params,
+            |row| HistoryAuthorizationSnapshot::from(row),
+        )
+        .await?
+    };
+    if require_history && rows.is_empty() && params.cursor.is_none() {
+        return Err(ApiError::NotFound(format!("class {entity_id} not found")));
     }
 
     let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
@@ -112,7 +141,7 @@ async fn get_class_as_of(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, authorize_history_snapshots, can_read_deleted_history, parse_as_of,
+        HistoryResponse, authorize_history_snapshot, can_read_deleted_history, parse_as_of,
         resolve_actor_usernames,
     };
 
@@ -148,12 +177,12 @@ async fn get_class_as_of(
         .ok_or_else(|| ApiError::NotFound(format!("no version of class {entity_id} at {at}")))?;
 
     if !deleted {
-        authorize_history_snapshots(
+        authorize_history_snapshot(
             &pool,
             user,
             requestor.scopes(),
             Permissions::ReadClass,
-            vec![HistoryAuthorizationSnapshot::from(&row)],
+            HistoryAuthorizationSnapshot::from(&row),
         )
         .await?;
     }
@@ -190,8 +219,8 @@ async fn get_object_history(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, authorize_history_snapshots, can_read_deleted_history,
-        resolve_actor_usernames,
+        HistoryResponse, authorize_history_page, can_read_deleted_history,
+        history_candidate_query_options, readable_history_collection_ids, resolve_actor_usernames,
     };
 
     let user = &requestor.principal;
@@ -225,24 +254,54 @@ async fn get_object_history(
 
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<HubuumObjectHistory>(&params)?;
-    let (rows, total_count) =
-        object_history_paginated_with_total_count(entity_id, class_id.id(), &pool, &search_params)
-            .await?;
-    if require_history && rows.is_empty() && params.cursor.is_none() {
-        return Err(ApiError::NotFound(format!("object {entity_id} not found")));
-    }
-
-    if !require_history {
-        let snapshots =
-            object_history_authorization_snapshots(entity_id, class_id.id(), &pool).await?;
-        authorize_history_snapshots(
+    let (rows, total_count) = if require_history {
+        object_history_paginated_with_total_count(
+            entity_id,
+            class_id.id(),
+            &pool,
+            &search_params,
+            HistoryCollectionFilter::All,
+        )
+        .await?
+    } else if pool.permission_backend().supports_sql_visibility_pushdown() {
+        let collection_ids = readable_history_collection_ids(
             &pool,
             user,
             requestor.scopes(),
             Permissions::ReadObject,
-            snapshots,
         )
         .await?;
+        object_history_paginated_with_total_count(
+            entity_id,
+            class_id.id(),
+            &pool,
+            &search_params,
+            HistoryCollectionFilter::Visible(&collection_ids),
+        )
+        .await?
+    } else {
+        let candidate_params = history_candidate_query_options(&params);
+        let (candidates, _) = object_history_paginated_with_total_count(
+            entity_id,
+            class_id.id(),
+            &pool,
+            &candidate_params,
+            HistoryCollectionFilter::All,
+        )
+        .await?;
+        authorize_history_page(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadObject,
+            candidates,
+            &search_params,
+            |row| HistoryAuthorizationSnapshot::from(row),
+        )
+        .await?
+    };
+    if require_history && rows.is_empty() && params.cursor.is_none() {
+        return Err(ApiError::NotFound(format!("object {entity_id} not found")));
     }
 
     let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
@@ -287,7 +346,7 @@ async fn get_object_as_of(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, authorize_history_snapshots, can_read_deleted_history, parse_as_of,
+        HistoryResponse, authorize_history_snapshot, can_read_deleted_history, parse_as_of,
         resolve_actor_usernames,
     };
 
@@ -325,12 +384,12 @@ async fn get_object_as_of(
         .ok_or_else(|| ApiError::NotFound(format!("no version of object {entity_id} at {at}")))?;
 
     if !deleted {
-        authorize_history_snapshots(
+        authorize_history_snapshot(
             &pool,
             user,
             requestor.scopes(),
             Permissions::ReadObject,
-            vec![HistoryAuthorizationSnapshot::from(&row)],
+            HistoryAuthorizationSnapshot::from(&row),
         )
         .await?;
     }
