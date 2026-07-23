@@ -205,11 +205,14 @@ fn write_backup_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-fn create_backup_temporary_file(path: &Path) -> std::io::Result<(PathBuf, File)> {
-    let parent = path
-        .parent()
+fn backup_parent_directory(path: &Path) -> &Path {
+    path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+        .unwrap_or_else(|| Path::new("."))
+}
+
+fn create_backup_temporary_file(path: &Path) -> std::io::Result<(PathBuf, File)> {
+    let parent = backup_parent_directory(path);
     let file_name = path.file_name().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -290,7 +293,8 @@ fn secure_backup_temporary_file(_path: &Path, _file: &File) -> std::io::Result<(
 
 #[cfg(unix)]
 fn replace_backup_file(temporary_path: &Path, path: &Path) -> std::io::Result<()> {
-    std::fs::rename(temporary_path, path)
+    std::fs::rename(temporary_path, path)?;
+    File::open(backup_parent_directory(path))?.sync_all()
 }
 
 #[cfg(windows)]

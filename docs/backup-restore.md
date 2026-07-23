@@ -134,6 +134,10 @@ Create a full backup:
 hubuum-admin --database-url "$HUBUUM_DATABASE_URL" --backup backup.json
 ```
 
+The CLI writes an owner-only temporary file, synchronizes it, and atomically
+replaces the destination. On Unix, it also synchronizes the destination
+directory before reporting success.
+
 History is included by default. Add `--backup-without-history` only to create a
 backup whose eventual restore resets terminal task, audit, delivery, and
 temporal history.
