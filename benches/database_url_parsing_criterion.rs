@@ -13,7 +13,11 @@ fn benchmark_database_url_parsing(c: &mut Criterion) {
 
     for url in urls {
         group.bench_with_input(BenchmarkId::from_parameter(url), &url, |b, url| {
-            b.iter(|| DatabaseUrlComponents::new(black_box(url)).expect("URL should parse"))
+            b.iter(|| {
+                black_box(url)
+                    .parse::<DatabaseUrlComponents>()
+                    .expect("URL should parse")
+            })
         });
     }
 

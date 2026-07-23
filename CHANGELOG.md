@@ -16,6 +16,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (Rust API):** `DatabaseUrlComponents` now parses through `FromStr`,
+  exposes a typed `DatabaseVendor`, and keeps its representation private.
+  Downstream Rust callers must replace `DatabaseUrlComponents::new(url)` with
+  `url.parse::<DatabaseUrlComponents>()` and read components through the new
+  accessor methods.
 - JSON filters and object-aggregate dimensions now share one typed JSON-path
   parser. Empty segments, whitespace, and characters outside ASCII letters,
   digits, `_`, and `$` are rejected consistently before SQL generation.
