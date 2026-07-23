@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::db::prelude::*;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
+use crate::models::HistoryAuthorizationSnapshot;
 use crate::models::search::QueryOptions;
 use chrono::{DateTime, Utc};
 
@@ -106,6 +107,126 @@ history_db_fns!(
     crate::schema::remote_targets_history,
     crate::models::RemoteTargetHistory
 );
+
+pub async fn collection_history_authorization_snapshots(
+    entity_id: i32,
+    pool: &DbPool,
+) -> Result<Vec<HistoryAuthorizationSnapshot>, ApiError> {
+    use crate::schema::collections_history::dsl as history;
+
+    let rows = with_connection(pool, async |conn| {
+        history::collections_history
+            .filter(history::id.eq(entity_id))
+            .select((history::id, history::name))
+            .distinct()
+            .load::<(i32, String)>(conn)
+            .await
+    })
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| HistoryAuthorizationSnapshot::collection(id, name))
+        .collect())
+}
+
+pub async fn class_history_authorization_snapshots(
+    entity_id: i32,
+    pool: &DbPool,
+) -> Result<Vec<HistoryAuthorizationSnapshot>, ApiError> {
+    use crate::schema::hubuumclass_history::dsl as history;
+
+    let rows = with_connection(pool, async |conn| {
+        history::hubuumclass_history
+            .filter(history::id.eq(entity_id))
+            .select((history::id, history::collection_id, history::name))
+            .distinct()
+            .load::<(i32, i32, String)>(conn)
+            .await
+    })
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, collection_id, name)| {
+            HistoryAuthorizationSnapshot::class(id, collection_id, name)
+        })
+        .collect())
+}
+
+pub async fn object_history_authorization_snapshots(
+    object_id: i32,
+    class_id: i32,
+    pool: &DbPool,
+) -> Result<Vec<HistoryAuthorizationSnapshot>, ApiError> {
+    use crate::schema::hubuumobject_history::dsl as history;
+
+    let rows = with_connection(pool, async |conn| {
+        history::hubuumobject_history
+            .filter(history::id.eq(object_id))
+            .filter(history::hubuum_class_id.eq(class_id))
+            .select((
+                history::id,
+                history::collection_id,
+                history::hubuum_class_id,
+                history::name,
+            ))
+            .distinct()
+            .load::<(i32, i32, i32, String)>(conn)
+            .await
+    })
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, collection_id, class_id, name)| {
+            HistoryAuthorizationSnapshot::object(id, collection_id, class_id, name)
+        })
+        .collect())
+}
+
+pub async fn export_template_history_authorization_snapshots(
+    entity_id: i32,
+    pool: &DbPool,
+) -> Result<Vec<HistoryAuthorizationSnapshot>, ApiError> {
+    use crate::schema::export_templates_history::dsl as history;
+
+    let rows = with_connection(pool, async |conn| {
+        history::export_templates_history
+            .filter(history::id.eq(entity_id))
+            .select((history::id, history::collection_id, history::name))
+            .distinct()
+            .load::<(i32, i32, String)>(conn)
+            .await
+    })
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, collection_id, name)| {
+            HistoryAuthorizationSnapshot::template(id, collection_id, name)
+        })
+        .collect())
+}
+
+pub async fn remote_target_history_authorization_snapshots(
+    entity_id: i32,
+    pool: &DbPool,
+) -> Result<Vec<HistoryAuthorizationSnapshot>, ApiError> {
+    use crate::schema::remote_targets_history::dsl as history;
+
+    let rows = with_connection(pool, async |conn| {
+        history::remote_targets_history
+            .filter(history::id.eq(entity_id))
+            .select((history::id, history::collection_id, history::name))
+            .distinct()
+            .load::<(i32, i32, String)>(conn)
+            .await
+    })
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, collection_id, name)| {
+            HistoryAuthorizationSnapshot::remote_target(id, collection_id, name)
+        })
+        .collect())
+}
 
 pub async fn object_history_paginated_with_total_count(
     object_id: i32,

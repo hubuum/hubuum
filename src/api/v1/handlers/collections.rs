@@ -5,7 +5,10 @@ use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::authz::scope_allows;
-use crate::db::traits::history::{collection_as_of, collection_history_paginated_with_total_count};
+use crate::db::traits::history::{
+    collection_as_of, collection_history_authorization_snapshots,
+    collection_history_paginated_with_total_count,
+};
 use crate::db::traits::user::UserSearchBackend;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, Authenticated};
@@ -13,8 +16,9 @@ use crate::models::collection as collection_model;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     Collection, CollectionHistory, CollectionID, EffectiveGroupPermission, Group, GroupID,
-    GroupPermission, GroupResponse, NewCollectionWithAssignee, Permission, Permissions,
-    PermissionsList, PrincipalID, UpdateCollection, UpdateCollectionParent,
+    GroupPermission, GroupResponse, HistoryAuthorizationSnapshot, NewCollectionWithAssignee,
+    Permission, Permissions, PermissionsList, PrincipalID, UpdateCollection,
+    UpdateCollectionParent,
 };
 use crate::pagination::{SKIPPED_TOTAL_COUNT, count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
@@ -1106,7 +1110,8 @@ pub async fn get_collection_history(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, can_read_deleted_history, resolve_actor_usernames,
+        HistoryResponse, authorize_history_snapshots, can_read_deleted_history,
+        resolve_actor_usernames,
     };
 
     let user = &requestor.principal;
@@ -1122,7 +1127,14 @@ pub async fn get_collection_history(
             );
             (instance.id, false)
         }
-        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+        Err(ApiError::NotFound(_))
+            if can_read_deleted_history(
+                &pool,
+                &requestor.principal,
+                requestor.scopes().is_some(),
+            )
+            .await? =>
+        {
             (collection_id.id(), true)
         }
         Err(err) => return Err(err),
@@ -1136,6 +1148,18 @@ pub async fn get_collection_history(
         return Err(ApiError::NotFound(format!(
             "collection {entity_id} not found"
         )));
+    }
+
+    if !require_history {
+        let snapshots = collection_history_authorization_snapshots(entity_id, &pool).await?;
+        authorize_history_snapshots(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadCollection,
+            snapshots,
+        )
+        .await?;
     }
 
     let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
@@ -1179,12 +1203,13 @@ pub async fn get_collection_as_of(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, can_read_deleted_history, parse_as_of, resolve_actor_usernames,
+        HistoryResponse, authorize_history_snapshots, can_read_deleted_history, parse_as_of,
+        resolve_actor_usernames,
     };
 
     let user = &requestor.principal;
     let collection_id = collection_id.into_inner();
-    let entity_id = match collection_id.instance(&pool).await {
+    let (entity_id, deleted) = match collection_id.instance(&pool).await {
         Ok(instance) => {
             can!(
                 &pool,
@@ -1193,10 +1218,17 @@ pub async fn get_collection_as_of(
                 [Permissions::ReadCollection],
                 instance
             );
-            instance.id
+            (instance.id, false)
         }
-        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
-            collection_id.id()
+        Err(ApiError::NotFound(_))
+            if can_read_deleted_history(
+                &pool,
+                &requestor.principal,
+                requestor.scopes().is_some(),
+            )
+            .await? =>
+        {
+            (collection_id.id(), true)
         }
         Err(err) => return Err(err),
     };
@@ -1207,6 +1239,17 @@ pub async fn get_collection_as_of(
         .ok_or_else(|| {
             ApiError::NotFound(format!("no version of collection {entity_id} at {at}"))
         })?;
+
+    if !deleted {
+        authorize_history_snapshots(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadCollection,
+            vec![HistoryAuthorizationSnapshot::from(&row)],
+        )
+        .await?;
+    }
 
     let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
     let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());

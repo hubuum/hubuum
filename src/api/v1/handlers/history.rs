@@ -5,10 +5,11 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
-use crate::db::traits::authz::AuthzSubject;
+use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
-use crate::extractors::Authenticated;
+use crate::models::{CollectionID, HistoryAuthorizationSnapshot, Permissions};
+use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
+use crate::traits::AuthzSubject;
 
 pub use crate::db::traits::history::resolve_actor_usernames;
 
@@ -20,17 +21,68 @@ pub struct HistoryResponse<T: Serialize + ToSchema> {
     pub actor_username: Option<String>,
 }
 
+/// Require the requested permission on every permission-relevant historical
+/// resource shape before returning a history page.
+///
+/// The local backend can decide the distinct collection set in one SQL query.
+/// External policy backends receive the complete historical resource
+/// snapshots so policies that use names or class IDs retain their semantics.
+pub async fn authorize_history_snapshots<S>(
+    context: &AppContext,
+    subject: &S,
+    scopes: Option<&[Permissions]>,
+    permission: Permissions,
+    snapshots: Vec<HistoryAuthorizationSnapshot>,
+) -> Result<(), ApiError>
+where
+    S: AuthzSubject + ?Sized,
+{
+    if context.permission_backend().uses_sql_permission_store() {
+        let mut collection_ids = snapshots
+            .iter()
+            .map(HistoryAuthorizationSnapshot::collection_id)
+            .collect::<Vec<_>>();
+        collection_ids.sort_unstable();
+        collection_ids.dedup();
+        let collections = collection_ids
+            .into_iter()
+            .map(CollectionID::new)
+            .collect::<Result<Vec<_>, _>>()?;
+        return subject
+            .can(context, [permission], collections, scopes)
+            .await;
+    }
+
+    authorize_resources(
+        context.permission_backend(),
+        context,
+        subject,
+        scopes,
+        vec![permission],
+        snapshots
+            .into_iter()
+            .map(HistoryAuthorizationSnapshot::into_resource)
+            .collect(),
+    )
+    .await
+}
+
 /// Deleted resources have no live row to authorize against. Only unscoped
 /// admins may use the history endpoints as a compliance/audit surface for
 /// those tombstones; ordinary callers must pass the normal live-resource check.
-pub async fn can_read_deleted_history(
-    pool: &DbPool,
-    requestor: &Authenticated,
-) -> Result<bool, ApiError> {
-    if requestor.scopes().is_some() {
+pub async fn can_read_deleted_history<S>(
+    context: &AppContext,
+    subject: &S,
+    token_scoped: bool,
+) -> Result<bool, ApiError>
+where
+    S: AuthzSubject + ?Sized,
+{
+    if token_scoped {
         return Ok(false);
     }
-    requestor.principal.is_admin(pool).await
+    let principal = PrincipalRef::load(context, subject).await?;
+    context.permission_backend().is_admin(&principal).await
 }
 
 /// Parse the required `at=<rfc3339>` query parameter for the as-of endpoint.
@@ -115,7 +167,12 @@ macro_rules! impl_history_pagination {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
+    use crate::permissions::{ResourceAttrs, ResourceKind};
+    use crate::tests::{TestContext, create_test_group};
 
     #[test]
     fn parse_as_of_reads_rfc3339() {
@@ -140,5 +197,93 @@ mod tests {
             parse_as_of("at=not-a-date"),
             Err(ApiError::BadRequest(_))
         ));
+    }
+
+    #[actix_web::test]
+    async fn deleted_history_admin_check_uses_the_configured_backend() {
+        let test = TestContext::new().await;
+        let policy_group = create_test_group(&test.pool).await;
+        policy_group
+            .add_member_without_events(&test.pool, &test.normal_user)
+            .await
+            .unwrap();
+
+        let allow_backend = MockTreetopBackend::new();
+        allow_backend.add_admin_rule(policy_group.id);
+        let allow_context = AppContext::new(test.pool.get_ref().clone(), Arc::new(allow_backend));
+        assert!(
+            can_read_deleted_history(&allow_context, &test.normal_user, false)
+                .await
+                .unwrap()
+        );
+
+        let deny_context = AppContext::new(
+            test.pool.get_ref().clone(),
+            Arc::new(MockTreetopBackend::new()),
+        );
+        assert!(
+            !can_read_deleted_history(&deny_context, &test.admin_user, false)
+                .await
+                .unwrap()
+        );
+
+        policy_group
+            .delete_without_events(&test.pool)
+            .await
+            .unwrap();
+    }
+
+    #[actix_web::test]
+    async fn historical_resource_attributes_are_sent_to_external_backends() {
+        let test = TestContext::new().await;
+        let policy_group = create_test_group(&test.pool).await;
+        policy_group
+            .add_member_without_events(&test.pool, &test.normal_user)
+            .await
+            .unwrap();
+
+        let backend = Arc::new(MockTreetopBackend::new());
+        backend.add_rule(MockAllowRule {
+            group_id: policy_group.id,
+            action: Permissions::ReadClass,
+            resource_kind: ResourceKind::Class,
+            resource_id: Some(41),
+            attrs: ResourceAttrs {
+                collection_id: Some(73),
+                name: Some("visible-version".to_string()),
+                ..Default::default()
+            },
+        });
+        let context = AppContext::new(test.pool.get_ref().clone(), backend.clone());
+        let visible = HistoryAuthorizationSnapshot::class(41, 73, "visible-version".to_string());
+        authorize_history_snapshots(
+            &context,
+            &test.normal_user,
+            None,
+            Permissions::ReadClass,
+            vec![visible.clone()],
+        )
+        .await
+        .unwrap();
+
+        let result = authorize_history_snapshots(
+            &context,
+            &test.normal_user,
+            None,
+            Permissions::ReadClass,
+            vec![
+                visible,
+                HistoryAuthorizationSnapshot::class(41, 73, "hidden-version".to_string()),
+            ],
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::Forbidden(_))));
+        assert_eq!(backend.authorization_batch_sizes(), vec![1, 2]);
+
+        policy_group
+            .delete_without_events(&test.pool)
+            .await
+            .unwrap();
     }
 }

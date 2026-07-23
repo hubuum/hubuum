@@ -28,6 +28,12 @@ pub mod tests {
 
     const CLASSES_ENDPOINT: &str = "/api/v1/classes";
 
+    #[derive(Clone, Copy)]
+    enum ClassHistoryRoute {
+        List,
+        AsOf,
+    }
+
     async fn api_get_classes_with_query_string(
         context: &TestContext,
         query_string: &str,
@@ -834,6 +840,92 @@ pub mod tests {
         assert_eq!(snap["description"], "v1");
 
         collection_fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[case::list(ClassHistoryRoute::List)]
+    #[case::as_of(ClassHistoryRoute::AsOf)]
+    #[actix_web::test]
+    async fn class_history_requires_access_to_every_historical_collection(
+        #[future(awt)] test_context: TestContext,
+        #[case] route: ClassHistoryRoute,
+    ) {
+        use chrono::SecondsFormat;
+
+        use crate::db::with_connection;
+        use crate::traits::{CanSave, CanUpdate};
+
+        let context = test_context;
+        let collections = context
+            .collection_fixtures("class_history_collection_move", 2)
+            .await;
+        let source = &collections[0];
+        let target = &collections[1];
+        target
+            .owner_group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+
+        let event_context = EventContext::system();
+        let class = NewHubuumClass {
+            name: context.scoped_name("class_history_collection_move"),
+            description: "historically private".to_string(),
+            collection_id: source.collection.id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save(&context.pool, &event_context)
+        .await
+        .unwrap();
+        UpdateHubuumClass {
+            name: None,
+            collection_id: Some(target.collection.id),
+            json_schema: None,
+            validate_schema: None,
+            description: None,
+        }
+        .update(&context.pool, class.id, &event_context)
+        .await
+        .unwrap();
+
+        let live_response = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{CLASSES_ENDPOINT}/{}", class.id),
+        )
+        .await;
+        assert_response_status(live_response, StatusCode::OK).await;
+
+        let endpoint = match route {
+            ClassHistoryRoute::List => format!("{CLASSES_ENDPOINT}/{}/history", class.id),
+            ClassHistoryRoute::AsOf => {
+                let valid_from = with_connection(&context.pool, async |conn| {
+                    use crate::schema::hubuumclass_history::dsl as history;
+
+                    history::hubuumclass_history
+                        .filter(history::id.eq(class.id))
+                        .order(history::history_id.asc())
+                        .select(history::valid_from)
+                        .first::<chrono::DateTime<chrono::Utc>>(conn)
+                        .await
+                })
+                .await
+                .unwrap();
+                format!(
+                    "{CLASSES_ENDPOINT}/{}/history/as-of?at={}",
+                    class.id,
+                    valid_from.to_rfc3339_opts(SecondsFormat::Micros, true)
+                )
+            }
+        };
+        let history_response = get_request(&context.pool, &context.normal_token, &endpoint).await;
+
+        assert_response_status(history_response, StatusCode::FORBIDDEN).await;
+
+        crate::tests::CollectionFixture::cleanup_all(&collections)
+            .await
+            .unwrap();
     }
 
     #[rstest]

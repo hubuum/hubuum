@@ -12,7 +12,8 @@ use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::history::{
-    remote_target_as_of, remote_target_history_paginated_with_total_count,
+    remote_target_as_of, remote_target_history_authorization_snapshots,
+    remote_target_history_paginated_with_total_count,
 };
 use crate::db::traits::remote_target::{
     DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
@@ -24,9 +25,10 @@ use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    CollectionID, HubuumClassID, NewRemoteTarget, Permissions, PrincipalID, RemoteTarget,
-    RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest, StoredRemoteCallTaskPayload,
-    TaskKind, TaskRecord, TaskResponse, UpdateRemoteTarget, authorize_remote_invocation,
+    CollectionID, HistoryAuthorizationSnapshot, HubuumClassID, NewRemoteTarget, Permissions,
+    PrincipalID, RemoteTarget, RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest,
+    StoredRemoteCallTaskPayload, TaskKind, TaskRecord, TaskResponse, UpdateRemoteTarget,
+    authorize_remote_invocation,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, PrincipalRef};
@@ -416,7 +418,8 @@ pub async fn get_remote_target_history(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, can_read_deleted_history, resolve_actor_usernames,
+        HistoryResponse, authorize_history_snapshots, can_read_deleted_history,
+        resolve_actor_usernames,
     };
     use crate::models::search::parse_query_parameter;
     use crate::pagination::prepare_db_pagination;
@@ -434,7 +437,14 @@ pub async fn get_remote_target_history(
             );
             (instance.id, false)
         }
-        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+        Err(ApiError::NotFound(_))
+            if can_read_deleted_history(
+                &pool,
+                &requestor.principal,
+                requestor.scopes().is_some(),
+            )
+            .await? =>
+        {
             (remote_target_id.id(), true)
         }
         Err(err) => return Err(err),
@@ -448,6 +458,18 @@ pub async fn get_remote_target_history(
         return Err(ApiError::NotFound(format!(
             "remote target {entity_id} not found"
         )));
+    }
+
+    if !require_history {
+        let snapshots = remote_target_history_authorization_snapshots(entity_id, &pool).await?;
+        authorize_history_snapshots(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadRemoteTarget,
+            snapshots,
+        )
+        .await?;
     }
 
     let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
@@ -491,12 +513,13 @@ pub async fn get_remote_target_as_of(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, can_read_deleted_history, parse_as_of, resolve_actor_usernames,
+        HistoryResponse, authorize_history_snapshots, can_read_deleted_history, parse_as_of,
+        resolve_actor_usernames,
     };
 
     let user = &requestor.principal;
     let remote_target_id = remote_target_id.into_inner();
-    let entity_id = match remote_target_id.instance(&pool).await {
+    let (entity_id, deleted) = match remote_target_id.instance(&pool).await {
         Ok(instance) => {
             can!(
                 &pool,
@@ -505,10 +528,17 @@ pub async fn get_remote_target_as_of(
                 [Permissions::ReadRemoteTarget],
                 CollectionID::new(instance.collection_id)?
             );
-            instance.id
+            (instance.id, false)
         }
-        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
-            remote_target_id.id()
+        Err(ApiError::NotFound(_))
+            if can_read_deleted_history(
+                &pool,
+                &requestor.principal,
+                requestor.scopes().is_some(),
+            )
+            .await? =>
+        {
+            (remote_target_id.id(), true)
         }
         Err(err) => return Err(err),
     };
@@ -519,6 +549,17 @@ pub async fn get_remote_target_as_of(
         .ok_or_else(|| {
             ApiError::NotFound(format!("no version of remote target {entity_id} at {at}"))
         })?;
+
+    if !deleted {
+        authorize_history_snapshots(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadRemoteTarget,
+            vec![HistoryAuthorizationSnapshot::from(&row)],
+        )
+        .await?;
+    }
 
     let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
     let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());

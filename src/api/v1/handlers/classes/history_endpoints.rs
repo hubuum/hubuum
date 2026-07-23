@@ -21,7 +21,8 @@ async fn get_class_history(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, can_read_deleted_history, resolve_actor_usernames,
+        HistoryResponse, authorize_history_snapshots, can_read_deleted_history,
+        resolve_actor_usernames,
     };
 
     let user = &requestor.principal;
@@ -37,7 +38,14 @@ async fn get_class_history(
             );
             (instance.id, false)
         }
-        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+        Err(ApiError::NotFound(_))
+            if can_read_deleted_history(
+                &pool,
+                &requestor.principal,
+                requestor.scopes().is_some(),
+            )
+            .await? =>
+        {
             (class_id.id(), true)
         }
         Err(err) => return Err(err),
@@ -49,6 +57,18 @@ async fn get_class_history(
         class_history_paginated_with_total_count(entity_id, &pool, &search_params).await?;
     if require_history && rows.is_empty() && params.cursor.is_none() {
         return Err(ApiError::NotFound(format!("class {entity_id} not found")));
+    }
+
+    if !require_history {
+        let snapshots = class_history_authorization_snapshots(entity_id, &pool).await?;
+        authorize_history_snapshots(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadClass,
+            snapshots,
+        )
+        .await?;
     }
 
     let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
@@ -92,12 +112,13 @@ async fn get_class_as_of(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, can_read_deleted_history, parse_as_of, resolve_actor_usernames,
+        HistoryResponse, authorize_history_snapshots, can_read_deleted_history, parse_as_of,
+        resolve_actor_usernames,
     };
 
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
-    let entity_id = match class_id.instance(&pool).await {
+    let (entity_id, deleted) = match class_id.instance(&pool).await {
         Ok(instance) => {
             can!(
                 &pool,
@@ -106,10 +127,17 @@ async fn get_class_as_of(
                 [Permissions::ReadClass],
                 instance
             );
-            instance.id
+            (instance.id, false)
         }
-        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
-            class_id.id()
+        Err(ApiError::NotFound(_))
+            if can_read_deleted_history(
+                &pool,
+                &requestor.principal,
+                requestor.scopes().is_some(),
+            )
+            .await? =>
+        {
+            (class_id.id(), true)
         }
         Err(err) => return Err(err),
     };
@@ -118,6 +146,17 @@ async fn get_class_as_of(
     let row = class_as_of(entity_id, at, &pool)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("no version of class {entity_id} at {at}")))?;
+
+    if !deleted {
+        authorize_history_snapshots(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadClass,
+            vec![HistoryAuthorizationSnapshot::from(&row)],
+        )
+        .await?;
+    }
 
     let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
     let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
@@ -151,7 +190,8 @@ async fn get_object_history(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, can_read_deleted_history, resolve_actor_usernames,
+        HistoryResponse, authorize_history_snapshots, can_read_deleted_history,
+        resolve_actor_usernames,
     };
 
     let user = &requestor.principal;
@@ -170,7 +210,14 @@ async fn get_object_history(
                 );
                 (object.id, false)
             }
-            Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
+            Err(ApiError::NotFound(_))
+                if can_read_deleted_history(
+                    &pool,
+                    &requestor.principal,
+                    requestor.scopes().is_some(),
+                )
+                .await? =>
+            {
                 (object_id.id(), true)
             }
             Err(err) => return Err(err),
@@ -183,6 +230,19 @@ async fn get_object_history(
             .await?;
     if require_history && rows.is_empty() && params.cursor.is_none() {
         return Err(ApiError::NotFound(format!("object {entity_id} not found")));
+    }
+
+    if !require_history {
+        let snapshots =
+            object_history_authorization_snapshots(entity_id, class_id.id(), &pool).await?;
+        authorize_history_snapshots(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadObject,
+            snapshots,
+        )
+        .await?;
     }
 
     let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
@@ -227,13 +287,14 @@ async fn get_object_as_of(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
-        HistoryResponse, can_read_deleted_history, parse_as_of, resolve_actor_usernames,
+        HistoryResponse, authorize_history_snapshots, can_read_deleted_history, parse_as_of,
+        resolve_actor_usernames,
     };
 
     let user = &requestor.principal;
     let (class_id, object_id) = paths.into_inner();
 
-    let entity_id = match check_if_object_in_class(&pool, &class_id, &object_id).await {
+    let (entity_id, deleted) = match check_if_object_in_class(&pool, &class_id, &object_id).await {
         Ok(()) => {
             let object = object_id.instance(&pool).await?;
             can!(
@@ -243,10 +304,17 @@ async fn get_object_as_of(
                 [Permissions::ReadObject],
                 object
             );
-            object.id
+            (object.id, false)
         }
-        Err(ApiError::NotFound(_)) if can_read_deleted_history(&pool, &requestor).await? => {
-            object_id.id()
+        Err(ApiError::NotFound(_))
+            if can_read_deleted_history(
+                &pool,
+                &requestor.principal,
+                requestor.scopes().is_some(),
+            )
+            .await? =>
+        {
+            (object_id.id(), true)
         }
         Err(err) => return Err(err),
     };
@@ -255,6 +323,17 @@ async fn get_object_as_of(
     let row = object_as_of(entity_id, class_id.id(), at, &pool)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("no version of object {entity_id} at {at}")))?;
+
+    if !deleted {
+        authorize_history_snapshots(
+            &pool,
+            user,
+            requestor.scopes(),
+            Permissions::ReadObject,
+            vec![HistoryAuthorizationSnapshot::from(&row)],
+        )
+        .await?;
+    }
 
     let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
     let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
