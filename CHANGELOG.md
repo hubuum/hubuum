@@ -50,6 +50,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Group deletion now checks service-account ownership while holding the group
   row lock, so concurrent account creation returns a stable `409 Conflict`;
   conflict diagnostics also cap the number of account names they include.
+- Unix admin CLI backups now synchronize the destination directory after
+  atomically replacing the output file.
 - Single-host rolling updates now wait for Caddy's passive upstream failure
   marks to clear between replica replacements, preserving continuous routing
   without reprovisioning an unchanged proxy configuration.
