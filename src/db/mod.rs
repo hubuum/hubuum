@@ -58,7 +58,7 @@ pub type DbPool = Pool<DbConnection>;
 /// Latest migration required by this binary. The test below keeps this value
 /// synchronized with the migration directory so readiness cannot silently lag
 /// behind a newly added schema change.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260721000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260722000001";
 
 #[derive(diesel::QueryableByName)]
 struct DatabaseSchemaReadiness {
@@ -746,6 +746,20 @@ mod tests {
             .expect("at least one migration");
 
         assert_eq!(REQUIRED_DATABASE_MIGRATION_VERSION, latest);
+    }
+
+    #[test]
+    fn resource_scope_rollback_revokes_tokens_before_dropping_scope_tables() {
+        let rollback =
+            include_str!("../../migrations/2026-07-22-000001_token_resource_scopes/down.sql");
+        let revoke = rollback
+            .find("WHERE resource_scoped")
+            .expect("rollback revokes resource-scoped tokens");
+        let first_drop = rollback
+            .find("DROP TABLE token_object_scopes")
+            .expect("rollback drops resource-scope tables");
+
+        assert!(revoke < first_drop);
     }
 
     #[tokio::test]

@@ -50,7 +50,7 @@ where
 ///
 /// * `pool` - A database connection pool.
 /// * `subject` - The principal (impl [`UserPermissions`]) to check permissions for.
-/// * `scopes` - The token scope set as `Option<&[Permissions]>`. `None` = unscoped
+/// * `scopes` - The token scope set as `Option<&TokenScope>`. `None` = unscoped
 ///   (full authority); `Some(..)` intersects the check with the scopes (fail-closed,
 ///   applied even to admins). This argument is **required** — request handlers pass
 ///   `requestor.scopes()`; truly unscoped internal callers pass `None` explicitly.
@@ -66,7 +66,7 @@ where
 ///
 /// ```text
 /// use hubuum::can;
-/// // `scopes` is `Option<&[Permissions]>` — e.g. `requestor.scopes()` or `None`.
+/// // `scopes` is `Option<&TokenScope>` — e.g. `requestor.scopes()` or `None`.
 /// can!(pool, subject, scopes, [Permissions::ReadCollection], collection, class, object);
 /// can!(pool, subject, scopes, [Permissions::ReadCollection, Permissions::UpdateCollection], collection, class1, class2);
 /// ```
@@ -77,7 +77,7 @@ where
 /// [`Permissions`]: crate::models::Permissions
 /// [`ApiError::Forbidden`]: crate::errors::ApiError::Forbidden
 macro_rules! can {
-    // Scope is a REQUIRED argument — `$scopes: Option<&[Permissions]>`. There is
+    // Scope is a REQUIRED argument — `$scopes: Option<&TokenScope>`. There is
     // deliberately no convenience form that defaults to `None`, so a missed
     // migration to scope-aware authorization is a compile error, not a silent
     // scope bypass. Resource/task handlers pass `requestor.scopes()`; truly
@@ -90,11 +90,15 @@ macro_rules! can {
         #[allow(unused_imports)]
         use $crate::traits::CollectionAccessors as _;
 
+        let resources = vec![
+            $($collection.to_resource_ref($pool.db_pool()).await?),+
+        ];
+        if !$crate::db::traits::authz::scope_allows_resources($scopes, &resources) {
+            return Err($crate::errors::ApiError::Forbidden("Permission denied".to_string()));
+        }
+
         match $crate::traits::BackendContext::permission_backend($pool) {
             Some(permission_backend) if !permission_backend.uses_sql_permission_store() => {
-                let resources = vec![
-                    $($collection.to_resource_ref($pool.db_pool()).await?),+
-                ];
                 $crate::permissions::authorize_resources(
                     permission_backend,
                     $pool.db_pool(),

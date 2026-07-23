@@ -1,3 +1,4 @@
+use crate::models::token_scope::TokenScope;
 use serde::Serialize;
 
 use crate::db::traits::authz::AuthzSubject;
@@ -41,7 +42,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     /// * `backend` - The backend context to use for the query.
     /// * `subject` - The principal (impl `AuthzSubject`) to check permissions for.
     /// * `permission` - The permissions to check (all must be present).
-    /// * `scopes` - The token scope set as `Option<&[Permissions]>`; `None` = unscoped
+    /// * `scopes` - The token scope set as `Option<&TokenScope>`; `None` = unscoped
     ///   (full authority), `Some(..)` intersects the check fail-closed (even for admins).
     ///
     /// ## Returns
@@ -61,7 +62,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         backend: &C,
         subject: S,
         permission: Vec<Permissions>,
-        scopes: Option<&[Permissions]>,
+        scopes: Option<&TokenScope>,
     ) -> Result<bool, ApiError>
     where
         C: BackendContext + ?Sized,

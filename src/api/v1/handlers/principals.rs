@@ -15,14 +15,14 @@ use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
 use crate::models::collection::principal_all_permissions;
 use crate::models::principal::{Principal, PrincipalKind, PrincipalSettings};
 use crate::models::search::parse_query_parameter;
-use crate::models::token::{create_principal_token, revoke_token_by_id_for_principal};
+use crate::models::token::revoke_token_by_id_for_principal;
 use crate::models::{
-    Group, GroupResponse, Permissions, PrincipalID, PrincipalToken, PrincipalTokenMetadata,
+    Group, GroupResponse, Permissions, PrincipalID, PrincipalToken, PrincipalTokenCreateRequest,
+    PrincipalTokenMetadata, TokenID, TokenResourceScope, TokenScope,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::traits::{AuthzSubject, GroupAccessors};
 use std::collections::BTreeMap;
-use std::collections::HashSet;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(create_token)
@@ -63,12 +63,31 @@ pub struct NewTokenRequest {
     /// Optional scope set. Omit for an unscoped token; an **empty** array is
     /// rejected (almost certainly a client bug, not "grant nothing").
     pub scopes: Option<Vec<Permissions>>,
+    /// Optional resource boundary. Entries are additive within the boundary
+    /// and are always intersected with the principal's live group grants. At
+    /// most 1,000 entries are accepted.
+    #[schema(max_items = 1000)]
+    pub resource_scopes: Option<Vec<TokenResourceScope>>,
+}
+
+impl NewTokenRequest {
+    fn into_create_request(
+        self,
+        principal_id: PrincipalID,
+    ) -> Result<PrincipalTokenCreateRequest, ApiError> {
+        let scope = TokenScope::from_request_parts(self.scopes, self.resource_scopes)?;
+        Ok(PrincipalTokenCreateRequest::new(principal_id)
+            .name(self.name)
+            .description(self.description)
+            .expires_at(self.expires_at)
+            .scope(scope))
+    }
 }
 
 #[derive(Debug, Deserialize)]
 struct TokenPath {
     principal_id: PrincipalID,
-    token_id: i32,
+    token_id: TokenID,
 }
 
 /// Management authz for a principal's credentials/membership:
@@ -153,7 +172,8 @@ pub async fn create_token(
     body: web::Json<NewTokenRequest>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let principal = principal_id.into_inner().principal(&pool).await?;
+    let principal_id = principal_id.into_inner();
+    let principal = principal_id.principal(&pool).await?;
     ensure_can_manage_principal(&pool, &requestor, &principal).await?;
 
     // A disabled service account cannot mint credentials.
@@ -163,42 +183,17 @@ pub async fn create_token(
         ));
     }
 
-    let body = body.into_inner();
-    if let Some(scopes) = &body.scopes
-        && scopes.is_empty()
-    {
-        return Err(ApiError::BadRequest(
-            "scopes must be non-empty when provided".to_string(),
-        ));
-    }
-
-    if let Some(scopes) = &body.scopes {
-        let unique: HashSet<Permissions> = scopes.iter().copied().collect();
-        if unique.len() != scopes.len() {
-            return Err(ApiError::BadRequest(
-                "scopes must not contain duplicates".to_string(),
-            ));
-        }
-    }
+    let token_request = body.into_inner().into_create_request(principal_id)?;
 
     debug!(
         message = "Token mint requested",
         principal = principal.id,
         requestor = requestor.user.id,
-        scoped = body.scopes.is_some()
+        scoped = token_request.is_scoped()
     );
 
     let event_context = requestor.event_context(&req);
-    let raw = create_principal_token(
-        &pool,
-        principal.id,
-        body.name.as_deref(),
-        body.description.as_deref(),
-        body.expires_at,
-        body.scopes.as_deref(),
-        Some(&event_context),
-    )
-    .await?;
+    let raw = token_request.create(&pool, Some(&event_context)).await?;
 
     Ok(ApiResponse::new(
         LoginResponse::new(raw.get_token()),
@@ -271,9 +266,13 @@ pub async fn revoke_token(
     ensure_can_manage_principal(&pool, &requestor, &principal).await?;
 
     let event_context = requestor.event_context(&req);
-    let revoked =
-        revoke_token_by_id_for_principal(&pool, path.token_id, principal.id, Some(&event_context))
-            .await?;
+    let revoked = revoke_token_by_id_for_principal(
+        &pool,
+        path.token_id.id(),
+        principal.id,
+        Some(&event_context),
+    )
+    .await?;
     if revoked == 0 {
         return Err(ApiError::NotFound(
             "Token not found for this principal".to_string(),

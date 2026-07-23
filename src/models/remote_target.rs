@@ -1,3 +1,4 @@
+use crate::models::token_scope::TokenScope;
 use std::str::FromStr;
 
 use crate::db::prelude::*;
@@ -729,7 +730,7 @@ impl RemoteTarget {
 pub async fn authorize_remote_invocation<C>(
     backend: &C,
     actor: &impl crate::db::traits::authz::AuthzSubject,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     target: &RemoteTarget,
     subject: &RemoteInvocationSubject,
 ) -> Result<ResolvedRemoteInvocationSubject, ApiError>

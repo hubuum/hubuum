@@ -28,16 +28,16 @@ use std::sync::Arc;
 
 use crate::config::{AppConfig, PermissionBackendKind};
 use crate::db::DbPool;
-use crate::db::traits::authz::scope_allows;
+use crate::db::traits::authz::{scope_allows, scope_allows_resources};
 use crate::errors::ApiError;
-use crate::models::Permissions;
+use crate::models::{Permissions, TokenScope};
 use crate::traits::{AuthzSubject, BackendContext, PrincipalIdAccessor};
 
 pub async fn authorize_resources<S>(
     backend: &dyn PermissionBackend,
     pool: &DbPool,
     subject: S,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     permissions: Vec<Permissions>,
     resources: Vec<ResourceRef>,
 ) -> Result<(), ApiError>
@@ -45,6 +45,9 @@ where
     S: PrincipalIdAccessor,
 {
     if !scope_allows(scopes, &permissions) {
+        return Err(ApiError::Forbidden("Permission denied".to_string()));
+    }
+    if !scope_allows_resources(scopes, &resources) {
         return Err(ApiError::Forbidden("Permission denied".to_string()));
     }
     let principal = PrincipalRef::load(pool, &subject).await?;

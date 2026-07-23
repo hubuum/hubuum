@@ -24,9 +24,7 @@ use crate::errors::ApiError;
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::principal::load_principal_by_id;
-use crate::models::{
-    NewTaskEventRecord, Permissions, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
-};
+use crate::models::{NewTaskEventRecord, TaskKind, TaskRecord, TaskResultCounts, TaskStatus};
 use crate::observability::metrics;
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
@@ -752,25 +750,14 @@ async fn process_claimed_task(
     // failing closed on any unknown permission string. Import, export, and
     // backup are runtime-admin operations, so only remote calls consume scoped
     // snapshots.
-    let snapshot_scopes: Option<Vec<Permissions>> =
-        if task_kind == TaskKind::RemoteCall && task.submitted_token_scoped {
-            let entries = task.submitted_token_scopes.as_array().ok_or_else(|| {
-                ApiError::InternalServerError("Task scope snapshot is not an array".to_string())
-            })?;
-            let mut parsed = Vec::with_capacity(entries.len());
-            for entry in entries {
-                let raw = entry.as_str().ok_or_else(|| {
-                    ApiError::InternalServerError(
-                        "Task scope snapshot entry is not a string".to_string(),
-                    )
-                })?;
-                parsed.push(Permissions::from_string(raw)?);
-            }
-            Some(parsed)
-        } else {
-            None
-        };
-    let scopes = snapshot_scopes.as_deref();
+    let snapshot_scope = if task_kind == TaskKind::RemoteCall && task.submitted_token_scoped {
+        Some(crate::models::TokenScope::from_snapshot_json(
+            &task.submitted_token_scopes,
+        )?)
+    } else {
+        None
+    };
+    let scopes = snapshot_scope.as_ref();
 
     info!(
         message = "Dispatching task execution",

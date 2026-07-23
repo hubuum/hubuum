@@ -44,7 +44,7 @@ use crate::db::{init_pool, with_connection};
 use crate::errors::ApiError;
 use crate::models::collection::{Collection, NewCollectionWithAssignee};
 use crate::models::group::{Group, NewGroup};
-use crate::models::token::create_principal_token;
+use crate::models::token::{create_principal_token, create_principal_token_with_scope};
 use crate::models::user::{NewUser, User};
 use crate::models::{HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject};
 
@@ -586,6 +586,21 @@ pub async fn scoped_token(
     create_principal_token(pool, principal_id, None, None, None, Some(scopes), None)
         .await
         .expect("failed to mint scoped token")
+        .get_token()
+}
+
+/// Mint a token narrowed to the supplied collection, class, or object entries.
+pub async fn resource_scoped_token(
+    pool: &DbPool,
+    principal_id: i32,
+    resource_scopes: Vec<crate::models::TokenResourceScope>,
+) -> String {
+    let scope = crate::models::TokenScope::from_request_parts(None, Some(resource_scopes))
+        .expect("valid resource token scope")
+        .expect("resource token scope is present");
+    create_principal_token_with_scope(pool, principal_id, None, None, None, Some(&scope), None)
+        .await
+        .expect("failed to mint resource-scoped token")
         .get_token()
 }
 

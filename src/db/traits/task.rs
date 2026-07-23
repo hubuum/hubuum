@@ -1,4 +1,5 @@
 use crate::db::prelude::*;
+use crate::models::token_scope::TokenScope;
 use chrono::Utc;
 use diesel::dsl::sql;
 use diesel::expression::AsExpression;
@@ -18,7 +19,7 @@ use crate::models::{
     BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
     ExportTaskOutputRecord, ExportTaskOutputSummaryRecord, ImportTaskResultRecord,
     NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewImportTaskResultRecord,
-    NewTaskEventRecord, NewTaskRecord, Permissions, TaskEventRecord, TaskID, TaskKind, TaskRecord,
+    NewTaskEventRecord, NewTaskRecord, PrincipalID, TaskEventRecord, TaskID, TaskKind, TaskRecord,
     TaskResponse, TaskResultCounts, TaskStatus,
 };
 use crate::observability::metrics;
@@ -47,19 +48,20 @@ pub struct TaskCreateRequest {
     pub request_hash: Option<String>,
     pub request_payload: serde_json::Value,
     pub total_items: i32,
-    /// Scope snapshot of the submitting token (see `TaskRecord`).
+    /// Persisted scope snapshot fields. Prefer [`TaskCreateRequest::builder`]
+    /// so these values are derived atomically from [`TaskScopeSnapshot`].
     pub submitted_token_id: Option<i32>,
     pub submitted_token_scoped: bool,
     pub submitted_token_scopes: serde_json::Value,
 }
 
-/// Encode a token scope set as the persisted snapshot JSON (an array of
-/// permission strings; empty array for unscoped or deny-all).
-pub fn scope_snapshot_json(scopes: Option<&[Permissions]>) -> serde_json::Value {
-    let strings: Vec<String> = scopes
-        .map(|s| s.iter().map(|p| p.to_string()).collect())
-        .unwrap_or_default();
-    serde_json::Value::Array(strings.into_iter().map(serde_json::Value::String).collect())
+/// Encode a token scope for asynchronous execution. Unscoped callers retain the
+/// historical empty-array marker; scoped callers use an object that preserves
+/// independent permission and resource dimensions.
+pub fn scope_snapshot_json(scopes: Option<&TokenScope>) -> serde_json::Value {
+    scopes
+        .map(TokenScope::snapshot_json)
+        .unwrap_or_else(|| serde_json::json!([]))
 }
 
 /// The submitting token's scope boundary, captured at task-creation time and
@@ -67,21 +69,88 @@ pub fn scope_snapshot_json(scopes: Option<&[Permissions]>) -> serde_json::Value 
 #[derive(Debug, Clone)]
 pub struct TaskScopeSnapshot {
     pub token_id: Option<i32>,
-    /// Whether the submitting token was scoped. This is NOT derivable from
-    /// `scopes`: an unscoped token (`None`) and a deny-all scoped token
-    /// (`Some(&[])`) both serialize to an empty array, so the boolean is the
-    /// only thing that distinguishes "full authority" from "deny everything".
+    /// Whether the submitting token was scoped. This remains explicit for task
+    /// metadata and for compatibility with legacy permission-array snapshots.
     pub scoped: bool,
     pub scopes: serde_json::Value,
 }
 
+pub struct TaskCreateRequestBuilder {
+    kind: TaskKind,
+    submitted_by: PrincipalID,
+    request_payload: serde_json::Value,
+    total_items: i32,
+    idempotency_key: Option<IdempotencyKey>,
+    request_hash: Option<String>,
+    scope_snapshot: TaskScopeSnapshot,
+}
+
 impl TaskScopeSnapshot {
     /// Build from the submitting token id and its live scope set.
-    pub fn from_request(token_id: Option<i32>, scopes: Option<&[Permissions]>) -> Self {
+    pub fn from_request(token_id: Option<i32>, scopes: Option<&TokenScope>) -> Self {
         Self {
             token_id,
             scoped: scopes.is_some(),
             scopes: scope_snapshot_json(scopes),
+        }
+    }
+
+    pub fn unscoped() -> Self {
+        Self::from_request(None, None)
+    }
+}
+
+impl TaskCreateRequest {
+    pub fn builder(
+        kind: TaskKind,
+        submitted_by: PrincipalID,
+        request_payload: serde_json::Value,
+        total_items: i32,
+    ) -> TaskCreateRequestBuilder {
+        TaskCreateRequestBuilder {
+            kind,
+            submitted_by,
+            request_payload,
+            total_items,
+            idempotency_key: None,
+            request_hash: None,
+            scope_snapshot: TaskScopeSnapshot::unscoped(),
+        }
+    }
+}
+
+impl TaskCreateRequestBuilder {
+    pub fn idempotency_key(mut self, idempotency_key: Option<IdempotencyKey>) -> Self {
+        self.idempotency_key = idempotency_key;
+        self
+    }
+
+    pub fn request_hash(mut self, request_hash: Option<String>) -> Self {
+        self.request_hash = request_hash;
+        self
+    }
+
+    pub fn scope_snapshot(mut self, scope_snapshot: TaskScopeSnapshot) -> Self {
+        self.scope_snapshot = scope_snapshot;
+        self
+    }
+
+    pub fn build(self) -> TaskCreateRequest {
+        let TaskScopeSnapshot {
+            token_id,
+            scoped,
+            scopes,
+        } = self.scope_snapshot;
+        TaskCreateRequest {
+            kind: self.kind,
+            submitted_by: self.submitted_by.id(),
+            idempotency_key: self.idempotency_key,
+            request_hash: self.request_hash,
+            request_payload: self.request_payload,
+            total_items: self.total_items,
+            submitted_token_id: token_id,
+            submitted_token_scoped: scoped,
+            submitted_token_scopes: scopes,
         }
     }
 }
@@ -1605,8 +1674,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        TaskBackend, TaskCreateRequest, TaskStateUpdate, claim_next_queued_task, database_now,
-        insert_import_results, recover_expired_task_lease, renew_task_lease,
+        TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate, claim_next_queued_task,
+        database_now, insert_import_results, recover_expired_task_lease, renew_task_lease,
         task_capacity_lock_key, task_kind_claim_order,
     };
     use crate::db::traits::user::DeleteUserRecord;
@@ -1615,9 +1684,9 @@ mod tests {
     use crate::models::search::QueryOptions;
     use crate::models::{
         CollectionID, NewBackupTaskOutputRecord, NewImportTaskResultRecord, NewTaskEventRecord,
-        NewTaskRecord, RemoteInvocationBodyOverride, RemoteInvocationParameters,
-        RemoteInvocationSubject, RemoteTargetID, StoredRemoteCallTaskPayload, TaskID, TaskKind,
-        TaskStatus,
+        NewTaskRecord, Permissions, PrincipalID, RemoteInvocationBodyOverride,
+        RemoteInvocationParameters, RemoteInvocationSubject, RemoteTargetID,
+        StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskStatus, TokenScope,
     };
     use crate::tests::{TestContext, create_test_user};
 
@@ -1627,6 +1696,39 @@ mod tests {
         valid: bool,
         #[diesel(sql_type = diesel::sql_types::Text)]
         definition: String,
+    }
+
+    #[test]
+    fn task_request_builder_derives_unscoped_persistence_fields() {
+        let request = TaskCreateRequest::builder(
+            TaskKind::Export,
+            PrincipalID::new(7).unwrap(),
+            serde_json::json!({}),
+            1,
+        )
+        .build();
+
+        assert_eq!(request.submitted_token_id, None);
+        assert!(!request.submitted_token_scoped);
+        assert_eq!(request.submitted_token_scopes, serde_json::json!([]));
+    }
+
+    #[test]
+    fn task_request_builder_derives_scoped_persistence_fields() {
+        let scope =
+            TokenScope::from_stored_parts(Some(vec![Permissions::ReadObject]), None).unwrap();
+        let request = TaskCreateRequest::builder(
+            TaskKind::Export,
+            PrincipalID::new(7).unwrap(),
+            serde_json::json!({}),
+            1,
+        )
+        .scope_snapshot(TaskScopeSnapshot::from_request(Some(11), Some(&scope)))
+        .build();
+
+        assert_eq!(request.submitted_token_id, Some(11));
+        assert!(request.submitted_token_scoped);
+        assert_eq!(request.submitted_token_scopes, scope.snapshot_json());
     }
 
     #[tokio::test]

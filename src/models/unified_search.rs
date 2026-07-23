@@ -1,3 +1,4 @@
+use crate::models::token_scope::TokenScope;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
@@ -10,9 +11,9 @@ use crate::db::traits::user::UnifiedSearchBackend;
 use crate::errors::ApiError;
 use crate::models::{Collection, HubuumClassExpanded, HubuumObject, Permissions};
 use crate::pagination::{PageLimits, page_limits};
+use crate::permissions::visibility::authorize_all_candidates;
 use crate::permissions::{
-    PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs,
-    ResourceKind, ResourceRef,
+    PermissionBackend, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
 };
 use crate::traits::{BackendContext, Search};
 use crate::utilities::extensions::CustomStringExtensions;
@@ -448,7 +449,7 @@ async fn search_collections<C, S>(
     backend: &C,
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<Collection>, ApiError>
 where
@@ -469,23 +470,15 @@ where
                     true,
                 )
                 .await?;
-            let requests = candidates
-                .iter()
-                .map(|collection| PermissionRequest {
-                    resource: ResourceRef::collection(collection.id),
-                    permissions: vec![Permissions::ReadCollection],
-                })
-                .collect();
-            let decisions = permission_backend
-                .authorize_many(principal, requests)
-                .await?;
-            candidates
-                .into_iter()
-                .zip(decisions)
-                .filter_map(|(candidate, decision)| {
-                    (decision == PermissionDecision::Allow).then_some(candidate)
-                })
-                .collect()
+            authorize_all_candidates(
+                permission_backend,
+                principal,
+                candidates,
+                scopes,
+                vec![Permissions::ReadCollection],
+                |collection| ResourceRef::collection(collection.id),
+            )
+            .await?
         }
     } else {
         user.search_unified_collections(backend, search_spec, scopes)
@@ -528,7 +521,7 @@ async fn search_classes<C, S>(
     backend: &C,
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<HubuumClassExpanded>, ApiError>
 where
@@ -549,31 +542,23 @@ where
                     true,
                 )
                 .await?;
-            let requests = candidates
-                .iter()
-                .map(|class| PermissionRequest {
-                    resource: ResourceRef {
-                        kind: ResourceKind::Class,
-                        id: class.id,
-                        attrs: ResourceAttrs {
-                            collection_id: Some(class.collection.id),
-                            name: Some(class.name.clone()),
-                            ..Default::default()
-                        },
+            authorize_all_candidates(
+                permission_backend,
+                principal,
+                candidates,
+                scopes,
+                vec![Permissions::ReadClass],
+                |class| ResourceRef {
+                    kind: ResourceKind::Class,
+                    id: class.id,
+                    attrs: ResourceAttrs {
+                        collection_id: Some(class.collection.id),
+                        name: Some(class.name.clone()),
+                        ..Default::default()
                     },
-                    permissions: vec![Permissions::ReadClass],
-                })
-                .collect();
-            let decisions = permission_backend
-                .authorize_many(principal, requests)
-                .await?;
-            candidates
-                .into_iter()
-                .zip(decisions)
-                .filter_map(|(candidate, decision)| {
-                    (decision == PermissionDecision::Allow).then_some(candidate)
-                })
-                .collect()
+                },
+            )
+            .await?
         }
     } else {
         user.search_unified_classes(backend, search_spec, scopes)
@@ -614,7 +599,7 @@ async fn search_objects<C, S>(
     backend: &C,
     params: &UnifiedSearchQuery,
     search_spec: &UnifiedSearchSpec,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<HubuumObject>, ApiError>
 where
@@ -635,32 +620,24 @@ where
                     true,
                 )
                 .await?;
-            let requests = candidates
-                .iter()
-                .map(|object| PermissionRequest {
-                    resource: ResourceRef {
-                        kind: ResourceKind::Object,
-                        id: object.id,
-                        attrs: ResourceAttrs {
-                            collection_id: Some(object.collection_id),
-                            class_id: Some(object.hubuum_class_id),
-                            name: Some(object.name.clone()),
-                            ..Default::default()
-                        },
+            authorize_all_candidates(
+                permission_backend,
+                principal,
+                candidates,
+                scopes,
+                vec![Permissions::ReadObject],
+                |object| ResourceRef {
+                    kind: ResourceKind::Object,
+                    id: object.id,
+                    attrs: ResourceAttrs {
+                        collection_id: Some(object.collection_id),
+                        class_id: Some(object.hubuum_class_id),
+                        name: Some(object.name.clone()),
+                        ..Default::default()
                     },
-                    permissions: vec![Permissions::ReadObject],
-                })
-                .collect();
-            let decisions = permission_backend
-                .authorize_many(principal, requests)
-                .await?;
-            candidates
-                .into_iter()
-                .zip(decisions)
-                .filter_map(|(candidate, decision)| {
-                    (decision == PermissionDecision::Allow).then_some(candidate)
-                })
-                .collect()
+                },
+            )
+            .await?
         }
     } else {
         user.search_unified_objects(backend, search_spec, scopes)
@@ -696,7 +673,7 @@ pub async fn execute_unified_search<C, S>(
     user: &S,
     backend: &C,
     params: &UnifiedSearchQuery,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
 ) -> Result<UnifiedSearchResponse, ApiError>
 where
     C: BackendContext + ?Sized,
@@ -765,7 +742,7 @@ pub async fn execute_unified_search_batch<C, S>(
     backend: &C,
     params: &UnifiedSearchQuery,
     kind: UnifiedSearchKind,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
 ) -> Result<UnifiedSearchBatchResponse, ApiError>
 where
     C: BackendContext + ?Sized,

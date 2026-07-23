@@ -1,3 +1,4 @@
+use crate::models::token_scope::TokenScope;
 use base64::Engine;
 use hubuum_outbound_http::{
     OutboundHeaders, OutboundHttpError, OutboundMethod, OutboundRequest, validate_outbound_url,
@@ -18,7 +19,7 @@ use crate::db::traits::remote_target::insert_remote_call_result;
 use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::models::{
-    NewRemoteCallResult, NewTaskEventRecord, Permissions, RemoteAuthConfig, RemoteHttpMethod,
+    NewRemoteCallResult, NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod,
     RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTemplateContext,
     StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, authorize_remote_invocation,
 };
@@ -53,7 +54,7 @@ pub(super) async fn execute_remote_call_task<C>(
     backend: &C,
     task: &TaskRecord,
     user: &impl AuthzSubject,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
 where
     C: BackendContext + ?Sized,
@@ -137,7 +138,7 @@ async fn execute_remote_call<C>(
     backend: &C,
     task_id: i32,
     user: &impl AuthzSubject,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     request: &StoredRemoteCallTaskPayload,
 ) -> Result<RemoteExecutionOutcome, ApiError>
 where

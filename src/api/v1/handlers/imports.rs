@@ -11,7 +11,8 @@ use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    ImportRequest, ImportTaskResultResponse, TaskID, TaskKind, TaskRecord, TaskResponse,
+    ImportRequest, ImportTaskResultResponse, PrincipalID, TaskID, TaskKind, TaskRecord,
+    TaskResponse,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
@@ -28,17 +29,16 @@ async fn find_or_create_import_task(
     request_hash: String,
     total_items: i32,
 ) -> Result<TaskRecord, ApiError> {
-    (TaskCreateRequest {
-        kind: TaskKind::Import,
-        submitted_by,
-        idempotency_key,
-        request_hash: Some(request_hash),
-        request_payload: payload,
+    TaskCreateRequest::builder(
+        TaskKind::Import,
+        PrincipalID::new(submitted_by)?,
+        payload,
         total_items,
-        submitted_token_id: snapshot.token_id,
-        submitted_token_scoped: snapshot.scoped,
-        submitted_token_scopes: snapshot.scopes,
-    })
+    )
+    .idempotency_key(idempotency_key)
+    .request_hash(Some(request_hash))
+    .scope_snapshot(snapshot)
+    .build()
     .create_idempotently_with_active_limit(pool, max_active_import_tasks_per_user())
     .await
 }
@@ -65,8 +65,12 @@ pub async fn create_import(
     req: HttpRequest,
     import_request: web::Json<ImportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    require_unscoped_runtime_admin(&pool, &requestor.principal, requestor.token_meta.scoped)
-        .await?;
+    require_unscoped_runtime_admin(
+        &pool,
+        &requestor.principal,
+        requestor.token_meta.is_scoped(),
+    )
+    .await?;
     ensure_task_worker_running(pool.clone());
 
     let import_request = import_request.into_inner();

@@ -23,6 +23,7 @@ pub mod search;
 pub mod service_account;
 pub mod task;
 pub mod token;
+pub mod token_scope;
 pub mod unified_search;
 pub mod user;
 
@@ -51,5 +52,6 @@ pub use crate::models::remote_target::*;
 pub use crate::models::service_account::*;
 pub use crate::models::task::*;
 pub use crate::models::token::*;
+pub use crate::models::token_scope::*;
 pub use crate::models::unified_search::*;
 pub use crate::models::user::*;

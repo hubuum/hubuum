@@ -377,3 +377,56 @@ async fn invalid_computed_selectors_are_bad_requests(
         .await
         .unwrap();
 }
+
+#[rstest::rstest]
+#[case("known")]
+#[case("disabled")]
+#[case("unknown")]
+#[tokio::test]
+async fn local_computed_filters_are_not_disclosed_outside_resource_scope(
+    #[future(awt)] test_context: TestContext,
+    #[case] selector: &str,
+) {
+    let target = fixture(&test_context, "local computed filter scope target").await;
+    let outside = fixture(&test_context, "local computed filter outside scope").await;
+    let group = grant_normal_user_read_access(&test_context, &target).await;
+    for (key, enabled) in [("known", true), ("disabled", false)] {
+        create_shared_definition(
+            &test_context.pool,
+            target.class.id,
+            target.class.collection_id,
+            test_context.admin_user.id,
+            computed_definition(key, "/bucket", enabled),
+            &EventContext::system(),
+        )
+        .await
+        .unwrap();
+    }
+    let token = resource_scoped_token(
+        &test_context.pool,
+        test_context.normal_user.id,
+        vec![TokenResourceScope::Object(
+            HubuumObjectID::new(outside.objects[0].id).unwrap(),
+        )],
+    )
+    .await;
+
+    let page = aggregate_rows(
+        &test_context,
+        &target,
+        &token,
+        &format!("computed.shared.{selector}__equals=a&group_by=description"),
+    )
+    .await;
+
+    assert!(page.rows.is_empty());
+    assert_eq!(page.total_count.as_deref(), Some("0"));
+
+    finish_active_rebuild(&test_context, target.class.id).await;
+    target.cleanup().await.unwrap();
+    outside.cleanup().await.unwrap();
+    group
+        .delete_without_events(&test_context.pool)
+        .await
+        .unwrap();
+}

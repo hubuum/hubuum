@@ -12,7 +12,7 @@ use crate::models::search::{
     ComputedFieldScope, FilterField, QueryOptions, QueryParamsExt, SearchOperator,
     parse_query_parameter_with_computed_filters_and_passthrough,
 };
-use crate::models::{CollectionID, HubuumClass, HubuumClassID, Permissions, UserID};
+use crate::models::{CollectionID, HubuumClass, HubuumClassID, Permissions, TokenScope, UserID};
 
 pub const MAX_OBJECT_AGGREGATE_DIMENSIONS: usize = 3;
 pub const MAX_OBJECT_AGGREGATE_MEASURES: usize = 4;
@@ -852,6 +852,12 @@ pub struct ObjectAggregateTarget {
     collection_id: CollectionID,
 }
 
+pub(crate) struct ObjectAggregateTargetParts {
+    pub class_id: HubuumClassID,
+    pub class_name: String,
+    pub collection_id: CollectionID,
+}
+
 impl ObjectAggregateTarget {
     pub fn from_class(class: &HubuumClass) -> Result<Self, ApiError> {
         Ok(Self {
@@ -861,8 +867,12 @@ impl ObjectAggregateTarget {
         })
     }
 
-    pub(crate) fn into_parts(self) -> (HubuumClassID, String, CollectionID) {
-        (self.class_id, self.class_name, self.collection_id)
+    pub(crate) fn into_parts(self) -> ObjectAggregateTargetParts {
+        ObjectAggregateTargetParts {
+            class_id: self.class_id,
+            class_name: self.class_name,
+            collection_id: self.collection_id,
+        }
     }
 }
 
@@ -956,13 +966,18 @@ pub(crate) struct ObjectAggregateBackendParts {
 
 pub struct ObjectAggregateAuthorization {
     required_permissions: Vec<Permissions>,
-    token_scopes: Option<Vec<Permissions>>,
+    token_scopes: Option<TokenScope>,
+}
+
+pub(crate) struct ObjectAggregateAuthorizationParts {
+    pub required_permissions: Vec<Permissions>,
+    pub token_scopes: Option<TokenScope>,
 }
 
 impl ObjectAggregateAuthorization {
     pub fn new(
         required_permissions: Vec<Permissions>,
-        token_scopes: Option<Vec<Permissions>>,
+        token_scopes: Option<TokenScope>,
     ) -> Result<Self, ApiError> {
         if !required_permissions.contains(&Permissions::ReadObject)
             || !required_permissions.contains(&Permissions::ReadCollection)
@@ -978,8 +993,11 @@ impl ObjectAggregateAuthorization {
         })
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<Permissions>, Option<Vec<Permissions>>) {
-        (self.required_permissions, self.token_scopes)
+    pub(crate) fn into_parts(self) -> ObjectAggregateAuthorizationParts {
+        ObjectAggregateAuthorizationParts {
+            required_permissions: self.required_permissions,
+            token_scopes: self.token_scopes,
+        }
     }
 }
 

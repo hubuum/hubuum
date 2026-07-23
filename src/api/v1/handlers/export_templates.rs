@@ -126,12 +126,15 @@ pub async fn get_templates(
 
     let (templates, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {
         let search_params = prepare_db_pagination::<ExportTemplate>(&params)?;
-        let allowed_collection_ids =
+        let mut allowed_collection_ids =
             user_can_on_any(&pool, user, Permissions::ReadTemplate, requestor.scopes())
                 .await?
                 .into_iter()
                 .map(|collection| collection.id)
                 .collect::<Vec<_>>();
+        if let Some(scope) = requestor.scopes() {
+            scope.retain_allowed_collection_ids(&mut allowed_collection_ids);
+        }
         ExportTemplate::list_with_total_count(&pool, &allowed_collection_ids, &search_params)
             .await?
     } else {
@@ -147,6 +150,7 @@ pub async fn get_templates(
             pool.permission_backend(),
             &principal,
             candidates,
+            requestor.scopes(),
             vec![Permissions::ReadTemplate],
             &search_params,
             |template| ResourceRef {
@@ -236,8 +240,12 @@ pub async fn run_template_export(
     template_id: web::Path<ExportTemplateID>,
     run: web::Json<ExportTemplateRunRequest>,
 ) -> Result<impl Responder, ApiError> {
-    require_unscoped_runtime_admin(&pool, &requestor.principal, requestor.token_meta.scoped)
-        .await?;
+    require_unscoped_runtime_admin(
+        &pool,
+        &requestor.principal,
+        requestor.token_meta.is_scoped(),
+    )
+    .await?;
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
     let run = run.into_inner();

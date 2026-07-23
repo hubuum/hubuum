@@ -19,7 +19,7 @@ use crate::permissions::local::LocalPermissionBackend;
 use crate::permissions::types::{
     AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef,
 };
-use crate::permissions::visibility::{AuthorizedObjectIds, paginate_authorized};
+use crate::permissions::visibility::{AuthorizationPage, AuthorizedObjectIds, paginate_authorized};
 use crate::tests::{
     create_collection_fixture, create_test_group, create_test_user, get_pool_and_config,
 };
@@ -206,9 +206,9 @@ async fn paginate_authorized_filters_pages_correctly_under_slow_path() {
         &backend,
         &principal,
         candidates,
+        None,
         vec![Permissions::ReadCollection],
-        0,
-        10,
+        AuthorizationPage::new(0, 10),
         |ns: &Collection| ResourceRef::collection(ns.id),
     )
     .await
@@ -235,9 +235,9 @@ async fn paginate_authorized_filters_pages_correctly_under_slow_path() {
         &backend,
         &principal,
         candidates,
+        None,
         vec![Permissions::ReadCollection],
-        1,
-        10,
+        AuthorizationPage::new(1, 10),
         |ns: &Collection| ResourceRef::collection(ns.id),
     )
     .await

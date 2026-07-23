@@ -12,6 +12,7 @@ use super::candidate::ObjectAggregateCandidate;
 use super::computed::{ComputedAggregateDefinitions, computed_aggregate_payload};
 use super::filters::apply_object_aggregate_source_filters;
 use crate::db::traits::computed_field::{ComputedQuerySnapshot, computed_filter_sql_component};
+use crate::db::traits::resource_scope::{object_scope_predicate, resource_scope_ids};
 use crate::db::traits::search::JsonPredicateExt;
 use crate::db::{DbConnection, with_connection};
 use crate::errors::ApiError;
@@ -76,7 +77,7 @@ macro_rules! bind_object_aggregate_query {
 pub(super) use bind_object_aggregate_query;
 
 macro_rules! visible_filtered_object_query {
-    ($collection_id:expr, $query_options:expr, $computed_filter_snapshot:expr) => {{
+    ($collection_id:expr, $token_scope:expr, $query_options:expr, $computed_filter_snapshot:expr) => {{
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
@@ -86,13 +87,16 @@ macro_rules! visible_filtered_object_query {
         let mut query = hubuumobject
             .filter(object_collection_id.eq($collection_id))
             .into_boxed();
+        if let Some(scope) = resource_scope_ids($token_scope) {
+            query = query.filter(object_scope_predicate(scope));
+        }
         apply_object_aggregate_source_filters!(query, $query_options, $computed_filter_snapshot);
         query
     }};
 }
 
 macro_rules! visible_filtered_aggregate_query {
-    ($collection_id:expr, $query_options:expr, $sort_key_sql:expr, $measures_sql:expr, $computed_filter_snapshot:expr) => {{
+    ($collection_id:expr, $token_scope:expr, $query_options:expr, $sort_key_sql:expr, $measures_sql:expr, $computed_filter_snapshot:expr) => {{
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
@@ -108,6 +112,9 @@ macro_rules! visible_filtered_aggregate_query {
             ))
             .into_boxed()
             .filter(object_collection_id.eq($collection_id));
+        if let Some(scope) = resource_scope_ids($token_scope) {
+            query = query.filter(object_scope_predicate(scope));
+        }
         apply_object_aggregate_source_filters!(query, $query_options, $computed_filter_snapshot);
         query
     }};
@@ -120,6 +127,7 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
         pool,
         target,
         paging,
+        token_scopes,
         ..
     } = execution;
     let query_options = &paging.query_options;
@@ -130,6 +138,7 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
     let total_count = if query_options.include_total {
         let query = visible_filtered_object_query!(
             target.collection_id,
+            token_scopes,
             query_options,
             computed_filter_snapshot
         );
@@ -146,6 +155,7 @@ pub(super) async fn aggregate_visible_filtered_objects_with_sql(
 
     let mut query = visible_filtered_aggregate_query!(
         target.collection_id,
+        token_scopes,
         query_options,
         &sort_key_sql,
         &measures_sql,

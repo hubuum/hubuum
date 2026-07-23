@@ -2,7 +2,7 @@
 //!
 //! `AuthzSubject` is **identity-only**: it answers "who is this principal and
 //! which groups / admin status do they have", and nothing about token scopes.
-//! Scopes are threaded *separately* as an `Option<&[Permissions]>` parameter on
+//! Scopes are threaded *separately* as an `Option<&TokenScope>` parameter on
 //! every authz / search / export entry point:
 //!
 //! * `None`        — unscoped: full principal authority (internal/background
@@ -22,8 +22,15 @@ use crate::db::{DbPool, with_connection, with_connection_async};
 use crate::errors::ApiError;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::permissions::Permissions;
-use crate::models::{Principal, PrincipalID, ServiceAccount, ServiceAccountID, User, UserID};
-use crate::schema::{group_memberships, groups, identity_scopes};
+use crate::models::{
+    CollectionID, HubuumClassID, HubuumObjectID, Principal, PrincipalID, PrincipalToken,
+    ServiceAccount, ServiceAccountID, TokenResourceScope, TokenScope, User, UserID,
+};
+use crate::permissions::ResourceRef;
+use crate::schema::{
+    group_memberships, groups, identity_scopes, token_class_scopes, token_collection_scopes,
+    token_object_scopes, token_scopes,
+};
 
 /// Cheap, local access to a subject's principal id (no backend round-trip).
 ///
@@ -143,21 +150,34 @@ impl<T: PrincipalIdAccessor + ?Sized> AuthzSubject for T {}
 ///
 /// Returns `true` iff the token scope set permits *all* of `requested`:
 /// * `None`        ⇒ unscoped ⇒ always allowed.
-/// * `Some(slice)` ⇒ every requested permission must be present; an empty slice
-///   therefore denies everything.
+/// * `Some(scope)` ⇒ every requested permission must be present when the
+///   permission dimension is enabled; an empty enabled dimension denies all.
 ///
 /// Callers apply this **before** the admin-bypass so a scoped admin token can
 /// never exceed its scopes.
-pub fn scope_allows(scopes: Option<&[Permissions]>, requested: &[Permissions]) -> bool {
+pub fn scope_allows(scopes: Option<&TokenScope>, requested: &[Permissions]) -> bool {
     match scopes {
         None => true,
-        Some(allowed) => requested.iter().all(|p| allowed.contains(p)),
+        Some(scope) => scope.allows_permissions(requested),
     }
 }
 
-/// Load a token's scope set from `token_scopes`, validating each stored string
-/// against the `Permissions` enum (fail-closed on an unknown value). Only called
-/// when `tokens.scoped` is true; the resulting slice may be empty (deny-all).
+/// Fail-closed resource-identity pre-filter for a token scope.
+pub fn scope_allows_resource(scope: Option<&TokenScope>, resource: &ResourceRef) -> bool {
+    scope.is_none_or(|scope| scope.allows_resource(resource))
+}
+
+/// Require every resource touched by an operation to be inside the token's
+/// resource boundary.
+pub fn scope_allows_resources(scope: Option<&TokenScope>, resources: &[ResourceRef]) -> bool {
+    resources
+        .iter()
+        .all(|resource| scope_allows_resource(scope, resource))
+}
+
+/// Load a token's permission dimension from `token_scopes`, validating each
+/// stored string against the `Permissions` enum (fail-closed on an unknown
+/// value). A flagged dimension may contain zero rows, which means deny-all.
 pub async fn load_token_scopes(pool: &DbPool, token_id: i32) -> Result<Vec<Permissions>, ApiError> {
     use crate::schema::token_scopes::dsl::{permission, token_id as ts_token_id, token_scopes};
 
@@ -171,4 +191,112 @@ pub async fn load_token_scopes(pool: &DbPool, token_id: i32) -> Result<Vec<Permi
     .await?;
 
     raw.iter().map(|s| Permissions::from_string(s)).collect()
+}
+
+struct StoredTokenScopeRows {
+    permissions: Vec<String>,
+    collection_ids: Vec<i32>,
+    class_ids: Vec<i32>,
+    object_ids: Vec<i32>,
+}
+
+impl StoredTokenScopeRows {
+    fn into_scope(self, token: &PrincipalToken) -> Result<TokenScope, ApiError> {
+        let Self {
+            permissions,
+            collection_ids,
+            class_ids,
+            object_ids,
+        } = self;
+        let permissions = token
+            .permission_scoped
+            .then(|| {
+                permissions
+                    .iter()
+                    .map(|permission| Permissions::from_string(permission))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+        let resources = token
+            .resource_scoped
+            .then(|| {
+                collection_ids
+                    .into_iter()
+                    .map(|id| CollectionID::new(id).map(TokenResourceScope::Collection))
+                    .chain(
+                        class_ids
+                            .into_iter()
+                            .map(|id| HubuumClassID::new(id).map(TokenResourceScope::Class)),
+                    )
+                    .chain(
+                        object_ids
+                            .into_iter()
+                            .map(|id| HubuumObjectID::new(id).map(TokenResourceScope::Object)),
+                    )
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
+        TokenScope::from_stored_parts(permissions, resources)
+    }
+}
+
+/// Load all narrowing dimensions for an authenticated token. The two scoped
+/// flags are the source of truth, so a flagged dimension with no rows becomes a
+/// present-but-empty deny-all dimension.
+pub async fn load_token_scope(
+    pool: &DbPool,
+    token: &PrincipalToken,
+) -> Result<Option<TokenScope>, ApiError> {
+    if !token.is_scoped() {
+        return Ok(None);
+    }
+
+    let stored_scope = with_connection(pool, async |conn| -> Result<_, ApiError> {
+        let permissions = if token.permission_scoped {
+            token_scopes::table
+                .filter(token_scopes::token_id.eq(token.id))
+                .select(token_scopes::permission)
+                .load::<String>(conn)
+                .await?
+        } else {
+            Vec::new()
+        };
+        let collection_ids = if token.resource_scoped {
+            token_collection_scopes::table
+                .filter(token_collection_scopes::token_id.eq(token.id))
+                .select(token_collection_scopes::collection_id)
+                .load::<i32>(conn)
+                .await?
+        } else {
+            Vec::new()
+        };
+        let class_ids = if token.resource_scoped {
+            token_class_scopes::table
+                .filter(token_class_scopes::token_id.eq(token.id))
+                .select(token_class_scopes::class_id)
+                .load::<i32>(conn)
+                .await?
+        } else {
+            Vec::new()
+        };
+        let object_ids = if token.resource_scoped {
+            token_object_scopes::table
+                .filter(token_object_scopes::token_id.eq(token.id))
+                .select(token_object_scopes::object_id)
+                .load::<i32>(conn)
+                .await?
+        } else {
+            Vec::new()
+        };
+        Ok(StoredTokenScopeRows {
+            permissions,
+            collection_ids,
+            class_ids,
+            object_ids,
+        })
+    })
+    .await?;
+
+    stored_scope.into_scope(token).map(Some)
 }

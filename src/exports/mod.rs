@@ -25,9 +25,9 @@ use crate::models::{
     ExportJsonResponse, ExportMeta, ExportMissingDataPolicy, ExportRequest, ExportTemplate,
     ExportTemplateID, ExportWarning, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
     HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath, NewExportTaskOutputRecord,
-    NewTaskEventRecord, RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH,
-    RelatedObjectForRootRow, RelatedObjectGraphRow, RelatedObjectIncludeRow, TaskKind, TaskRecord,
-    ValidatedExportScope,
+    NewTaskEventRecord, PrincipalID, RELATED_INCLUDE_DEFAULT_LIMIT,
+    RELATED_INCLUDE_DEFAULT_MAX_DEPTH, RelatedObjectForRootRow, RelatedObjectGraphRow,
+    RelatedObjectIncludeRow, TaskKind, TaskRecord, ValidatedExportScope,
 };
 use crate::observability::metrics;
 use crate::pagination::page_limits_or_defaults;
@@ -421,17 +421,16 @@ async fn find_or_create_export_task(
     payload: serde_json::Value,
     request_hash_value: String,
 ) -> Result<TaskRecord, ApiError> {
-    (TaskCreateRequest {
-        kind: TaskKind::Export,
-        submitted_by,
-        idempotency_key,
-        request_hash: Some(request_hash_value),
-        request_payload: payload,
-        total_items: 1,
-        submitted_token_id: snapshot.token_id,
-        submitted_token_scoped: snapshot.scoped,
-        submitted_token_scopes: snapshot.scopes,
-    })
+    TaskCreateRequest::builder(
+        TaskKind::Export,
+        PrincipalID::new(submitted_by)?,
+        payload,
+        1,
+    )
+    .idempotency_key(idempotency_key)
+    .request_hash(Some(request_hash_value))
+    .scope_snapshot(snapshot)
+    .build()
     .create_idempotently_with_active_limit(pool, max_active_export_tasks_per_user())
     .await
 }

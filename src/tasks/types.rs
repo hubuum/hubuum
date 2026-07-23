@@ -43,7 +43,7 @@ pub(super) struct PlanningState {
     pub(super) is_admin: Option<bool>,
     /// Submitting token's scope boundary (`None` = unscoped). Threaded into the
     /// per-collection permission checks so a scoped import cannot exceed it.
-    pub(super) scopes: Option<Vec<Permissions>>,
+    pub(super) scopes: Option<crate::models::TokenScope>,
     pub(super) planned_collection_keys: HashSet<(Option<i32>, String)>,
     pub(super) planned_class_keys: HashSet<(i32, String)>,
     pub(super) planned_object_keys: HashSet<(i32, String)>,

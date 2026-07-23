@@ -1,3 +1,4 @@
+use crate::models::token_scope::TokenScope;
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -276,7 +277,7 @@ where
     let collection = CollectionID::new(collection_id).map_err(|err| err.to_string())?;
     let scopes = state.scopes.clone();
     let result: Result<(), crate::errors::ApiError> = async {
-        crate::can!(backend, user, scopes.as_deref(), [permission], collection);
+        crate::can!(backend, user, scopes.as_ref(), [permission], collection);
         Ok(())
     }
     .await;
@@ -335,7 +336,7 @@ async fn object_relation_exists_cached(
 pub(super) async fn plan_import<C>(
     backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     request: &ImportRequest,
 ) -> PlanningOutcome
 where
@@ -358,7 +359,7 @@ where
 async fn plan_import_with_admin_status<C>(
     backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     request: &ImportRequest,
     is_admin: Option<bool>,
 ) -> PlanningOutcome
@@ -368,7 +369,7 @@ where
     let pool = backend.db_pool();
     let mode = request.mode();
     let mut state = PlanningState::new();
-    state.scopes = scopes.map(|s| s.to_vec());
+    state.scopes = scopes.cloned();
     state.is_admin = is_admin;
     let mut planned_items = Vec::with_capacity(request.total_items() as usize);
     let mut failures = Vec::new();

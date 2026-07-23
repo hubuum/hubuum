@@ -10,9 +10,9 @@ use crate::db::traits::computed_field::{
 };
 use crate::events::EventContext;
 use crate::models::{
-    ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest, HubuumObject,
+    ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest, HubuumObject, HubuumObjectID,
     MAX_OBJECT_AGGREGATE_CURSOR_LENGTH, NewHubuumClass, NewHubuumObject, Permissions,
-    ServiceAccountID, TaskID, UpdateHubuumObject,
+    ServiceAccountID, TaskID, TokenResourceScope, UpdateHubuumObject,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
 use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
@@ -20,8 +20,8 @@ use crate::permissions::{AppContext, PermissionBackend, ResourceAttrs, ResourceK
 use crate::tests::api_operations::get_request;
 use crate::tests::asserts::{assert_response_status, header_value};
 use crate::tests::{
-    ObjectFixture, TestContext, create_test_group, create_test_service_account, scoped_token,
-    service_account_token, test_context,
+    ObjectFixture, TestContext, create_test_group, create_test_service_account,
+    resource_scoped_token, scoped_token, service_account_token, test_context,
 };
 use crate::traits::{CanDelete, CanUpdate, PermissionController, SelfAccessors};
 

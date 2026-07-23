@@ -1,3 +1,4 @@
+use crate::models::token_scope::TokenScope;
 use std::collections::BTreeMap;
 
 use chrono::{Duration, Utc};
@@ -9,8 +10,7 @@ use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::models::{
     BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState,
-    CURRENT_BACKUP_VERSION, NewBackupTaskOutputRecord, NewTaskEventRecord, Permissions, TaskRecord,
-    TaskStatus,
+    CURRENT_BACKUP_VERSION, NewBackupTaskOutputRecord, NewTaskEventRecord, TaskRecord, TaskStatus,
 };
 use crate::permissions::{AppContext, PrincipalRef};
 use crate::traits::AuthzSubject;
@@ -104,7 +104,7 @@ pub async fn execute_backup_task(
     context: &AppContext,
     task: &TaskRecord,
     user: &impl AuthzSubject,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
     settings: &BackupSettings,
 ) -> Result<(), ApiError> {
     let payload = task
@@ -172,7 +172,7 @@ pub async fn execute_backup_task(
 pub(crate) async fn authorize_backup_request(
     context: &AppContext,
     user: &impl AuthzSubject,
-    scopes: Option<&[Permissions]>,
+    scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError> {
     let principal = PrincipalRef::load(context, user).await?;
     if scopes.is_some() || !context.permission_backend().is_admin(&principal).await? {

@@ -13,12 +13,12 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::object::HubuumObject;
 use crate::models::object_aggregate::{
-    DecodedObjectAggregateCursor, ObjectAggregateBackendParts, ObjectAggregateBackendRequest,
-    ObjectAggregateCursorBudget, ObjectAggregateDimension, ObjectAggregatePage,
-    ObjectAggregateSpec,
+    DecodedObjectAggregateCursor, ObjectAggregateAuthorizationParts, ObjectAggregateBackendParts,
+    ObjectAggregateBackendRequest, ObjectAggregateCursorBudget, ObjectAggregateDimension,
+    ObjectAggregatePage, ObjectAggregateSpec, ObjectAggregateTargetParts,
 };
 use crate::models::search::{FilterField, QueryOptions, SortParam};
-use crate::models::{CollectionID, Permissions, UserID};
+use crate::models::{CollectionID, Permissions, TokenScope, UserID};
 use crate::pagination::{
     SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, prepare_db_pagination,
 };
@@ -56,7 +56,7 @@ struct ObjectAggregateExecution<'a> {
     paging: ObjectAggregatePaging,
     personal_owner_id: Option<i32>,
     required_permissions: Vec<Permissions>,
-    token_scopes: Option<&'a [Permissions]>,
+    token_scopes: Option<&'a TokenScope>,
 }
 
 struct ObjectAggregatePaging {
@@ -116,8 +116,15 @@ pub trait ObjectAggregateBackend: UserCollectionAccessors {
             authorization,
             cursor_budget,
         } = request.into_parts();
-        let (class_id, class_name, collection_id) = target.into_parts();
-        let (required_permissions, token_scopes) = authorization.into_parts();
+        let ObjectAggregateTargetParts {
+            class_id,
+            class_name,
+            collection_id,
+        } = target.into_parts();
+        let ObjectAggregateAuthorizationParts {
+            required_permissions,
+            token_scopes,
+        } = authorization.into_parts();
         let effective_limit = effective_page_limit(&query_options)?;
         let decoded_cursor = query_options
             .cursor
@@ -151,7 +158,7 @@ pub trait ObjectAggregateBackend: UserCollectionAccessors {
             },
             personal_owner_id: personal_owner_id.map(UserID::id),
             required_permissions,
-            token_scopes: token_scopes.as_deref(),
+            token_scopes: token_scopes.as_ref(),
         };
 
         let permission_backend = context.permission_backend();
@@ -198,6 +205,11 @@ where
         Err(error) => return Err(error),
     }
 
+    if execution.paging.has_computed_filter()
+        && !local_computed_filter_has_visible_candidates(&execution).await?
+    {
+        return empty_aggregate_page(&execution.paging.query_options);
+    }
     execution
         .paging
         .resolve_computed_filters(
@@ -212,6 +224,28 @@ where
     aggregate_visible_filtered_objects_with_local_batches(execution).await
 }
 
+async fn local_computed_filter_has_visible_candidates(
+    execution: &ObjectAggregateExecution<'_>,
+) -> Result<bool, ApiError> {
+    let mut candidate_options =
+        object_aggregate_authorization_chunk_options(&execution.paging.query_options);
+    candidate_options.limit = Some(1);
+    let database_options = prepare_db_pagination::<HubuumObject>(&candidate_options)?;
+    let candidate_query = ObjectAggregateCandidateQuery::new(
+        &database_options,
+        execution.target.collection_id,
+        &execution.paging.spec,
+    )
+    .token_scope(execution.token_scopes);
+    let candidates = with_connection(execution.pool, async |connection| {
+        load_aggregate_candidate_batch(connection, candidate_query).await
+    })
+    .await?
+    .into_page(&candidate_options)?;
+    validate_candidate_target(&candidates.items, &execution.target)?;
+    Ok(!candidates.items.is_empty())
+}
+
 async fn aggregate_visible_filtered_objects_with_local_batches(
     execution: ObjectAggregateExecution<'_>,
 ) -> Result<ObjectAggregatePage, ApiError> {
@@ -220,6 +254,7 @@ async fn aggregate_visible_filtered_objects_with_local_batches(
         target,
         paging,
         personal_owner_id,
+        token_scopes,
         ..
     } = execution;
     with_transaction(
@@ -237,7 +272,8 @@ async fn aggregate_visible_filtered_objects_with_local_batches(
                     &database_options,
                     target.collection_id,
                     &paging.spec,
-                );
+                )
+                .token_scope(token_scopes);
                 let candidate_query =
                     if let Some(snapshot) = paging.computed_filter_snapshot.as_ref() {
                         candidate_query.resolved_computed_filters(snapshot)
@@ -313,7 +349,7 @@ where
         mut paging,
         personal_owner_id,
         required_permissions,
-        token_scopes: _,
+        token_scopes,
     } = execution;
     let authorizer = ExternalObjectAggregateAuthorizer::new(
         backend,
@@ -335,7 +371,8 @@ where
             &database_options,
             target.collection_id,
             &paging.spec,
-        );
+        )
+        .token_scope(token_scopes);
         let candidate_query = if filters_computed_values {
             candidate_query.include_computed_filter_data()
         } else {

@@ -110,10 +110,13 @@ async fn list_visible_events(
         } else {
             (Vec::new(), false)
         };
-    let accessible_collection_ids = visible_collections
+    let mut accessible_collection_ids = visible_collections
         .iter()
         .map(|collection| collection.id)
         .collect::<Vec<_>>();
+    if let Some(scope) = requestor.scopes() {
+        scope.retain_allowed_collection_ids(&mut accessible_collection_ids);
+    }
     let (events, total_count) = list_events_with_total_count(
         &pool,
         &accessible_collection_ids,

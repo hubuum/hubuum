@@ -16,7 +16,7 @@ use crate::extractors::Authenticated;
 use crate::models::search::QueryOptions;
 use crate::models::{
     HubuumClass, HubuumClassID, HubuumObject, HubuumObjectComputedResponse,
-    HubuumObjectReadResponse, Permissions,
+    HubuumObjectReadResponse, Permissions, TokenScope,
 };
 use crate::pagination::{
     Page, SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, encode_cursor,
@@ -24,8 +24,7 @@ use crate::pagination::{
 };
 use crate::permissions::visibility::{AuthorizedObjectIds, authorize_all_candidates};
 use crate::permissions::{
-    AppContext, AuthzTarget, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
-    authorize_resources,
+    AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef, authorize_resources,
 };
 use crate::traits::BackendContext;
 
@@ -187,21 +186,49 @@ async fn can_list_objects_in_class(
     requestor: &Authenticated,
     class: &HubuumClass,
 ) -> Result<bool, ApiError> {
-    let resource = class.to_resource_ref(pool.db_pool()).await?;
-    match authorize_resources(
-        pool.permission_backend(),
-        pool,
-        &requestor.principal,
-        requestor.scopes(),
-        vec![Permissions::ReadObject, Permissions::ReadCollection],
-        vec![resource],
-    )
-    .await
-    {
-        Ok(()) => Ok(true),
-        Err(ApiError::Forbidden(_)) => Ok(false),
-        Err(error) => Err(error),
+    let required = [Permissions::ReadObject, Permissions::ReadCollection];
+    if !scope_allows(requestor.scopes(), &required) {
+        return Ok(false);
     }
+
+    let has_class_or_collection_scope = requestor
+        .scopes()
+        .and_then(TokenScope::resource_ids)
+        .is_some_and(|ids| ids.has_collection_or_class_entries());
+    if has_class_or_collection_scope || requestor.scopes().is_none() {
+        return Ok(authorize_resources(
+            pool.permission_backend(),
+            pool.db_pool(),
+            &requestor.principal,
+            requestor.scopes(),
+            vec![Permissions::ReadObject, Permissions::ReadCollection],
+            vec![ResourceRef {
+                kind: ResourceKind::Class,
+                id: class.id,
+                attrs: ResourceAttrs {
+                    collection_id: Some(class.collection_id),
+                    class_id: Some(class.id),
+                    ..Default::default()
+                },
+            }],
+        )
+        .await
+        .is_ok());
+    }
+
+    let mut visibility_query = QueryOptions {
+        filters: Vec::new(),
+        sort: Vec::new(),
+        limit: Some(1),
+        cursor: None,
+        include_total: false,
+    };
+    scope_object_query_to_class(&mut visibility_query, &HubuumClassID::new(class.id)?);
+    let visible_objects = requestor
+        .principal
+        .search_objects_from_backend(pool.db_pool(), visibility_query, requestor.scopes())
+        .await?;
+    Ok(!visible_objects.is_empty())
 }
 
 async fn authorized_object_ids_in_class(
@@ -226,6 +253,7 @@ async fn authorized_object_ids_in_class(
         pool.permission_backend(),
         &principal,
         candidates,
+        requestor.scopes(),
         vec![Permissions::ReadObject],
         |object| ResourceRef {
             kind: ResourceKind::Object,
