@@ -72,14 +72,21 @@ spec:
 ```
 
 Wait for the job to complete successfully before updating API or worker
-replicas. For the task-lease migration, use this upgrade order:
+replicas. For the task-lease and task-provenance migrations, use this upgrade
+order:
 
-1. Stop old-version worker replicas or let their active tasks drain.
+1. Stop old-version worker replicas, allowing their bounded graceful shutdown
+   to finish or fail active tasks.
 2. Run the one-shot migration.
 3. Deploy new worker and API replicas.
 
-The drain prevents a new worker from treating a task owned by an old,
-lease-unaware worker as abandoned.
+For the lease migration, the drain prevents a new worker from treating a task
+owned by an old, lease-unaware worker as abandoned. For the provenance
+migration, it prevents an old worker from committing temporal mutations
+without the root task context that only the new worker propagates. Old API
+replicas may remain online during the migration: the expanded schema derives
+task initiators from `submitted_by` and treats their legacy `hubuum.actor_id`
+session setting as direct-user attribution.
 
 The `api` and `worker` entrypoints wait until the database records the latest
 migration required by the binary. API `/readyz` performs the same schema check.
@@ -181,8 +188,9 @@ Every migration used in this sequence must be compatible with both the old and
 new API versions. Use expand/backfill/switch/contract changes across releases;
 do not drop or reinterpret schema that the old pods still use. Helm rollback
 does not undo a completed database migration, so the previous application image
-must also remain compatible with the migrated schema. The task-lease migration
-still requires the worker drain order described above.
+must also remain compatible with the migrated schema. The task-lease and
+task-provenance migrations still require the worker drain order described
+above.
 
 These settings protect the HTTP application rollout. They do not make the
 ingress controller, Kubernetes nodes, PostgreSQL, or Valkey highly available;

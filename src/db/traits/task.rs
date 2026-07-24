@@ -1860,6 +1860,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_task_insert_copies_submitter_to_initiator() {
+        let context = TestContext::new().await;
+        let task = NewTaskRecord {
+            kind: TaskKind::Import.as_str().to_string(),
+            status: TaskStatus::Queued.as_str().to_string(),
+            submitted_by: Some(context.admin_user.id),
+            idempotency_key: Some(context.scoped_name("legacy-task-insert")),
+            request_hash: None,
+            request_payload: Some(serde_json::json!({"items": []})),
+            summary: None,
+            total_items: 0,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            request_redacted_at: None,
+            started_at: None,
+            finished_at: None,
+        }
+        .create(&context.pool)
+        .await
+        .unwrap();
+
+        assert_eq!(task.initiator_user_id, Some(context.admin_user.id));
+    }
+
+    #[tokio::test]
     async fn legacy_task_event_page_uses_bounded_provenance_queries() {
         let context = TestContext::new().await;
         let initiator = create_test_user(&context.pool).await;

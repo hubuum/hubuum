@@ -6,8 +6,9 @@ use crate::traits::{CanSave, CanUpdate};
 use chrono::{DateTime, Utc};
 use diesel::sql_types::{Integer, Text, Timestamp, Timestamptz};
 
-/// Driving INSERT/UPDATE/DELETE on a base table through raw SQL (with the
-/// actor GUC set) must produce I/U/D history rows carrying that actor.
+/// Driving INSERT/UPDATE/DELETE on a base table through raw SQL with only the
+/// legacy actor GUC set must produce I/U/D history rows carrying compatible
+/// direct-user provenance.
 #[actix_rt::test]
 async fn trigger_records_ops_and_actor() {
     let scope = TestScope::new();
@@ -55,34 +56,62 @@ async fn trigger_records_ops_and_actor() {
     .unwrap();
 
     // Read back the history for that class, oldest first.
-    type HistRow = (String, DateTime<Utc>, Option<DateTime<Utc>>, Option<i32>);
+    type HistRow = (
+        String,
+        DateTime<Utc>,
+        Option<DateTime<Utc>>,
+        Option<i32>,
+        Option<String>,
+        Option<i32>,
+        Option<i32>,
+    );
     let rows: Vec<HistRow> = with_connection(&pool, async |conn| {
         use crate::schema::hubuumclass_history::dsl as h;
         // The class itself is deleted; find history by the name snapshot instead.
         h::hubuumclass_history
             .filter(h::name.eq(&cname))
             .order(h::history_id.asc())
-            .select((h::op, h::valid_from, h::valid_to, h::actor_id))
+            .select((
+                h::op,
+                h::valid_from,
+                h::valid_to,
+                h::actor_id,
+                h::actor_kind,
+                h::initiator_user_id,
+                h::task_id,
+            ))
             .load(conn)
             .await
     })
     .await
     .unwrap();
 
-    let ops: Vec<&str> = rows.iter().map(|(op, _, _, _)| op.as_str()).collect();
+    let ops: Vec<&str> = rows
+        .iter()
+        .map(|(op, _, _, _, _, _, _)| op.as_str())
+        .collect();
     assert_eq!(
         ops,
         vec!["I", "U", "D"],
         "expected insert/update/delete history"
     );
     assert!(
-        rows.iter().all(|(_, _, _, actor)| *actor == Some(4242)),
+        rows.iter()
+            .all(|(_, _, _, actor, actor_kind, initiator, task_id)| {
+                *actor == Some(4242)
+                    && actor_kind.as_deref() == Some("user")
+                    && initiator.is_none()
+                    && task_id.is_none()
+            }),
         "actor must be 4242 on every row"
     );
 
     // The DELETE row must be a zero-width tombstone.
-    let delete_row = rows.iter().find(|(op, _, _, _)| op == "D").unwrap();
-    let (_, valid_from, valid_to, _) = delete_row;
+    let delete_row = rows
+        .iter()
+        .find(|(op, _, _, _, _, _, _)| op == "D")
+        .unwrap();
+    let (_, valid_from, valid_to, _, _, _, _) = delete_row;
     assert_eq!(
         valid_from,
         valid_to.as_ref().unwrap(),

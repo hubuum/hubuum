@@ -218,9 +218,37 @@ hubuum_reload_caddy_and_wait_for_upstreams() {
 }
 
 hubuum_run_migrations() {
-  echo "Running one-shot database migrations while the primary remains online..."
+  echo "Running one-shot database migrations..."
   "${COMPOSE_CMD[@]}" run --rm --no-deps -T \
     --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+}
+
+hubuum_drain_primary_workers_for_migrations() {
+  local standby_health
+
+  if ! hubuum_service_is_healthy hubuum-api; then
+    return 1
+  fi
+
+  standby_health="$(hubuum_service_health hubuum-api-standby)"
+  if [[ "$standby_health" == "missing" ]]; then
+    # First adoption of rolling services has no old API-only replica to carry
+    # traffic. Its documented upgrade contract requires an idle task queue.
+    return 1
+  fi
+  if [[ "$standby_health" != "healthy" && "$standby_health" != "running" ]]; then
+    echo "ERROR: API standby is not healthy; refusing to migrate while old-version workers remain online" >&2
+    return 2
+  fi
+
+  echo "Stopping the all-role primary to drain old-version workers..."
+  "${COMPOSE_CMD[@]}" stop hubuum-api
+}
+
+hubuum_restart_primary_after_failed_migration() {
+  echo "Migration failed; restarting the drained primary..."
+  "${COMPOSE_CMD[@]}" start hubuum-api
+  hubuum_wait_for_rollout_health hubuum-api
 }
 
 hubuum_start_stack() {
@@ -245,7 +273,9 @@ hubuum_start_stack() {
 
 hubuum_rollout() {
   local api_primary_recovered="false"
+  local drain_status
   local primary_rolled="false"
+  local primary_workers_drained="false"
   local web_primary_recovered="false"
   local web_primary_health
   local web_standby_health
@@ -259,11 +289,28 @@ hubuum_rollout() {
 
   hubuum_remove_legacy_caddy_dependencies
   hubuum_ensure_infrastructure
-  hubuum_run_migrations
+  if hubuum_drain_primary_workers_for_migrations; then
+    primary_workers_drained="true"
+  else
+    drain_status=$?
+    if [[ "$drain_status" -eq 2 ]]; then
+      return 1
+    fi
+  fi
+  if ! hubuum_run_migrations; then
+    if [[ "$primary_workers_drained" == "true" ]]; then
+      hubuum_restart_primary_after_failed_migration || true
+    fi
+    return 1
+  fi
+  if [[ "$primary_workers_drained" == "true" ]]; then
+    hubuum_roll_service hubuum-api
+    api_primary_recovered="true"
+  fi
 
-  # A previous rollout may have failed after replacing a primary. Recover that
-  # primary while the healthy standby still owns traffic; recreating the
-  # standby first would otherwise remove the only usable upstream.
+  # A previous rollout may have left the primary unhealthy. Recover it while
+  # the healthy standby still owns traffic; recreating the standby first would
+  # otherwise remove the only usable upstream.
   if ! hubuum_service_is_healthy hubuum-api; then
     if ! hubuum_service_is_healthy hubuum-api-standby; then
       echo "ERROR: neither backend replica is healthy; refusing to replace either one" >&2

@@ -1,6 +1,9 @@
 DROP INDEX IF EXISTS events_task_queued_initiator_fallback_idx;
 DROP INDEX IF EXISTS events_initiator_user_id_idx;
 
+DROP TRIGGER IF EXISTS hubuum_fill_task_initiator_trg ON tasks;
+DROP FUNCTION IF EXISTS hubuum_fill_task_initiator();
+
 ALTER TABLE events
     DROP COLUMN task_id,
     DROP COLUMN initiator_user_id;

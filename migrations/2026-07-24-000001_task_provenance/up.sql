@@ -5,6 +5,19 @@ UPDATE tasks
 SET initiator_user_id = submitted_by
 WHERE submitted_by IS NOT NULL;
 
+CREATE FUNCTION hubuum_fill_task_initiator() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.initiator_user_id IS NULL AND NEW.submitted_by IS NOT NULL THEN
+        NEW.initiator_user_id := NEW.submitted_by;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER hubuum_fill_task_initiator_trg
+    BEFORE INSERT OR UPDATE OF submitted_by, initiator_user_id ON tasks
+    FOR EACH ROW EXECUTE FUNCTION hubuum_fill_task_initiator();
+
 ALTER TABLE events
     ADD COLUMN initiator_user_id INTEGER NULL,
     ADD COLUMN task_id INTEGER NULL;
@@ -57,6 +70,12 @@ DECLARE
   base_cols text;
   hist_cols text;
 BEGIN
+  -- Old API replicas only set hubuum.actor_id. Preserve their direct-user
+  -- attribution while they remain online during an expand-first rollout.
+  IF actor_kind_value IS NULL AND actor IS NOT NULL THEN
+    actor_kind_value := 'user';
+  END IF;
+
   IF current_setting('hubuum.restore_history', true) = 'on' THEN
     IF TG_OP = 'DELETE' THEN
       RETURN OLD;
