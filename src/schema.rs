@@ -57,6 +57,9 @@ diesel::table! {
         valid_to -> Nullable<Timestamptz>,
         actor_id -> Nullable<Int4>,
         history_id -> Int8,
+        actor_kind -> Nullable<Text>,
+        initiator_user_id -> Nullable<Int4>,
+        task_id -> Nullable<Int4>,
     }
 }
 
@@ -156,6 +159,8 @@ diesel::table! {
         dispatched_at -> Nullable<Timestamp>,
         fanout_locked_until -> Nullable<Timestamp>,
         fanout_claim_token -> Nullable<Uuid>,
+        initiator_user_id -> Nullable<Int4>,
+        task_id -> Nullable<Int4>,
     }
 }
 
@@ -224,6 +229,9 @@ diesel::table! {
         valid_to -> Nullable<Timestamptz>,
         actor_id -> Nullable<Int4>,
         history_id -> Int8,
+        actor_kind -> Nullable<Text>,
+        initiator_user_id -> Nullable<Int4>,
+        task_id -> Nullable<Int4>,
     }
 }
 
@@ -291,6 +299,9 @@ diesel::table! {
         valid_to -> Nullable<Timestamptz>,
         actor_id -> Nullable<Int4>,
         history_id -> Int8,
+        actor_kind -> Nullable<Text>,
+        initiator_user_id -> Nullable<Int4>,
+        task_id -> Nullable<Int4>,
     }
 }
 
@@ -330,6 +341,9 @@ diesel::table! {
         valid_to -> Nullable<Timestamptz>,
         actor_id -> Nullable<Int4>,
         history_id -> Int8,
+        actor_kind -> Nullable<Text>,
+        initiator_user_id -> Nullable<Int4>,
+        task_id -> Nullable<Int4>,
     }
 }
 
@@ -361,6 +375,9 @@ diesel::table! {
         valid_to -> Nullable<Timestamptz>,
         actor_id -> Nullable<Int4>,
         history_id -> Int8,
+        actor_kind -> Nullable<Text>,
+        initiator_user_id -> Nullable<Int4>,
+        task_id -> Nullable<Int4>,
     }
 }
 
@@ -388,6 +405,9 @@ diesel::table! {
         valid_to -> Nullable<Timestamptz>,
         actor_id -> Nullable<Int4>,
         history_id -> Int8,
+        actor_kind -> Nullable<Text>,
+        initiator_user_id -> Nullable<Int4>,
+        task_id -> Nullable<Int4>,
     }
 }
 
@@ -547,6 +567,9 @@ diesel::table! {
         valid_to -> Nullable<Timestamptz>,
         actor_id -> Nullable<Int4>,
         history_id -> Int8,
+        actor_kind -> Nullable<Text>,
+        initiator_user_id -> Nullable<Int4>,
+        task_id -> Nullable<Int4>,
     }
 }
 
@@ -634,6 +657,7 @@ diesel::table! {
         lease_token -> Nullable<Uuid>,
         lease_expires_at -> Nullable<Timestamp>,
         attempt_count -> Int4,
+        initiator_user_id -> Nullable<Int4>,
     }
 }
 

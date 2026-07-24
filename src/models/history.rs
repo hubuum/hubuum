@@ -5,6 +5,46 @@ use super::{
     RemoteTargetHistory,
 };
 
+/// Common durable provenance columns stored on temporal-history rows.
+pub trait TemporalHistoryProvenance {
+    fn actor_id(&self) -> Option<i32>;
+    fn actor_kind(&self) -> Option<&str>;
+    fn initiator_user_id(&self) -> Option<i32>;
+    fn task_id(&self) -> Option<i32>;
+}
+
+macro_rules! impl_temporal_history_provenance {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl TemporalHistoryProvenance for $ty {
+                fn actor_id(&self) -> Option<i32> {
+                    self.actor_id
+                }
+
+                fn actor_kind(&self) -> Option<&str> {
+                    self.actor_kind.as_deref()
+                }
+
+                fn initiator_user_id(&self) -> Option<i32> {
+                    self.initiator_user_id
+                }
+
+                fn task_id(&self) -> Option<i32> {
+                    self.task_id
+                }
+            }
+        )+
+    };
+}
+
+impl_temporal_history_provenance!(
+    CollectionHistory,
+    ExportTemplateHistory,
+    HubuumClassHistory,
+    HubuumObjectHistory,
+    RemoteTargetHistory,
+);
+
 /// The permission-relevant identity of one historical resource version.
 ///
 /// History rows retain attributes such as collection, class, and name after a

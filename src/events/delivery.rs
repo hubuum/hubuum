@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Once, OnceLock};
+use std::sync::{Arc, Once, OnceLock};
 use std::time::Duration;
 
 use actix_rt::time::sleep;
@@ -19,7 +19,9 @@ use crate::db::traits::event_delivery::{
     mark_event_delivery_failed, mark_event_delivery_succeeded,
 };
 use crate::errors::ApiError;
-use crate::events::sink::{DefaultSinkResolver, EventEnvelope, SinkResolver};
+use crate::events::sink::{
+    DefaultSinkResolver, EventEnvelope, SinkResolver, event_envelope_with_names,
+};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
 use crate::restores::{MaintenanceActivityGuard, maintenance_state};
@@ -91,10 +93,47 @@ pub async fn process_event_delivery_batch(
     if maintenance_state(pool).await? != "normal" {
         return Ok(0);
     }
-    let deliveries = claim_event_deliveries(pool, settings).await?;
+    let mut deliveries = claim_event_deliveries(pool, settings).await?;
     let processed = deliveries.len();
+    let legacy_task_ids = deliveries
+        .iter()
+        .filter(|claimed| {
+            claimed.event.entity_type == crate::events::EntityType::Task.as_str()
+                && claimed.event.initiator_user_id.is_none()
+        })
+        .filter_map(|claimed| claimed.event.entity_id)
+        .collect::<Vec<_>>();
+    let queued_initiators =
+        crate::db::traits::events::load_queued_task_initiators(pool, &legacy_task_ids).await?;
+    for claimed in &mut deliveries {
+        if claimed.event.entity_type != crate::events::EntityType::Task.as_str() {
+            continue;
+        }
+        let Some(task_id) = claimed.event.entity_id else {
+            continue;
+        };
+        claimed.event.task_id.get_or_insert(task_id);
+        if claimed.event.initiator_user_id.is_none() {
+            claimed.event.initiator_user_id = queued_initiators.get(&task_id).copied().flatten();
+        }
+    }
+    let principal_ids = deliveries
+        .iter()
+        .flat_map(|claimed| [claimed.event.actor_user_id, claimed.event.initiator_user_id])
+        .flatten()
+        .collect();
+    let principal_names =
+        Arc::new(crate::db::traits::history::resolve_actor_usernames(pool, principal_ids).await?);
     let results = futures_util::stream::iter(deliveries)
-        .map(|claimed| process_claimed_event_delivery(pool, settings, resolver, claimed))
+        .map(|claimed| {
+            process_claimed_event_delivery_with_names(
+                pool,
+                settings,
+                resolver,
+                claimed,
+                Arc::clone(&principal_names),
+            )
+        })
         .buffer_unordered(EVENT_DELIVERY_MAX_CONCURRENCY_PER_WORKER)
         .collect::<Vec<_>>()
         .await;
@@ -105,14 +144,46 @@ pub async fn process_event_delivery_batch(
     Ok(processed)
 }
 
+#[cfg(test)]
 pub(crate) async fn process_claimed_event_delivery(
     pool: &DbPool,
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,
+    mut claimed: ClaimedEventDelivery,
+) -> Result<(), ApiError> {
+    let task_ids = claimed
+        .event
+        .entity_id
+        .filter(|_| claimed.event.entity_type == crate::events::EntityType::Task.as_str())
+        .into_iter()
+        .collect::<Vec<_>>();
+    let queued_initiators =
+        crate::db::traits::events::load_queued_task_initiators(pool, &task_ids).await?;
+    if let Some(task_id) = task_ids.first().copied() {
+        claimed.event.task_id.get_or_insert(task_id);
+        if claimed.event.initiator_user_id.is_none() {
+            claimed.event.initiator_user_id = queued_initiators.get(&task_id).copied().flatten();
+        }
+    }
+    let principal_ids = [claimed.event.actor_user_id, claimed.event.initiator_user_id]
+        .into_iter()
+        .flatten()
+        .collect();
+    let principal_names =
+        Arc::new(crate::db::traits::history::resolve_actor_usernames(pool, principal_ids).await?);
+    process_claimed_event_delivery_with_names(pool, settings, resolver, claimed, principal_names)
+        .await
+}
+
+async fn process_claimed_event_delivery_with_names(
+    pool: &DbPool,
+    settings: EventDeliverySettings,
+    resolver: &dyn SinkResolver,
     claimed: ClaimedEventDelivery,
+    principal_names: Arc<std::collections::HashMap<i32, String>>,
 ) -> Result<(), ApiError> {
     let delivery = claimed.delivery;
-    let envelope = EventEnvelope::from(claimed.event);
+    let envelope = event_envelope_with_names(claimed.event, &principal_names);
     let subscription = EventSubscription::try_from(claimed.subscription)?;
     let sink = EventSink::try_from(claimed.sink)?;
     let result = tokio::time::timeout(
@@ -354,6 +425,7 @@ mod tests {
             action: "created".to_string(),
             actor_user_id: None,
             actor_kind: "system".to_string(),
+            provenance: hubuum_events_core::Provenance::default(),
             request_id: None,
             correlation_id: None,
             summary: "summary".to_string(),
@@ -407,6 +479,7 @@ mod tests {
             action: "created".to_string(),
             actor_user_id: None,
             actor_kind: "system".to_string(),
+            provenance: hubuum_events_core::Provenance::default(),
             request_id: None,
             correlation_id: None,
             summary: "summary".to_string(),

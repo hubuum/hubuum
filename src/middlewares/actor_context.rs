@@ -5,7 +5,8 @@ use actix_web::web::Data;
 use actix_web::{Error, HttpMessage};
 
 use crate::db::traits::Status;
-use crate::db::{DbPool, with_actor_scope};
+use crate::db::{DbPool, with_mutation_provenance_scope};
+use crate::events::MutationProvenance;
 use crate::middlewares::tracing::record_principal_on_current_span;
 use crate::models::token::{PrincipalToken, Token};
 
@@ -50,8 +51,8 @@ async fn resolve_auth(req: &ServiceRequest) -> ResolvedAuth {
 }
 
 /// Resolve the requesting user once, stash the result in request extensions for
-/// the extractors, and run the rest of the request inside a `with_actor_scope`
-/// so every DB write attributes its history rows to that user.
+/// the extractors, and run the rest of the request inside a typed provenance
+/// scope so every DB write attributes its history rows to that user.
 pub async fn actor_context(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
@@ -69,7 +70,8 @@ pub async fn actor_context(
         record_principal_on_current_span(principal_id);
     }
     req.extensions_mut().insert(resolved);
-    let res = with_actor_scope(actor, next.call(req)).await?;
+    let provenance = actor.map(MutationProvenance::user);
+    let res = with_mutation_provenance_scope(provenance, next.call(req)).await?;
     Ok(res.map_into_boxed_body())
 }
 

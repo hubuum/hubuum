@@ -9,7 +9,9 @@ use crate::db::traits::authz::scope_allows;
 use crate::errors::ApiError;
 use crate::models::collection::user_can_on_any;
 use crate::models::search::QueryOptions;
-use crate::models::{HistoryAuthorizationSnapshot, Permissions, TokenScope};
+use crate::models::{
+    HistoryAuthorizationSnapshot, Permissions, TemporalHistoryProvenance, TokenScope,
+};
 use crate::pagination::count_query_options;
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
@@ -23,6 +25,46 @@ pub struct HistoryResponse<T: Serialize + ToSchema> {
     #[serde(flatten)]
     pub entry: T,
     pub actor_username: Option<String>,
+    pub provenance: crate::events::Provenance,
+}
+
+impl<T> HistoryResponse<T>
+where
+    T: Serialize + ToSchema + TemporalHistoryProvenance,
+{
+    pub fn new(entry: T, principal_names: &std::collections::HashMap<i32, String>) -> Self {
+        let actor_username = entry
+            .actor_id()
+            .and_then(|actor_id| principal_names.get(&actor_id).cloned());
+        let provenance = crate::events::provenance_from_parts(
+            entry.actor_kind(),
+            entry.actor_id(),
+            entry.initiator_user_id(),
+            entry.task_id(),
+            principal_names,
+        );
+        Self {
+            entry,
+            actor_username,
+            provenance,
+        }
+    }
+}
+
+/// Resolve the union of actor and initiator ids with one principal query.
+pub async fn resolve_history_principal_names<T>(
+    pool: &crate::db::DbPool,
+    rows: &[T],
+) -> Result<std::collections::HashMap<i32, String>, ApiError>
+where
+    T: TemporalHistoryProvenance,
+{
+    let principal_ids = rows
+        .iter()
+        .flat_map(|row| [row.actor_id(), row.initiator_user_id()])
+        .flatten()
+        .collect();
+    resolve_actor_usernames(pool, principal_ids).await
 }
 
 /// Authorize one historical resource shape, including its stored attributes.
@@ -317,6 +359,9 @@ mod tests {
             valid_to: None,
             actor_id: None,
             history_id: 2,
+            actor_kind: None,
+            initiator_user_id: None,
+            task_id: None,
         };
         authorize_history_snapshot(
             &context,

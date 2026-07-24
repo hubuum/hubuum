@@ -413,7 +413,8 @@ pub async fn get_template_history(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_page, can_read_deleted_history,
-        history_candidate_query_options, readable_history_collection_ids, resolve_actor_usernames,
+        history_candidate_query_options, readable_history_collection_ids,
+        resolve_history_principal_names,
     };
     use crate::models::search::parse_query_parameter;
     use crate::pagination::prepare_db_pagination;
@@ -495,18 +496,11 @@ pub async fn get_template_history(
         )));
     }
 
-    let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
-    let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
+    let principal_names = resolve_history_principal_names(&pool, &rows).await?;
 
     ApiResponse::mapped_paginated(rows, total_count, &params, move |rows| {
         rows.into_iter()
-            .map(|row| {
-                let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-                HistoryResponse {
-                    entry: row,
-                    actor_username,
-                }
-            })
+            .map(|row| HistoryResponse::new(row, &principal_names))
             .collect()
     })
 }
@@ -537,7 +531,7 @@ pub async fn get_template_as_of(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_snapshot, can_read_deleted_history, parse_as_of,
-        resolve_actor_usernames,
+        resolve_history_principal_names,
     };
 
     let user = &requestor.principal;
@@ -582,10 +576,7 @@ pub async fn get_template_as_of(
         .await?;
     }
 
-    let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
-    let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-    Ok(ApiResponse::ok(HistoryResponse {
-        entry: row,
-        actor_username,
-    }))
+    let principal_names =
+        resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
+    Ok(ApiResponse::ok(HistoryResponse::new(row, &principal_names)))
 }

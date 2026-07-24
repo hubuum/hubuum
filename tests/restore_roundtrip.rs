@@ -3,7 +3,11 @@ use diesel_async::RunQueryDsl;
 use hubuum::backups::create_backup_document;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
 use hubuum::db::prelude::*;
-use hubuum::db::{init_pool_with_statement_timeout, with_connection, with_transaction};
+use hubuum::db::{
+    init_pool_with_statement_timeout, with_connection, with_mutation_provenance_scope,
+    with_transaction,
+};
+use hubuum::events::{Action, ActorKind, EntityType, MutationProvenance, NewEvent, emit_event};
 use hubuum::models::{
     BackupRequest, NewHubuumClass, NewHubuumClassRelation, NewTaskRecord,
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreInitiator, RestoreJobStatus,
@@ -14,8 +18,8 @@ use hubuum::restores::{
     stage_restore,
 };
 use hubuum::schema::{
-    collections, events, hubuumclass_reachability, hubuumclass_relation, restore_jobs,
-    system_maintenance, tasks,
+    collections, events, hubuumclass_history, hubuumclass_reachability, hubuumclass_relation,
+    restore_jobs, system_maintenance, tasks,
 };
 use hubuum::traits::CanSave;
 
@@ -37,14 +41,22 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     })
     .await
     .expect("root collection");
-    let first_class = NewHubuumClass {
-        name: "restore_roundtrip_first".to_string(),
-        description: "restore round-trip fixture".to_string(),
-        collection_id: root_collection_id,
-        json_schema: None,
-        validate_schema: Some(false),
-    }
-    .save_without_events(&pool)
+    let provenance_initiator_id = 12_345;
+    let provenance_task_id = 54_321;
+    let first_class = with_mutation_provenance_scope(
+        Some(MutationProvenance::worker(
+            Some(provenance_initiator_id),
+            provenance_task_id,
+        )),
+        NewHubuumClass {
+            name: "restore_roundtrip_first".to_string(),
+            description: "restore round-trip fixture".to_string(),
+            collection_id: root_collection_id,
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save_without_events(&pool),
+    )
     .await
     .expect("first class");
     let second_class = NewHubuumClass {
@@ -68,31 +80,52 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     .expect("class relation");
     let historical_task_id = with_connection(&pool, async |conn| {
         diesel::insert_into(tasks::table)
-            .values(NewTaskRecord {
-                kind: TaskKind::Reindex.as_str().to_string(),
-                status: TaskStatus::Succeeded.as_str().to_string(),
-                submitted_by: None,
-                idempotency_key: Some("pre-backup-history".to_string()),
-                request_hash: None,
-                request_payload: None,
-                summary: Some("completed before backup".to_string()),
-                total_items: 1,
-                processed_items: 1,
-                success_items: 1,
-                failed_items: 0,
-                submitted_token_id: None,
-                submitted_token_scoped: false,
-                submitted_token_scopes: serde_json::json!([]),
-                request_redacted_at: None,
-                started_at: Some(chrono::Utc::now().naive_utc()),
-                finished_at: Some(chrono::Utc::now().naive_utc()),
-            })
+            .values((
+                NewTaskRecord {
+                    kind: TaskKind::Reindex.as_str().to_string(),
+                    status: TaskStatus::Succeeded.as_str().to_string(),
+                    submitted_by: None,
+                    idempotency_key: Some("pre-backup-history".to_string()),
+                    request_hash: None,
+                    request_payload: None,
+                    summary: Some("completed before backup".to_string()),
+                    total_items: 1,
+                    processed_items: 1,
+                    success_items: 1,
+                    failed_items: 0,
+                    submitted_token_id: None,
+                    submitted_token_scoped: false,
+                    submitted_token_scopes: serde_json::json!([]),
+                    request_redacted_at: None,
+                    started_at: Some(chrono::Utc::now().naive_utc()),
+                    finished_at: Some(chrono::Utc::now().naive_utc()),
+                },
+                tasks::initiator_user_id.eq(Some(provenance_initiator_id)),
+            ))
             .returning(tasks::id)
             .get_result::<i32>(conn)
             .await
     })
     .await
     .expect("historical task");
+    let historical_task_event = NewEvent::new(
+        EntityType::Task,
+        Action::Succeeded,
+        ActorKind::Worker,
+        "Historical task completed",
+    )
+    .unwrap()
+    .with_entity_id(historical_task_id)
+    .with_mutation_provenance(&MutationProvenance::worker(
+        Some(provenance_initiator_id),
+        historical_task_id,
+    ));
+    let historical_task_event_id = historical_task_event.event_id();
+    with_connection(&pool, async |conn| {
+        emit_event(conn, &historical_task_event).await
+    })
+    .await
+    .expect("historical task event");
     let document = create_backup_document(
         &pool,
         &BackupRequest {
@@ -163,38 +196,68 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         .await
         .expect("reconcile interrupted restore");
 
-    let (restore_job_exists, marker_exists, historical_task, restore_event) =
-        with_connection(&pool, async |conn| {
-            let restore_job = restore_jobs::table
-                .filter(restore_jobs::id.eq(staged.id))
-                .select(restore_jobs::id)
-                .first::<i64>(conn)
-                .await
-                .optional()?;
-            let marker = tasks::table
-                .filter(tasks::id.eq(marker_task_id))
-                .select(tasks::id)
-                .first::<i32>(conn)
-                .await
-                .optional()?;
-            let history = tasks::table
-                .filter(tasks::id.eq(historical_task_id))
-                .select((tasks::id, tasks::idempotency_key))
-                .first::<(i32, Option<String>)>(conn)
-                .await
-                .optional()?;
-            let restore_event = events::table
-                .filter(events::entity_type.eq("restore"))
-                .filter(events::action.eq("succeeded"))
-                .order(events::id.desc())
-                .select((events::actor_kind, events::metadata))
-                .first::<(String, serde_json::Value)>(conn)
-                .await
-                .optional()?;
-            Ok::<_, diesel::result::Error>((restore_job, marker, history, restore_event))
-        })
-        .await
-        .expect("restored data lookup");
+    let (
+        restore_job_exists,
+        marker_exists,
+        historical_task,
+        historical_task_event,
+        class_history_provenance,
+        restore_event,
+    ) = with_connection(&pool, async |conn| {
+        let restore_job = restore_jobs::table
+            .filter(restore_jobs::id.eq(staged.id))
+            .select(restore_jobs::id)
+            .first::<i64>(conn)
+            .await
+            .optional()?;
+        let marker = tasks::table
+            .filter(tasks::id.eq(marker_task_id))
+            .select(tasks::id)
+            .first::<i32>(conn)
+            .await
+            .optional()?;
+        let history = tasks::table
+            .filter(tasks::id.eq(historical_task_id))
+            .select((tasks::id, tasks::idempotency_key, tasks::initiator_user_id))
+            .first::<(i32, Option<String>, Option<i32>)>(conn)
+            .await
+            .optional()?;
+        let historical_task_event = events::table
+            .filter(events::event_id.eq(historical_task_event_id))
+            .select((events::initiator_user_id, events::task_id))
+            .first::<(Option<i32>, Option<i32>)>(conn)
+            .await
+            .optional()?;
+        let class_history_provenance = hubuumclass_history::table
+            .filter(hubuumclass_history::id.eq(first_class.id))
+            .order(hubuumclass_history::history_id.asc())
+            .select((
+                hubuumclass_history::actor_kind,
+                hubuumclass_history::initiator_user_id,
+                hubuumclass_history::task_id,
+            ))
+            .first::<(Option<String>, Option<i32>, Option<i32>)>(conn)
+            .await
+            .optional()?;
+        let restore_event = events::table
+            .filter(events::entity_type.eq("restore"))
+            .filter(events::action.eq("succeeded"))
+            .order(events::id.desc())
+            .select((events::actor_kind, events::metadata))
+            .first::<(String, serde_json::Value)>(conn)
+            .await
+            .optional()?;
+        Ok::<_, diesel::result::Error>((
+            restore_job,
+            marker,
+            history,
+            historical_task_event,
+            class_history_provenance,
+            restore_event,
+        ))
+    })
+    .await
+    .expect("restored data lookup");
     assert_eq!(
         (
             restore_job_exists,
@@ -209,10 +272,22 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         (
             None,
             None,
-            Some((historical_task_id, None)),
+            Some((historical_task_id, None, Some(provenance_initiator_id))),
             Some("system"),
             Some(staged.sha256.as_str()),
         )
+    );
+    assert_eq!(
+        historical_task_event,
+        Some((Some(provenance_initiator_id), Some(historical_task_id)))
+    );
+    assert_eq!(
+        class_history_provenance,
+        Some((
+            Some("worker".to_string()),
+            Some(provenance_initiator_id),
+            Some(provenance_task_id),
+        ))
     );
     let (relation_exists, reachability_exists) = with_connection(&pool, async |conn| {
         let relation_exists = hubuumclass_relation::table

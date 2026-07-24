@@ -637,8 +637,12 @@ async fn collection_history_query_count_is_constant_with_page_size() {
                 HistoryCollectionFilter::All,
             )
             .await?;
-            let actor_ids = rows.iter().filter_map(|row| row.actor_id).collect();
-            let actors = resolve_actor_usernames(&pool, actor_ids).await?;
+            let principal_ids = rows
+                .iter()
+                .flat_map(|row| [row.actor_id, row.initiator_user_id])
+                .flatten()
+                .collect();
+            let actors = resolve_actor_usernames(&pool, principal_ids).await?;
             Ok::<_, crate::errors::ApiError>((rows, total, actors))
         }
     };

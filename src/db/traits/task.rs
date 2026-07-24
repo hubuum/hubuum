@@ -13,7 +13,7 @@ use crate::apply_query_options;
 use crate::config::get_config;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
-use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
+use crate::events::{Action, EntityType, MutationProvenance, NewEvent, emit_event};
 use crate::models::search::QueryOptions;
 use crate::models::{
     BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
@@ -555,8 +555,17 @@ pub trait TaskBackend: TaskIdentifier {
         let task_id_value = self.task_id();
         let task_lease_token = self.task_lease_token();
         let record = with_transaction(pool, async |conn| -> Result<TaskRecord, ApiError> {
-            let event_record =
-                emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None).await?;
+            let task = tasks
+                .filter(id.eq(task_id_value))
+                .first::<TaskRecord>(conn)
+                .await?;
+            let event_record = emit_task_lifecycle_event(
+                conn,
+                &task,
+                &event,
+                &MutationProvenance::worker(task.initiator_user_id, task.id),
+            )
+            .await?;
             let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
                 <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
 
@@ -631,8 +640,17 @@ pub trait TaskBackend: TaskIdentifier {
                 .execute(conn)
                 .await?;
 
-            let event_record =
-                emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None).await?;
+            let task = tasks
+                .filter(id.eq(task_id_value))
+                .first::<TaskRecord>(conn)
+                .await?;
+            let event_record = emit_task_lifecycle_event(
+                conn,
+                &task,
+                &event,
+                &MutationProvenance::worker(task.initiator_user_id, task.id),
+            )
+            .await?;
             let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
                 <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
 
@@ -704,8 +722,17 @@ pub trait TaskBackend: TaskIdentifier {
                 .execute(conn)
                 .await?;
 
-            let event_record =
-                emit_task_lifecycle_event(conn, &event, ActorKind::Worker, None, None).await?;
+            let task = tasks
+                .filter(id.eq(task_id_value))
+                .first::<TaskRecord>(conn)
+                .await?;
+            let event_record = emit_task_lifecycle_event(
+                conn,
+                &task,
+                &event,
+                &MutationProvenance::worker(task.initiator_user_id, task.id),
+            )
+            .await?;
             let no_lease_token: diesel::dsl::AsExprOf<bool, Bool> =
                 <bool as AsExpression<Bool>>::as_expression(task_lease_token.is_none());
 
@@ -850,6 +877,64 @@ pub async fn list_tasks_with_total_count(
     Ok((items, total_count))
 }
 
+/// Enrich one task-event page with legacy queued-event initiators and one
+/// batched principal-name lookup.
+pub async fn task_event_responses(
+    pool: &DbPool,
+    mut records: Vec<TaskEventRecord>,
+) -> Result<Vec<crate::models::TaskEventResponse>, ApiError> {
+    use crate::schema::events::dsl as stored;
+
+    let legacy_task_ids = records
+        .iter()
+        .filter(|record| record.initiator_user_id.is_none())
+        .map(|record| record.task_id)
+        .collect::<Vec<_>>();
+    if !legacy_task_ids.is_empty() {
+        let queued = with_connection(pool, async |conn| {
+            stored::events
+                .filter(stored::entity_type.eq(EntityType::Task.as_str()))
+                .filter(stored::action.eq(Action::Queued.as_str()))
+                .filter(stored::entity_id.eq_any(legacy_task_ids.iter().copied().map(Some)))
+                .order(stored::id.asc())
+                .select((
+                    stored::entity_id,
+                    stored::initiator_user_id,
+                    stored::actor_user_id,
+                ))
+                .load::<(Option<i32>, Option<i32>, Option<i32>)>(conn)
+                .await
+        })
+        .await?;
+        let queued_initiators = queued
+            .into_iter()
+            .filter_map(|(task_id, initiator_user_id, actor_user_id)| {
+                task_id.map(|task_id| (task_id, initiator_user_id.or(actor_user_id)))
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        for record in &mut records {
+            if record.initiator_user_id.is_none() {
+                record.initiator_user_id =
+                    queued_initiators.get(&record.task_id).copied().flatten();
+            }
+        }
+    }
+
+    let principal_ids = records
+        .iter()
+        .flat_map(|record| [record.actor_user_id, record.initiator_user_id])
+        .flatten()
+        .collect();
+    let principal_names =
+        crate::db::traits::history::resolve_actor_usernames(pool, principal_ids).await?;
+    Ok(records
+        .into_iter()
+        .map(|record| {
+            crate::models::TaskEventResponse::from_record_with_names(record, &principal_names)
+        })
+        .collect())
+}
+
 pub async fn list_export_task_output_summaries(
     pool: &DbPool,
     task_ids: &[i32],
@@ -907,20 +992,24 @@ pub async fn purge_expired_export_outputs(pool: &DbPool) -> Result<Vec<i32>, Api
                 .await?;
 
         if !expired_task_ids.is_empty() {
-            for expired_task_id in &expired_task_ids {
+            use crate::schema::tasks::dsl as task_rows;
+            let expired_tasks = task_rows::tasks
+                .filter(task_rows::id.eq_any(&expired_task_ids))
+                .load::<TaskRecord>(conn)
+                .await?;
+            for task in &expired_tasks {
                 emit_task_lifecycle_event(
                     conn,
+                    task,
                     &NewTaskEventRecord {
-                        task_id: *expired_task_id,
+                        task_id: task.id,
                         event_type: "cleanup".to_string(),
                         message: "Stored export output expired and was cleaned up".to_string(),
                         data: Some(serde_json::json!({
                             "cleaned_at": now,
                         })),
                     },
-                    ActorKind::System,
-                    None,
-                    Some(TaskKind::Export.as_str()),
+                    &MutationProvenance::system_for_task(task.initiator_user_id, task.id),
                 )
                 .await?;
             }
@@ -955,18 +1044,22 @@ pub async fn purge_expired_backup_outputs(pool: &DbPool) -> Result<Vec<i32>, Api
                 .returning(task_id)
                 .get_results::<i32>(conn)
                 .await?;
-        for expired_task_id in &expired_task_ids {
+        use crate::schema::tasks::dsl as task_rows;
+        let expired_tasks = task_rows::tasks
+            .filter(task_rows::id.eq_any(&expired_task_ids))
+            .load::<TaskRecord>(conn)
+            .await?;
+        for task in &expired_tasks {
             emit_task_lifecycle_event(
                 conn,
+                task,
                 &NewTaskEventRecord {
-                    task_id: *expired_task_id,
+                    task_id: task.id,
                     event_type: "cleanup".to_string(),
                     message: "Stored backup output expired and was cleaned up".to_string(),
                     data: Some(serde_json::json!({ "cleaned_at": now })),
                 },
-                ActorKind::System,
-                None,
-                Some(TaskKind::Backup.as_str()),
+                &MutationProvenance::system_for_task(task.initiator_user_id, task.id),
             )
             .await?;
         }
@@ -1012,43 +1105,42 @@ fn task_event_action(event_type: &str) -> Result<Action, ApiError> {
 }
 
 fn task_lifecycle_event(
+    task: &TaskRecord,
     event: &NewTaskEventRecord,
-    actor_kind: ActorKind,
-    actor_user_id: Option<i32>,
-    task_kind: Option<&str>,
+    provenance: &MutationProvenance,
 ) -> Result<NewEvent, ApiError> {
     let mut metadata = serde_json::json!({
-        "task_id": event.task_id,
+        "task_id": task.id,
+        "task_kind": task.kind,
     });
-    if let Some(task_kind) = task_kind {
-        metadata["task_kind"] = serde_json::json!(task_kind);
-    }
     if let Some(data) = &event.data {
         metadata["data"] = data.clone();
     }
 
-    let mut lifecycle_event = NewEvent::new(
+    Ok(NewEvent::new(
         EntityType::Task,
         task_event_action(&event.event_type)?,
-        actor_kind,
+        provenance.actor_kind(),
         event.message.clone(),
     )?
-    .with_entity_id(event.task_id)
-    .with_metadata(metadata);
-    if let Some(actor_user_id) = actor_user_id {
-        lifecycle_event = lifecycle_event.with_actor_user_id(actor_user_id);
-    }
-    Ok(lifecycle_event)
+    .with_entity_id(task.id)
+    .with_metadata(metadata)
+    .with_mutation_provenance(provenance))
 }
 
 async fn emit_task_lifecycle_event(
     conn: &mut crate::db::DbConnection,
+    task: &TaskRecord,
     event: &NewTaskEventRecord,
-    actor_kind: ActorKind,
-    actor_user_id: Option<i32>,
-    task_kind: Option<&str>,
+    provenance: &MutationProvenance,
 ) -> Result<crate::events::Event, ApiError> {
-    let lifecycle_event = task_lifecycle_event(event, actor_kind, actor_user_id, task_kind)?;
+    if event.task_id != task.id {
+        return Err(ApiError::InternalServerError(format!(
+            "Task lifecycle event id {} does not match loaded task {}",
+            event.task_id, task.id
+        )));
+    }
+    let lifecycle_event = task_lifecycle_event(task, event, provenance)?;
     emit_event(conn, &lifecycle_event)
         .await
         .map_err(ApiError::from)
@@ -1060,28 +1152,38 @@ pub(crate) async fn emit_internal_task_event(
     actor_user_id: Option<i32>,
     task_kind: TaskKind,
 ) -> Result<crate::events::Event, ApiError> {
-    let actor_kind = if actor_user_id.is_some() {
-        ActorKind::User
+    use crate::schema::tasks::dsl::{id, tasks};
+
+    let task = tasks
+        .filter(id.eq(event.task_id))
+        .first::<TaskRecord>(conn)
+        .await?;
+    let provenance = if let Some(actor_user_id) = actor_user_id {
+        MutationProvenance::user_for_task(actor_user_id, task.initiator_user_id, task.id)
     } else {
-        ActorKind::System
+        MutationProvenance::system_for_task(task.initiator_user_id, task.id)
     };
-    emit_task_lifecycle_event(
-        conn,
-        event,
-        actor_kind,
-        actor_user_id,
-        Some(task_kind.as_str()),
-    )
-    .await
+    debug_assert_eq!(task.kind, task_kind.as_str());
+    emit_task_lifecycle_event(conn, &task, event, &provenance).await
 }
 
 impl NewTaskEventRecord {
     /// Append this event to its task's history and return the persisted event.
     pub async fn append(self, pool: &DbPool) -> Result<TaskEventRecord, ApiError> {
         with_connection(pool, async |conn| -> Result<TaskEventRecord, ApiError> {
-            emit_task_lifecycle_event(conn, &self, ActorKind::Worker, None, None)
-                .await?
-                .try_into()
+            use crate::schema::tasks::dsl::{id, tasks};
+            let task = tasks
+                .filter(id.eq(self.task_id))
+                .first::<TaskRecord>(conn)
+                .await?;
+            emit_task_lifecycle_event(
+                conn,
+                &task,
+                &self,
+                &MutationProvenance::worker(task.initiator_user_id, task.id),
+            )
+            .await?
+            .try_into()
         })
         .await
     }
@@ -1176,15 +1278,14 @@ pub async fn claim_next_queued_task(
 
         emit_task_lifecycle_event(
             conn,
+            &record,
             &NewTaskEventRecord {
                 task_id: record.id,
                 event_type: "validating".to_string(),
                 message: "Task claimed for validation".to_string(),
                 data: None,
             },
-            ActorKind::Worker,
-            None,
-            Some(record.kind.as_str()),
+            &MutationProvenance::worker(record.initiator_user_id, record.id),
         )
         .await?;
 
@@ -1352,6 +1453,7 @@ async fn recover_expired_task_leases_matching(
             }
             emit_task_lifecycle_event(
                 conn,
+                &stale_task,
                 &NewTaskEventRecord {
                     task_id: stale_task.id,
                     event_type: TaskStatus::Failed.as_str().to_string(),
@@ -1363,9 +1465,10 @@ async fn recover_expired_task_leases_matching(
                         "operator_action": "inspect task history and submit a new task if replay is safe",
                     })),
                 },
-                ActorKind::System,
-                None,
-                Some(stale_task.kind.as_str()),
+                &MutationProvenance::system_for_task(
+                    stale_task.initiator_user_id,
+                    stale_task.id,
+                ),
             )
             .await?;
 
@@ -1494,44 +1597,46 @@ async fn insert_queued_task_with_event(
     conn: &mut crate::db::DbConnection,
     request: TaskCreateRequest,
 ) -> Result<TaskRecord, ApiError> {
-    use crate::schema::tasks::dsl::tasks;
+    use crate::schema::tasks::dsl::{initiator_user_id, tasks};
 
     let submitted_by = request.submitted_by;
     let task_kind = request.kind;
     let task = diesel::insert_into(tasks)
-        .values(NewTaskRecord {
-            kind: task_kind.as_str().to_string(),
-            status: TaskStatus::Queued.as_str().to_string(),
-            submitted_by: Some(submitted_by),
-            idempotency_key: request.idempotency_key.map(IdempotencyKey::into_inner),
-            request_hash: request.request_hash,
-            request_payload: Some(request.request_payload),
-            summary: None,
-            total_items: request.total_items,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            submitted_token_id: request.submitted_token_id,
-            submitted_token_scoped: request.submitted_token_scoped,
-            submitted_token_scopes: request.submitted_token_scopes,
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        })
+        .values((
+            NewTaskRecord {
+                kind: task_kind.as_str().to_string(),
+                status: TaskStatus::Queued.as_str().to_string(),
+                submitted_by: Some(submitted_by),
+                idempotency_key: request.idempotency_key.map(IdempotencyKey::into_inner),
+                request_hash: request.request_hash,
+                request_payload: Some(request.request_payload),
+                summary: None,
+                total_items: request.total_items,
+                processed_items: 0,
+                success_items: 0,
+                failed_items: 0,
+                submitted_token_id: request.submitted_token_id,
+                submitted_token_scoped: request.submitted_token_scoped,
+                submitted_token_scopes: request.submitted_token_scopes,
+                request_redacted_at: None,
+                started_at: None,
+                finished_at: None,
+            },
+            initiator_user_id.eq(Some(submitted_by)),
+        ))
         .get_result::<TaskRecord>(conn)
         .await?;
 
     emit_task_lifecycle_event(
         conn,
+        &task,
         &NewTaskEventRecord {
             task_id: task.id,
             event_type: "queued".to_string(),
             message: "Task queued".to_string(),
             data: None,
         },
-        ActorKind::User,
-        Some(submitted_by),
-        Some(task_kind.as_str()),
+        &MutationProvenance::user_for_task(submitted_by, Some(submitted_by), task.id),
     )
     .await?;
 
@@ -1549,47 +1654,49 @@ pub(crate) async fn insert_internal_queued_task(
     total_items_value: i32,
     submitted_by_value: Option<i32>,
 ) -> Result<TaskRecord, ApiError> {
-    use crate::schema::tasks::dsl::tasks;
+    use crate::schema::tasks::dsl::{initiator_user_id, tasks};
 
     let task = diesel::insert_into(tasks)
-        .values(NewTaskRecord {
-            kind: kind.as_str().to_string(),
-            status: TaskStatus::Queued.as_str().to_string(),
-            submitted_by: submitted_by_value,
-            idempotency_key: None,
-            request_hash: None,
-            request_payload: Some(payload),
-            summary: None,
-            total_items: total_items_value,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            submitted_token_id: None,
-            submitted_token_scoped: false,
-            submitted_token_scopes: serde_json::json!([]),
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        })
+        .values((
+            NewTaskRecord {
+                kind: kind.as_str().to_string(),
+                status: TaskStatus::Queued.as_str().to_string(),
+                submitted_by: submitted_by_value,
+                idempotency_key: None,
+                request_hash: None,
+                request_payload: Some(payload),
+                summary: None,
+                total_items: total_items_value,
+                processed_items: 0,
+                success_items: 0,
+                failed_items: 0,
+                submitted_token_id: None,
+                submitted_token_scoped: false,
+                submitted_token_scopes: serde_json::json!([]),
+                request_redacted_at: None,
+                started_at: None,
+                finished_at: None,
+            },
+            initiator_user_id.eq(submitted_by_value),
+        ))
         .get_result::<TaskRecord>(conn)
         .await?;
 
-    let actor_kind = if submitted_by_value.is_some() {
-        ActorKind::User
+    let provenance = if let Some(submitted_by) = submitted_by_value {
+        MutationProvenance::user_for_task(submitted_by, Some(submitted_by), task.id)
     } else {
-        ActorKind::System
+        MutationProvenance::system_for_task(None, task.id)
     };
     emit_task_lifecycle_event(
         conn,
+        &task,
         &NewTaskEventRecord {
             task_id: task.id,
             event_type: TaskStatus::Queued.as_str().to_string(),
             message: "Internal task queued".to_string(),
             data: None,
         },
-        actor_kind,
-        submitted_by_value,
-        Some(kind.as_str()),
+        &provenance,
     )
     .await?;
 
@@ -1675,12 +1782,14 @@ mod tests {
 
     use super::{
         TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate, claim_next_queued_task,
-        database_now, insert_import_results, recover_expired_task_lease, renew_task_lease,
-        task_capacity_lock_key, task_kind_claim_order,
+        database_now, insert_import_results, insert_internal_queued_task,
+        recover_expired_task_lease, renew_task_lease, task_capacity_lock_key, task_event_responses,
+        task_kind_claim_order,
     };
     use crate::db::traits::user::DeleteUserRecord;
-    use crate::db::{with_connection, with_transaction};
+    use crate::db::{capture_queries, with_connection, with_transaction};
     use crate::errors::ApiError;
+    use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
     use crate::models::search::QueryOptions;
     use crate::models::{
         CollectionID, NewBackupTaskOutputRecord, NewImportTaskResultRecord, NewTaskEventRecord,
@@ -1750,6 +1859,115 @@ mod tests {
         assert!(skew < 5, "database UTC clock skew was {skew} seconds");
     }
 
+    #[tokio::test]
+    async fn legacy_task_event_page_uses_bounded_provenance_queries() {
+        let context = TestContext::new().await;
+        let initiator = create_test_user(&context.pool).await;
+        let task_id = (Uuid::new_v4().as_u128() as i32 & (i32::MAX - 1)) + 1;
+        let queued = NewEvent::new(
+            EntityType::Task,
+            Action::Queued,
+            ActorKind::User,
+            "legacy task queued",
+        )
+        .unwrap()
+        .with_entity_id(task_id)
+        .with_actor_user_id(initiator.id);
+        let running = NewEvent::new(
+            EntityType::Task,
+            Action::Running,
+            ActorKind::Worker,
+            "legacy task running",
+        )
+        .unwrap()
+        .with_entity_id(task_id);
+        with_transaction(&context.pool, async |conn| {
+            emit_event(conn, &queued).await?;
+            emit_event(conn, &running).await?;
+            Ok::<_, diesel::result::Error>(())
+        })
+        .await
+        .unwrap();
+
+        let task = TaskID::new(task_id).unwrap();
+        let query_options = QueryOptions {
+            filters: Vec::new(),
+            sort: Vec::new(),
+            limit: None,
+            cursor: None,
+            include_total: false,
+        };
+        let (result, queries) = capture_queries(async {
+            let (records, _) = task
+                .list_events_with_total_count(&context.pool, &query_options)
+                .await?;
+            task_event_responses(&context.pool, records).await
+        })
+        .await;
+        let responses = result.unwrap();
+
+        assert_eq!(responses.len(), 2);
+        for response in responses {
+            assert_eq!(response.provenance.task_id, Some(task_id));
+            assert_eq!(
+                response
+                    .provenance
+                    .initiator
+                    .as_ref()
+                    .map(|principal| principal.principal_id),
+                Some(initiator.id)
+            );
+        }
+        assert_eq!(queries.queries_matching("FROM \"events\""), 2);
+        assert_eq!(queries.queries_matching("FROM \"principals\""), 1);
+    }
+
+    #[tokio::test]
+    async fn system_owned_task_queue_event_has_system_provenance() {
+        let context = TestContext::new().await;
+        let task = with_transaction(&context.pool, async |conn| -> Result<_, ApiError> {
+            let task = insert_internal_queued_task(
+                conn,
+                TaskKind::Reindex,
+                serde_json::json!({}),
+                0,
+                None,
+            )
+            .await?;
+            use crate::schema::tasks::dsl::{id, tasks};
+            diesel::delete(tasks.filter(id.eq(task.id)))
+                .execute(conn)
+                .await?;
+            Ok(task)
+        })
+        .await
+        .unwrap();
+
+        let (events, _) = TaskID::new(task.id)
+            .unwrap()
+            .list_events_with_total_count(
+                &context.pool,
+                &QueryOptions {
+                    filters: Vec::new(),
+                    sort: Vec::new(),
+                    limit: None,
+                    cursor: None,
+                    include_total: false,
+                },
+            )
+            .await
+            .unwrap();
+        let queued = events
+            .iter()
+            .find(|event| event.event_type == TaskStatus::Queued.as_str())
+            .unwrap();
+
+        assert_eq!(queued.actor_kind, "system");
+        assert_eq!(queued.actor_user_id, None);
+        assert_eq!(queued.initiator_user_id, None);
+        assert_eq!(queued.provenance_task_id, Some(task.id));
+    }
+
     async fn create_leased_task(
         context: &TestContext,
         name: &str,
@@ -1789,7 +2007,7 @@ mod tests {
         let claim_token = Uuid::new_v4();
         with_connection(&context.pool, async |conn| {
             use crate::schema::tasks::dsl::{
-                attempt_count, id, lease_expires_at, lease_token, tasks,
+                attempt_count, id, initiator_user_id, lease_expires_at, lease_token, tasks,
             };
 
             diesel::update(tasks.filter(id.eq(task.id)))
@@ -1797,6 +2015,7 @@ mod tests {
                     lease_token.eq(Some(claim_token)),
                     lease_expires_at.eq(Some(lease_expires_at_value)),
                     attempt_count.eq(1),
+                    initiator_user_id.eq(Some(context.admin_user.id)),
                 ))
                 .get_result::<crate::models::TaskRecord>(conn)
                 .await
@@ -2020,6 +2239,28 @@ mod tests {
                 .as_deref()
                 .is_some_and(|summary| summary.contains("without automatic replay"))
         );
+        let (events, _) = TaskID::new(recovered.id)
+            .unwrap()
+            .list_events_with_total_count(
+                &context.pool,
+                &QueryOptions {
+                    filters: Vec::new(),
+                    sort: Vec::new(),
+                    limit: None,
+                    cursor: None,
+                    include_total: false,
+                },
+            )
+            .await
+            .unwrap();
+        let failed = events
+            .iter()
+            .find(|event| event.event_type == TaskStatus::Failed.as_str())
+            .unwrap();
+        assert_eq!(failed.actor_kind, "system");
+        assert_eq!(failed.actor_user_id, None);
+        assert_eq!(failed.initiator_user_id, Some(context.admin_user.id));
+        assert_eq!(failed.provenance_task_id, Some(recovered.id));
     }
 
     #[tokio::test]
@@ -2279,26 +2520,17 @@ mod tests {
     async fn test_task_history_survives_user_deletion() {
         let context = (TestContext::new()).await;
         let task_owner = (create_test_user(&context.pool)).await;
-        let task = (NewTaskRecord {
-            kind: TaskKind::Import.as_str().to_string(),
-            status: TaskStatus::Succeeded.as_str().to_string(),
-            submitted_by: Some(task_owner.id),
-            submitted_token_id: None,
-            submitted_token_scoped: false,
-            submitted_token_scopes: serde_json::json!([]),
-            idempotency_key: Some(context.scoped_name("deleted-owner-task")),
-            request_hash: None,
-            request_payload: None,
-            summary: Some("completed".to_string()),
-            total_items: 0,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        }
-        .create(&context.pool))
+        let task = TaskCreateRequest::builder(
+            TaskKind::Import,
+            PrincipalID::new(task_owner.id).unwrap(),
+            serde_json::json!({"items": []}),
+            0,
+        )
+        .idempotency_key(Some(
+            IdempotencyKey::new(context.scoped_name("deleted-owner-task")).unwrap(),
+        ))
+        .build()
+        .create_idempotently_with_active_limit(&context.pool, 1)
         .await
         .unwrap();
 
@@ -2308,6 +2540,37 @@ mod tests {
 
         let stored = (task.find_record(&context.pool)).await.unwrap();
         assert_eq!(stored.submitted_by, None);
+        assert_eq!(stored.initiator_user_id, Some(task_owner.id));
+
+        let (events, _) = task
+            .list_events_with_total_count(
+                &context.pool,
+                &QueryOptions {
+                    filters: Vec::new(),
+                    sort: Vec::new(),
+                    limit: None,
+                    cursor: None,
+                    include_total: false,
+                },
+            )
+            .await
+            .unwrap();
+        let responses = task_event_responses(&context.pool, events).await.unwrap();
+        let provenance = &responses[0].provenance;
+        assert_eq!(
+            provenance
+                .initiator
+                .as_ref()
+                .map(|principal| principal.principal_id),
+            Some(task_owner.id)
+        );
+        assert_eq!(
+            provenance
+                .initiator
+                .as_ref()
+                .and_then(|principal| principal.name.as_deref()),
+            None
+        );
     }
 
     #[tokio::test]

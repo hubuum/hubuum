@@ -49,7 +49,8 @@ Each row stores:
 
 - task identity: `id`, `kind`
 - lifecycle: `status`, `created_at`, `started_at`, `finished_at`, `updated_at`
-- ownership: `submitted_by`
+- ownership: nullable `submitted_by`
+- durable root provenance: nullable, non-FK `initiator_user_id`
 - submission metadata: `idempotency_key`, `request_hash`
 - request storage: `request_payload`, `request_redacted_at`
 - progress counters: `total_items`, `processed_items`, `success_items`, `failed_items`
@@ -59,6 +60,13 @@ Each row stores:
 
 Task lifecycle/progress history is stored in the unified `events` table with
 `entity_type = 'task'` and `entity_id = tasks.id`.
+
+New lifecycle rows also store `task_id` and the root task
+`initiator_user_id`. The immediate actor stays distinct: submission is a user
+action, execution is a worker action, and recovery or cleanup is a system
+action. Queue events record the submitter as both actor and initiator. The task
+initiator remains available after `submitted_by` is cleared by principal
+deletion because it is intentionally not a foreign key.
 
 Typical events:
 
@@ -71,7 +79,10 @@ Typical events:
 - `cleanup`
 
 The task row is the current state. Task-scoped `events` rows are the history of
-how the task got there.
+how the task got there. API enrichment resolves the union of actor and
+initiator names in one query per page. Legacy lifecycle rows derive their
+initiator from the task's queued event in one additional batch query rather
+than one lookup per row.
 
 ### `import_task_results`
 

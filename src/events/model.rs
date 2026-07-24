@@ -10,6 +10,7 @@
 use crate::db::prelude::*;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -20,7 +21,10 @@ use crate::pagination::{
 };
 use crate::schema::events;
 
-use super::{Action, ActorKind, EntityType, EventCatalogError, EventContext, is_valid_pair};
+use super::{
+    Action, ActorKind, EntityType, EventCatalogError, EventContext, MutationProvenance, Provenance,
+    ProvenanceActor, ProvenancePrincipal, is_valid_pair,
+};
 
 /// Typed wrapper for the canonical, client-dedupable event identity
 /// (`events.event_id`). Flows to sinks as the idempotency key (#78) and to the
@@ -80,6 +84,8 @@ pub struct Event {
     pub dispatched_at: Option<NaiveDateTime>,
     pub fanout_locked_until: Option<NaiveDateTime>,
     pub fanout_claim_token: Option<Uuid>,
+    pub initiator_user_id: Option<i32>,
+    pub task_id: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -94,6 +100,7 @@ pub struct EventResponse {
     pub action: String,
     pub actor_user_id: Option<i32>,
     pub actor_kind: String,
+    pub provenance: Provenance,
     pub request_id: Option<Uuid>,
     pub correlation_id: Option<String>,
     pub summary: String,
@@ -120,8 +127,18 @@ impl Event {
     }
 }
 
-impl From<Event> for EventResponse {
-    fn from(value: Event) -> Self {
+impl EventResponse {
+    pub(crate) fn from_event_with_names(
+        value: Event,
+        principal_names: &HashMap<i32, String>,
+    ) -> Self {
+        let provenance = provenance_from_parts(
+            Some(&value.actor_kind),
+            value.actor_user_id,
+            value.initiator_user_id,
+            value.task_id,
+            principal_names,
+        );
         Self {
             id: value.id,
             event_id: value.event_id,
@@ -133,6 +150,7 @@ impl From<Event> for EventResponse {
             action: value.action,
             actor_user_id: value.actor_user_id,
             actor_kind: value.actor_kind,
+            provenance,
             request_id: value.request_id,
             correlation_id: value.correlation_id,
             summary: value.summary,
@@ -141,6 +159,12 @@ impl From<Event> for EventResponse {
             metadata: value.metadata,
             schema_version: value.schema_version,
         }
+    }
+}
+
+impl From<Event> for EventResponse {
+    fn from(value: Event) -> Self {
+        Self::from_event_with_names(value, &HashMap::new())
     }
 }
 
@@ -225,6 +249,8 @@ pub struct NewEvent {
     action: String,
     actor_user_id: Option<i32>,
     actor_kind: String,
+    initiator_user_id: Option<i32>,
+    task_id: Option<i32>,
     request_id: Option<Uuid>,
     correlation_id: Option<String>,
     summary: String,
@@ -263,6 +289,8 @@ impl NewEvent {
             action: action.as_str().to_string(),
             actor_user_id: None,
             actor_kind: actor_kind.as_str().to_string(),
+            initiator_user_id: None,
+            task_id: None,
             request_id: None,
             correlation_id: None,
             summary: summary.into(),
@@ -296,8 +324,18 @@ impl NewEvent {
     pub fn with_context(mut self, context: &EventContext) -> Self {
         self.actor_kind = context.actor_kind().as_str().to_string();
         self.actor_user_id = context.actor_user_id();
+        self.initiator_user_id = context.initiator_user_id();
+        self.task_id = context.task_id();
         self.request_id = context.request_id();
         self.correlation_id = context.correlation_id().map(ToOwned::to_owned);
+        self
+    }
+
+    pub fn with_mutation_provenance(mut self, provenance: &MutationProvenance) -> Self {
+        self.actor_kind = provenance.actor_kind().as_str().to_string();
+        self.actor_user_id = provenance.actor_user_id();
+        self.initiator_user_id = provenance.initiator_user_id();
+        self.task_id = provenance.task_id();
         self
     }
 
@@ -353,6 +391,14 @@ impl NewEvent {
         self.actor_user_id
     }
 
+    pub fn initiator_user_id(&self) -> Option<i32> {
+        self.initiator_user_id
+    }
+
+    pub fn task_id(&self) -> Option<i32> {
+        self.task_id
+    }
+
     pub fn request_id(&self) -> Option<Uuid> {
         self.request_id
     }
@@ -360,5 +406,26 @@ impl NewEvent {
     /// The caller-provided correlation id, if any.
     pub fn correlation_id(&self) -> Option<&str> {
         self.correlation_id.as_deref()
+    }
+}
+
+pub(crate) fn provenance_from_parts(
+    actor_kind: Option<&str>,
+    actor_user_id: Option<i32>,
+    initiator_user_id: Option<i32>,
+    task_id: Option<i32>,
+    principal_names: &HashMap<i32, String>,
+) -> Provenance {
+    let principal = |principal_id| ProvenancePrincipal {
+        principal_id,
+        name: principal_names.get(&principal_id).cloned(),
+    };
+    Provenance {
+        actor: ProvenanceActor {
+            kind: actor_kind.map(ToOwned::to_owned),
+            principal: actor_user_id.map(principal),
+        },
+        initiator: initiator_user_id.map(principal),
+        task_id,
     }
 }

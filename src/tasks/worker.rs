@@ -19,8 +19,11 @@ use crate::db::traits::task::{
     TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_backup_outputs,
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
-use crate::db::{DatabasePoolSettings, DbPool, init_pool_with_settings};
+use crate::db::{
+    DatabasePoolSettings, DbPool, init_pool_with_settings, with_mutation_provenance_scope,
+};
 use crate::errors::ApiError;
+use crate::events::MutationProvenance;
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::principal::load_principal_by_id;
@@ -366,56 +369,60 @@ async fn process_one_task_with_settings(
         worker = std::thread::current().name().unwrap_or("task-worker")
     );
 
-    let mut heartbeat = start_task_lease_heartbeat(
-        task_lease_pool(),
-        &task,
-        claim_started_at + settings.lease_duration,
-    );
-    let execution = async {
-        match shutdown {
-            Some(shutdown) => {
-                tokio::select! {
-                    biased;
-                    _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
-                        "Task interrupted by graceful server shutdown".to_string(),
-                    )),
-                    result = process_claimed_task(context, &task, backup_settings) => result,
+    let provenance = MutationProvenance::worker(task.initiator_user_id, task.id);
+    with_mutation_provenance_scope(Some(provenance), async {
+        let mut heartbeat = start_task_lease_heartbeat(
+            task_lease_pool(),
+            &task,
+            claim_started_at + settings.lease_duration,
+        );
+        let execution = async {
+            match shutdown {
+                Some(shutdown) => {
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
+                            "Task interrupted by graceful server shutdown".to_string(),
+                        )),
+                        result = process_claimed_task(context, &task, backup_settings) => result,
+                    }
                 }
+                None => process_claimed_task(context, &task, backup_settings).await,
             }
-            None => process_claimed_task(context, &task, backup_settings).await,
+        };
+        let mut ownership_lost = false;
+        let result = tokio::select! {
+            result = execution => result,
+            _ = wait_for_lost_task_lease(&mut heartbeat) => {
+                ownership_lost = true;
+                Err(ApiError::ServiceUnavailable(
+                    "Task execution stopped because its worker lease was lost".to_string(),
+                ))
+            }
+        };
+        if let Err(err) = &result
+            && !ownership_lost
+        {
+            let finalized = finalize_failure_while_lease_owned(
+                &mut heartbeat,
+                mark_claimed_task_failed(context, &task, err),
+            )
+            .await?;
+            if !finalized {
+                warn!(
+                    message = "Task failure finalization stopped because its worker lease was lost",
+                    task_id = task.id,
+                    claim_token = ?task.lease_token,
+                );
+            }
         }
-    };
-    let mut ownership_lost = false;
-    let result = tokio::select! {
-        result = execution => result,
-        _ = wait_for_lost_task_lease(&mut heartbeat) => {
-            ownership_lost = true;
-            Err(ApiError::ServiceUnavailable(
-                "Task execution stopped because its worker lease was lost".to_string(),
-            ))
+        if let Some(heartbeat) = heartbeat {
+            heartbeat.stop().await;
         }
-    };
-    if let Err(err) = &result
-        && !ownership_lost
-    {
-        let finalized = finalize_failure_while_lease_owned(
-            &mut heartbeat,
-            mark_claimed_task_failed(context, &task, err),
-        )
-        .await?;
-        if !finalized {
-            warn!(
-                message = "Task failure finalization stopped because its worker lease was lost",
-                task_id = task.id,
-                claim_token = ?task.lease_token,
-            );
-        }
-    }
-    if let Some(heartbeat) = heartbeat {
-        heartbeat.stop().await;
-    }
 
-    Ok(true)
+        Ok(true)
+    })
+    .await
 }
 
 #[derive(Debug, Default)]

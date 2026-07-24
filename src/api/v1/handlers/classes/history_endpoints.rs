@@ -22,7 +22,8 @@ async fn get_class_history(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_page, can_read_deleted_history,
-        history_candidate_query_options, readable_history_collection_ids, resolve_actor_usernames,
+        history_candidate_query_options, readable_history_collection_ids,
+        resolve_history_principal_names,
     };
 
     let user = &requestor.principal;
@@ -100,18 +101,11 @@ async fn get_class_history(
         return Err(ApiError::NotFound(format!("class {entity_id} not found")));
     }
 
-    let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
-    let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
+    let principal_names = resolve_history_principal_names(&pool, &rows).await?;
 
     ApiResponse::mapped_paginated(rows, total_count, &params, move |rows| {
         rows.into_iter()
-            .map(|row| {
-                let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-                HistoryResponse {
-                    entry: row,
-                    actor_username,
-                }
-            })
+            .map(|row| HistoryResponse::new(row, &principal_names))
             .collect()
     })
 }
@@ -142,7 +136,7 @@ async fn get_class_as_of(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_snapshot, can_read_deleted_history, parse_as_of,
-        resolve_actor_usernames,
+        resolve_history_principal_names,
     };
 
     let user = &requestor.principal;
@@ -187,12 +181,9 @@ async fn get_class_as_of(
         .await?;
     }
 
-    let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
-    let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-    Ok(ApiResponse::ok(HistoryResponse {
-        entry: row,
-        actor_username,
-    }))
+    let principal_names =
+        resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
+    Ok(ApiResponse::ok(HistoryResponse::new(row, &principal_names)))
 }
 
 #[utoipa::path(
@@ -220,7 +211,8 @@ async fn get_object_history(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_page, can_read_deleted_history,
-        history_candidate_query_options, readable_history_collection_ids, resolve_actor_usernames,
+        history_candidate_query_options, readable_history_collection_ids,
+        resolve_history_principal_names,
     };
 
     let user = &requestor.principal;
@@ -304,18 +296,11 @@ async fn get_object_history(
         return Err(ApiError::NotFound(format!("object {entity_id} not found")));
     }
 
-    let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
-    let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
+    let principal_names = resolve_history_principal_names(&pool, &rows).await?;
 
     ApiResponse::mapped_paginated(rows, total_count, &params, move |rows| {
         rows.into_iter()
-            .map(|row| {
-                let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-                HistoryResponse {
-                    entry: row,
-                    actor_username,
-                }
-            })
+            .map(|row| HistoryResponse::new(row, &principal_names))
             .collect()
     })
 }
@@ -347,7 +332,7 @@ async fn get_object_as_of(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_snapshot, can_read_deleted_history, parse_as_of,
-        resolve_actor_usernames,
+        resolve_history_principal_names,
     };
 
     let user = &requestor.principal;
@@ -394,10 +379,7 @@ async fn get_object_as_of(
         .await?;
     }
 
-    let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
-    let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-    Ok(ApiResponse::ok(HistoryResponse {
-        entry: row,
-        actor_username,
-    }))
+    let principal_names =
+        resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
+    Ok(ApiResponse::ok(HistoryResponse::new(row, &principal_names)))
 }

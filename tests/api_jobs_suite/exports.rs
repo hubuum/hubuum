@@ -1671,10 +1671,29 @@ mod tests {
         .await;
         let events_resp = assert_response_status(events_resp, StatusCode::OK).await;
         let events: Vec<TaskEventResponse> = test::read_body_json(events_resp).await;
-        assert!(
-            events
+        let assert_provenance = |event_type: &str, actor_kind: &str| {
+            let event = events
                 .iter()
-                .any(|event| event.event_type == "cleanup" && event.message.contains("cleaned up"))
+                .find(|event| event.event_type == event_type)
+                .unwrap_or_else(|| panic!("missing {event_type} task event"));
+            assert_eq!(event.provenance.actor.kind.as_deref(), Some(actor_kind));
+            assert_eq!(
+                event
+                    .provenance
+                    .initiator
+                    .as_ref()
+                    .map(|principal| principal.principal_id),
+                Some(context.admin_user.id)
+            );
+            assert_eq!(event.provenance.task_id, Some(task.id));
+            event
+        };
+        assert_provenance("queued", "user");
+        assert_provenance("running", "worker");
+        let cleanup_event = assert_provenance("cleanup", "system");
+        assert!(
+            cleanup_event.message.contains("cleaned up"),
+            "cleanup event should describe the expired output"
         );
 
         cleanup(&classes).await;

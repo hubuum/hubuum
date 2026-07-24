@@ -2,6 +2,7 @@ use crate::db::prelude::*;
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use utoipa::ToSchema;
 
 use crate::db::DbPool;
@@ -182,6 +183,7 @@ pub struct TaskRecord {
     pub lease_token: Option<uuid::Uuid>,
     pub lease_expires_at: Option<NaiveDateTime>,
     pub attempt_count: i32,
+    pub initiator_user_id: Option<i32>,
 }
 
 #[derive(Debug, Insertable)]
@@ -217,6 +219,10 @@ pub struct TaskEventRecord {
     pub message: String,
     pub data: Option<serde_json::Value>,
     pub created_at: NaiveDateTime,
+    pub actor_user_id: Option<i32>,
+    pub actor_kind: String,
+    pub initiator_user_id: Option<i32>,
+    pub provenance_task_id: Option<i32>,
 }
 
 #[derive(Debug)]
@@ -335,6 +341,7 @@ pub struct TaskEventResponse {
     pub message: String,
     pub data: Option<serde_json::Value>,
     pub created_at: NaiveDateTime,
+    pub provenance: crate::events::Provenance,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -565,6 +572,22 @@ impl TaskRecord {
 
 impl From<TaskEventRecord> for TaskEventResponse {
     fn from(value: TaskEventRecord) -> Self {
+        Self::from_record_with_names(value, &HashMap::new())
+    }
+}
+
+impl TaskEventResponse {
+    pub(crate) fn from_record_with_names(
+        value: TaskEventRecord,
+        principal_names: &HashMap<i32, String>,
+    ) -> Self {
+        let provenance = crate::events::provenance_from_parts(
+            Some(&value.actor_kind),
+            value.actor_user_id,
+            value.initiator_user_id,
+            value.provenance_task_id,
+            principal_names,
+        );
         Self {
             id: value.id,
             task_id: value.task_id,
@@ -572,6 +595,7 @@ impl From<TaskEventRecord> for TaskEventResponse {
             message: value.message,
             data: value.data,
             created_at: value.created_at,
+            provenance,
         }
     }
 }
@@ -597,6 +621,10 @@ impl TryFrom<Event> for TaskEventRecord {
             message: value.summary,
             data,
             created_at: value.occurred_at,
+            actor_user_id: value.actor_user_id,
+            actor_kind: value.actor_kind,
+            initiator_user_id: value.initiator_user_id,
+            provenance_task_id: value.task_id.or(Some(task_id)),
         })
     }
 }

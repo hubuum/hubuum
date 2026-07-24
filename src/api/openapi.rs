@@ -61,7 +61,9 @@ use crate::pagination::{
     NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults,
 };
 use actix_web::{HttpResponse, Responder};
-use hubuum_events_core::EventSubscriptionFilter;
+use hubuum_events_core::{
+    EventSubscriptionFilter, Provenance, ProvenanceActor, ProvenancePrincipal,
+};
 use serde::Serialize;
 use utoipa::openapi::OpenApi as OpenApiDoc;
 use utoipa::openapi::header::Header;
@@ -399,6 +401,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
             TaskResponse,
             TaskEventResponse,
             EventResponse,
+            Provenance,
+            ProvenanceActor,
+            ProvenancePrincipal,
             EventDeliveryStatus,
             EventDelivery,
             EventDeliveryUpdateResponse,

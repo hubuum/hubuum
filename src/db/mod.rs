@@ -48,6 +48,7 @@ use std::time::Duration;
 use tracing::debug;
 
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
+use crate::events::MutationProvenance;
 use crate::models::search::StatementTimeoutMs;
 use crate::observability::metrics::{self, ResultKind};
 use crate::utilities::db::DatabaseUrlComponents;
@@ -58,7 +59,7 @@ pub type DbPool = Pool<DbConnection>;
 /// Latest migration required by this binary. The test below keeps this value
 /// synchronized with the migration directory so readiness cannot silently lag
 /// behind a newly added schema change.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260722000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260724000001";
 
 #[derive(diesel::QueryableByName)]
 struct DatabaseSchemaReadiness {
@@ -318,13 +319,12 @@ tokio::task_local! {
 }
 
 tokio::task_local! {
-    /// The acting user id for the current async task, if any. Set via
-    /// [`with_actor_scope`] and applied as a transaction-local
-    /// `SET LOCAL hubuum.actor_id` by [`with_connection_timeout`] /
-    /// [`with_transaction`], so the history trigger can attribute writes to a
-    /// user without threading the actor through every caller. Outside any scope
-    /// the lookup yields `None`, recorded as a NULL actor.
-    static AMBIENT_ACTOR: Option<i32>;
+    /// Typed mutation attribution for the current async task. Applied as
+    /// transaction-local Postgres settings by [`with_connection_timeout`] /
+    /// [`with_transaction`] so temporal triggers can preserve the immediate
+    /// actor, root task initiator, and task id without threading them through
+    /// every persistence call.
+    static AMBIENT_MUTATION_PROVENANCE: Option<MutationProvenance>;
 }
 
 /// Run `future` with an ambient per-query `statement_timeout` in effect.
@@ -356,26 +356,66 @@ fn ambient_statement_timeout() -> Option<StatementTimeoutMs> {
         .unwrap_or(None)
 }
 
-/// Run `future` with an ambient actor id in effect (see [`AMBIENT_ACTOR`]).
+/// Run `future` with typed mutation provenance in effect.
+pub async fn with_mutation_provenance_scope<F, R>(
+    provenance: Option<MutationProvenance>,
+    future: F,
+) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    AMBIENT_MUTATION_PROVENANCE.scope(provenance, future).await
+}
+
+/// Compatibility helper for callers that only have a direct user actor.
 pub async fn with_actor_scope<F, R>(actor: Option<i32>, future: F) -> R
 where
     F: std::future::Future<Output = R>,
 {
-    AMBIENT_ACTOR.scope(actor, future).await
+    with_mutation_provenance_scope(actor.map(MutationProvenance::user), future).await
 }
 
-/// The ambient actor id for the current task, or `None` outside any scope.
-fn ambient_actor() -> Option<i32> {
-    AMBIENT_ACTOR.try_with(|actor| *actor).unwrap_or(None)
+/// The ambient mutation provenance, or `None` outside any scope.
+fn ambient_mutation_provenance() -> Option<MutationProvenance> {
+    AMBIENT_MUTATION_PROVENANCE
+        .try_with(Clone::clone)
+        .unwrap_or(None)
 }
 
-/// Apply a transaction-local `SET LOCAL hubuum.actor_id`. Bound, not formatted,
-/// mirroring [`set_local_statement_timeout`]. Reverts at COMMIT/ROLLBACK.
-async fn set_local_actor(conn: &mut DbConnection, actor: i32) -> Result<(), diesel::result::Error> {
-    diesel::sql_query("SELECT set_config('hubuum.actor_id', $1, true)")
-        .bind::<diesel::sql_types::Text, _>(actor.to_string())
-        .execute(conn)
-        .await?;
+/// Apply transaction-local provenance settings consumed by history triggers.
+/// Empty optional values are converted back to NULL by the trigger.
+async fn set_local_mutation_provenance(
+    conn: &mut DbConnection,
+    provenance: &MutationProvenance,
+) -> Result<(), diesel::result::Error> {
+    diesel::sql_query(
+        "SELECT \
+         set_config('hubuum.actor_kind', $1, true), \
+         set_config('hubuum.actor_id', $2, true), \
+         set_config('hubuum.initiator_user_id', $3, true), \
+         set_config('hubuum.task_id', $4, true)",
+    )
+    .bind::<diesel::sql_types::Text, _>(provenance.actor_kind().as_str())
+    .bind::<diesel::sql_types::Text, _>(
+        provenance
+            .actor_user_id()
+            .map(|id| id.to_string())
+            .unwrap_or_default(),
+    )
+    .bind::<diesel::sql_types::Text, _>(
+        provenance
+            .initiator_user_id()
+            .map(|id| id.to_string())
+            .unwrap_or_default(),
+    )
+    .bind::<diesel::sql_types::Text, _>(
+        provenance
+            .task_id()
+            .map(|id| id.to_string())
+            .unwrap_or_default(),
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 
@@ -437,14 +477,14 @@ where
     ApiError: From<E>,
 {
     let statement_timeout = ambient_statement_timeout();
-    let actor = ambient_actor();
-    with_connection_context(&pool, statement_timeout, actor, f).await
+    let provenance = ambient_mutation_provenance();
+    with_connection_context(&pool, statement_timeout, provenance, f).await
 }
 
 async fn with_connection_context<F, R, E>(
     pool: &DbPool,
     statement_timeout: Option<StatementTimeoutMs>,
-    actor: Option<i32>,
+    provenance: Option<MutationProvenance>,
     f: F,
 ) -> Result<R, ApiError>
 where
@@ -457,15 +497,15 @@ where
 {
     let mut conn = acquire_connection(pool).await?;
     let start = std::time::Instant::now();
-    let result = if statement_timeout.is_none() && actor.is_none() {
+    let result = if statement_timeout.is_none() && provenance.is_none() {
         f(&mut conn).await.map_err(ApiError::from)
     } else {
         conn.transaction::<R, ApiError, _>(async move |conn| {
             if let Some(statement_timeout) = statement_timeout {
                 set_local_statement_timeout(conn, statement_timeout).await?;
             }
-            if let Some(actor) = actor {
-                set_local_actor(conn, actor).await?;
+            if let Some(provenance) = provenance {
+                set_local_mutation_provenance(conn, &provenance).await?;
             }
             f(conn).await.map_err(ApiError::from)
         })
@@ -531,7 +571,7 @@ where
     E: Send,
     ApiError: From<E>,
 {
-    with_connection_context(pool, statement_timeout, ambient_actor(), f).await
+    with_connection_context(pool, statement_timeout, ambient_mutation_provenance(), f).await
 }
 
 /// Run database work inside a SQL transaction on a single pooled connection.
@@ -563,7 +603,7 @@ where
     ApiError: From<E>,
 {
     let statement_timeout = ambient_statement_timeout();
-    let actor = ambient_actor();
+    let provenance = ambient_mutation_provenance();
     let mut conn = acquire_connection(pool).await?;
     let start = std::time::Instant::now();
     let result = crate::logger::defer_operation_mutation_logs_until_commit(
@@ -571,8 +611,8 @@ where
             if let Some(statement_timeout) = statement_timeout {
                 set_local_statement_timeout(conn, statement_timeout).await?;
             }
-            if let Some(actor) = actor {
-                set_local_actor(conn, actor).await?;
+            if let Some(provenance) = provenance {
+                set_local_mutation_provenance(conn, &provenance).await?;
             }
             f(conn).await.map_err(ApiError::from)
         }),

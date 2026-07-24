@@ -2,7 +2,10 @@
 
 # Temporal History, Actor Capture, and GDPR Anonymization
 
-This document describes Hubuum's row-history mechanism, which records every data modification to seven core tables via a generic PostgreSQL trigger, attributes changes to a per-request actor (user), and enables GDPR-compliant user anonymization.
+This document describes Hubuum's row-history mechanism, which records every
+data modification to seven core tables through a generic PostgreSQL trigger,
+preserves direct-user and asynchronous task provenance, and enables
+GDPR-compliant user anonymization.
 
 ## Data Model
 
@@ -27,8 +30,17 @@ Each history row is a **full-row snapshot** with the following columns:
   - `'D'` - DELETE
 - **`valid_from` (timestamptz)**: When this version became active. Uses `clock_timestamp()` so long transactions record the trigger execution time.
 - **`valid_to` (timestamptz, nullable)**: When this version expired. NULL indicates the row is the current open version.
-- **`actor_id` (int, nullable)**: The user who performed the mutation. NULL when recorded outside a request scope (e.g., migrations, background work).
+- **`actor_id` (int, nullable)**: The principal that performed the mutation
+  when the actor is a user. Worker and system actors normally have no principal.
 - **`history_id` (bigint, PK)**: Surrogate primary key for the history row itself, auto-incremented per table.
+- **`actor_kind` (text, nullable)**: Immediate actor class: `user`, `worker`,
+  or `system`. Unknown legacy rows remain `NULL`.
+- **`initiator_user_id` (int, nullable)**: Durable, non-FK ID of the principal
+  that submitted the root task.
+- **`task_id` (int, nullable)**: Durable, non-FK root task ID.
+
+The provenance IDs deliberately do not have foreign keys. Deleting a principal
+or purging a task cannot erase attribution from immutable history.
 
 ### Open vs. Closed Versions
 
@@ -57,22 +69,25 @@ DECLARE
   seq   text        := quote_literal(TG_TABLE_NAME || '_history_seq');
   ts    timestamptz := clock_timestamp();
   actor int         := nullif(current_setting('hubuum.actor_id', true), '')::int;
+  actor_kind_value text := nullif(current_setting('hubuum.actor_kind', true), '');
+  initiator int := nullif(current_setting('hubuum.initiator_user_id', true), '')::int;
+  provenance_task_id int := nullif(current_setting('hubuum.task_id', true), '')::int;
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    EXECUTE format('INSERT INTO %s (<base columns>, op, valid_from, valid_to, actor_id, history_id) SELECT <base values>, %L, $2, NULL, $3, nextval(%s)', hist, 'I', seq)
-      USING NEW, ts, actor;
+    EXECUTE format('INSERT INTO %s (<base columns>, op, valid_from, valid_to, actor_id, history_id, actor_kind, initiator_user_id, task_id) SELECT <base values>, %L, $2, NULL, $3, nextval(%s), $4, $5, $6', hist, 'I', seq)
+      USING NEW, ts, actor, actor_kind_value, initiator, provenance_task_id;
     RETURN NEW;
   ELSIF TG_OP = 'UPDATE' THEN
     EXECUTE format('UPDATE %s SET valid_to=$1 WHERE id=$2 AND valid_to IS NULL', hist)
       USING ts, OLD.id;
-    EXECUTE format('INSERT INTO %s (<base columns>, op, valid_from, valid_to, actor_id, history_id) SELECT <base values>, %L, $2, NULL, $3, nextval(%s)', hist, 'U', seq)
-      USING NEW, ts, actor;
+    EXECUTE format('INSERT INTO %s (<base columns>, op, valid_from, valid_to, actor_id, history_id, actor_kind, initiator_user_id, task_id) SELECT <base values>, %L, $2, NULL, $3, nextval(%s), $4, $5, $6', hist, 'U', seq)
+      USING NEW, ts, actor, actor_kind_value, initiator, provenance_task_id;
     RETURN NEW;
   ELSE  -- DELETE
     EXECUTE format('UPDATE %s SET valid_to=$1 WHERE id=$2 AND valid_to IS NULL', hist)
       USING ts, OLD.id;
-    EXECUTE format('INSERT INTO %s (<base columns>, op, valid_from, valid_to, actor_id, history_id) SELECT <base values>, %L, $2, $2, $3, nextval(%s)', hist, 'D', seq)
-      USING OLD, ts, actor;
+    EXECUTE format('INSERT INTO %s (<base columns>, op, valid_from, valid_to, actor_id, history_id, actor_kind, initiator_user_id, task_id) SELECT <base values>, %L, $2, $2, $3, nextval(%s), $4, $5, $6', hist, 'D', seq)
+      USING OLD, ts, actor, actor_kind_value, initiator, provenance_task_id;
     RETURN OLD;
   END IF;
 END; $$;
@@ -91,8 +106,14 @@ CREATE TRIGGER hubuumclass_history_trg AFTER INSERT OR UPDATE OR DELETE ON hubuu
 ### Key Behaviors
 
 - **Cascade-safe**: The trigger fires after the base operation, so constraint cascades are honored.
-- **Transaction-local actor**: The trigger reads `hubuum.actor_id` from a PostgreSQL GUC (session configuration), which is set to transaction-local scope so it reverts at commit/rollback.
-- **NULL actor = system OR background task**: When `actor_id` is not set, it defaults to `NULL` in the history row. This covers writes outside any request context (migrations, schema changes), **and also async background workers** (notably imports and other `src/tasks` work) that currently run WITHOUT `with_actor_scope`, even when the task was user-initiated. **Planned future enhancement (Plan 2)**: threading the originating user through task execution so background work can be attributed correctly.
+- **Transaction-local provenance**: The trigger reads actor kind, actor
+  principal, initiator principal, and task ID from PostgreSQL GUCs that revert
+  at commit or rollback.
+- **No guessing**: Writes outside a typed provenance scope retain `NULL`
+  attribution. Legacy rows with no actor or task evidence remain unknown.
+- **Worker attribution**: Task execution runs in a worker provenance scope.
+  Import-created versions therefore record `actor_kind = 'worker'`, the
+  submitting principal as initiator, and the task ID.
 - **Dynamic table name**: Using `TG_TABLE_NAME`, the function adapts to whichever table it's attached to, avoiding trigger duplication.
 
 ### No-Op Updates
@@ -110,79 +131,79 @@ in an audit/event stream rather than in the row's temporal state.
 
 ## Actor Capture
 
-### Ambient Actor Task-Local
+### Ambient Mutation-Provenance Task-Local
 
-In `src/db/mod.rs`, an async task-local (`tokio::task_local!`) variable stores the current actor ID:
+In `src/db/mod.rs`, an async task-local (`tokio::task_local!`) variable stores
+typed mutation provenance:
 
 ```rust
 tokio::task_local! {
-    /// The acting user id for the current async task, if any. Set via
-    /// [`with_actor_scope`] and applied as a transaction-local
-    /// `SET LOCAL hubuum.actor_id` by [`with_connection_timeout`] /
-    /// [`with_transaction`], so the history trigger can attribute writes to a
-    /// user without threading the actor through every caller.
-    static AMBIENT_ACTOR: Option<i32>;
+    static AMBIENT_MUTATION_PROVENANCE: Option<MutationProvenance>;
 }
 ```
 
-### Setting the Actor Scope
+`MutationProvenance` distinguishes:
 
-The `with_actor_scope()` helper establishes the ambient actor for the duration of a future:
+- the immediate `actor_kind`
+- the optional actor principal
+- the optional root-task initiator
+- the optional root task ID
+
+### Setting the Provenance Scope
+
+The `with_mutation_provenance_scope()` helper establishes provenance for the
+duration of a future:
 
 ```rust
-pub async fn with_actor_scope<F, R>(actor: Option<i32>, future: F) -> R
+pub async fn with_mutation_provenance_scope<F, R>(
+    provenance: Option<MutationProvenance>,
+    future: F,
+) -> R
 where
     F: std::future::Future<Output = R>,
 {
-    AMBIENT_ACTOR.scope(actor, future).await
+    AMBIENT_MUTATION_PROVENANCE.scope(provenance, future).await
 }
 ```
 
 ### Applying to Database Connections
 
-Both `with_connection_timeout()` and `with_transaction()` read the ambient actor and apply it as a transaction-local `SET LOCAL`:
+Both `with_connection_timeout()` and `with_transaction()` apply all four
+values as transaction-local settings with bound parameters. The equivalent
+database operation is:
 
-```rust
-fn set_local_actor(conn: &mut PgConnection, actor: i32) -> Result<(), diesel::result::Error> {
-    use diesel::RunQueryDsl;
-    diesel::sql_query("SELECT set_config('hubuum.actor_id', $1, true)")
-        .bind::<diesel::sql_types::Text, _>(actor.to_string())
-        .execute(conn)?;
-    Ok(())
-}
+```sql
+SELECT
+  set_config('hubuum.actor_kind', $1, true),
+  set_config('hubuum.actor_id', $2, true),
+  set_config('hubuum.initiator_user_id', $3, true),
+  set_config('hubuum.task_id', $4, true);
 ```
 
 The second parameter `true` to `set_config()` means the configuration is local to the transaction and reverts automatically at COMMIT/ROLLBACK, avoiding any leak back to the connection pool.
 
-### Middleware Integration
+### Request and Worker Integration
 
-The `actor_context` middleware in `src/middlewares/actor_context.rs` resolves the bearer token once per request and establishes the actor scope for the entire request handler:
-
-```rust
-pub async fn actor_context(
-    req: ServiceRequest,
-    next: Next<impl MessageBody + 'static>,
-) -> Result<ServiceResponse<BoxBody>, Error> {
-    let resolved = resolve_auth(&req).await;
-    let actor = match &resolved {
-        ResolvedAuth::Authenticated { token_meta, .. } => Some(token_meta.principal_id),
-        _ => None,
-    };
-    req.extensions_mut().insert(resolved);
-    let res = with_actor_scope(actor, next.call(req)).await?;
-    Ok(res.map_into_boxed_body())
-}
-```
+The `actor_context` middleware resolves the bearer token once and wraps the
+request in `MutationProvenance::user(principal_id)`. Task workers wrap
+execution and failure finalization in
+`MutationProvenance::worker(task.initiator_user_id, task.id)`.
 
 ### Execution Flow
 
 1. **Request arrives** → middleware resolves the bearer token to a principal token.
-2. **Actor scope established** → `with_actor_scope(Some(token_meta.principal_id), ...)` wraps the request handler.
-3. **Handler executes** → any `with_connection()` or `with_transaction()` call inside reads the ambient actor.
-4. **SET LOCAL applied** → at the start of the database operation, `SET LOCAL hubuum.actor_id` is executed.
-5. **Trigger fires** → the history trigger reads `current_setting('hubuum.actor_id')` and records it.
+2. **Provenance scope established** → a user or worker scope wraps the mutation.
+3. **Handler or worker executes** → database helpers read the ambient provenance.
+4. **Transaction-local settings applied** → all available provenance values
+   are set at the start of the database operation.
+5. **Trigger fires** → the history trigger records those durable values.
 6. **Transaction completes** → the `SET LOCAL` scope reverts.
-7. **Outside any scope** → writes outside a request context (migrations, background jobs) record `actor_id = NULL`.
+7. **Outside any scope** → writes retain unknown (`NULL`) provenance.
+
+History API responses preserve `actor_id`, `actor_kind`, and `actor_username`
+for compatibility and add the shared `provenance` object used by task and
+event responses. Actor and initiator IDs are unioned and name-resolved with one
+query per page.
 
 ## Maintenance Contract
 

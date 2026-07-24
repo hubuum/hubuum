@@ -120,7 +120,10 @@ async fn trigger_inserts_history_by_column_name() {
                     valid_from timestamptz NOT NULL,
                     valid_to timestamptz,
                     actor_id int,
-                    history_id bigint NOT NULL
+                    history_id bigint NOT NULL,
+                    task_id int,
+                    actor_kind text,
+                    initiator_user_id int
                  )",
             )
             .execute(conn)
@@ -389,22 +392,94 @@ async fn actor_scope_sets_actor_and_default_is_null() {
     .await
     .unwrap();
 
-    let read_actor = async |id: i32| {
+    let read_provenance = async |id: i32| {
         with_connection(&pool, async move |conn| {
             use crate::schema::hubuumclass_history::dsl as h;
             h::hubuumclass_history
                 .filter(h::id.eq(id))
                 .order(h::history_id.desc())
-                .select(h::actor_id)
-                .first::<Option<i32>>(conn)
+                .select((h::actor_id, h::actor_kind, h::initiator_user_id, h::task_id))
+                .first::<(Option<i32>, Option<String>, Option<i32>, Option<i32>)>(conn)
                 .await
         })
         .await
         .unwrap()
     };
 
-    assert_eq!(read_actor(in_class.id).await, Some(4242));
-    assert_eq!(read_actor(out_class.id).await, None);
+    assert_eq!(
+        read_provenance(in_class.id).await,
+        (Some(4242), Some("user".to_string()), None, None)
+    );
+    assert_eq!(
+        read_provenance(out_class.id).await,
+        (None, None, None, None)
+    );
+
+    collection_fixture.cleanup().await.unwrap();
+}
+
+#[actix_rt::test]
+async fn worker_mutation_scope_records_root_task_provenance() {
+    use crate::db::{with_connection, with_mutation_provenance_scope};
+    use crate::events::MutationProvenance;
+    use crate::models::NewHubuumClass;
+    use crate::traits::CanSave;
+
+    let scope = TestScope::new();
+    let pool = scope.pool.clone();
+    let collection_fixture = scope.collection_fixture("worker_provenance").await;
+    let initiator_user_id = 5151;
+    let task_id = 6161;
+    let class = with_mutation_provenance_scope(
+        Some(MutationProvenance::worker(Some(initiator_user_id), task_id)),
+        async {
+            NewHubuumClass {
+                name: scope.scoped_name("worker_created_class"),
+                collection_id: collection_fixture.collection.id,
+                json_schema: None,
+                validate_schema: Some(false),
+                description: "created by import worker".to_string(),
+            }
+            .save(
+                &pool,
+                &hubuum_events_core::EventContext::worker_for_task(
+                    Some(initiator_user_id),
+                    task_id,
+                    None,
+                    None,
+                ),
+            )
+            .await
+        },
+    )
+    .await
+    .unwrap();
+
+    let stored = with_connection(&pool, async |conn| {
+        use crate::schema::hubuumclass_history::dsl as history;
+        history::hubuumclass_history
+            .filter(history::id.eq(class.id))
+            .order(history::history_id.desc())
+            .select((
+                history::actor_id,
+                history::actor_kind,
+                history::initiator_user_id,
+                history::task_id,
+            ))
+            .first::<(Option<i32>, Option<String>, Option<i32>, Option<i32>)>(conn)
+            .await
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        (
+            None,
+            Some("worker".to_string()),
+            Some(initiator_user_id),
+            Some(task_id),
+        )
+    );
 
     collection_fixture.cleanup().await.unwrap();
 }

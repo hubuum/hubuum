@@ -28,6 +28,7 @@ pub use delivery::{
 pub use fanout::{
     ensure_event_fanout_worker_running, event_fanout_wakeup_stats, kick_event_fanout_worker,
 };
+pub(crate) use model::provenance_from_parts;
 pub use model::{Event, EventId, EventResponse, NewEvent};
 pub use retention::ensure_event_retention_worker_running;
 pub use sink::{
@@ -37,7 +38,8 @@ pub use sink::{
 pub(crate) use pg_notify::notify_event_delivery;
 
 pub use hubuum_events_core::{
-    Action, ActorKind, EntityType, EventCatalogError, EventContext, is_valid_pair, valid_actions,
+    Action, ActorKind, EntityType, EventCatalogError, EventContext, MutationProvenance, Provenance,
+    ProvenanceActor, ProvenancePrincipal, is_valid_pair, valid_actions,
 };
 
 #[cfg(test)]

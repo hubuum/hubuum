@@ -40,10 +40,14 @@ are also outside the database backup.
 
 The version 3 manifest reports only counts for included sections and the fixed
 list of exclusions. It includes personal and shared computed-field definitions
-as authoritative state. Class computation state and object materializations are
-excluded as rebuildable caches; restore validates the definitions and queues
-class rebuild tasks. The manifest does not carry partial-selection counts,
-import-planning warnings, a collection scope, or an embedded import request.
+as authoritative state. When history is included, nullable task initiator,
+event initiator/task, and temporal actor/initiator/task provenance columns are
+round-tripped. Backup version `3` remains unchanged because the added fields are
+nullable and older version-3 rows restore them as `NULL`. Class computation
+state and object materializations are excluded as rebuildable caches; restore
+validates the definitions and queues class rebuild tasks. The manifest does not
+carry partial-selection counts, import-planning warnings, a collection scope,
+or an embedded import request.
 
 Backups cannot be scoped and backup documents are not import requests. Use the
 export/import workflow (with an import-compatible export template or adapter)
