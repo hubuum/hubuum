@@ -11,7 +11,7 @@ use crate::models::{
     ExportContentType, ExportJsonResponse, ExportMeta, ExportOutputLookup, ExportRequest,
     ExportTaskOutputRecord, ExportWarning, TaskID, TaskResponse, TokenID,
 };
-use crate::permissions::{AppContext, require_unscoped_runtime_admin};
+use crate::permissions::AppContext;
 use crate::tasks::{ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker};
 
 const EXPORT_WARNINGS_HEADER: &str = "X-Hubuum-Export-Warnings";
@@ -54,7 +54,7 @@ fn render_export_task_output(output: ExportTaskOutputRecord) -> Result<HttpRespo
         (status = 202, description = "Export task accepted", body = TaskResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Runtime administrator required", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse),
         (status = 429, description = "Too many active export tasks", body = ApiErrorResponse)
     )
@@ -66,16 +66,11 @@ pub async fn run_export(
     req: HttpRequest,
     export: web::Json<ExportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    require_unscoped_runtime_admin(
-        &pool,
-        &requestor.principal,
-        requestor.token_meta.is_scoped(),
-    )
-    .await?;
     let export = export.into_inner();
     let task = submit_export_task(
         &pool,
         &requestor.principal,
+        requestor.scopes(),
         Some(TokenID::new(requestor.token_meta.id)?),
         idempotency_key_from_headers(req.headers())?,
         export,

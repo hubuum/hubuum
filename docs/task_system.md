@@ -276,9 +276,9 @@ them.
 
 Task workers carry the same permission-backend context as API handlers. Execution
 therefore rechecks the submitting principal through the configured local or
-Treetop backend. Import and export workers require unscoped runtime-admin
-authority; remote-call workers preserve and enforce the submitted token's scope
-snapshot.
+Treetop backend. Import, export, and remote-call workers preserve and enforce
+the submitted token's scope snapshot against live grants. Backup workers retain
+their unscoped runtime-administrator requirement.
 
 ## Import execution pipeline
 
@@ -426,9 +426,9 @@ Planning and execution behavior is shaped by:
 Current behavior:
 
 - `strict` always aborts on the first planning failure
-- `mode.permission_policy` remains accepted for payload compatibility, but
-  API-submitted imports run with runtime-admin authority and therefore do not
-  produce per-item authorization failures
+- `mode.permission_policy=abort` stops on permission failures
+- `mode.permission_policy=continue` records permission failures and continues a
+  best-effort import
 - `collision_policy=abort` records or aborts on collisions depending on atomicity
 - `collision_policy=overwrite` turns matching collection/class/object collisions into update operations
 
@@ -453,17 +453,15 @@ Import-specific endpoints:
 - `GET /api/v1/imports/{id}`
 - `GET /api/v1/imports/{id}/results`
 
-Import and export submission requires an unscoped runtime administrator. The
-principal may be either a human or a service account; unlike human/IAM admin
-extractors, this gate intentionally accepts service accounts in the configured
-admin group. A dedicated service account is recommended for backup and restore
-automation.
+Import and export submission accepts ordinary human and service-account
+principals, including scoped tokens. The task stores the token's permission and
+resource boundary, and the worker applies it to resource-by-resource
+authorization against the configured backend. Revoking a required live grant
+or disabling the submitting service account while a task is queued prevents
+the affected work from executing.
 
-The worker repeats the configured-backend admin check after claiming the task.
-Revoking admin membership or disabling the submitting service account while a
-task is queued therefore prevents execution. Once execution starts, the single
-admin decision authorizes the complete operation instead of applying
-resource-by-resource permission filtering.
+Creating collections in an import, and importing identity, template, or
+integration records, remains restricted to unscoped runtime administrators.
 
 ## Queue introspection
 

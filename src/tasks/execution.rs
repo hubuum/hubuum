@@ -9,6 +9,7 @@ use crate::models::{
     Collection, EventSinkKey, GroupKey, IdentityScopeKey, ImportAtomicity, ImportCollisionPolicy,
     ImportExportTemplateInput, ImportMode, ImportPermissionPolicy, ImportPrincipalSubtype,
     ImportRequest, NewTaskEventRecord, PrincipalKey, TaskRecord, TaskResultCounts, TaskStatus,
+    TokenScope,
 };
 use crate::observability::metrics;
 use crate::traits::BackendContext;
@@ -16,7 +17,7 @@ use crate::traits::BackendContext;
 use super::helpers::{
     flush_import_result_batches, sanitize_error_for_storage, should_abort_best_effort_execution,
 };
-use super::planning::plan_runtime_admin_import;
+use super::planning::plan_import;
 use super::resolution::{
     resolve_class_runtime, resolve_collection_parent_runtime, resolve_collection_runtime,
     resolve_object_runtime,
@@ -154,6 +155,7 @@ pub(super) async fn execute_import_task<C>(
     backend: &C,
     task: &TaskRecord,
     user: &impl crate::db::traits::authz::AuthzSubject,
+    scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
 where
     C: BackendContext + ?Sized,
@@ -188,7 +190,7 @@ where
     async {
         let total_start = Instant::now();
         let planning_start = Instant::now();
-        let planning = plan_runtime_admin_import(backend, user, &request)
+        let planning = plan_import(backend, user, scopes, &request)
             .instrument(info_span!("import_planning"))
             .await;
         let planning_time = planning_start.elapsed();

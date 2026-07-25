@@ -15,7 +15,7 @@ use crate::models::{
     TaskResponse, TokenID,
 };
 use crate::pagination::prepare_db_pagination;
-use crate::permissions::{AppContext, require_unscoped_runtime_admin};
+use crate::permissions::AppContext;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
@@ -50,7 +50,7 @@ async fn find_or_create_import_task(
         (status = 409, description = "Conflict", body = ApiErrorResponse),
         (status = 429, description = "Too many active import tasks", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
-        (status = 403, description = "Runtime administrator required", body = ApiErrorResponse)
+        (status = 403, description = "Forbidden", body = ApiErrorResponse)
     )
 )]
 #[post("")]
@@ -60,12 +60,6 @@ pub async fn create_import(
     req: HttpRequest,
     import_request: web::Json<ImportRequest>,
 ) -> Result<impl Responder, ApiError> {
-    require_unscoped_runtime_admin(
-        &pool,
-        &requestor.principal,
-        requestor.token_meta.is_scoped(),
-    )
-    .await?;
     ensure_task_worker_running(pool.clone());
 
     let import_request = import_request.into_inner();
@@ -73,8 +67,10 @@ pub async fn create_import(
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
-    let snapshot =
-        TaskScopeSnapshot::from_request(Some(TokenID::new(requestor.token_meta.id)?), None);
+    let snapshot = TaskScopeSnapshot::from_request(
+        Some(TokenID::new(requestor.token_meta.id)?),
+        requestor.scopes(),
+    );
 
     let task = find_or_create_import_task(
         &pool,

@@ -22,11 +22,12 @@ Import results are intentionally not exposed through a generic shared task-resul
 
 Authentication:
 
-- An unscoped bearer token for a runtime administrator is required.
-- Runtime administrators may be humans or service accounts in the configured
-  admin group. Service accounts do not gain access to human/IAM administration.
-- The worker rechecks admin authority before execution. Use a dedicated backup
-  or restore service account for automation.
+- A bearer token for a human or service-account principal is required.
+- Collection-scoped items are planned against the principal's live collection
+  permissions. Scoped tokens are supported, and their permission and resource
+  boundaries are persisted with the task.
+- Creating collections inside an import, and importing identity, template, or
+  integration records, requires an unscoped runtime administrator.
 
 ## Request model
 
@@ -461,9 +462,11 @@ Membership sources can carry their own timestamps.
 
 ### `mode.permission_policy`
 
-This field remains accepted for payload compatibility. API imports require
-runtime-admin authority and do not perform per-item authorization, so `abort`
-and `continue` currently have no effect on API-submitted tasks.
+- default: `abort`
+- `abort`
+  - permission failures stop strict imports and stop best-effort imports once encountered
+- `continue`
+  - best-effort imports record permission failures and continue
 
 ## Submit example
 

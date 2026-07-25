@@ -332,7 +332,6 @@ async fn object_relation_exists_cached(
     Ok(exists)
 }
 
-#[cfg(test)]
 pub(super) async fn plan_import<C>(
     backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
@@ -345,6 +344,7 @@ where
     plan_import_with_admin_status(backend, user, scopes, request, None).await
 }
 
+#[cfg(test)]
 pub(super) async fn plan_runtime_admin_import<C>(
     backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
@@ -388,8 +388,9 @@ where
             failures.push(PlanningFailure {
                 kind: FailureKind::Permission,
                 item: planned_result("system", "import", None, None),
-                message: "Identity and integration imports require an unscoped administrator token"
-                    .to_string(),
+                message:
+                    "Identity, template, and integration imports require an unscoped administrator token"
+                        .to_string(),
             });
             return PlanningOutcome {
                 planned_items,

@@ -71,12 +71,11 @@ where
     }
 }
 
-/// Require runtime-wide administrator authority for a queued data-transfer task.
+/// Require runtime-wide administrator authority for a queued full-system task.
 ///
 /// Unlike [`crate::extractors::AdminAccess`], this accepts both human principals
-/// and service accounts. Tokens must still be unscoped: this capability grants
-/// access to the complete import/export data set and cannot be represented by a
-/// collection permission subset.
+/// and service accounts. Tokens must still be unscoped because the operation
+/// cannot be represented by a collection permission subset.
 pub async fn require_unscoped_runtime_admin<C, S>(
     context: &C,
     subject: &S,
@@ -88,7 +87,7 @@ where
 {
     if token_scoped {
         return Err(ApiError::Forbidden(
-            "Import and export require an unscoped runtime administrator".to_string(),
+            "This operation requires an unscoped runtime administrator".to_string(),
         ));
     }
 
@@ -105,7 +104,7 @@ where
         Ok(())
     } else {
         Err(ApiError::Forbidden(
-            "Import and export require an unscoped runtime administrator".to_string(),
+            "This operation requires an unscoped runtime administrator".to_string(),
         ))
     }
 }

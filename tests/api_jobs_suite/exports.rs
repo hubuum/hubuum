@@ -10,19 +10,20 @@ mod tests {
 
     use crate::db::traits::task::{TaskBackend, TaskStateUpdate, purge_expired_export_outputs};
     use crate::models::{
-        ExportContentType, ExportJsonResponse, ExportRelationContext, ExportRequest, ExportScope,
-        ExportScopeKind, ExportTemplateKind, HubuumClass, HubuumClassRelation,
-        HubuumObjectRelation, NewExportTaskOutputRecord, NewExportTemplate, NewHubuumClass,
-        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewTaskEventRecord,
-        NewTaskRecord, Permissions, TaskEventResponse, TaskID, TaskKind, TaskResponse,
-        TaskResultCounts, TaskStatus, UpdateExportTemplate,
+        CollectionID, ExportContentType, ExportJsonResponse, ExportRelationContext, ExportRequest,
+        ExportScope, ExportScopeKind, ExportTemplate, ExportTemplateKind, HubuumClass,
+        HubuumClassRelation, HubuumObjectRelation, NewExportTaskOutputRecord, NewExportTemplate,
+        NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
+        NewTaskEventRecord, NewTaskRecord, Permissions, TaskEventResponse, TaskID, TaskKind,
+        TaskResponse, TaskResultCounts, TaskStatus, TokenResourceScope, UpdateExportTemplate,
     };
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
         TestContext, TestMutex, cleanup_test_classes as cleanup, create_test_classes,
         create_test_group, create_test_service_account, create_test_user, ensure_admin_group,
-        lock_test_mutex, scoped_token, service_account_token, test_context, test_mutex,
+        lock_test_mutex, resource_scoped_token, scoped_token, service_account_token, test_context,
+        test_mutex,
     };
     use crate::traits::{CanSave, CanUpdate};
     const EXPORTS_ENDPOINT: &str = "/api/v1/exports";
@@ -34,23 +35,23 @@ mod tests {
     static EXPIRED_OUTPUT_PURGE_LOCK: TestMutex = test_mutex();
 
     #[derive(Clone, Copy)]
-    enum UnauthorizedExportCaller {
+    enum ExportCaller {
         NonAdmin,
         ScopedAdmin,
     }
 
     #[rstest]
-    #[case::non_admin(UnauthorizedExportCaller::NonAdmin)]
-    #[case::scoped_admin(UnauthorizedExportCaller::ScopedAdmin)]
+    #[case::non_admin(ExportCaller::NonAdmin)]
+    #[case::scoped_admin(ExportCaller::ScopedAdmin)]
     #[actix_web::test]
-    async fn test_export_requires_unscoped_runtime_admin(
+    async fn test_export_submission_accepts_normal_and_scoped_callers(
         #[future(awt)] test_context: TestContext,
-        #[case] caller: UnauthorizedExportCaller,
+        #[case] caller: ExportCaller,
     ) {
         let context = test_context;
         let token = match caller {
-            UnauthorizedExportCaller::NonAdmin => context.normal_token.clone(),
-            UnauthorizedExportCaller::ScopedAdmin => {
+            ExportCaller::NonAdmin => context.normal_token.clone(),
+            ExportCaller::ScopedAdmin => {
                 scoped_token(
                     &context.pool,
                     context.admin_user.id,
@@ -63,8 +64,67 @@ mod tests {
 
         let resp =
             post_request_with_headers(&context.pool, &token, EXPORTS_ENDPOINT, &body, vec![]).await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let completed =
+            wait_for_task_with_token(&context.pool, &token, task.id, &[TaskStatus::Succeeded])
+                .await;
+        assert_eq!(completed.status, TaskStatus::Succeeded);
+    }
 
-        assert_response_status(resp, StatusCode::FORBIDDEN).await;
+    #[rstest]
+    #[actix_web::test]
+    async fn test_export_worker_enforces_persisted_resource_scope(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let visible = context.collection_fixture("scoped_export_visible").await;
+        let hidden = context.collection_fixture("scoped_export_hidden").await;
+        for fixture in [&visible, &hidden] {
+            fixture
+                .owner_group
+                .add_member_without_events(&context.pool, &context.normal_user)
+                .await
+                .unwrap();
+        }
+        let token = resource_scoped_token(
+            &context.pool,
+            context.normal_user.id,
+            vec![TokenResourceScope::Collection(
+                CollectionID::new(visible.collection.id).unwrap(),
+            )],
+        )
+        .await;
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &token,
+            EXPORTS_ENDPOINT,
+            &collection_export_request(),
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let completed =
+            wait_for_task_with_token(&context.pool, &token, task.id, &[TaskStatus::Succeeded])
+                .await;
+        assert_eq!(completed.status, TaskStatus::Succeeded);
+
+        let output = get_request(
+            &context.pool,
+            &token,
+            &format!("/api/v1/exports/{}/output", task.id),
+        )
+        .await;
+        let output = assert_response_status(output, StatusCode::OK).await;
+        let output: ExportJsonResponse = test::read_body_json(output).await;
+        let exported_ids = output
+            .items
+            .iter()
+            .filter_map(|item| item["id"].as_i64())
+            .collect::<Vec<_>>();
+        assert_eq!(exported_ids, vec![i64::from(visible.collection.id)]);
     }
 
     #[rstest]
@@ -151,14 +211,24 @@ mod tests {
         task_id: i32,
         expected_terminal_statuses: &[TaskStatus],
     ) -> TaskResponse {
+        wait_for_task_with_token(
+            &context.pool,
+            &context.admin_token,
+            task_id,
+            expected_terminal_statuses,
+        )
+        .await
+    }
+
+    async fn wait_for_task_with_token(
+        pool: &crate::db::DbPool,
+        token: &str,
+        task_id: i32,
+        expected_terminal_statuses: &[TaskStatus],
+    ) -> TaskResponse {
         let mut last_task = None;
         for _ in 0..50 {
-            let resp = get_request(
-                &context.pool,
-                &context.admin_token,
-                &format!("/api/v1/tasks/{task_id}"),
-            )
-            .await;
+            let resp = get_request(pool, token, &format!("/api/v1/tasks/{task_id}")).await;
             let resp = assert_response_status(resp, StatusCode::OK).await;
             let task: TaskResponse = test::read_body_json(resp).await;
             if matches!(
@@ -1193,30 +1263,102 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn test_template_export_requires_runtime_admin_before_task_creation(
+    async fn test_normal_user_runs_template_export_with_collection_permissions(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
         let classes = create_test_classes(&context, "export_template_permission").await;
         let class = classes[0].clone();
-        let template_id = create_template(
+        classes
+            .collection
+            .owner_group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+        let objects = create_export_objects(&context.pool, &class).await;
+        let template = NewExportTemplate {
+            collection_id: class.collection_id,
+            name: "normal-user-template".to_string(),
+            description: "normal user export template".to_string(),
+            content_type: ExportContentType::TextPlain,
+            template: "{{ items|length }}".to_string(),
+            kind: ExportTemplateKind::Export,
+            scope_kind: Some(ExportScopeKind::ObjectsInClass),
+            class_id: Some(class.id),
+            default_query: None,
+            include: None,
+            relation_context: None,
+            default_missing_data_policy: None,
+            default_limits: None,
+        };
+        let create = post_request_with_headers(
             &context.pool,
-            class.collection_id,
-            class.id,
-            ExportScopeKind::ObjectsInClass,
-            "restricted-template",
-            ExportContentType::TextPlain,
-            "{{ items|length }}",
+            &context.normal_token,
+            "/api/v1/export-templates",
+            &template,
+            vec![],
         )
         .await;
+        let create = assert_response_status(create, StatusCode::CREATED).await;
+        let template: ExportTemplate = test::read_body_json(create).await;
 
         let body = serde_json::json!({});
 
         let resp = post_request_with_headers(
             &context.pool,
             &context.normal_token,
-            &format!("/api/v1/export-templates/{template_id}/exports"),
+            &format!("/api/v1/export-templates/{}/exports", template.id),
             &body,
+            vec![],
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let completed = wait_for_task_with_token(
+            &context.pool,
+            &context.normal_token,
+            task.id,
+            &[TaskStatus::Succeeded],
+        )
+        .await;
+        assert_eq!(completed.status, TaskStatus::Succeeded);
+
+        let output = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("/api/v1/exports/{}/output", task.id),
+        )
+        .await;
+        let output = assert_response_status(output, StatusCode::OK).await;
+        assert_eq!(test::read_body(output).await, objects.len().to_string());
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_template_export_requires_read_template_permission(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "export_template_read_permission").await;
+        let class = classes[0].clone();
+        let template_id = create_template(
+            &context.pool,
+            class.collection_id,
+            class.id,
+            ExportScopeKind::ObjectsInClass,
+            "unreadable-template",
+            ExportContentType::TextPlain,
+            "{{ items|length }}",
+        )
+        .await;
+
+        let resp = post_request_with_headers(
+            &context.pool,
+            &context.normal_token,
+            &format!("/api/v1/export-templates/{template_id}/exports"),
+            &serde_json::json!({}),
             vec![],
         )
         .await;

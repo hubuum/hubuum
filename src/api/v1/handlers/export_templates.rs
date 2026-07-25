@@ -26,7 +26,6 @@ use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{
     AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef, authorize_resources,
-    require_unscoped_runtime_admin,
 };
 use crate::tasks::{idempotency_key_from_headers, kick_task_worker};
 use crate::traits::{CanDelete, CanSave, CanUpdate, SelfAccessors};
@@ -242,12 +241,6 @@ pub async fn run_template_export(
     template_id: web::Path<ExportTemplateID>,
     run: web::Json<ExportTemplateRunRequest>,
 ) -> Result<impl Responder, ApiError> {
-    require_unscoped_runtime_admin(
-        &pool,
-        &requestor.principal,
-        requestor.token_meta.is_scoped(),
-    )
-    .await?;
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
     let run = run.into_inner();
@@ -260,11 +253,20 @@ pub async fn run_template_export(
 
     let template = template_id.instance(&pool).await?;
 
+    can!(
+        &pool,
+        user,
+        requestor.scopes(),
+        [Permissions::ReadTemplate],
+        &template
+    );
+
     let export = template.build_export_request(run)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
     let task = submit_export_task(
         &pool,
         user,
+        requestor.scopes(),
         Some(TokenID::new(requestor.token_meta.id)?),
         idempotency_key,
         export,
