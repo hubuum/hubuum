@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-07-25
+
 ### Added
 
 - Token-list responses now include each visible token's exact permission and

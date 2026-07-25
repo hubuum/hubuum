@@ -16,7 +16,7 @@ serde_json = "1"
 tracing = "0.1"
 
 [dev-dependencies]
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync"] }
 tokio-rustls = "0.26"
