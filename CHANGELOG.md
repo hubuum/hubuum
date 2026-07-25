@@ -30,6 +30,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (Rust API):** `PrincipalTokenMetadata` no longer implements
+  `From<PrincipalToken>` because exact scope metadata requires a database
+  lookup. Downstream callers must replace `PrincipalTokenMetadata::from(token)`
+  or `token.into()` with
+  `PrincipalTokenMetadata::load_for_tokens(&backend, &[token]).await?`.
 - **Breaking:** Before applying the task-provenance migration, stop
   old-version worker replicas and allow their bounded graceful shutdown to
   finish or fail active tasks. Old API replicas may stay online: legacy

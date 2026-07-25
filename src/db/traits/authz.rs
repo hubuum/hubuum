@@ -193,7 +193,7 @@ pub async fn load_token_scopes(pool: &DbPool, token_id: i32) -> Result<Vec<Permi
     raw.iter().map(|s| Permissions::from_string(s)).collect()
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct StoredTokenScopeRows {
     permissions: Vec<String>,
     collection_ids: Vec<i32>,
@@ -250,16 +250,21 @@ pub(crate) async fn load_token_scopes_for_tokens(
 ) -> Result<Vec<Option<TokenScope>>, ApiError> {
     use std::collections::HashMap;
 
-    let permission_token_ids = tokens
+    let mut permission_token_ids = tokens
         .iter()
         .filter(|token| token.permission_scoped)
         .map(|token| token.id)
         .collect::<Vec<_>>();
-    let resource_token_ids = tokens
+    permission_token_ids.sort_unstable();
+    permission_token_ids.dedup();
+
+    let mut resource_token_ids = tokens
         .iter()
         .filter(|token| token.resource_scoped)
         .map(|token| token.id)
         .collect::<Vec<_>>();
+    resource_token_ids.sort_unstable();
+    resource_token_ids.dedup();
 
     if permission_token_ids.is_empty() && resource_token_ids.is_empty() {
         return Ok(vec![None; tokens.len()]);
@@ -361,7 +366,8 @@ pub(crate) async fn load_token_scopes_for_tokens(
                 return Ok(None);
             }
             rows_by_token
-                .remove(&token.id)
+                .get(&token.id)
+                .cloned()
                 .unwrap_or_default()
                 .into_scope(token)
                 .map(Some)

@@ -142,6 +142,11 @@ pub struct PrincipalTokenMetadata {
 }
 
 impl PrincipalTokenMetadata {
+    /// Load exact scope metadata for every supplied token in a bounded number
+    /// of database queries.
+    ///
+    /// The result preserves the input length and order, including repeated
+    /// token rows.
     pub async fn load_for_tokens<C>(
         backend: &C,
         tokens: &[PrincipalToken],

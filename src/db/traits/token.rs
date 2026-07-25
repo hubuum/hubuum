@@ -1,5 +1,6 @@
 use crate::db::prelude::*;
 
+use crate::db::traits::authz::load_token_scopes_for_tokens;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
@@ -45,7 +46,7 @@ pub(crate) async fn principal_token_metadata_db(
     pool: &DbPool,
     tokens: &[PrincipalToken],
 ) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
-    let scopes = crate::db::traits::authz::load_token_scopes_for_tokens(pool, tokens).await?;
+    let scopes = load_token_scopes_for_tokens(pool, tokens).await?;
     tokens
         .iter()
         .zip(scopes)

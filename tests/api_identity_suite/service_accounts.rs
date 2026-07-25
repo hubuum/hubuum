@@ -1763,6 +1763,35 @@ mod tests {
         );
     }
 
+    #[actix_web::test]
+    async fn test_token_metadata_loader_preserves_scopes_for_duplicate_tokens() {
+        let context = TestContext::new().await;
+        let raw = scoped_token(
+            &context.pool,
+            context.normal_user.id,
+            &[Permissions::ReadCollection],
+        )
+        .await;
+        let token = Token(raw).is_valid(&context.pool).await.unwrap();
+        let duplicate_tokens = [token.clone(), token];
+
+        let metadata = PrincipalTokenMetadata::load_for_tokens(&context.pool, &duplicate_tokens)
+            .await
+            .unwrap();
+        let scopes = metadata
+            .into_iter()
+            .map(|token| token.scopes)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            scopes,
+            vec![
+                Some(vec![Permissions::ReadCollection]),
+                Some(vec![Permissions::ReadCollection])
+            ]
+        );
+    }
+
     /// #29: the principal-shaped collection effective-permission route works for a
     /// service-account principal (it has perms via its owner group).
     #[actix_web::test]
