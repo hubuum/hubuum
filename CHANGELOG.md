@@ -9,6 +9,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Token-list responses now include each visible token's exact permission and
+  resource scope dimensions instead of exposing only a combined `scoped`
+  boolean.
 - Added durable task provenance across audit events, task lifecycle history,
   temporal resource history, event subscriptions, and all event sinks. Worker
   and system actions now retain the root task initiator and task ID, API and

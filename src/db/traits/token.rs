@@ -6,7 +6,7 @@ use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::principal::PrincipalKind;
 use crate::models::{
     Permissions, PrincipalID, PrincipalToken, PrincipalTokenCreateParts,
-    PrincipalTokenCreateRequest, Token, TokenScope,
+    PrincipalTokenCreateRequest, PrincipalTokenMetadata, Token, TokenScope,
 };
 use crate::schema::{
     principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
@@ -39,6 +39,18 @@ struct NewTokenClassScope {
 struct NewTokenObjectScope {
     token_id: i32,
     object_id: i32,
+}
+
+pub(crate) async fn principal_token_metadata_db(
+    pool: &DbPool,
+    tokens: &[PrincipalToken],
+) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
+    let scopes = crate::db::traits::authz::load_token_scopes_for_tokens(pool, tokens).await?;
+    tokens
+        .iter()
+        .zip(scopes)
+        .map(|(token, scope)| PrincipalTokenMetadata::from_token_and_scope(token, scope))
+        .collect()
 }
 
 fn token_snapshot(token: &PrincipalToken) -> serde_json::Value {

@@ -24340,7 +24340,7 @@
       },
       "PrincipalTokenMetadata": {
         "type": "object",
-        "description": "Public, hash-free projection of a token for listing.",
+        "description": "Public, hash-free projection of a token for listing, including its exact\npermission and resource scope dimensions.",
         "required": [
           "id",
           "principal_id",
@@ -24386,6 +24386,16 @@
             "type": "integer",
             "format": "int32"
           },
+          "resource_scopes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/TokenResourceScope"
+            },
+            "description": "Collection, class, and object boundary. `None` leaves this dimension\nunrestricted."
+          },
           "revoked_at": {
             "type": [
               "string",
@@ -24394,7 +24404,18 @@
             "format": "date-time"
           },
           "scoped": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether either scope dimension narrows this token."
+          },
+          "scopes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Permissions"
+            },
+            "description": "Permission boundary. `None` leaves this dimension unrestricted."
           }
         }
       },

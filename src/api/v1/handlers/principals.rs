@@ -20,7 +20,7 @@ use crate::models::{
     Group, GroupResponse, Permissions, PrincipalID, PrincipalToken, PrincipalTokenCreateRequest,
     PrincipalTokenMetadata, TokenID, TokenResourceScope, TokenScope,
 };
-use crate::pagination::prepare_db_pagination;
+use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::traits::{AuthzSubject, GroupAccessors};
 use std::collections::BTreeMap;
 
@@ -229,13 +229,16 @@ pub async fn list_tokens(
     let (tokens, total_count) = pid
         .tokens_paginated_with_total_count(&pool, &search_params)
         .await?;
+    let page = finalize_page(tokens, &params)?;
+    let metadata = PrincipalTokenMetadata::load_for_tokens(&pool, &page.items).await?;
 
-    ApiResponse::mapped_paginated(tokens, total_count, &params, |tokens| {
-        tokens
-            .into_iter()
-            .map(PrincipalTokenMetadata::from)
-            .collect()
-    })
+    Ok(ApiResponse::paginated_items(
+        metadata,
+        &page.next_cursor,
+        total_count,
+        effective_page_limit(&params)?,
+        false,
+    ))
 }
 
 #[utoipa::path(

@@ -11,7 +11,7 @@ use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{PrincipalID, TokenScope};
+use crate::models::{Permissions, PrincipalID, TokenResourceScope, TokenScope};
 use crate::schema::tokens;
 use crate::traits::{
     BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -120,7 +120,8 @@ impl PrincipalTokenCreateRequest {
     }
 }
 
-/// Public, hash-free projection of a token for listing.
+/// Public, hash-free projection of a token for listing, including its exact
+/// permission and resource scope dimensions.
 #[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct PrincipalTokenMetadata {
     pub id: i32,
@@ -131,23 +132,64 @@ pub struct PrincipalTokenMetadata {
     pub expires_at: Option<NaiveDateTime>,
     pub last_used_at: Option<NaiveDateTime>,
     pub revoked_at: Option<NaiveDateTime>,
+    /// Whether either scope dimension narrows this token.
     pub scoped: bool,
+    /// Permission boundary. `None` leaves this dimension unrestricted.
+    pub scopes: Option<Vec<Permissions>>,
+    /// Collection, class, and object boundary. `None` leaves this dimension
+    /// unrestricted.
+    pub resource_scopes: Option<Vec<TokenResourceScope>>,
 }
 
-impl From<PrincipalToken> for PrincipalTokenMetadata {
-    fn from(value: PrincipalToken) -> Self {
+impl PrincipalTokenMetadata {
+    pub async fn load_for_tokens<C>(
+        backend: &C,
+        tokens: &[PrincipalToken],
+    ) -> Result<Vec<Self>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        crate::db::traits::token::principal_token_metadata_db(backend.db_pool(), tokens).await
+    }
+
+    pub(crate) fn from_token_and_scope(
+        value: &PrincipalToken,
+        scope: Option<TokenScope>,
+    ) -> Result<Self, ApiError> {
         let scoped = value.is_scoped();
-        Self {
+        let (scopes, resource_scopes) = match (scoped, scope) {
+            (false, None) => (None, None),
+            (true, Some(scope)) => {
+                let parts = scope.into_parts()?;
+                (parts.permissions, parts.resource_scopes)
+            }
+            (false, Some(_)) => {
+                return Err(ApiError::InternalServerError(format!(
+                    "Unscoped token {} has stored scope rows",
+                    value.id
+                )));
+            }
+            (true, None) => {
+                return Err(ApiError::InternalServerError(format!(
+                    "Scoped token {} has no stored scope",
+                    value.id
+                )));
+            }
+        };
+
+        Ok(Self {
             id: value.id,
             principal_id: value.principal_id,
-            name: value.name,
-            description: value.description,
+            name: value.name.clone(),
+            description: value.description.clone(),
             issued: value.issued,
             expires_at: value.expires_at,
             last_used_at: value.last_used_at,
             revoked_at: value.revoked_at,
             scoped,
-        }
+            scopes,
+            resource_scopes,
+        })
     }
 }
 

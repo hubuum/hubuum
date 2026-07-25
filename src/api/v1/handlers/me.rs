@@ -14,9 +14,9 @@ use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     Group, GroupResponse, Permissions, PrincipalID, PrincipalMemberResponse, PrincipalSettings,
-    PrincipalToken, TokenResourceScope,
+    PrincipalToken, PrincipalTokenMetadata, TokenResourceScope,
 };
-use crate::pagination::prepare_db_pagination;
+use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::traits::GroupAccessors;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
@@ -123,13 +123,16 @@ pub async fn list_my_tokens(
         .user
         .tokens_paginated_with_total_count(&pool, &search_params)
         .await?;
+    let page = finalize_page(tokens, &params)?;
+    let metadata = PrincipalTokenMetadata::load_for_tokens(&pool, &page.items).await?;
 
-    ApiResponse::mapped_paginated(tokens, total_count, &params, |tokens| {
-        tokens
-            .into_iter()
-            .map(crate::models::PrincipalTokenMetadata::from)
-            .collect()
-    })
+    Ok(ApiResponse::paginated_items(
+        metadata,
+        &page.next_cursor,
+        total_count,
+        effective_page_limit(&params)?,
+        false,
+    ))
 }
 
 #[utoipa::path(

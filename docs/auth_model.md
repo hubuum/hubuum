@@ -120,6 +120,8 @@ hash — the raw token is shown exactly once, at creation.
 | `last_used_at` | Advanced on every successful validation |
 | `revoked_at` | Soft-revoke marker (the row is retained) |
 | `scoped` | Whether the token is scope-limited (see [Scopes](#scopes)) |
+| `scopes` | Optional permission-scope dimension; `null` means unrestricted |
+| `resource_scopes` | Optional collection/class/object scope dimension; `null` means unrestricted |
 
 ### Validation
 
@@ -305,7 +307,8 @@ serves both kinds:
 
 Mint accepts `name`, `description`, `expires_at`, permission `scopes`, and
 `resource_scopes`. `GET /api/v1/iam/me` returns both dimensions for the current
-token; token-list metadata continues to expose the combined `scoped` boolean.
+token. Both token-list endpoints return the same two dimensions for every visible
+token in addition to the combined `scoped` boolean.
 
 Two safety properties worth calling out:
 

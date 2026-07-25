@@ -1708,6 +1708,61 @@ mod tests {
         );
     }
 
+    #[derive(Clone, Copy)]
+    enum TokenListRoute {
+        Me,
+        Principal,
+    }
+
+    #[rstest]
+    #[case::me(TokenListRoute::Me)]
+    #[case::principal(TokenListRoute::Principal)]
+    #[actix_web::test]
+    async fn test_token_lists_include_scope_dimensions(#[case] route: TokenListRoute) {
+        let context = TestContext::new().await;
+        let fixture = context.with_collection().await;
+        let token_name = context.scoped_name("visible-token-scopes");
+
+        let mint = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", context.normal_user.id),
+            &serde_json::json!({
+                "name": token_name,
+                "scopes": ["ReadCollection"],
+                "resource_scopes": [{
+                    "kind": "collection",
+                    "id": fixture.collection.id
+                }]
+            }),
+        )
+        .await;
+        let _ = assert_response_status(mint, StatusCode::CREATED).await;
+
+        let endpoint = match route {
+            TokenListRoute::Me => format!("{ME_ENDPOINT}/tokens"),
+            TokenListRoute::Principal => {
+                format!("{PRINCIPALS_ENDPOINT}/{}/tokens", context.normal_user.id)
+            }
+        };
+        let response = get_request(&context.pool, &context.normal_token, &endpoint).await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let tokens: Vec<PrincipalTokenMetadata> = test::read_body_json(response).await;
+        let token = tokens
+            .iter()
+            .find(|token| token.name.as_deref() == Some(token_name.as_str()))
+            .expect("minted token should be visible");
+
+        assert!(token.scoped);
+        assert_eq!(token.scopes, Some(vec![Permissions::ReadCollection]));
+        assert_eq!(
+            token.resource_scopes,
+            Some(vec![TokenResourceScope::Collection(
+                CollectionID::new(fixture.collection.id).unwrap()
+            )])
+        );
+    }
+
     /// #29: the principal-shaped collection effective-permission route works for a
     /// service-account principal (it has perms via its owner group).
     #[actix_web::test]
