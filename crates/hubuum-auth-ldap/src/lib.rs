@@ -593,7 +593,8 @@ mod tests {
         let request = ExternalUserRefreshRequest::new(
             "alice*(admin)",
             "66a9137d-2c10-4cc0-948f-6f589a25f9d9",
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             provider.refresh_filter(&request),
@@ -616,7 +617,7 @@ mod tests {
             ]),
             bin_attrs: HashMap::new(),
         };
-        let request = ExternalUserRefreshRequest::new("alice", "expected-subject");
+        let request = ExternalUserRefreshRequest::new("alice", "expected-subject").unwrap();
 
         let error = provider
             .refreshed_user_from_entry(&request, &entry.dn, &entry)
@@ -644,7 +645,7 @@ mod tests {
             ]),
             bin_attrs: HashMap::new(),
         };
-        let request = ExternalUserRefreshRequest::new("alice", "stable-subject");
+        let request = ExternalUserRefreshRequest::new("alice", "stable-subject").unwrap();
 
         let refreshed = provider
             .refreshed_user_from_entry(&request, &entry.dn, &entry)

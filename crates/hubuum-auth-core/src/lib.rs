@@ -55,26 +55,71 @@ pub struct AuthenticatedExternalUser {
     pub groups: Vec<ExternalGroup>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ExternalUsername(String);
+
+impl ExternalUsername {
+    fn new(value: impl Into<String>) -> Result<Self, ExternalIdentityValueError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(ExternalIdentityValueError::EmptyUsername);
+        }
+        Ok(Self(value))
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ExternalSubject(String);
+
+impl ExternalSubject {
+    fn new(value: impl Into<String>) -> Result<Self, ExternalIdentityValueError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(ExternalIdentityValueError::EmptySubject);
+        }
+        Ok(Self(value))
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
+pub enum ExternalIdentityValueError {
+    #[error("external username must not be empty")]
+    EmptyUsername,
+    #[error("external subject must not be empty")]
+    EmptySubject,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalUserRefreshRequest {
-    username: String,
-    expected_subject: String,
+    username: ExternalUsername,
+    expected_subject: ExternalSubject,
 }
 
 impl ExternalUserRefreshRequest {
-    pub fn new(username: impl Into<String>, expected_subject: impl Into<String>) -> Self {
-        Self {
-            username: username.into(),
-            expected_subject: expected_subject.into(),
-        }
+    pub fn new(
+        username: impl Into<String>,
+        expected_subject: impl Into<String>,
+    ) -> Result<Self, ExternalIdentityValueError> {
+        Ok(Self {
+            username: ExternalUsername::new(username)?,
+            expected_subject: ExternalSubject::new(expected_subject)?,
+        })
     }
 
     pub fn username(&self) -> &str {
-        &self.username
+        self.username.as_str()
     }
 
     pub fn expected_subject(&self) -> &str {
-        &self.expected_subject
+        self.expected_subject.as_str()
     }
 }
 
@@ -103,4 +148,31 @@ pub trait ExternalIdentityProvider: Send + Sync {
         &self,
         request: &ExternalUserRefreshRequest,
     ) -> Result<AuthenticatedExternalUser, AuthProviderError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refresh_request_rejects_an_empty_username() {
+        let error = ExternalUserRefreshRequest::new("", "stable-subject").unwrap_err();
+
+        assert_eq!(error, ExternalIdentityValueError::EmptyUsername);
+    }
+
+    #[test]
+    fn refresh_request_rejects_an_empty_subject() {
+        let error = ExternalUserRefreshRequest::new("alice", "").unwrap_err();
+
+        assert_eq!(error, ExternalIdentityValueError::EmptySubject);
+    }
+
+    #[test]
+    fn refresh_request_exposes_validated_identity_values() {
+        let request = ExternalUserRefreshRequest::new("alice", "stable-subject").unwrap();
+
+        assert_eq!(request.username(), "alice");
+        assert_eq!(request.expected_subject(), "stable-subject");
+    }
 }
