@@ -7,7 +7,7 @@ use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::principal::PrincipalKind;
 use crate::models::{
     PrincipalToken, PrincipalTokenCreateParts, PrincipalTokenCreateRequest, PrincipalTokenMetadata,
-    Token, TokenScope,
+    Token, TokenLifetime, TokenScope,
 };
 use crate::schema::{
     principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
@@ -165,7 +165,7 @@ pub async fn revoke_token_by_id_for_principal_db(
 pub(crate) async fn create_principal_token_request_db(
     pool: &DbPool,
     request: PrincipalTokenCreateRequest,
-    default_lifetime_hours: i64,
+    default_lifetime: TokenLifetime,
     context: Option<&EventContext>,
 ) -> Result<(Token, PrincipalToken), ApiError> {
     let PrincipalTokenCreateParts {
@@ -266,7 +266,7 @@ pub(crate) async fn create_principal_token_request_db(
         >("COALESCE(")
         .bind::<diesel::sql_types::Nullable<diesel::sql_types::Timestamp>, _>(expires_at)
         .sql(", (statement_timestamp() AT TIME ZONE 'UTC') + (")
-        .bind::<diesel::sql_types::BigInt, _>(default_lifetime_hours)
+        .bind::<diesel::sql_types::BigInt, _>(default_lifetime.hours())
         .sql(" * INTERVAL '1 hour'))");
         let token = diesel::insert_into(tokens::table)
             .values((

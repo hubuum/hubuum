@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use utoipa::ToSchema;
 
-use crate::config::{DEFAULT_TOKEN_LIFETIME_HOURS, get_config, token_hash_key_bytes};
+use crate::config::{get_config, token_hash_key_bytes};
 use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{PrincipalID, TokenScope, TokenScopeDetails};
+use crate::models::{PrincipalID, TokenLifetime, TokenScope, TokenScopeDetails};
 use crate::schema::tokens;
 use crate::traits::{
     BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -123,11 +123,11 @@ impl PrincipalTokenCreateRequest {
     where
         C: BackendContext + ?Sized,
     {
-        let default_lifetime_hours = configured_default_token_lifetime_hours();
+        let default_lifetime = configured_token_lifetime()?;
         let (token, persisted) = crate::db::traits::token::create_principal_token_request_db(
             backend.db_pool(),
             self,
-            default_lifetime_hours,
+            default_lifetime,
             context,
         )
         .await?;
@@ -307,10 +307,8 @@ impl IssuedToken {
     }
 }
 
-pub(crate) fn configured_default_token_lifetime_hours() -> i64 {
-    get_config()
-        .map(|config| config.token_lifetime_hours)
-        .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS)
+pub(crate) fn configured_token_lifetime() -> Result<TokenLifetime, ApiError> {
+    TokenLifetime::from_hours(get_config()?.token_lifetime_hours)
 }
 
 impl Token {

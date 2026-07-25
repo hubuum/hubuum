@@ -3,15 +3,12 @@ use std::time::Duration;
 use actix_rt::time::sleep;
 use tracing::{error, info};
 
-use crate::config::{
-    DEFAULT_TOKEN_LIFETIME_HOURS, DEFAULT_TOKEN_RETENTION_DAYS,
-    DEFAULT_TOKEN_RETENTION_PURGE_BATCH_SIZE, DEFAULT_TOKEN_RETENTION_PURGE_ENABLED,
-    DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS, get_config,
-};
+use crate::config::get_config;
 use crate::db::DbPool;
-use crate::db::traits::token_retention::{TokenRetentionSettings, purge_expired_token_batch};
+use crate::db::traits::token_retention::purge_expired_token_batch;
 use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
+use crate::models::TokenRetentionSettings;
 use crate::restores::{MaintenanceActivityGuard, maintenance_state};
 
 static TOKEN_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
@@ -23,26 +20,13 @@ struct TokenRetentionWorkerConfig {
     interval: Duration,
 }
 
-fn configured_token_retention_worker() -> TokenRetentionWorkerConfig {
-    get_config()
-        .map(|config| TokenRetentionWorkerConfig {
-            enabled: config.token_retention_purge_enabled,
-            settings: TokenRetentionSettings {
-                retention_days: config.token_retention_days,
-                token_lifetime_hours: config.token_lifetime_hours,
-                batch_size: config.token_retention_purge_batch_size,
-            },
-            interval: Duration::from_secs(config.token_retention_purge_interval_seconds),
-        })
-        .unwrap_or(TokenRetentionWorkerConfig {
-            enabled: DEFAULT_TOKEN_RETENTION_PURGE_ENABLED,
-            settings: TokenRetentionSettings {
-                retention_days: DEFAULT_TOKEN_RETENTION_DAYS,
-                token_lifetime_hours: DEFAULT_TOKEN_LIFETIME_HOURS,
-                batch_size: DEFAULT_TOKEN_RETENTION_PURGE_BATCH_SIZE,
-            },
-            interval: Duration::from_secs(DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS),
-        })
+fn configured_token_retention_worker() -> Result<TokenRetentionWorkerConfig, ApiError> {
+    let config = get_config()?;
+    Ok(TokenRetentionWorkerConfig {
+        enabled: config.token_retention_purge_enabled,
+        settings: config.token_retention_settings()?,
+        interval: Duration::from_secs(config.token_retention_purge_interval_seconds),
+    })
 }
 
 pub async fn process_token_retention_batch(
@@ -99,9 +83,9 @@ fn spawn_token_retention_worker_loop(pool: DbPool, config: TokenRetentionWorkerC
     spawn_background_worker("token-retention-worker", move |shutdown| {
         info!(
             message = "Starting token retention worker loop",
-            retention_days = config.settings.retention_days,
-            token_lifetime_hours = config.settings.token_lifetime_hours,
-            batch_size = config.settings.batch_size,
+            retention_days = config.settings.retention_period().days(),
+            token_lifetime_hours = config.settings.token_lifetime().hours(),
+            batch_size = config.settings.batch_size().get(),
             interval = ?config.interval,
         );
         let system = actix_rt::System::new();
@@ -113,7 +97,16 @@ pub fn ensure_token_retention_worker_running(pool: DbPool) {
     if get_config().is_ok_and(|config| !config.runtime_role.runs_background_workers()) {
         return;
     }
-    let config = configured_token_retention_worker();
+    let config = match configured_token_retention_worker() {
+        Ok(config) => config,
+        Err(error) => {
+            error!(
+                message = "Token retention worker configuration is invalid",
+                error = %error
+            );
+            return;
+        }
+    };
     if !config.enabled {
         return;
     }
@@ -121,9 +114,9 @@ pub fn ensure_token_retention_worker_running(pool: DbPool) {
     TOKEN_RETENTION_WORKER.call_once(move || {
         info!(
             message = "Initializing token retention worker",
-            retention_days = config.settings.retention_days,
-            token_lifetime_hours = config.settings.token_lifetime_hours,
-            batch_size = config.settings.batch_size,
+            retention_days = config.settings.retention_period().days(),
+            token_lifetime_hours = config.settings.token_lifetime().hours(),
+            batch_size = config.settings.batch_size().get(),
             interval = ?config.interval,
         );
         spawn_token_retention_worker_loop(pool, config);

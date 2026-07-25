@@ -12,6 +12,7 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use crate::errors::ApiError;
+use crate::models::TokenRetentionSettings;
 
 mod client_network;
 mod defaults;
@@ -892,6 +893,14 @@ impl std::fmt::Debug for AppConfig {
 }
 
 impl AppConfig {
+    pub fn token_retention_settings(&self) -> Result<TokenRetentionSettings, ApiError> {
+        TokenRetentionSettings::builder()
+            .retention_days(self.token_retention_days)
+            .token_lifetime_hours(self.token_lifetime_hours)
+            .batch_size(self.token_retention_purge_batch_size)
+            .build()
+    }
+
     fn validate(self) -> Result<Self, ApiError> {
         if self.actix_workers == 0 {
             return Err(ApiError::BadRequest(
@@ -1137,35 +1146,12 @@ impl AppConfig {
             ));
         }
 
-        if self.token_lifetime_hours <= 0 {
-            return Err(ApiError::BadRequest(
-                "token_lifetime_hours must be greater than 0".to_string(),
-            ));
-        }
-        if self.token_lifetime_hours > i64::from(i32::MAX) {
-            return Err(ApiError::BadRequest(format!(
-                "token_lifetime_hours must not exceed {}",
-                i32::MAX
-            )));
-        }
-
-        if self.token_retention_days <= 0 {
-            return Err(ApiError::BadRequest(
-                "token_retention_days must be greater than 0".to_string(),
-            ));
-        }
+        self.token_retention_settings()?;
 
         if self.token_retention_purge_interval_seconds == 0 {
             return Err(ApiError::BadRequest(
                 "token_retention_purge_interval_seconds must be greater than 0".to_string(),
             ));
-        }
-
-        if self.token_retention_purge_batch_size < MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE {
-            return Err(ApiError::BadRequest(format!(
-                "token_retention_purge_batch_size must be at least \
-                 {MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE}"
-            )));
         }
 
         if self.login_rate_limit_max_attempts == 0 {
@@ -1330,20 +1316,6 @@ impl AppConfig {
 
         Ok(self)
     }
-}
-
-pub fn token_lifetime_hours_i32() -> i32 {
-    #[cfg(test)]
-    let hours = get_config_from_env()
-        .map(|config| config.token_lifetime_hours)
-        .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS);
-
-    #[cfg(not(test))]
-    let hours = get_config()
-        .map(|config| config.token_lifetime_hours)
-        .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS);
-
-    hours.clamp(1, i32::MAX as i64) as i32
 }
 
 pub fn max_transitive_depth() -> i32 {
