@@ -119,7 +119,6 @@ hash — the raw token is shown exactly once, at creation.
 | `expires_at` | Optional per-token expiry; **overrides** the global window |
 | `last_used_at` | Advanced on every successful validation |
 | `revoked_at` | Soft-revoke marker (the row is retained) |
-| `scoped` | Whether the token is scope-limited (see [Scopes](#scopes)) |
 | `scope` | Optional object containing the independent `permissions` and `resources` boundaries; `null` means unscoped |
 
 ### Validation
@@ -310,7 +309,8 @@ serves both kinds:
 Mint accepts `name`, `description`, `expires_at`, and an optional `scope` object
 containing `permissions` and `resources`. `GET /api/v1/iam/me` returns that scope
 object for the current token. Both token-list endpoints return the same object for
-every visible token in addition to the combined `scoped` boolean.
+every visible token; `scope: null` identifies an unscoped token without a redundant
+boolean.
 
 Two safety properties worth calling out:
 

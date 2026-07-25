@@ -40,14 +40,15 @@ use crate::models::collection::{NewCollectionWithAssignee, UpdateCollection, mov
 use crate::models::group::{NewGroup, UpdateGroup};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
 use crate::models::search::QueryOptions;
-use crate::models::token::{create_principal_token, revoke_token_by_id_for_principal};
+use crate::models::token::revoke_token_by_id_for_principal;
 use crate::models::{
     CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink as EventSinkModel,
     EventSinkID, EventSinkKind, EventSubscription, ExportContentType, ExportTemplateID,
     ExportTemplateKind, GroupID, HubuumClassRelationID, NewEventSink, NewEventSubscription,
     NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow,
-    NewUser, Permissions, PermissionsList, PrincipalToken, RemoteTargetID, Token,
-    UpdateExportTemplate, UpdateRemoteTargetRow, UpdateUser,
+    NewUser, Permissions, PermissionsList, PrincipalID, PrincipalToken,
+    PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID, UpdateExportTemplate,
+    UpdateRemoteTargetRow, UpdateUser,
 };
 use crate::schema::events::dsl::events;
 use crate::tests::{
@@ -1781,22 +1782,22 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
     .await
     .unwrap();
 
-    let raw = create_principal_token(
+    let raw = PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
+        .name(Some("automation".to_string()))
+        .description(Some("for event tests".to_string()))
+        .create(&scope.pool, Some(&context))
+        .await
+        .unwrap();
+    let token = token_by_raw_value(&scope, &raw).await;
+
+    let revoked = revoke_token_by_id_for_principal(
         &scope.pool,
-        user.id,
-        Some("automation"),
-        Some("for event tests"),
-        None,
-        None,
+        TokenID::new(token.id).unwrap(),
+        PrincipalID::new(user.id).unwrap(),
         Some(&context),
     )
     .await
     .unwrap();
-    let token = token_by_raw_value(&scope, &raw).await;
-
-    let revoked = revoke_token_by_id_for_principal(&scope.pool, token.id, user.id, Some(&context))
-        .await
-        .unwrap();
     assert_eq!(revoked, 1);
 
     let rows = events_for(&scope, "token", token.id).await;

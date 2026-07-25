@@ -174,11 +174,6 @@ impl<'a> TokenResourceScopeIds<'a> {
     }
 }
 
-pub(crate) struct TokenScopeParts {
-    pub(crate) permissions: Option<Vec<Permissions>>,
-    pub(crate) resources: Option<Vec<TokenResourceScope>>,
-}
-
 impl TokenScopeDetails {
     /// Build and validate a client-facing scope representation.
     pub fn new(
@@ -190,10 +185,13 @@ impl TokenScopeDetails {
 
     /// Build an API representation from a validated domain scope.
     pub fn from_scope(scope: TokenScope) -> Result<Self, ApiError> {
-        let parts = scope.into_parts()?;
+        let resources = scope
+            .resources
+            .map(|resources| resources.entries())
+            .transpose()?;
         Ok(Self {
-            permissions: parts.permissions,
-            resources: parts.resources,
+            permissions: scope.permissions,
+            resources,
         })
     }
 
@@ -216,10 +214,12 @@ impl TokenScopeDetails {
         })
     }
 
+    /// The optional permission boundary.
     pub fn permissions(&self) -> Option<&[Permissions]> {
         self.permissions.as_deref()
     }
 
+    /// The optional collection, class, and object boundary.
     pub fn resources(&self) -> Option<&[TokenResourceScope]> {
         self.resources.as_deref()
     }
@@ -318,7 +318,8 @@ impl TokenScope {
         self.resources.is_some()
     }
 
-    pub fn resource_scopes(&self) -> Result<Option<Vec<TokenResourceScope>>, ApiError> {
+    /// Return the normalized collection, class, and object boundary.
+    pub fn resources(&self) -> Result<Option<Vec<TokenResourceScope>>, ApiError> {
         self.resources
             .as_ref()
             .map(TokenResourceScopeSet::entries)
@@ -393,17 +394,6 @@ impl TokenScope {
             // collection/class/object resource hierarchy.
             ResourceKind::Task => true,
         }
-    }
-
-    pub(crate) fn into_parts(self) -> Result<TokenScopeParts, ApiError> {
-        let resources = self
-            .resources
-            .map(|resources| resources.entries())
-            .transpose()?;
-        Ok(TokenScopeParts {
-            permissions: self.permissions,
-            resources,
-        })
     }
 
     /// Persist this boundary for asynchronous execution. An absent dimension

@@ -537,7 +537,7 @@ mod tests {
         let tokens: Vec<crate::models::PrincipalTokenMetadata> = test::read_body_json(resp).await;
 
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].principal_id, test_user.id);
+        assert_eq!(tokens[0].principal_id.id(), test_user.id);
         assert!(next_cursor.is_some());
 
         let resp = get_request(
@@ -554,7 +554,7 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let tokens: Vec<crate::models::PrincipalTokenMetadata> = test::read_body_json(resp).await;
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].principal_id, test_user.id);
+        assert_eq!(tokens[0].principal_id.id(), test_user.id);
     }
 
     #[rstest]
@@ -592,7 +592,7 @@ mod tests {
         assert!(
             tokens
                 .iter()
-                .all(|token| token.principal_id == test_user.id)
+                .all(|token| token.principal_id.id() == test_user.id)
         );
     }
 
@@ -771,7 +771,7 @@ mod tests {
             .expect("matching token should exist in the database");
 
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].principal_id, user.id);
+        assert_eq!(tokens[0].principal_id.id(), user.id);
         assert_eq!(tokens[0].name.as_deref(), Some(matching_name.as_str()));
         assert_eq!(tokens[0].issued, expected_issued);
     }

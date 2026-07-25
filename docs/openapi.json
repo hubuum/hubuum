@@ -18134,10 +18134,10 @@
       },
       "CurrentTokenMetadata": {
         "type": "object",
+        "description": "Public metadata for the token authenticating the current request.",
         "required": [
           "id",
-          "issued",
-          "scoped"
+          "issued"
         ],
         "properties": {
           "description": {
@@ -18154,8 +18154,7 @@
             "format": "date-time"
           },
           "id": {
-            "type": "integer",
-            "format": "int32"
+            "$ref": "#/components/schemas/TokenID"
           },
           "issued": {
             "type": "string",
@@ -18180,12 +18179,10 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/TokenScopeDetails"
+                "$ref": "#/components/schemas/TokenScopeDetails",
+                "description": "Exact permission and resource boundaries. `None` means that this token\nis unscoped."
               }
             ]
-          },
-          "scoped": {
-            "type": "boolean"
           }
         }
       },
@@ -24197,6 +24194,11 @@
           }
         }
       },
+      "PrincipalID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Identifier wrapper for a [`Principal`]."
+      },
       "PrincipalKey": {
         "type": "object",
         "required": [
@@ -24327,8 +24329,7 @@
         "required": [
           "id",
           "principal_id",
-          "issued",
-          "scoped"
+          "issued"
         ],
         "properties": {
           "description": {
@@ -24345,8 +24346,7 @@
             "format": "date-time"
           },
           "id": {
-            "type": "integer",
-            "format": "int32"
+            "$ref": "#/components/schemas/TokenID"
           },
           "issued": {
             "type": "string",
@@ -24366,8 +24366,7 @@
             ]
           },
           "principal_id": {
-            "type": "integer",
-            "format": "int32"
+            "$ref": "#/components/schemas/PrincipalID"
           },
           "revoked_at": {
             "type": [
@@ -24386,10 +24385,6 @@
                 "description": "Exact permission and resource boundaries. `None` means that this token\nis unscoped."
               }
             ]
-          },
-          "scoped": {
-            "type": "boolean",
-            "description": "Whether either scope dimension narrows this token."
           }
         }
       },
@@ -25904,6 +25899,11 @@
             "$ref": "#/components/schemas/SecretStatus"
           }
         }
+      },
+      "TokenID": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Identifier wrapper for a [`PrincipalToken`]."
       },
       "TokenResourceScope": {
         "oneOf": [

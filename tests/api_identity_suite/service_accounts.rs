@@ -33,15 +33,15 @@ mod tests {
     use crate::models::Collection;
     use crate::models::collection::user_can_on_any;
     use crate::models::principal::{PrincipalKind, load_principal_by_id};
-    use crate::models::token::{Token, create_principal_token, create_principal_token_with_scope};
+    use crate::models::token::Token;
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
         CollectionID, GroupResponse, HubuumClassID, HubuumObject, HubuumObjectID,
         MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClassRelation, NewHubuumObject,
         NewHubuumObjectRelation, NewServiceAccount, NewTaskRecord, Permissions, PrincipalID,
-        PrincipalMemberResponse, PrincipalTokenMetadata, ServiceAccount, ServiceAccountID,
-        ServiceAccountResponse, TaskID, TaskKind, TaskRecord, TaskStatus, TokenResourceScope,
-        TokenScope,
+        PrincipalMemberResponse, PrincipalTokenCreateRequest, PrincipalTokenMetadata,
+        ServiceAccount, ServiceAccountID, ServiceAccountResponse, TaskID, TaskKind, TaskRecord,
+        TaskStatus, TokenResourceScope, TokenScope,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
     use crate::test_support::{
@@ -355,7 +355,9 @@ mod tests {
         let token = match offset_hours {
             Some(h) => {
                 let expiry = chrono::Utc::now().naive_utc() + chrono::Duration::hours(h);
-                create_principal_token(pool, user.id, None, None, Some(expiry), None, None)
+                PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
+                    .expires_at(Some(expiry))
+                    .create(pool, None)
                     .await
                     .unwrap()
             }
@@ -910,18 +912,12 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        let token = create_principal_token_with_scope(
-            &context.pool,
-            sa.id,
-            None,
-            None,
-            None,
-            Some(&scope),
-            None,
-        )
-        .await
-        .unwrap()
-        .get_token();
+        let token = PrincipalTokenCreateRequest::new(PrincipalID::new(sa.id).unwrap())
+            .scope(Some(scope))
+            .create(&context.pool, None)
+            .await
+            .unwrap()
+            .get_token();
         let endpoint = match target {
             CombinedScopeTarget::PermissionAndResourceMatch => {
                 format!("{COLLECTIONS_ENDPOINT}/{collection_id}")
@@ -1628,17 +1624,30 @@ mod tests {
 
         let resp = get_request(pool, &token, ME_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let body: MeResponse = test::read_body_json(resp).await;
+        let raw: serde_json::Value = test::read_body_json(resp).await;
+        assert!(raw["token"].get("scoped").is_none());
+        let body: MeResponse = serde_json::from_value(raw).unwrap();
 
         assert_eq!(body.principal.principal_id, sa.id);
         assert_eq!(body.principal.kind, "service_account");
-        assert!(body.token.scoped);
         let scope = body.token.scope.expect("token should expose its scope");
         assert_eq!(
             scope.permissions(),
             Some([Permissions::ReadCollection].as_slice())
         );
         assert_eq!(scope.resources(), None);
+    }
+
+    #[actix_web::test]
+    async fn test_me_route_reports_null_scope_for_unscoped_token() {
+        let context = TestContext::new().await;
+
+        let response = get_request(&context.pool, &context.normal_token, ME_ENDPOINT).await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let body: serde_json::Value = test::read_body_json(response).await;
+
+        assert!(body["token"]["scope"].is_null());
+        assert!(body["token"].get("scoped").is_none());
     }
 
     #[actix_web::test]
@@ -1674,7 +1683,6 @@ mod tests {
         let me = assert_response_status(me, StatusCode::OK).await;
         let body: MeResponse = test::read_body_json(me).await;
 
-        assert!(body.token.scoped);
         let scope = body.token.scope.expect("token should expose its scope");
         assert_eq!(scope.permissions(), None);
         assert_eq!(
@@ -1762,7 +1770,7 @@ mod tests {
         assert!(
             tokens
                 .iter()
-                .all(|token| token.principal_id == context.normal_user.id)
+                .all(|token| token.principal_id.id() == context.normal_user.id)
         );
         assert!(
             !tokens.is_empty(),
@@ -1811,13 +1819,24 @@ mod tests {
         };
         let response = get_request(&context.pool, &context.normal_token, &endpoint).await;
         let response = assert_response_status(response, StatusCode::OK).await;
-        let tokens: Vec<PrincipalTokenMetadata> = test::read_body_json(response).await;
+        let raw_tokens: Vec<serde_json::Value> = test::read_body_json(response).await;
+        let raw_token = raw_tokens
+            .iter()
+            .find(|token| token["name"].as_str() == Some(token_name.as_str()))
+            .expect("minted token should be visible");
+        assert!(raw_token.get("scoped").is_none());
+        assert!(raw_token.get("scopes").is_none());
+        assert!(raw_token.get("resource_scopes").is_none());
+        let tokens = raw_tokens
+            .into_iter()
+            .map(serde_json::from_value)
+            .collect::<Result<Vec<PrincipalTokenMetadata>, _>>()
+            .unwrap();
         let token = tokens
             .iter()
             .find(|token| token.name.as_deref() == Some(token_name.as_str()))
             .expect("minted token should be visible");
 
-        assert!(token.scoped);
         let scope = token.scope.as_ref().expect("token should expose its scope");
         assert_eq!(
             scope.permissions(),

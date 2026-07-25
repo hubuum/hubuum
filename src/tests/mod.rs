@@ -44,9 +44,11 @@ use crate::db::{init_pool, with_connection};
 use crate::errors::ApiError;
 use crate::models::collection::{Collection, NewCollectionWithAssignee};
 use crate::models::group::{Group, NewGroup};
-use crate::models::token::{create_principal_token, create_principal_token_with_scope};
 use crate::models::user::{NewUser, User};
-use crate::models::{HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject};
+use crate::models::{
+    HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject, PrincipalID,
+    PrincipalTokenCreateRequest, TokenScope,
+};
 
 use crate::utilities::auth::{generate_random_password, hash_password};
 
@@ -581,12 +583,19 @@ pub async fn create_test_service_account(
 pub async fn scoped_token(
     pool: &DbPool,
     principal_id: i32,
-    scopes: &[crate::models::Permissions],
+    permissions: &[crate::models::Permissions],
 ) -> String {
-    create_principal_token(pool, principal_id, None, None, None, Some(scopes), None)
-        .await
-        .expect("failed to mint scoped token")
-        .get_token()
+    let scope = TokenScope::from_request_parts(Some(permissions.to_vec()), None)
+        .expect("valid permission token scope")
+        .expect("permission token scope is present");
+    PrincipalTokenCreateRequest::new(
+        PrincipalID::new(principal_id).expect("valid persisted principal id"),
+    )
+    .scope(Some(scope))
+    .create(pool, None)
+    .await
+    .expect("failed to mint scoped token")
+    .get_token()
 }
 
 /// Mint a token narrowed to the supplied collection, class, or object entries.
@@ -598,21 +607,33 @@ pub async fn resource_scoped_token(
     let scope = crate::models::TokenScope::from_request_parts(None, Some(resource_scopes))
         .expect("valid resource token scope")
         .expect("resource token scope is present");
-    create_principal_token_with_scope(pool, principal_id, None, None, None, Some(&scope), None)
-        .await
-        .expect("failed to mint resource-scoped token")
-        .get_token()
+    PrincipalTokenCreateRequest::new(
+        PrincipalID::new(principal_id).expect("valid persisted principal id"),
+    )
+    .scope(Some(scope))
+    .create(pool, None)
+    .await
+    .expect("failed to mint resource-scoped token")
+    .get_token()
 }
 
-/// Mint a token for a service account with optional scopes and expiry; returns
-/// the raw token string.
+/// Mint a token for a service account with optional permission narrowing and
+/// expiry; returns the raw token string.
 pub async fn service_account_token(
     pool: &DbPool,
     sa: &crate::models::ServiceAccount,
-    scopes: Option<&[crate::models::Permissions]>,
+    permissions: Option<&[crate::models::Permissions]>,
     expires_at: Option<chrono::NaiveDateTime>,
 ) -> String {
-    create_principal_token(pool, sa.id, None, None, expires_at, scopes, None)
+    let scope = permissions.map(|permissions| {
+        TokenScope::from_request_parts(Some(permissions.to_vec()), None)
+            .expect("valid permission token scope")
+            .expect("permission token scope is present")
+    });
+    PrincipalTokenCreateRequest::new(PrincipalID::new(sa.id).expect("valid persisted principal id"))
+        .expires_at(expires_at)
+        .scope(scope)
+        .create(pool, None)
         .await
         .expect("failed to mint service account token")
         .get_token()

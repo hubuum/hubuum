@@ -93,6 +93,11 @@ impl PrincipalTokenCreateRequest {
         self.scope.is_some()
     }
 
+    /// Persist this token request and return its raw bearer value once.
+    ///
+    /// The token row and every scope row are written in one transaction. Scope
+    /// flags are stored on the token row before child rows are inserted, so a
+    /// partial failure cannot create an unrestricted credential.
     pub async fn create<C>(
         self,
         backend: &C,
@@ -124,16 +129,28 @@ impl PrincipalTokenCreateRequest {
 /// permission and resource scope dimensions.
 #[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 pub struct PrincipalTokenMetadata {
-    pub id: i32,
-    pub principal_id: i32,
+    pub id: TokenID,
+    pub principal_id: PrincipalID,
     pub name: Option<String>,
     pub description: Option<String>,
     pub issued: NaiveDateTime,
     pub expires_at: Option<NaiveDateTime>,
     pub last_used_at: Option<NaiveDateTime>,
     pub revoked_at: Option<NaiveDateTime>,
-    /// Whether either scope dimension narrows this token.
-    pub scoped: bool,
+    /// Exact permission and resource boundaries. `None` means that this token
+    /// is unscoped.
+    pub scope: Option<TokenScopeDetails>,
+}
+
+/// Public metadata for the token authenticating the current request.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CurrentTokenMetadata {
+    pub id: TokenID,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub issued: NaiveDateTime,
+    pub expires_at: Option<NaiveDateTime>,
+    pub last_used_at: Option<NaiveDateTime>,
     /// Exact permission and resource boundaries. `None` means that this token
     /// is unscoped.
     pub scope: Option<TokenScopeDetails>,
@@ -159,35 +176,34 @@ impl PrincipalTokenMetadata {
         value: &PrincipalToken,
         scope: Option<TokenScope>,
     ) -> Result<Self, ApiError> {
-        let scoped = value.is_scoped();
-        let scope = match (scoped, scope) {
-            (false, None) => None,
-            (true, Some(scope)) => Some(TokenScopeDetails::from_scope(scope)?),
-            (false, Some(_)) => {
-                return Err(ApiError::InternalServerError(format!(
-                    "Unscoped token {} has stored scope rows",
-                    value.id
-                )));
-            }
-            (true, None) => {
-                return Err(ApiError::InternalServerError(format!(
-                    "Scoped token {} has no stored scope",
-                    value.id
-                )));
-            }
-        };
-
         Ok(Self {
-            id: value.id,
-            principal_id: value.principal_id,
+            id: value.metadata_id()?,
+            principal_id: value.metadata_principal_id()?,
             name: value.name.clone(),
             description: value.description.clone(),
             issued: value.issued,
             expires_at: value.expires_at,
             last_used_at: value.last_used_at,
             revoked_at: value.revoked_at,
-            scoped,
-            scope,
+            scope: value.scope_details(scope)?,
+        })
+    }
+}
+
+impl CurrentTokenMetadata {
+    /// Project a validated persisted token and its loaded scope for `/iam/me`.
+    pub fn from_token_and_scope(
+        value: &PrincipalToken,
+        scope: Option<TokenScope>,
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
+            id: value.metadata_id()?,
+            name: value.name.clone(),
+            description: value.description.clone(),
+            issued: value.issued,
+            expires_at: value.expires_at,
+            last_used_at: value.last_used_at,
+            scope: value.scope_details(scope)?,
         })
     }
 }
@@ -195,6 +211,42 @@ impl PrincipalTokenMetadata {
 impl PrincipalToken {
     pub fn is_scoped(&self) -> bool {
         self.permission_scoped || self.resource_scoped
+    }
+
+    fn metadata_id(&self) -> Result<TokenID, ApiError> {
+        TokenID::new(self.id).map_err(|_| {
+            ApiError::InternalServerError(format!(
+                "Stored token has invalid identifier {}",
+                self.id
+            ))
+        })
+    }
+
+    fn metadata_principal_id(&self) -> Result<PrincipalID, ApiError> {
+        PrincipalID::new(self.principal_id).map_err(|_| {
+            ApiError::InternalServerError(format!(
+                "Stored token has invalid principal identifier {}",
+                self.principal_id
+            ))
+        })
+    }
+
+    fn scope_details(
+        &self,
+        scope: Option<TokenScope>,
+    ) -> Result<Option<TokenScopeDetails>, ApiError> {
+        match (self.is_scoped(), scope) {
+            (false, None) => Ok(None),
+            (true, Some(scope)) => TokenScopeDetails::from_scope(scope).map(Some),
+            (false, Some(_)) => Err(ApiError::InternalServerError(format!(
+                "Unscoped token {} has stored scope rows",
+                self.id
+            ))),
+            (true, None) => Err(ApiError::InternalServerError(format!(
+                "Scoped token {} has no stored scope",
+                self.id
+            ))),
+        }
     }
 }
 
@@ -249,24 +301,24 @@ impl Token {
 /// infrastructure paths such as cleanup and event-system tests.
 pub async fn revoke_token_by_id_for_principal_without_events<C>(
     backend: &C,
-    token_id: i32,
-    principal: i32,
+    token_id: TokenID,
+    principal_id: PrincipalID,
 ) -> Result<usize, ApiError>
 where
     C: BackendContext + ?Sized,
 {
     crate::db::traits::token::revoke_token_by_id_for_principal_without_events_db(
         backend.db_pool(),
-        token_id,
-        principal,
+        token_id.id(),
+        principal_id.id(),
     )
     .await
 }
 
 pub async fn revoke_token_by_id_for_principal<C>(
     backend: &C,
-    token_id: i32,
-    principal: i32,
+    token_id: TokenID,
+    principal_id: PrincipalID,
     context: Option<&EventContext>,
 ) -> Result<usize, ApiError>
 where
@@ -274,62 +326,8 @@ where
 {
     crate::db::traits::token::revoke_token_by_id_for_principal_db(
         backend.db_pool(),
-        token_id,
-        principal,
-        context,
-    )
-    .await
-}
-
-/// Create a named/expiring/optionally-scoped token for a principal and return
-/// the raw value (shown once). Fail-closed: `scoped` is set in the same insert
-/// as the token row, before the scope rows, so a mid-transaction failure can
-/// never leave a `scoped = false` (full-authority) token with missing scopes.
-pub async fn create_principal_token<C>(
-    backend: &C,
-    principal: i32,
-    name: Option<&str>,
-    description: Option<&str>,
-    expires_at: Option<chrono::NaiveDateTime>,
-    scopes: Option<&[crate::models::Permissions]>,
-    context: Option<&EventContext>,
-) -> Result<Token, ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    crate::db::traits::token::create_principal_token_db(
-        backend.db_pool(),
-        principal,
-        name,
-        description,
-        expires_at,
-        scopes,
-        context,
-    )
-    .await
-}
-
-/// Create a token with independent permission and resource narrowing
-/// dimensions. `None` creates an unscoped token.
-pub async fn create_principal_token_with_scope<C>(
-    backend: &C,
-    principal: i32,
-    name: Option<&str>,
-    description: Option<&str>,
-    expires_at: Option<chrono::NaiveDateTime>,
-    scope: Option<&TokenScope>,
-    context: Option<&EventContext>,
-) -> Result<Token, ApiError>
-where
-    C: BackendContext + ?Sized,
-{
-    crate::db::traits::token::create_principal_token_with_scope_db(
-        backend.db_pool(),
-        principal,
-        name,
-        description,
-        expires_at,
-        scope,
+        token_id.id(),
+        principal_id.id(),
         context,
     )
     .await

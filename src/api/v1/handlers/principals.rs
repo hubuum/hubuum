@@ -270,8 +270,8 @@ pub async fn revoke_token(
     let event_context = requestor.event_context(&req);
     let revoked = revoke_token_by_id_for_principal(
         &pool,
-        path.token_id.id(),
-        principal.id,
+        path.token_id,
+        path.principal_id,
         Some(&event_context),
     )
     .await?;

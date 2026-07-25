@@ -14,10 +14,12 @@ use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     Group, GroupResponse, PrincipalID, PrincipalMemberResponse, PrincipalSettings, PrincipalToken,
-    PrincipalTokenMetadata, TokenScopeDetails,
+    PrincipalTokenMetadata,
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::traits::GroupAccessors;
+
+pub use crate::models::CurrentTokenMetadata;
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(get_me)
@@ -33,18 +35,6 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(put_my_settings)
         .service(patch_my_settings)
         .service(delete_my_settings);
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct CurrentTokenMetadata {
-    pub id: i32,
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub issued: chrono::NaiveDateTime,
-    pub expires_at: Option<chrono::NaiveDateTime>,
-    pub last_used_at: Option<chrono::NaiveDateTime>,
-    pub scoped: bool,
-    pub scope: Option<TokenScopeDetails>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -70,21 +60,7 @@ pub async fn get_me(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
-    let scoped = requestor.token_meta.is_scoped();
-    let scope = requestor
-        .scope
-        .map(TokenScopeDetails::from_scope)
-        .transpose()?;
-    let token = CurrentTokenMetadata {
-        id: requestor.token_meta.id,
-        name: requestor.token_meta.name,
-        description: requestor.token_meta.description,
-        issued: requestor.token_meta.issued,
-        expires_at: requestor.token_meta.expires_at,
-        last_used_at: requestor.token_meta.last_used_at,
-        scoped,
-        scope,
-    };
+    let token = CurrentTokenMetadata::from_token_and_scope(&requestor.token_meta, requestor.scope)?;
 
     Ok(ApiResponse::new(
         MeResponse {
