@@ -13,6 +13,29 @@ pub struct TokenRetentionSettings {
     pub batch_size: usize,
 }
 
+impl TokenRetentionSettings {
+    fn validate(self) -> Result<Self, ApiError> {
+        if self.retention_days <= 0 {
+            return Err(ApiError::BadRequest(
+                "token retention days must be greater than 0".to_string(),
+            ));
+        }
+        if self.token_lifetime_hours <= 0 {
+            return Err(ApiError::BadRequest(
+                "token lifetime hours must be greater than 0".to_string(),
+            ));
+        }
+        if self.batch_size < MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE {
+            return Err(ApiError::BadRequest(format!(
+                "token retention purge batch size must be at least \
+                 {MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE}"
+            )));
+        }
+
+        Ok(self)
+    }
+}
+
 const TOKEN_RETENTION_LOCK_KEY: i64 = 4_850_188_191_125_219;
 
 #[derive(Debug, QueryableByName)]
@@ -52,12 +75,7 @@ async fn purge_expired_token_batch_at(
     settings: TokenRetentionSettings,
     now: NaiveDateTime,
 ) -> Result<usize, ApiError> {
-    if settings.batch_size < MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE {
-        return Err(ApiError::BadRequest(format!(
-            "token retention purge batch size must be at least \
-             {MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE}"
-        )));
-    }
+    let settings = settings.validate()?;
 
     let retention = Duration::try_days(settings.retention_days).ok_or_else(|| {
         ApiError::BadRequest("token retention days are outside the supported range".to_string())
@@ -346,6 +364,49 @@ mod tests {
             error.to_string(),
             "token retention purge batch size must be at least 10"
         );
+    }
+
+    #[rstest]
+    #[case(
+        -1,
+        TEST_TOKEN_LIFETIME_HOURS,
+        "token retention days must be greater than 0"
+    )]
+    #[case(
+        0,
+        TEST_TOKEN_LIFETIME_HOURS,
+        "token retention days must be greater than 0"
+    )]
+    #[case(
+        TEST_RETENTION_DAYS,
+        -1,
+        "token lifetime hours must be greater than 0"
+    )]
+    #[case(TEST_RETENTION_DAYS, 0, "token lifetime hours must be greater than 0")]
+    #[tokio::test]
+    async fn purge_rejects_non_positive_durations_without_deleting_tokens(
+        #[case] retention_days: i64,
+        #[case] token_lifetime_hours: i64,
+        #[case] expected_error: &str,
+    ) {
+        let _lock = lock_test_mutex(&TOKEN_RETENTION_TEST_LOCK).await;
+        let pool = crate::tests::get_test_pool();
+        let user = create_test_user(&pool).await;
+        let now = Utc::now().naive_utc();
+        let token = create_token(&pool, user.id, Some(now + Duration::hours(12))).await;
+        let settings = TokenRetentionSettings {
+            retention_days,
+            token_lifetime_hours,
+            batch_size: MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE,
+        };
+
+        let error = purge_expired_token_batch_at(&pool, settings, now)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), expected_error);
+        assert!(token_exists(&pool, &token).await);
+        user.delete_user_record_without_events(&pool).await.unwrap();
     }
 
     #[tokio::test]
