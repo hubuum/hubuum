@@ -9,6 +9,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Token-list responses now include each visible token's exact permission and
+  resource scope dimensions in a shared `scope` object. A `null` scope
+  identifies an unscoped token.
 - Added durable task provenance across audit events, task lifecycle history,
   temporal resource history, event subscriptions, and all event sinks. Worker
   and system actions now retain the root task initiator and task ID, API and
@@ -27,6 +30,29 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (HTTP and Rust API):** Token-mint and token-metadata payloads now
+  use a singular `scope` object with optional `permissions` and `resources`
+  fields. Token-mint clients must replace top-level `scopes` and
+  `resource_scopes` with `scope.permissions` and `scope.resources`; legacy flat
+  fields are rejected with `400` to prevent accidentally minting an unscoped
+  token. Token metadata consumers must replace the flat `scopes` and
+  `resource_scopes` fields with `scope`, and must replace the redundant
+  `scoped` boolean with a null check on `scope`. Rust callers use
+  `TokenScopeDetails::permissions()` or `TokenScopeDetails::resources()`.
+- **Breaking (Rust API):** Token metadata identifiers now use `TokenID` and
+  `PrincipalID`; call `.id()` where a raw integer is required.
+  `TokenScope::resource_scopes()` is renamed to `TokenScope::resources()`.
+  The long-positional `create_principal_token`,
+  `create_principal_token_with_scope`, and corresponding `_db` helpers are
+  removed in favor of `PrincipalTokenCreateRequest`, and token revocation now
+  requires typed `TokenID` and `PrincipalID` arguments. Construct a request with
+  `PrincipalTokenCreateRequest::new(principal_id)`, set optional values through
+  its builder methods, and finish with `.create(&backend, context).await?`.
+- **Breaking (Rust API):** `PrincipalTokenMetadata` no longer implements
+  `From<PrincipalToken>` because exact scope metadata requires a database
+  lookup. Downstream callers must replace `PrincipalTokenMetadata::from(token)`
+  or `token.into()` with
+  `PrincipalTokenMetadata::load_for_tokens(&backend, &[token]).await?`.
 - **Breaking:** Before applying the task-provenance migration, stop
   old-version worker replicas and allow their bounded graceful shutdown to
   finish or fail active tasks. Old API replicas may stay online: legacy

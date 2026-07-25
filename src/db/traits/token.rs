@@ -1,12 +1,13 @@
 use crate::db::prelude::*;
 
+use crate::db::traits::authz::load_token_scopes_for_tokens;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::principal::PrincipalKind;
 use crate::models::{
-    Permissions, PrincipalID, PrincipalToken, PrincipalTokenCreateParts,
-    PrincipalTokenCreateRequest, Token, TokenScope,
+    PrincipalToken, PrincipalTokenCreateParts, PrincipalTokenCreateRequest, PrincipalTokenMetadata,
+    Token, TokenScope,
 };
 use crate::schema::{
     principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
@@ -39,6 +40,18 @@ struct NewTokenClassScope {
 struct NewTokenObjectScope {
     token_id: i32,
     object_id: i32,
+}
+
+pub(crate) async fn principal_token_metadata_db(
+    pool: &DbPool,
+    tokens: &[PrincipalToken],
+) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
+    let scopes = load_token_scopes_for_tokens(pool, tokens).await?;
+    tokens
+        .iter()
+        .zip(scopes)
+        .map(|(token, scope)| PrincipalTokenMetadata::from_token_and_scope(token, scope))
+        .collect()
 }
 
 fn token_snapshot(token: &PrincipalToken) -> serde_json::Value {
@@ -149,51 +162,6 @@ pub async fn revoke_token_by_id_for_principal_db(
     .await
 }
 
-/// Compatibility entry point for permission-only token creation. New callers
-/// should prefer [`PrincipalTokenCreateRequest`].
-pub async fn create_principal_token_db(
-    pool: &DbPool,
-    principal: i32,
-    name: Option<&str>,
-    description: Option<&str>,
-    expires_at: Option<chrono::NaiveDateTime>,
-    scopes: Option<&[Permissions]>,
-    context: Option<&EventContext>,
-) -> Result<Token, ApiError> {
-    let scope = scopes
-        .map(|permissions| TokenScope::from_stored_parts(Some(permissions.to_vec()), None))
-        .transpose()?;
-    create_principal_token_with_scope_db(
-        pool,
-        principal,
-        name,
-        description,
-        expires_at,
-        scope.as_ref(),
-        context,
-    )
-    .await
-}
-
-/// Compatibility entry point for callers that have not moved to the typed
-/// token creation request yet.
-pub async fn create_principal_token_with_scope_db(
-    pool: &DbPool,
-    principal: i32,
-    name: Option<&str>,
-    description: Option<&str>,
-    expires_at: Option<chrono::NaiveDateTime>,
-    scope: Option<&TokenScope>,
-    context: Option<&EventContext>,
-) -> Result<Token, ApiError> {
-    let request = PrincipalTokenCreateRequest::new(PrincipalID::new(principal)?)
-        .name(name.map(ToOwned::to_owned))
-        .description(description.map(ToOwned::to_owned))
-        .expires_at(expires_at)
-        .scope(scope.cloned());
-    create_principal_token_request_db(pool, request, context).await
-}
-
 pub(crate) async fn create_principal_token_request_db(
     pool: &DbPool,
     request: PrincipalTokenCreateRequest,
@@ -260,7 +228,7 @@ pub(crate) async fn create_principal_token_request_db(
                 .await?;
             if found != collection_scope_ids.len() as i64 {
                 return Err(ApiError::BadRequest(
-                    "resource_scopes contains an unknown collection id".to_string(),
+                    "scope.resources contains an unknown collection id".to_string(),
                 ));
             }
         }
@@ -272,7 +240,7 @@ pub(crate) async fn create_principal_token_request_db(
                 .await?;
             if found != class_scope_ids.len() as i64 {
                 return Err(ApiError::BadRequest(
-                    "resource_scopes contains an unknown class id".to_string(),
+                    "scope.resources contains an unknown class id".to_string(),
                 ));
             }
         }
@@ -284,7 +252,7 @@ pub(crate) async fn create_principal_token_request_db(
                 .await?;
             if found != object_scope_ids.len() as i64 {
                 return Err(ApiError::BadRequest(
-                    "resource_scopes contains an unknown object id".to_string(),
+                    "scope.resources contains an unknown object id".to_string(),
                 ));
             }
         }

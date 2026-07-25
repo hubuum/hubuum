@@ -119,7 +119,7 @@ hash — the raw token is shown exactly once, at creation.
 | `expires_at` | Optional per-token expiry; **overrides** the global window |
 | `last_used_at` | Advanced on every successful validation |
 | `revoked_at` | Soft-revoke marker (the row is retained) |
-| `scoped` | Whether the token is scope-limited (see [Scopes](#scopes)) |
+| `scope` | Optional object containing the independent `permissions` and `resources` boundaries; `null` means unscoped |
 
 ### Validation
 
@@ -149,9 +149,10 @@ authority, never widen it.
 
 > **Effective authority = principal/group grants ∩ permission scope ∩ resource scope**
 
-The `scopes` request field is the optional permission dimension. The
-`resource_scopes` field is the optional resource dimension. Omitting one dimension
-leaves that dimension unrestricted; omitting both creates an unscoped token.
+The singular `scope` request field contains optional `permissions` and `resources`
+dimensions. Omitting one nested dimension leaves it unrestricted. Omitting `scope`
+or sending it as `null` creates an unscoped token; a present scope object must
+contain at least one dimension.
 
 Scope semantics are **fail-closed**, with the persisted dimension flags as the
 source of truth rather than child-row presence:
@@ -162,8 +163,8 @@ source of truth rather than child-row presence:
 | Permission dimension present | Grants are intersected with its permission rows |
 | Resource dimension present | Grants are intersected with its resource rows |
 | A flagged dimension has **zero** rows | That dimension denies everything |
-| Request body `scopes: []` or `resource_scopes: []` | **Rejected with `400`** — an empty list is a client bug, not "grant nothing" |
-| More than 1,000 `resource_scopes` entries | **Rejected with `400`** — resource boundaries are bounded for persistence and per-request authorization work |
+| Request body `scope: { permissions: [] }` or `scope: { resources: [] }` | **Rejected with `400`** — an empty list is a client bug, not "grant nothing" |
+| More than 1,000 `scope.resources` entries | **Rejected with `400`** — resource boundaries are bounded for persistence and per-request authorization work |
 
 Enforcement details:
 
@@ -184,11 +185,13 @@ Each resource entry uses a tagged object:
 
 ```json
 {
-  "resource_scopes": [
-    { "kind": "collection", "id": 17 },
-    { "kind": "class", "id": 42 },
-    { "kind": "object", "id": 99 }
-  ]
+  "scope": {
+    "resources": [
+      { "kind": "collection", "id": 17 },
+      { "kind": "class", "id": 42 },
+      { "kind": "object", "id": 99 }
+    ]
+  }
 }
 ```
 
@@ -303,9 +306,11 @@ serves both kinds:
 | `GET /api/v1/collections/{collection_id}/permissions/effective/principal/{principal_id}` | Direct and inherited permission rows on a single collection for the principal's groups | collection read authority |
 | `POST` / `DELETE /api/v1/iam/groups/{group_id}/members/{principal_id}` | Add/remove a member (human or SA) | **admin only** |
 
-Mint accepts `name`, `description`, `expires_at`, permission `scopes`, and
-`resource_scopes`. `GET /api/v1/iam/me` returns both dimensions for the current
-token; token-list metadata continues to expose the combined `scoped` boolean.
+Mint accepts `name`, `description`, `expires_at`, and an optional `scope` object
+containing `permissions` and `resources`. `GET /api/v1/iam/me` returns that scope
+object for the current token. Both token-list endpoints return the same object for
+every visible token; `scope: null` identifies an unscoped token without a redundant
+boolean.
 
 Two safety properties worth calling out:
 
