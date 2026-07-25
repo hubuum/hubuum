@@ -2,14 +2,14 @@ use crate::db::prelude::*;
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use utoipa::ToSchema;
 
 use crate::db::DbPool;
 use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
-use crate::events::Event;
+use crate::events::{Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance};
 use crate::models::BackupOutputLookup;
+use crate::models::principal::PrincipalID;
 use crate::models::search::{FilterField, SortParam};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::{backup_task_outputs, export_task_outputs, import_task_results, tasks};
@@ -186,6 +186,20 @@ pub struct TaskRecord {
     pub initiator_user_id: Option<i32>,
 }
 
+impl TaskRecord {
+    pub(crate) fn worker_provenance(&self) -> MutationProvenance {
+        MutationProvenance::worker(self.initiator_user_id, self.id)
+    }
+
+    pub(crate) fn system_provenance(&self) -> MutationProvenance {
+        MutationProvenance::system_for_task(self.initiator_user_id, self.id)
+    }
+
+    pub(crate) fn user_provenance(&self, actor: PrincipalID) -> MutationProvenance {
+        MutationProvenance::user_for_task(actor.id(), self.initiator_user_id, self.id)
+    }
+}
+
 #[derive(Debug, Insertable)]
 #[diesel(table_name = tasks)]
 pub struct NewTaskRecord {
@@ -341,7 +355,7 @@ pub struct TaskEventResponse {
     pub message: String,
     pub data: Option<serde_json::Value>,
     pub created_at: NaiveDateTime,
-    pub provenance: crate::events::Provenance,
+    pub provenance: Provenance,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -572,22 +586,20 @@ impl TaskRecord {
 
 impl From<TaskEventRecord> for TaskEventResponse {
     fn from(value: TaskEventRecord) -> Self {
-        Self::from_record_with_names(value, &HashMap::new())
+        Self::from_record_with_names(value, &PrincipalNames::default())
     }
 }
 
 impl TaskEventResponse {
     pub(crate) fn from_record_with_names(
         value: TaskEventRecord,
-        principal_names: &HashMap<i32, String>,
+        principal_names: &PrincipalNames,
     ) -> Self {
-        let provenance = crate::events::provenance_from_parts(
-            Some(&value.actor_kind),
-            value.actor_user_id,
-            value.initiator_user_id,
-            value.provenance_task_id,
-            principal_names,
-        );
+        let provenance = StoredProvenance::from_actor_kind(Some(&value.actor_kind))
+            .with_actor_user_id(value.actor_user_id)
+            .with_initiator_user_id(value.initiator_user_id)
+            .with_task_id(value.provenance_task_id)
+            .resolve(principal_names);
         Self {
             id: value.id,
             task_id: value.task_id,

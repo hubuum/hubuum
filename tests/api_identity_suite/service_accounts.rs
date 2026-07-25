@@ -1924,7 +1924,7 @@ mod tests {
         synthetic_task(pool, sa.id, TaskStatus::Queued, Some(key.clone()), None).await;
 
         let lookup = if same_principal { sa.id } else { other.id };
-        let found = TaskRecord::find_by_idempotency(pool, lookup, &key)
+        let found = TaskRecord::find_by_idempotency(pool, PrincipalID::new(lookup).unwrap(), &key)
             .await
             .unwrap();
 

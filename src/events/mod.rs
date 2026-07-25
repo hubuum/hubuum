@@ -28,8 +28,8 @@ pub use delivery::{
 pub use fanout::{
     ensure_event_fanout_worker_running, event_fanout_wakeup_stats, kick_event_fanout_worker,
 };
-pub(crate) use model::provenance_from_parts;
 pub use model::{Event, EventId, EventResponse, NewEvent};
+pub(crate) use model::{PrincipalNames, StoredProvenance};
 pub use retention::ensure_event_retention_worker_running;
 pub use sink::{
     DefaultSinkResolver, EventEnvelope, NoopSinkResolver, Sink, SinkError, SinkResolver,

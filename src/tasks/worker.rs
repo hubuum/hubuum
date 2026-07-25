@@ -23,7 +23,6 @@ use crate::db::{
     DatabasePoolSettings, DbPool, init_pool_with_settings, with_mutation_provenance_scope,
 };
 use crate::errors::ApiError;
-use crate::events::MutationProvenance;
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::principal::load_principal_by_id;
@@ -369,7 +368,7 @@ async fn process_one_task_with_settings(
         worker = std::thread::current().name().unwrap_or("task-worker")
     );
 
-    let provenance = MutationProvenance::worker(task.initiator_user_id, task.id);
+    let provenance = task.worker_provenance();
     with_mutation_provenance_scope(Some(provenance), async {
         let mut heartbeat = start_task_lease_heartbeat(
             task_lease_pool(),

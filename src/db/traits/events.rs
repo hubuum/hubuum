@@ -2,9 +2,10 @@ use crate::db::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::apply_query_options;
+use crate::db::traits::history::resolve_principal_names;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::events::{Action, ActorKind, EntityType, Event, EventResponse};
+use crate::events::{Action, ActorKind, EntityType, Event, EventResponse, PrincipalNames};
 use crate::models::search::QueryOptions;
 use crate::utilities::extensions::CustomStringExtensions;
 
@@ -48,8 +49,7 @@ pub async fn list_events_with_total_count(
         .flat_map(|event| [event.actor_user_id, event.initiator_user_id])
         .flatten()
         .collect();
-    let principal_names =
-        crate::db::traits::history::resolve_actor_usernames(pool, principal_ids).await?;
+    let principal_names = resolve_principal_names(pool, principal_ids).await?;
     let accessible_collection_ids = accessible_collection_ids
         .iter()
         .copied()
@@ -174,7 +174,7 @@ fn event_response_for_visibility(
     event: Event,
     accessible_collection_ids: &HashSet<i32>,
     include_collection_less: bool,
-    principal_names: &HashMap<i32, String>,
+    principal_names: &PrincipalNames,
 ) -> EventResponse {
     let is_directly_visible = event
         .collection_id
@@ -189,7 +189,7 @@ fn event_response_for_visibility(
 }
 
 pub fn parse_event_filters(
-    passthrough: &mut std::collections::HashMap<String, Vec<String>>,
+    passthrough: &mut HashMap<String, Vec<String>>,
 ) -> Result<EventListFilters, ApiError> {
     Ok(EventListFilters {
         entity_type: parse_optional_catalog_filter(
@@ -274,7 +274,7 @@ pub(crate) async fn load_queued_task_initiators(
 }
 
 fn take_single(
-    passthrough: &mut std::collections::HashMap<String, Vec<String>>,
+    passthrough: &mut HashMap<String, Vec<String>>,
     key: &str,
 ) -> Result<Option<String>, ApiError> {
     match passthrough.remove(key) {
@@ -285,7 +285,7 @@ fn take_single(
 }
 
 fn parse_optional_i32_filter(
-    passthrough: &mut std::collections::HashMap<String, Vec<String>>,
+    passthrough: &mut HashMap<String, Vec<String>>,
     key: &str,
 ) -> Result<Option<i32>, ApiError> {
     take_single(passthrough, key)?
@@ -298,7 +298,7 @@ fn parse_optional_i32_filter(
 }
 
 fn parse_optional_date_filter(
-    passthrough: &mut std::collections::HashMap<String, Vec<String>>,
+    passthrough: &mut HashMap<String, Vec<String>>,
     key: &str,
 ) -> Result<Option<chrono::NaiveDateTime>, ApiError> {
     take_single(passthrough, key)?
@@ -315,7 +315,7 @@ fn parse_optional_date_filter(
 }
 
 fn parse_optional_catalog_filter<T, F>(
-    passthrough: &mut std::collections::HashMap<String, Vec<String>>,
+    passthrough: &mut HashMap<String, Vec<String>>,
     key: &str,
     parse: F,
 ) -> Result<Option<T>, ApiError>

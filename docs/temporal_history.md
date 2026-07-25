@@ -187,7 +187,7 @@ The second parameter `true` to `set_config()` means the configuration is local t
 The `actor_context` middleware resolves the bearer token once and wraps the
 request in `MutationProvenance::user(principal_id)`. Task workers wrap
 execution and failure finalization in
-`MutationProvenance::worker(task.initiator_user_id, task.id)`.
+`task.worker_provenance()`.
 
 ### Execution Flow
 

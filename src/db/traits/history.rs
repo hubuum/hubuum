@@ -1,8 +1,7 @@
-use std::collections::HashMap;
-
 use crate::db::prelude::*;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
+use crate::events::PrincipalNames;
 use crate::models::search::QueryOptions;
 use chrono::{DateTime, Utc};
 
@@ -13,21 +12,21 @@ pub enum HistoryCollectionFilter<'a> {
     Visible(&'a [i32]),
 }
 
-/// Batch-resolve a set of actor ids to principal names (anonymized users keep
+/// Batch-resolve principal ids for provenance responses (anonymized users keep
 /// their tombstoned principal name; ids with no matching principal are absent).
-pub async fn resolve_actor_usernames(
+pub(crate) async fn resolve_principal_names(
     pool: &DbPool,
-    mut actor_ids: Vec<i32>,
-) -> Result<HashMap<i32, String>, ApiError> {
+    mut principal_ids: Vec<i32>,
+) -> Result<PrincipalNames, ApiError> {
     use crate::schema::principals::dsl::{id, name, principals};
-    actor_ids.sort_unstable();
-    actor_ids.dedup();
-    if actor_ids.is_empty() {
-        return Ok(HashMap::new());
+    principal_ids.sort_unstable();
+    principal_ids.dedup();
+    if principal_ids.is_empty() {
+        return Ok(PrincipalNames::default());
     }
     let rows: Vec<(i32, String)> = with_connection(pool, async |conn| {
         principals
-            .filter(id.eq_any(&actor_ids))
+            .filter(id.eq_any(&principal_ids))
             .select((id, name))
             .load(conn)
             .await

@@ -2,34 +2,27 @@ use futures::FutureExt;
 use futures::future::BoxFuture;
 use hubuum_event_sink_webhook::WebhookSinkSettings;
 use hubuum_event_sinks_common::SinkDelivery;
-use std::collections::HashMap;
 
 use crate::config::{
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
     DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
 };
-use crate::events::Event;
+use crate::events::{Event, PrincipalNames};
 use crate::models::{EventSink, EventSinkKind, EventSubscription};
 
 pub use hubuum_event_sinks_common::{EventEnvelope, SinkError};
 
 impl From<Event> for EventEnvelope {
     fn from(event: Event) -> Self {
-        event_envelope_with_names(event, &HashMap::new())
+        event_envelope_with_names(event, &PrincipalNames::default())
     }
 }
 
 pub(crate) fn event_envelope_with_names(
     event: Event,
-    principal_names: &HashMap<i32, String>,
+    principal_names: &PrincipalNames,
 ) -> EventEnvelope {
-    let provenance = crate::events::provenance_from_parts(
-        Some(&event.actor_kind),
-        event.actor_user_id,
-        event.initiator_user_id,
-        event.task_id,
-        principal_names,
-    );
+    let provenance = event.resolved_provenance(principal_names);
     EventEnvelope {
         id: event.id,
         event_id: event.event_id,

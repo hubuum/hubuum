@@ -26,6 +26,91 @@ use super::{
     ProvenanceActor, ProvenancePrincipal, is_valid_pair,
 };
 
+/// Principal names resolved in one database query for provenance responses.
+///
+/// Keeping the map private prevents response builders from duplicating lookup
+/// and cloning behavior or treating the resolved names as general-purpose
+/// principal records.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PrincipalNames(HashMap<i32, String>);
+
+impl PrincipalNames {
+    pub(crate) fn name(&self, principal_id: i32) -> Option<&str> {
+        self.0.get(&principal_id).map(String::as_str)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn contains(&self, principal_id: i32) -> bool {
+        self.0.contains_key(&principal_id)
+    }
+
+    fn principal(&self, principal_id: i32) -> ProvenancePrincipal {
+        ProvenancePrincipal {
+            principal_id,
+            name: self.name(principal_id).map(ToOwned::to_owned),
+        }
+    }
+}
+
+impl FromIterator<(i32, String)> for PrincipalNames {
+    fn from_iter<T: IntoIterator<Item = (i32, String)>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+/// Stored provenance columns before principal names are resolved.
+///
+/// Named fields make it difficult to transpose actor, initiator, and task ids
+/// while translating persistence models into the public provenance shape.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StoredProvenance<'a> {
+    actor_kind: Option<&'a str>,
+    actor_user_id: Option<i32>,
+    initiator_user_id: Option<i32>,
+    task_id: Option<i32>,
+}
+
+impl<'a> StoredProvenance<'a> {
+    pub(crate) fn from_actor_kind(actor_kind: Option<&'a str>) -> Self {
+        Self {
+            actor_kind,
+            actor_user_id: None,
+            initiator_user_id: None,
+            task_id: None,
+        }
+    }
+
+    pub(crate) fn with_actor_user_id(mut self, actor_user_id: Option<i32>) -> Self {
+        self.actor_user_id = actor_user_id;
+        self
+    }
+
+    pub(crate) fn with_initiator_user_id(mut self, initiator_user_id: Option<i32>) -> Self {
+        self.initiator_user_id = initiator_user_id;
+        self
+    }
+
+    pub(crate) fn with_task_id(mut self, task_id: Option<i32>) -> Self {
+        self.task_id = task_id;
+        self
+    }
+
+    pub(crate) fn resolve(self, principal_names: &PrincipalNames) -> Provenance {
+        Provenance {
+            actor: ProvenanceActor {
+                kind: self.actor_kind.map(ToOwned::to_owned),
+                principal: self
+                    .actor_user_id
+                    .map(|principal_id| principal_names.principal(principal_id)),
+            },
+            initiator: self
+                .initiator_user_id
+                .map(|principal_id| principal_names.principal(principal_id)),
+            task_id: self.task_id,
+        }
+    }
+}
+
 /// Typed wrapper for the canonical, client-dedupable event identity
 /// (`events.event_id`). Flows to sinks as the idempotency key (#78) and to the
 /// audit API (#74).
@@ -125,20 +210,19 @@ impl Event {
     pub fn actor_kind(&self) -> Result<ActorKind, EventCatalogError> {
         ActorKind::from_db(&self.actor_kind)
     }
+
+    pub(crate) fn resolved_provenance(&self, principal_names: &PrincipalNames) -> Provenance {
+        StoredProvenance::from_actor_kind(Some(&self.actor_kind))
+            .with_actor_user_id(self.actor_user_id)
+            .with_initiator_user_id(self.initiator_user_id)
+            .with_task_id(self.task_id)
+            .resolve(principal_names)
+    }
 }
 
 impl EventResponse {
-    pub(crate) fn from_event_with_names(
-        value: Event,
-        principal_names: &HashMap<i32, String>,
-    ) -> Self {
-        let provenance = provenance_from_parts(
-            Some(&value.actor_kind),
-            value.actor_user_id,
-            value.initiator_user_id,
-            value.task_id,
-            principal_names,
-        );
+    pub(crate) fn from_event_with_names(value: Event, principal_names: &PrincipalNames) -> Self {
+        let provenance = value.resolved_provenance(principal_names);
         Self {
             id: value.id,
             event_id: value.event_id,
@@ -164,7 +248,7 @@ impl EventResponse {
 
 impl From<Event> for EventResponse {
     fn from(value: Event) -> Self {
-        Self::from_event_with_names(value, &HashMap::new())
+        Self::from_event_with_names(value, &PrincipalNames::default())
     }
 }
 
@@ -406,26 +490,5 @@ impl NewEvent {
     /// The caller-provided correlation id, if any.
     pub fn correlation_id(&self) -> Option<&str> {
         self.correlation_id.as_deref()
-    }
-}
-
-pub(crate) fn provenance_from_parts(
-    actor_kind: Option<&str>,
-    actor_user_id: Option<i32>,
-    initiator_user_id: Option<i32>,
-    task_id: Option<i32>,
-    principal_names: &HashMap<i32, String>,
-) -> Provenance {
-    let principal = |principal_id| ProvenancePrincipal {
-        principal_id,
-        name: principal_names.get(&principal_id).cloned(),
-    };
-    Provenance {
-        actor: ProvenanceActor {
-            kind: actor_kind.map(ToOwned::to_owned),
-            principal: actor_user_id.map(principal),
-        },
-        initiator: initiator_user_id.map(principal),
-        task_id,
     }
 }

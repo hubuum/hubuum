@@ -18,10 +18,13 @@ use crate::db::traits::event_delivery::{
     ClaimedEventDelivery, EventDeliverySettings, claim_event_deliveries,
     mark_event_delivery_failed, mark_event_delivery_succeeded,
 };
+use crate::db::traits::events::load_queued_task_initiators;
+use crate::db::traits::history::resolve_principal_names;
 use crate::errors::ApiError;
 use crate::events::sink::{
-    DefaultSinkResolver, EventEnvelope, SinkResolver, event_envelope_with_names,
+    DefaultSinkResolver, EventEnvelope, SinkError, SinkResolver, event_envelope_with_names,
 };
+use crate::events::{EntityType, PrincipalNames};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
 use crate::restores::{MaintenanceActivityGuard, maintenance_state};
@@ -98,15 +101,14 @@ pub async fn process_event_delivery_batch(
     let legacy_task_ids = deliveries
         .iter()
         .filter(|claimed| {
-            claimed.event.entity_type == crate::events::EntityType::Task.as_str()
+            claimed.event.entity_type == EntityType::Task.as_str()
                 && claimed.event.initiator_user_id.is_none()
         })
         .filter_map(|claimed| claimed.event.entity_id)
         .collect::<Vec<_>>();
-    let queued_initiators =
-        crate::db::traits::events::load_queued_task_initiators(pool, &legacy_task_ids).await?;
+    let queued_initiators = load_queued_task_initiators(pool, &legacy_task_ids).await?;
     for claimed in &mut deliveries {
-        if claimed.event.entity_type != crate::events::EntityType::Task.as_str() {
+        if claimed.event.entity_type != EntityType::Task.as_str() {
             continue;
         }
         let Some(task_id) = claimed.event.entity_id else {
@@ -122,8 +124,7 @@ pub async fn process_event_delivery_batch(
         .flat_map(|claimed| [claimed.event.actor_user_id, claimed.event.initiator_user_id])
         .flatten()
         .collect();
-    let principal_names =
-        Arc::new(crate::db::traits::history::resolve_actor_usernames(pool, principal_ids).await?);
+    let principal_names = Arc::new(resolve_principal_names(pool, principal_ids).await?);
     let results = futures_util::stream::iter(deliveries)
         .map(|claimed| {
             process_claimed_event_delivery_with_names(
@@ -154,11 +155,10 @@ pub(crate) async fn process_claimed_event_delivery(
     let task_ids = claimed
         .event
         .entity_id
-        .filter(|_| claimed.event.entity_type == crate::events::EntityType::Task.as_str())
+        .filter(|_| claimed.event.entity_type == EntityType::Task.as_str())
         .into_iter()
         .collect::<Vec<_>>();
-    let queued_initiators =
-        crate::db::traits::events::load_queued_task_initiators(pool, &task_ids).await?;
+    let queued_initiators = load_queued_task_initiators(pool, &task_ids).await?;
     if let Some(task_id) = task_ids.first().copied() {
         claimed.event.task_id.get_or_insert(task_id);
         if claimed.event.initiator_user_id.is_none() {
@@ -169,8 +169,7 @@ pub(crate) async fn process_claimed_event_delivery(
         .into_iter()
         .flatten()
         .collect();
-    let principal_names =
-        Arc::new(crate::db::traits::history::resolve_actor_usernames(pool, principal_ids).await?);
+    let principal_names = Arc::new(resolve_principal_names(pool, principal_ids).await?);
     process_claimed_event_delivery_with_names(pool, settings, resolver, claimed, principal_names)
         .await
 }
@@ -180,7 +179,7 @@ async fn process_claimed_event_delivery_with_names(
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,
     claimed: ClaimedEventDelivery,
-    principal_names: Arc<std::collections::HashMap<i32, String>>,
+    principal_names: Arc<PrincipalNames>,
 ) -> Result<(), ApiError> {
     let delivery = claimed.delivery;
     let envelope = event_envelope_with_names(claimed.event, &principal_names);
@@ -192,7 +191,7 @@ async fn process_claimed_event_delivery_with_names(
     )
     .await
     .map_err(|_| {
-        crate::events::sink::SinkError::new(format!(
+        SinkError::new(format!(
             "Event delivery transport timed out after {} ms",
             settings.transport_timeout_ms
         ))
@@ -221,9 +220,9 @@ async fn deliver_one(
     envelope: &EventEnvelope,
     subscription: &EventSubscription,
     sink: &EventSink,
-) -> Result<(), crate::events::sink::SinkError> {
+) -> Result<(), SinkError> {
     let Some(transport) = resolver.resolve(sink.kind) else {
-        return Err(crate::events::sink::SinkError::new(format!(
+        return Err(SinkError::new(format!(
             "No event sink transport is registered for kind '{}'",
             sink.kind.as_str()
         )));
