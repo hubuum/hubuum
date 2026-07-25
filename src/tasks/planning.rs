@@ -16,8 +16,8 @@ use super::resolution::{
     resolve_collection_planning, resolve_object_planning,
 };
 use super::types::{
-    ClassResolution, CollectionResolution, FailureKind, ObjectResolution, PlannedExecution,
-    PlannedItem, PlanningFailure, PlanningOutcome, PlanningState,
+    ClassResolution, CollectionResolution, FailureKind, ImportAdminStatus, ObjectResolution,
+    PlannedExecution, PlannedItem, PlanningFailure, PlanningOutcome, PlanningState,
 };
 use crate::db::prelude::AsyncConnection;
 use crate::db::traits::UserPermissions;
@@ -229,7 +229,7 @@ async fn is_import_admin<C>(
 where
     C: BackendContext + ?Sized,
 {
-    if let Some(is_admin) = state.is_admin {
+    if let Some(is_admin) = state.admin_status.known() {
         return Ok(is_admin);
     }
 
@@ -246,7 +246,7 @@ where
         }
         _ => user.is_admin(pool).await.map_err(|err| err.to_string())?,
     };
-    state.is_admin = Some(is_admin);
+    state.admin_status = ImportAdminStatus::Known(is_admin);
     Ok(is_admin)
 }
 
@@ -341,7 +341,7 @@ pub(super) async fn plan_import<C>(
 where
     C: BackendContext + ?Sized,
 {
-    plan_import_with_admin_status(backend, user, scopes, request, None).await
+    plan_import_with_admin_status(backend, user, scopes, request, ImportAdminStatus::Unknown).await
 }
 
 #[cfg(test)]
@@ -353,7 +353,8 @@ pub(super) async fn plan_runtime_admin_import<C>(
 where
     C: BackendContext + ?Sized,
 {
-    plan_import_with_admin_status(backend, user, None, request, Some(true)).await
+    plan_import_with_admin_status(backend, user, None, request, ImportAdminStatus::Known(true))
+        .await
 }
 
 async fn plan_import_with_admin_status<C>(
@@ -361,7 +362,7 @@ async fn plan_import_with_admin_status<C>(
     user: &impl crate::db::traits::authz::AuthzSubject,
     scopes: Option<&TokenScope>,
     request: &ImportRequest,
-    is_admin: Option<bool>,
+    admin_status: ImportAdminStatus,
 ) -> PlanningOutcome
 where
     C: BackendContext + ?Sized,
@@ -370,7 +371,7 @@ where
     let mode = request.mode();
     let mut state = PlanningState::new();
     state.scopes = scopes.cloned();
-    state.is_admin = is_admin;
+    state.admin_status = admin_status;
     let mut planned_items = Vec::with_capacity(request.total_items() as usize);
     let mut failures = Vec::new();
     let mut aborted = false;

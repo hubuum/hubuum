@@ -13,7 +13,7 @@ use crate::db::traits::history::{
     export_template_history_paginated_with_total_count,
 };
 use crate::errors::ApiError;
-use crate::exports::submit_export_task;
+use crate::exports::{ExportTaskSubmission, submit_export_task};
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter;
@@ -263,16 +263,14 @@ pub async fn run_template_export(
 
     let export = template.build_export_request(run)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
-    let task = submit_export_task(
-        &pool,
-        user,
-        requestor.scopes(),
-        Some(TokenID::new(requestor.token_meta.id)?),
-        idempotency_key,
+    let submission = ExportTaskSubmission::for_token(
         export,
-        Some(template),
+        TokenID::new(requestor.token_meta.id)?,
+        requestor.scopes(),
     )
-    .await?;
+    .template(template)
+    .idempotency_key(idempotency_key);
+    let task = submit_export_task(&pool, user, submission).await?;
     kick_task_worker(pool.clone());
     let response = task.to_response()?;
 

@@ -270,6 +270,10 @@ impl<T: Serialize + PartialEq + Clone> PermissionsList<T> {
     pub fn iter(&self) -> slice::Iter<'_, T> {
         self.0.iter()
     }
+
+    pub fn as_slice(&self) -> &[T] {
+        &self.0
+    }
 }
 
 impl<T: Serialize + PartialEq + Clone + Display> Display for PermissionsList<T> {

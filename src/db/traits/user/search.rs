@@ -2282,11 +2282,13 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         related_objects_for_roots_query(
             self,
             pool,
-            root_object_ids,
-            include,
-            is_admin,
-            scopes,
-            true,
+            DirectionalRootGraphQuery {
+                root_object_ids,
+                include,
+                is_admin,
+                scopes,
+                path_mode: GraphPathMode::Canonical,
+            },
         )
         .await
     }
@@ -2302,11 +2304,13 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         related_objects_for_roots_query(
             self,
             pool,
-            root_object_ids,
-            include,
-            is_admin,
-            scopes,
-            false,
+            DirectionalRootGraphQuery {
+                root_object_ids,
+                include,
+                is_admin,
+                scopes,
+                path_mode: GraphPathMode::PreserveAlternatives,
+            },
         )
         .await
     }
@@ -2349,7 +2353,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 per_root_cap,
                 is_admin,
                 scopes,
-                deduplicate_paths: true,
+                path_mode: GraphPathMode::Canonical,
             },
         )
         .await
@@ -2373,33 +2377,42 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 per_root_cap,
                 is_admin,
                 scopes,
-                deduplicate_paths: false,
+                path_mode: GraphPathMode::PreserveAlternatives,
             },
         )
         .await
     }
 }
 
+struct DirectionalRootGraphQuery<'a> {
+    root_object_ids: &'a [i32],
+    include: ExportIncludeRelatedQuery,
+    is_admin: bool,
+    scopes: Option<&'a TokenScope>,
+    path_mode: GraphPathMode,
+}
+
 async fn related_objects_for_roots_query<U>(
     user: &U,
     pool: &DbPool,
-    root_object_ids: &[i32],
-    include: ExportIncludeRelatedQuery,
-    is_admin: bool,
-    scopes: Option<&TokenScope>,
-    deduplicate_paths: bool,
+    request: DirectionalRootGraphQuery<'_>,
 ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError>
 where
     U: UserCollectionAccessors + ?Sized,
 {
-    if root_object_ids.is_empty() {
+    if request.root_object_ids.is_empty() {
         return Ok(Vec::new());
     }
 
     let permissions =
         PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
     let collection_ids: Vec<i32> = user
-        .load_collections_with_permissions_with_admin_status(pool, &permissions, is_admin, scopes)
+        .load_collections_with_permissions_with_admin_status(
+            pool,
+            &permissions,
+            request.is_admin,
+            request.scopes,
+        )
         .await?
         .into_iter()
         .map(|collection| collection.id)
@@ -2410,33 +2423,33 @@ where
     }
 
     let spec = build_root_graph_walk_query(RootGraphWalkSpec {
-        root_object_ids,
+        root_object_ids: request.root_object_ids,
         collection_ids: &collection_ids,
-        scope: scopes,
-        max_depth: include.max_depth,
-        per_root_limit: include.limit,
+        scope: request.scopes,
+        max_depth: request.include.max_depth,
+        per_root_limit: request.include.limit,
         edges: GraphWalkEdges::Directional {
-            direction: include.direction,
-            class_relation_id: include.class_relation_id,
+            direction: request.include.direction,
+            class_relation_id: request.include.class_relation_id,
         },
         ranking: GraphWalkRanking::ByTargetClass {
-            class_id: include.class_id,
-            sort: include.sort,
+            class_id: request.include.class_id,
+            sort: request.include.sort,
         },
         projection: GraphWalkProjection::AncestorAndDescendant,
-        deduplicate_paths,
+        path_mode: request.path_mode,
     });
 
     let query = bind_raw_sql_query!(spec.clone());
     debug!(
         message = "Searching batched related objects",
-        root_object_count = root_object_ids.len(),
-        target_class_id = include.class_id,
-        class_relation_id = include.class_relation_id,
-        direction = ?include.direction,
-        sort = ?include.sort,
-        max_depth = include.max_depth,
-        per_root_limit = include.limit,
+        root_object_count = request.root_object_ids.len(),
+        target_class_id = request.include.class_id,
+        class_relation_id = request.include.class_relation_id,
+        direction = ?request.include.direction,
+        sort = ?request.include.sort,
+        max_depth = request.include.max_depth,
+        per_root_limit = request.include.limit,
         raw_sql = %spec.sql,
         bind_variables = ?spec.bind_variables
     );
@@ -2454,7 +2467,7 @@ struct BidirectionalRootGraphQuery<'a> {
     per_root_cap: i32,
     is_admin: bool,
     scopes: Option<&'a TokenScope>,
-    deduplicate_paths: bool,
+    path_mode: GraphPathMode,
 }
 
 async fn bidirectionally_related_objects_for_roots_query<U>(
@@ -2496,7 +2509,7 @@ where
         edges: GraphWalkEdges::Bidirectional,
         ranking: GraphWalkRanking::ByDescendant,
         projection: GraphWalkProjection::DescendantOnly,
-        deduplicate_paths: request.deduplicate_paths,
+        path_mode: request.path_mode,
     });
 
     let query = bind_raw_sql_query!(spec.clone());
@@ -2622,6 +2635,38 @@ enum GraphWalkProjection {
     AncestorAndDescendant,
 }
 
+#[derive(Clone, Copy)]
+enum GraphPathMode {
+    Canonical,
+    PreserveAlternatives,
+}
+
+impl GraphPathMode {
+    fn walk_selection_sql(self) -> &'static str {
+        match self {
+            Self::Canonical => {
+                r#"    SELECT DISTINCT ON (root_object_id, descendant_object_id)
+        root_object_id,
+        ancestor_object_id,
+        descendant_object_id,
+        depth,
+        path
+    FROM graph_walk
+    ORDER BY root_object_id ASC, descendant_object_id ASC, depth ASC, path ASC"#
+            }
+            Self::PreserveAlternatives => {
+                r#"    SELECT
+        root_object_id,
+        ancestor_object_id,
+        descendant_object_id,
+        depth,
+        path
+    FROM graph_walk"#
+            }
+        }
+    }
+}
+
 /// Parameters for [`build_root_graph_walk_query`]. One builder owns the full SQL and, crucially,
 /// the bind-variable ordering shared by both batched per-root graph queries.
 struct RootGraphWalkSpec<'a> {
@@ -2633,7 +2678,7 @@ struct RootGraphWalkSpec<'a> {
     edges: GraphWalkEdges,
     ranking: GraphWalkRanking,
     projection: GraphWalkProjection,
-    deduplicate_paths: bool,
+    path_mode: GraphPathMode,
 }
 
 fn bidirectional_object_edges_sql() -> &'static str {
@@ -2679,24 +2724,7 @@ fn build_root_graph_walk_query(spec: RootGraphWalkSpec) -> RawSqlQuerySpec {
     bind_variables.push(SQLValue::Integer(spec.max_depth));
     bind_variables.push(SQLValue::Integer(spec.max_depth));
 
-    let deduplicated_walk_sql = if spec.deduplicate_paths {
-        r#"    SELECT DISTINCT ON (root_object_id, descendant_object_id)
-        root_object_id,
-        ancestor_object_id,
-        descendant_object_id,
-        depth,
-        path
-    FROM graph_walk
-    ORDER BY root_object_id ASC, descendant_object_id ASC, depth ASC, path ASC"#
-    } else {
-        r#"    SELECT
-        root_object_id,
-        ancestor_object_id,
-        descendant_object_id,
-        depth,
-        path
-    FROM graph_walk"#
-    };
+    let deduplicated_walk_sql = spec.path_mode.walk_selection_sql();
 
     let ranked_walk_sql = match spec.ranking {
         GraphWalkRanking::ByDescendant => r#"    SELECT

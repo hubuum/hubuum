@@ -5,7 +5,7 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
-use crate::exports::submit_export_task;
+use crate::exports::{ExportTaskSubmission, submit_export_task};
 use crate::extractors::Authenticated;
 use crate::models::{
     ExportContentType, ExportJsonResponse, ExportMeta, ExportOutputLookup, ExportRequest,
@@ -67,16 +67,13 @@ pub async fn run_export(
     export: web::Json<ExportRequest>,
 ) -> Result<impl Responder, ApiError> {
     let export = export.into_inner();
-    let task = submit_export_task(
-        &pool,
-        &requestor.principal,
-        requestor.scopes(),
-        Some(TokenID::new(requestor.token_meta.id)?),
-        idempotency_key_from_headers(req.headers())?,
+    let submission = ExportTaskSubmission::for_token(
         export,
-        None,
+        TokenID::new(requestor.token_meta.id)?,
+        requestor.scopes(),
     )
-    .await?;
+    .idempotency_key(idempotency_key_from_headers(req.headers())?);
+    let task = submit_export_task(&pool, &requestor.principal, submission).await?;
 
     let response = task.to_response()?;
     kick_task_worker(pool.clone());

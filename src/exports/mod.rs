@@ -31,7 +31,7 @@ use crate::models::{
     ExportJsonResponse, ExportMeta, ExportMissingDataPolicy, ExportRequest, ExportTemplate,
     ExportTemplateID, ExportWarning, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
     HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath, NewExportTaskOutputRecord,
-    NewTaskEventRecord, Permissions, PrincipalID, RELATED_INCLUDE_DEFAULT_LIMIT,
+    NewTaskEventRecord, Permissions, PermissionsList, PrincipalID, RELATED_INCLUDE_DEFAULT_LIMIT,
     RELATED_INCLUDE_DEFAULT_MAX_DEPTH, RelatedObjectForRootRow, RelatedObjectGraphRow,
     RelatedObjectIncludeRow, TaskKind, TaskRecord, TaskResultCounts, TaskStatus, TokenID,
     TokenScope, ValidatedExportScope,
@@ -40,7 +40,10 @@ use crate::observability::metrics;
 use crate::pagination::{
     CursorPaginated, count_query_options, page_limits_or_defaults, paginate_in_memory,
 };
-use crate::permissions::{AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef};
+use crate::permissions::{
+    AuthzTarget, PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef,
+    ResourceRef,
+};
 use crate::tasks::request_hash;
 use crate::traits::{AuthzSubject, BackendContext, SelfAccessors};
 use crate::utilities::exporting::render_template;
@@ -193,21 +196,163 @@ struct ReachableTemplateTarget {
     remaining_depth: i32,
 }
 
-fn normalize_id_pair(left: i32, right: i32) -> (i32, i32) {
-    if left <= right {
-        (left, right)
-    } else {
-        (right, left)
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ObjectGraphEdge {
+    first_object_id: i32,
+    second_object_id: i32,
+}
+
+impl ObjectGraphEdge {
+    fn new(left: i32, right: i32) -> Result<Self, ApiError> {
+        let left = HubuumObjectID::new(left)?.id();
+        let right = HubuumObjectID::new(right)?.id();
+        if left <= right {
+            Ok(Self {
+                first_object_id: left,
+                second_object_id: right,
+            })
+        } else {
+            Ok(Self {
+                first_object_id: right,
+                second_object_id: left,
+            })
+        }
+    }
+}
+
+struct AuthorizedObjectGraph {
+    object_ids: HashSet<i32>,
+    edges: HashSet<ObjectGraphEdge>,
+}
+
+impl AuthorizedObjectGraph {
+    fn allows_path(&self, path: &[i32]) -> Result<bool, ApiError> {
+        if path.is_empty() {
+            return Err(ApiError::InternalServerError(
+                "Export graph query returned an empty object path".to_string(),
+            ));
+        }
+
+        for object_id in path {
+            let object_id = HubuumObjectID::new(*object_id)?.id();
+            if !self.object_ids.contains(&object_id) {
+                return Ok(false);
+            }
+        }
+        for edge in path.windows(2) {
+            if !self
+                .edges
+                .contains(&ObjectGraphEdge::new(edge[0], edge[1])?)
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn retain_allowed<T>(
+        &self,
+        candidates: Vec<T>,
+        path: impl for<'candidate> Fn(&'candidate T) -> &'candidate [i32],
+    ) -> Result<Vec<T>, ApiError> {
+        let mut authorized = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            if self.allows_path(path(&candidate))? {
+                authorized.push(candidate);
+            }
+        }
+        Ok(authorized)
+    }
+}
+
+struct AuthorizationCandidates<T>(Vec<(T, ResourceRef)>);
+
+impl<T> AuthorizationCandidates<T> {
+    fn new(candidates: Vec<T>, resources: Vec<ResourceRef>) -> Result<Self, ApiError> {
+        if candidates.len() != resources.len() {
+            return Err(ApiError::InternalServerError(
+                "Export authorization candidate/resource count mismatch".to_string(),
+            ));
+        }
+        Ok(Self(candidates.into_iter().zip(resources).collect()))
+    }
+
+    fn retain_scoped(self, scopes: Option<&TokenScope>) -> Self {
+        Self(
+            self.0
+                .into_iter()
+                .filter(|(_, resource)| scope_allows_resource(scopes, resource))
+                .collect(),
+        )
+    }
+
+    fn permission_requests(
+        &self,
+        permissions: &PermissionsList<Permissions>,
+    ) -> Vec<PermissionRequest> {
+        self.0
+            .iter()
+            .map(|(_, resource)| PermissionRequest {
+                resource: resource.clone(),
+                permissions: permissions.as_slice().to_vec(),
+            })
+            .collect()
+    }
+
+    fn into_values(self) -> Vec<T> {
+        self.0.into_iter().map(|(candidate, _)| candidate).collect()
+    }
+
+    fn retain_decisions(self, decisions: Vec<PermissionDecision>) -> Result<Vec<T>, ApiError> {
+        if decisions.len() != self.0.len() {
+            return Err(ApiError::InternalServerError(
+                "Permission backend returned an unexpected number of export decisions".to_string(),
+            ));
+        }
+        Ok(self
+            .0
+            .into_iter()
+            .zip(decisions)
+            .filter_map(|((candidate, _), decision)| {
+                (decision == PermissionDecision::Allow).then_some(candidate)
+            })
+            .collect())
     }
 }
 
 fn query_permissions(
     query: &QueryOptions,
     required: &[Permissions],
-) -> Result<Vec<Permissions>, ApiError> {
+) -> Result<PermissionsList<Permissions>, ApiError> {
     let mut permissions = query.filters.permissions()?;
     permissions.ensure_contains(required);
-    Ok(permissions.iter().copied().collect())
+    Ok(permissions)
+}
+
+enum ExportAuthorization<'a> {
+    LocalSql {
+        is_admin: bool,
+    },
+    External {
+        backend: &'a dyn PermissionBackend,
+        principal: PrincipalRef,
+    },
+}
+
+impl ExportAuthorization<'_> {
+    fn local_is_admin(&self) -> Option<bool> {
+        match self {
+            Self::LocalSql { is_admin } => Some(*is_admin),
+            Self::External { .. } => None,
+        }
+    }
+
+    fn external(&self) -> Option<(&dyn PermissionBackend, &PrincipalRef)> {
+        match self {
+            Self::LocalSql { .. } => None,
+            Self::External { backend, principal } => Some((*backend, principal)),
+        }
+    }
 }
 
 fn retain_per_root<T>(
@@ -300,8 +445,7 @@ struct PermissionAwareExport<'a, C: ?Sized, S: ?Sized> {
     backend: &'a C,
     subject: &'a S,
     scopes: Option<&'a TokenScope>,
-    local_is_admin: Option<bool>,
-    external_principal: Option<PrincipalRef>,
+    authorization: ExportAuthorization<'a>,
 }
 
 impl<'a, C, S> PermissionAwareExport<'a, C, S>
@@ -314,28 +458,24 @@ where
         subject: &'a S,
         scopes: Option<&'a TokenScope>,
     ) -> Result<Self, ApiError> {
-        let uses_external_backend =
-            backend
-                .permission_backend()
-                .is_some_and(|permission_backend| {
-                    !permission_backend.supports_sql_visibility_pushdown()
-                });
-        let external_principal = if uses_external_backend {
-            Some(PrincipalRef::load(backend.db_pool(), subject).await?)
+        let authorization = if let Some(permission_backend) = backend
+            .permission_backend()
+            .filter(|backend| !backend.supports_sql_visibility_pushdown())
+        {
+            ExportAuthorization::External {
+                backend: permission_backend,
+                principal: PrincipalRef::load(backend.db_pool(), subject).await?,
+            }
         } else {
-            None
-        };
-        let local_is_admin = if uses_external_backend {
-            None
-        } else {
-            Some(subject.is_admin(backend.db_pool()).await?)
+            ExportAuthorization::LocalSql {
+                is_admin: subject.is_admin(backend.db_pool()).await?,
+            }
         };
         Ok(Self {
             backend,
             subject,
             scopes,
-            local_is_admin,
-            external_principal,
+            authorization,
         })
     }
 
@@ -346,54 +486,26 @@ where
     fn external_backend(
         &self,
     ) -> Option<(&dyn crate::permissions::PermissionBackend, &PrincipalRef)> {
-        self.backend
-            .permission_backend()
-            .filter(|backend| !backend.supports_sql_visibility_pushdown())
-            .zip(self.external_principal.as_ref())
+        self.authorization.external()
     }
 
     async fn authorize_candidates<T>(
         &self,
         candidates: Vec<T>,
-        resources: Vec<crate::permissions::ResourceRef>,
-        permissions: Vec<Permissions>,
+        resources: Vec<ResourceRef>,
+        permissions: PermissionsList<Permissions>,
     ) -> Result<Vec<T>, ApiError> {
-        if candidates.len() != resources.len() {
-            return Err(ApiError::InternalServerError(
-                "Export authorization candidate/resource count mismatch".to_string(),
-            ));
-        }
-        if !scope_allows(self.scopes, &permissions) {
+        let candidates = AuthorizationCandidates::new(candidates, resources)?;
+        if !scope_allows(self.scopes, permissions.as_slice()) {
             return Ok(Vec::new());
         }
         let Some((backend, principal)) = self.external_backend() else {
-            return Ok(candidates);
+            return Ok(candidates.into_values());
         };
-        let scoped = candidates
-            .into_iter()
-            .zip(resources)
-            .filter(|(_, resource)| scope_allows_resource(self.scopes, resource))
-            .collect::<Vec<_>>();
-        let requests = scoped
-            .iter()
-            .map(|(_, resource)| PermissionRequest {
-                resource: resource.clone(),
-                permissions: permissions.clone(),
-            })
-            .collect::<Vec<_>>();
+        let scoped = candidates.retain_scoped(self.scopes);
+        let requests = scoped.permission_requests(&permissions);
         let decisions = backend.authorize_many(principal, requests).await?;
-        if decisions.len() != scoped.len() {
-            return Err(ApiError::InternalServerError(
-                "Permission backend returned an unexpected number of export decisions".to_string(),
-            ));
-        }
-        Ok(scoped
-            .into_iter()
-            .zip(decisions)
-            .filter_map(|((candidate, _), decision)| {
-                (decision == PermissionDecision::Allow).then_some(candidate)
-            })
-            .collect())
+        scoped.retain_decisions(decisions)
     }
 
     async fn target_resources<T: AuthzTarget>(
@@ -410,8 +522,8 @@ where
     async fn authorize_page<T>(
         &self,
         candidates: Vec<T>,
-        resources: Vec<crate::permissions::ResourceRef>,
-        permissions: Vec<Permissions>,
+        resources: Vec<ResourceRef>,
+        permissions: PermissionsList<Permissions>,
         query: &QueryOptions,
     ) -> Result<Vec<T>, ApiError>
     where
@@ -423,12 +535,12 @@ where
         paginate_in_memory(authorized, query)
     }
 
-    async fn authorized_graph_paths(
+    async fn authorized_object_graph(
         &self,
         paths: &[Vec<i32>],
-        object_permissions: Vec<Permissions>,
-        relation_permissions: Vec<Permissions>,
-    ) -> Result<Vec<bool>, ApiError> {
+        object_permissions: PermissionsList<Permissions>,
+        relation_permissions: PermissionsList<Permissions>,
+    ) -> Result<AuthorizedObjectGraph, ApiError> {
         let mut object_ids = paths
             .iter()
             .flat_map(|path| path.iter().copied())
@@ -441,9 +553,9 @@ where
             .await?
             .into_iter()
             .map(|relation| {
-                normalize_id_pair(relation.from_hubuum_object_id, relation.to_hubuum_object_id)
+                ObjectGraphEdge::new(relation.from_hubuum_object_id, relation.to_hubuum_object_id)
             })
-            .collect::<HashSet<_>>();
+            .collect::<Result<HashSet<_>, _>>()?;
 
         let object_resources = object_authorization_resources(self.pool(), &object_ids).await?;
         let allowed_object_ids = self
@@ -452,26 +564,20 @@ where
             .into_iter()
             .collect::<HashSet<_>>();
 
-        Ok(paths
-            .iter()
-            .map(|path| {
-                path.iter()
-                    .all(|object_id| allowed_object_ids.contains(object_id))
-                    && path
-                        .windows(2)
-                        .all(|edge| allowed_edges.contains(&normalize_id_pair(edge[0], edge[1])))
-            })
-            .collect())
+        Ok(AuthorizedObjectGraph {
+            object_ids: allowed_object_ids,
+            edges: allowed_edges,
+        })
     }
 
     async fn collections(&self, query: QueryOptions) -> Result<Vec<Collection>, ApiError> {
-        if self.external_backend().is_none() {
+        if let Some(is_admin) = self.authorization.local_is_admin() {
             return self
                 .subject
                 .search_collections_from_backend_with_admin_status(
                     self.pool(),
                     query,
-                    self.local_is_admin.unwrap_or(false),
+                    is_admin,
                     self.scopes,
                 )
                 .await;
@@ -492,13 +598,13 @@ where
     }
 
     async fn classes(&self, query: QueryOptions) -> Result<Vec<HubuumClassExpanded>, ApiError> {
-        if self.external_backend().is_none() {
+        if let Some(is_admin) = self.authorization.local_is_admin() {
             return self
                 .subject
                 .search_classes_from_backend_with_admin_status(
                     self.pool(),
                     query,
-                    self.local_is_admin.unwrap_or(false),
+                    is_admin,
                     self.scopes,
                 )
                 .await;
@@ -530,13 +636,13 @@ where
     }
 
     async fn objects(&self, query: QueryOptions) -> Result<Vec<HubuumObject>, ApiError> {
-        if self.external_backend().is_none() {
+        if let Some(is_admin) = self.authorization.local_is_admin() {
             return self
                 .subject
                 .search_objects_from_backend_with_admin_status(
                     self.pool(),
                     query,
-                    self.local_is_admin.unwrap_or(false),
+                    is_admin,
                     self.scopes,
                 )
                 .await;
@@ -560,13 +666,13 @@ where
         &self,
         query: QueryOptions,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
-        if self.external_backend().is_none() {
+        if let Some(is_admin) = self.authorization.local_is_admin() {
             return self
                 .subject
                 .search_class_relations_from_backend_with_admin_status(
                     self.pool(),
                     query,
-                    self.local_is_admin.unwrap_or(false),
+                    is_admin,
                     self.scopes,
                 )
                 .await;
@@ -590,13 +696,13 @@ where
         &self,
         class_ids: &[i32],
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
-        if self.external_backend().is_none() {
+        if let Some(is_admin) = self.authorization.local_is_admin() {
             return self
                 .subject
                 .search_class_relations_touching_ids_from_backend_with_admin_status(
                     self.pool(),
                     class_ids,
-                    self.local_is_admin.unwrap_or(false),
+                    is_admin,
                     self.scopes,
                 )
                 .await;
@@ -604,21 +710,25 @@ where
         let class_ids = ClassIdSet::new(class_ids.iter().copied())?;
         let candidates = class_ids.load_relations_touching(self.pool()).await?;
         let resources = class_relation_authorization_resources(self.pool(), &candidates).await?;
-        self.authorize_candidates(candidates, resources, vec![Permissions::ReadClassRelation])
-            .await
+        self.authorize_candidates(
+            candidates,
+            resources,
+            PermissionsList::new([Permissions::ReadClassRelation]),
+        )
+        .await
     }
 
     async fn object_relations(
         &self,
         query: QueryOptions,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
-        if self.external_backend().is_none() {
+        if let Some(is_admin) = self.authorization.local_is_admin() {
             return self
                 .subject
                 .search_object_relations_from_backend_with_admin_status(
                     self.pool(),
                     query,
-                    self.local_is_admin.unwrap_or(false),
+                    is_admin,
                     self.scopes,
                 )
                 .await;
@@ -643,14 +753,14 @@ where
         object: HubuumObjectID,
         query: QueryOptions,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError> {
-        if self.external_backend().is_none() {
+        if let Some(is_admin) = self.authorization.local_is_admin() {
             return self
                 .subject
                 .search_objects_related_to_from_backend_with_admin_status(
                     self.pool(),
                     object,
                     query,
-                    self.local_is_admin.unwrap_or(false),
+                    is_admin,
                     self.scopes,
                 )
                 .await;
@@ -666,21 +776,18 @@ where
             )
             .await?;
         let permissions = query_permissions(&query, &[Permissions::ReadObject])?;
-        let allowed_paths = self
-            .authorized_graph_paths(
+        let authorized_graph = self
+            .authorized_object_graph(
                 &candidates
                     .iter()
                     .map(|row| row.path.clone())
                     .collect::<Vec<_>>(),
                 permissions,
-                vec![Permissions::ReadObjectRelation],
+                PermissionsList::new([Permissions::ReadObjectRelation]),
             )
             .await?;
-        let authorized = candidates
-            .into_iter()
-            .zip(allowed_paths)
-            .filter_map(|(candidate, allowed)| allowed.then_some(candidate))
-            .collect();
+        let authorized =
+            authorized_graph.retain_allowed(candidates, |candidate| &candidate.path)?;
         paginate_in_memory(authorized, &query)
     }
 
@@ -689,14 +796,14 @@ where
         root_ids: &[i32],
         include: ExportIncludeRelatedQuery,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
-        if self.external_backend().is_none() {
+        if let Some(is_admin) = self.authorization.local_is_admin() {
             return self
                 .subject
                 .related_objects_for_roots_from_backend_with_admin_status(
                     self.pool(),
                     root_ids,
                     include,
-                    self.local_is_admin.unwrap_or(false),
+                    is_admin,
                     self.scopes,
                 )
                 .await;
@@ -714,22 +821,18 @@ where
                 None,
             )
             .await?;
-        let allowed_paths = self
-            .authorized_graph_paths(
+        let authorized_graph = self
+            .authorized_object_graph(
                 &candidates
                     .iter()
                     .map(|row| row.path.clone())
                     .collect::<Vec<_>>(),
-                vec![Permissions::ReadObject],
-                vec![Permissions::ReadObjectRelation],
+                PermissionsList::new([Permissions::ReadObject]),
+                PermissionsList::new([Permissions::ReadObjectRelation]),
             )
             .await?;
         Ok(canonicalize_related_include_paths(
-            candidates
-                .into_iter()
-                .zip(allowed_paths)
-                .filter_map(|(candidate, allowed)| allowed.then_some(candidate))
-                .collect(),
+            authorized_graph.retain_allowed(candidates, |candidate| &candidate.path)?,
             include,
         ))
     }
@@ -740,7 +843,7 @@ where
         max_depth: i32,
         per_root_cap: i32,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
-        if self.external_backend().is_none() {
+        if let Some(is_admin) = self.authorization.local_is_admin() {
             return self
                 .subject
                 .bidirectionally_related_objects_for_roots_from_backend_with_admin_status(
@@ -748,7 +851,7 @@ where
                     root_ids,
                     max_depth,
                     per_root_cap,
-                    self.local_is_admin.unwrap_or(false),
+                    is_admin,
                     self.scopes,
                 )
                 .await;
@@ -764,22 +867,18 @@ where
                 None,
             )
             .await?;
-        let allowed_paths = self
-            .authorized_graph_paths(
+        let authorized_graph = self
+            .authorized_object_graph(
                 &candidates
                     .iter()
                     .map(|row| row.path.clone())
                     .collect::<Vec<_>>(),
-                vec![Permissions::ReadObject],
-                vec![Permissions::ReadObjectRelation],
+                PermissionsList::new([Permissions::ReadObject]),
+                PermissionsList::new([Permissions::ReadObjectRelation]),
             )
             .await?;
         Ok(canonicalize_related_object_paths(
-            candidates
-                .into_iter()
-                .zip(allowed_paths)
-                .filter_map(|(candidate, allowed)| allowed.then_some(candidate))
-                .collect(),
+            authorized_graph.retain_allowed(candidates, |candidate| &candidate.path)?,
             per_root_cap,
         ))
     }
@@ -790,7 +889,7 @@ where
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         self.object_relations_between_ids_with_permissions(
             object_ids,
-            vec![Permissions::ReadObjectRelation],
+            PermissionsList::new([Permissions::ReadObjectRelation]),
         )
         .await
     }
@@ -798,15 +897,15 @@ where
     async fn object_relations_between_ids_with_permissions(
         &self,
         object_ids: &[i32],
-        permissions: Vec<Permissions>,
+        permissions: PermissionsList<Permissions>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
-        if self.external_backend().is_none() {
+        if let Some(is_admin) = self.authorization.local_is_admin() {
             return self
                 .subject
                 .search_object_relations_between_ids_from_backend_with_admin_status(
                     self.pool(),
                     object_ids,
-                    self.local_is_admin.unwrap_or(false),
+                    is_admin,
                     self.scopes,
                 )
                 .await;
@@ -826,15 +925,49 @@ where
     }
 }
 
+pub(crate) struct ExportTaskSubmission {
+    export: ExportRequest,
+    template: Option<ExportTemplate>,
+    idempotency_key: Option<IdempotencyKey>,
+    scope_snapshot: TaskScopeSnapshot,
+}
+
+impl ExportTaskSubmission {
+    pub(crate) fn for_token(
+        export: ExportRequest,
+        token_id: TokenID,
+        scopes: Option<&TokenScope>,
+    ) -> Self {
+        Self {
+            export,
+            template: None,
+            idempotency_key: None,
+            scope_snapshot: TaskScopeSnapshot::from_request(Some(token_id), scopes),
+        }
+    }
+
+    pub(crate) fn template(mut self, template: ExportTemplate) -> Self {
+        self.template = Some(template);
+        self
+    }
+
+    pub(crate) fn idempotency_key(mut self, idempotency_key: Option<IdempotencyKey>) -> Self {
+        self.idempotency_key = idempotency_key;
+        self
+    }
+}
+
 pub(crate) async fn submit_export_task<S: AuthzSubject>(
     pool: &DbPool,
     subject: &S,
-    scopes: Option<&TokenScope>,
-    submitted_token_id: Option<TokenID>,
-    idempotency_key: Option<IdempotencyKey>,
-    export: ExportRequest,
-    template: Option<ExportTemplate>,
+    submission: ExportTaskSubmission,
 ) -> Result<TaskRecord, ApiError> {
+    let ExportTaskSubmission {
+        export,
+        template,
+        idempotency_key,
+        scope_snapshot,
+    } = submission;
     let task_payload = StoredExportTaskPayload {
         export,
         template_id: template.as_ref().map(|template| template.id),
@@ -846,12 +979,10 @@ pub(crate) async fn submit_export_task<S: AuthzSubject>(
     validate_export_submission(&runtime)?;
     let task_payload = runtime_to_task_payload(&runtime)?;
 
-    let snapshot = TaskScopeSnapshot::from_request(submitted_token_id, scopes);
-
     find_or_create_export_task(
         pool,
         PrincipalID::new(subject.principal_id())?,
-        snapshot,
+        scope_snapshot,
         idempotency_key,
         serde_json::to_value(task_payload)?,
         hash,
@@ -2716,10 +2847,11 @@ mod tests {
     use crate::permissions::{AppContext, ResourceAttrs, ResourceKind};
 
     use super::{
-        ExportRuntime, HydrationBudget, PermissionAwareExport, RelationHydrationPlan,
-        build_template_items, inferred_relation_alias, load_hydration_class_metadata,
-        normalize_alias_segment, object_with_root_path, pluralize_alias,
-        take_related_within_budget, validate_export_limits, validate_export_submission,
+        AuthorizationCandidates, ExportRuntime, HydrationBudget, ObjectGraphEdge,
+        PermissionAwareExport, RelationHydrationPlan, build_template_items,
+        inferred_relation_alias, load_hydration_class_metadata, normalize_alias_segment,
+        object_with_root_path, pluralize_alias, take_related_within_budget, validate_export_limits,
+        validate_export_submission,
     };
     use crate::db::capture_queries;
     use crate::errors::ApiError;
@@ -2730,6 +2862,28 @@ mod tests {
         chrono::DateTime::from_timestamp(1_700_000_000, 0)
             .unwrap()
             .naive_utc()
+    }
+
+    #[test]
+    fn authorization_candidates_reject_mismatched_resources() {
+        let result = AuthorizationCandidates::new(
+            vec![1, 2],
+            vec![crate::permissions::ResourceRef {
+                kind: ResourceKind::Object,
+                id: 1,
+                attrs: ResourceAttrs::default(),
+            }],
+        );
+
+        assert!(matches!(result, Err(ApiError::InternalServerError(_))));
+    }
+
+    #[test]
+    fn object_graph_edge_is_independent_of_relation_direction() {
+        let forward = ObjectGraphEdge::new(3, 7).unwrap();
+        let reverse = ObjectGraphEdge::new(7, 3).unwrap();
+
+        assert_eq!(forward, reverse);
     }
 
     #[tokio::test]

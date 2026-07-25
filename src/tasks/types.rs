@@ -37,10 +37,26 @@ pub(super) struct ObjectResolution {
     pub(super) exists_in_db: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) enum ImportAdminStatus {
+    #[default]
+    Unknown,
+    Known(bool),
+}
+
+impl ImportAdminStatus {
+    pub(super) fn known(self) -> Option<bool> {
+        match self {
+            Self::Unknown => None,
+            Self::Known(is_admin) => Some(is_admin),
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct PlanningState {
     pub(super) next_temp_id: i32,
-    pub(super) is_admin: Option<bool>,
+    pub(super) admin_status: ImportAdminStatus,
     /// Submitting token's scope boundary (`None` = unscoped). Threaded into the
     /// per-collection permission checks so a scoped import cannot exceed it.
     pub(super) scopes: Option<crate::models::TokenScope>,
