@@ -11,7 +11,7 @@ use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{Permissions, PrincipalID, TokenResourceScope, TokenScope};
+use crate::models::{PrincipalID, TokenScope, TokenScopeDetails};
 use crate::schema::tokens;
 use crate::traits::{
     BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -134,11 +134,9 @@ pub struct PrincipalTokenMetadata {
     pub revoked_at: Option<NaiveDateTime>,
     /// Whether either scope dimension narrows this token.
     pub scoped: bool,
-    /// Permission boundary. `None` leaves this dimension unrestricted.
-    pub scopes: Option<Vec<Permissions>>,
-    /// Collection, class, and object boundary. `None` leaves this dimension
-    /// unrestricted.
-    pub resource_scopes: Option<Vec<TokenResourceScope>>,
+    /// Exact permission and resource boundaries. `None` means that this token
+    /// is unscoped.
+    pub scope: Option<TokenScopeDetails>,
 }
 
 impl PrincipalTokenMetadata {
@@ -162,12 +160,9 @@ impl PrincipalTokenMetadata {
         scope: Option<TokenScope>,
     ) -> Result<Self, ApiError> {
         let scoped = value.is_scoped();
-        let (scopes, resource_scopes) = match (scoped, scope) {
-            (false, None) => (None, None),
-            (true, Some(scope)) => {
-                let parts = scope.into_parts()?;
-                (parts.permissions, parts.resource_scopes)
-            }
+        let scope = match (scoped, scope) {
+            (false, None) => None,
+            (true, Some(scope)) => Some(TokenScopeDetails::from_scope(scope)?),
             (false, Some(_)) => {
                 return Err(ApiError::InternalServerError(format!(
                     "Unscoped token {} has stored scope rows",
@@ -192,8 +187,7 @@ impl PrincipalTokenMetadata {
             last_used_at: value.last_used_at,
             revoked_at: value.revoked_at,
             scoped,
-            scopes,
-            resource_scopes,
+            scope,
         })
     }
 }

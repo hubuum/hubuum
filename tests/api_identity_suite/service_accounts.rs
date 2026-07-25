@@ -497,9 +497,9 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::CONFLICT);
     }
 
-    /// #13: an empty `scopes` array is a client bug and is rejected with 400.
+    /// #13: an empty permission boundary is a client bug and is rejected with 400.
     #[actix_web::test]
-    async fn test_token_mint_empty_scopes_rejected() {
+    async fn test_token_mint_empty_permissions_rejected() {
         let context = TestContext::new().await;
         let pool = &context.pool;
         let group = create_test_group(pool).await;
@@ -509,7 +509,7 @@ mod tests {
             pool,
             &context.admin_token,
             &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
-            &serde_json::json!({ "scopes": [] }),
+            &serde_json::json!({ "scope": { "permissions": [] } }),
         )
         .await;
 
@@ -518,7 +518,7 @@ mod tests {
 
     /// Duplicate scope entries are rejected at the request boundary with 400.
     #[actix_web::test]
-    async fn test_token_mint_duplicate_scopes_rejected() {
+    async fn test_token_mint_duplicate_permissions_rejected() {
         let context = TestContext::new().await;
         let pool = &context.pool;
         let group = create_test_group(pool).await;
@@ -529,7 +529,9 @@ mod tests {
             &context.admin_token,
             &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
             &serde_json::json!({
-                "scopes": ["ReadCollection", "ReadCollection"]
+                "scope": {
+                    "permissions": ["ReadCollection", "ReadCollection"]
+                }
             }),
         )
         .await;
@@ -538,7 +540,7 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_token_mint_empty_resource_scopes_rejected() {
+    async fn test_token_mint_empty_resources_rejected() {
         let context = TestContext::new().await;
         let group = create_test_group(&context.pool).await;
         let sa = create_test_service_account(&context.pool, &group, None).await;
@@ -547,7 +549,7 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
-            &serde_json::json!({ "resource_scopes": [] }),
+            &serde_json::json!({ "scope": { "resources": [] } }),
         )
         .await;
 
@@ -555,11 +557,11 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_token_mint_resource_scope_limit_rejected() {
+    async fn test_token_mint_resource_limit_rejected() {
         let context = TestContext::new().await;
         let group = create_test_group(&context.pool).await;
         let sa = create_test_service_account(&context.pool, &group, None).await;
-        let resource_scopes = (1..=MAX_TOKEN_RESOURCE_SCOPES + 1)
+        let resources = (1..=MAX_TOKEN_RESOURCE_SCOPES + 1)
             .map(|id| serde_json::json!({"kind": "object", "id": id}))
             .collect::<Vec<_>>();
 
@@ -567,7 +569,7 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
-            &serde_json::json!({ "resource_scopes": resource_scopes }),
+            &serde_json::json!({ "scope": { "resources": resources } }),
         )
         .await;
 
@@ -575,7 +577,7 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_token_mint_duplicate_resource_scopes_rejected() {
+    async fn test_token_mint_duplicate_resources_rejected() {
         let context = TestContext::new().await;
         let fixture = context.with_collection().await;
         let group = create_test_group(&context.pool).await;
@@ -589,7 +591,11 @@ mod tests {
             &context.pool,
             &context.admin_token,
             &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
-            &serde_json::json!({ "resource_scopes": [entry.clone(), entry] }),
+            &serde_json::json!({
+                "scope": {
+                    "resources": [entry.clone(), entry]
+                }
+            }),
         )
         .await;
 
@@ -597,7 +603,7 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_token_mint_unknown_resource_scope_rejected() {
+    async fn test_token_mint_unknown_resource_rejected() {
         let context = TestContext::new().await;
         let group = create_test_group(&context.pool).await;
         let sa = create_test_service_account(&context.pool, &group, None).await;
@@ -607,7 +613,9 @@ mod tests {
             &context.admin_token,
             &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
             &serde_json::json!({
-                "resource_scopes": [{"kind": "object", "id": i32::MAX}]
+                "scope": {
+                    "resources": [{"kind": "object", "id": i32::MAX}]
+                }
             }),
         )
         .await;
@@ -615,9 +623,9 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
-    /// #13: omitting `scopes` mints an unscoped token (`scoped = false`).
+    /// #13: omitting `scope` mints an unscoped token (`scoped = false`).
     #[actix_web::test]
-    async fn test_token_mint_omitted_scopes_is_unscoped() {
+    async fn test_token_mint_omitted_scope_is_unscoped() {
         use crate::schema::tokens::dsl::{
             permission_scoped, principal_id, resource_scoped, tokens,
         };
@@ -651,6 +659,50 @@ mod tests {
         .unwrap();
 
         assert_eq!(scoped_flags, vec![(false, false)]);
+    }
+
+    #[actix_web::test]
+    async fn test_token_mint_empty_scope_object_rejected() {
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        let sa = create_test_service_account(&context.pool, &group, None).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
+            &serde_json::json!({ "scope": {} }),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[rstest]
+    #[case::permission_scopes("scopes")]
+    #[case::resource_scopes("resource_scopes")]
+    #[actix_web::test]
+    async fn test_token_mint_legacy_flat_scope_fields_rejected(#[case] legacy_field: &str) {
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        let sa = create_test_service_account(&context.pool, &group, None).await;
+        let body = match legacy_field {
+            "scopes" => serde_json::json!({ "scopes": ["ReadCollection"] }),
+            "resource_scopes" => serde_json::json!({
+                "resource_scopes": [{"kind": "collection", "id": 1}]
+            }),
+            _ => unreachable!("rstest provides only known legacy fields"),
+        };
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
+            &body,
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     /// #2 / #13 (mechanism): scope intersection is fail-closed. `None` (unscoped)
@@ -1581,8 +1633,12 @@ mod tests {
         assert_eq!(body.principal.principal_id, sa.id);
         assert_eq!(body.principal.kind, "service_account");
         assert!(body.token.scoped);
-        assert_eq!(body.token.scopes, Some(vec![Permissions::ReadCollection]));
-        assert_eq!(body.token.resource_scopes, None);
+        let scope = body.token.scope.expect("token should expose its scope");
+        assert_eq!(
+            scope.permissions(),
+            Some([Permissions::ReadCollection].as_slice())
+        );
+        assert_eq!(scope.resources(), None);
     }
 
     #[actix_web::test]
@@ -1601,10 +1657,12 @@ mod tests {
             &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
             &serde_json::json!({
                 "name": "resource-only",
-                "resource_scopes": [{
-                    "kind": "collection",
-                    "id": fixture.collection.id
-                }]
+                "scope": {
+                    "resources": [{
+                        "kind": "collection",
+                        "id": fixture.collection.id
+                    }]
+                }
             }),
         )
         .await;
@@ -1617,12 +1675,16 @@ mod tests {
         let body: MeResponse = test::read_body_json(me).await;
 
         assert!(body.token.scoped);
-        assert_eq!(body.token.scopes, None);
+        let scope = body.token.scope.expect("token should expose its scope");
+        assert_eq!(scope.permissions(), None);
         assert_eq!(
-            body.token.resource_scopes,
-            Some(vec![TokenResourceScope::Collection(
-                CollectionID::new(fixture.collection.id).unwrap()
-            )])
+            scope.resources(),
+            Some(
+                [TokenResourceScope::Collection(
+                    CollectionID::new(fixture.collection.id).unwrap()
+                )]
+                .as_slice()
+            )
         );
     }
 
@@ -1729,11 +1791,13 @@ mod tests {
             &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", context.normal_user.id),
             &serde_json::json!({
                 "name": token_name,
-                "scopes": ["ReadCollection"],
-                "resource_scopes": [{
-                    "kind": "collection",
-                    "id": fixture.collection.id
-                }]
+                "scope": {
+                    "permissions": ["ReadCollection"],
+                    "resources": [{
+                        "kind": "collection",
+                        "id": fixture.collection.id
+                    }]
+                }
             }),
         )
         .await;
@@ -1754,12 +1818,19 @@ mod tests {
             .expect("minted token should be visible");
 
         assert!(token.scoped);
-        assert_eq!(token.scopes, Some(vec![Permissions::ReadCollection]));
+        let scope = token.scope.as_ref().expect("token should expose its scope");
         assert_eq!(
-            token.resource_scopes,
-            Some(vec![TokenResourceScope::Collection(
-                CollectionID::new(fixture.collection.id).unwrap()
-            )])
+            scope.permissions(),
+            Some([Permissions::ReadCollection].as_slice())
+        );
+        assert_eq!(
+            scope.resources(),
+            Some(
+                [TokenResourceScope::Collection(
+                    CollectionID::new(fixture.collection.id).unwrap()
+                )]
+                .as_slice()
+            )
         );
     }
 
@@ -1778,13 +1849,17 @@ mod tests {
         let metadata = PrincipalTokenMetadata::load_for_tokens(&context.pool, &duplicate_tokens)
             .await
             .unwrap();
-        let scopes = metadata
+        let permissions = metadata
             .into_iter()
-            .map(|token| token.scopes)
+            .map(|token| {
+                token
+                    .scope
+                    .and_then(|scope| scope.permissions().map(|permissions| permissions.to_vec()))
+            })
             .collect::<Vec<_>>();
 
         assert_eq!(
-            scopes,
+            permissions,
             vec![
                 Some(vec![Permissions::ReadCollection]),
                 Some(vec![Permissions::ReadCollection])

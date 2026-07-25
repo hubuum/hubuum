@@ -18,7 +18,7 @@ use crate::models::search::parse_query_parameter;
 use crate::models::token::revoke_token_by_id_for_principal;
 use crate::models::{
     Group, GroupResponse, Permissions, PrincipalID, PrincipalToken, PrincipalTokenCreateRequest,
-    PrincipalTokenMetadata, TokenID, TokenResourceScope, TokenScope,
+    PrincipalTokenMetadata, TokenID, TokenScopeDetails,
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::traits::{AuthzSubject, GroupAccessors};
@@ -56,18 +56,14 @@ async fn ensure_can_manage_principal_settings(
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NewTokenRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub expires_at: Option<chrono::NaiveDateTime>,
-    /// Optional scope set. Omit for an unscoped token; an **empty** array is
-    /// rejected (almost certainly a client bug, not "grant nothing").
-    pub scopes: Option<Vec<Permissions>>,
-    /// Optional resource boundary. Entries are additive within the boundary
-    /// and are always intersected with the principal's live group grants. At
-    /// most 1,000 entries are accepted.
-    #[schema(max_items = 1000)]
-    pub resource_scopes: Option<Vec<TokenResourceScope>>,
+    /// Optional permission and resource boundaries. Omit or send `null` for an
+    /// unscoped token.
+    pub scope: Option<TokenScopeDetails>,
 }
 
 impl NewTokenRequest {
@@ -75,7 +71,10 @@ impl NewTokenRequest {
         self,
         principal_id: PrincipalID,
     ) -> Result<PrincipalTokenCreateRequest, ApiError> {
-        let scope = TokenScope::from_request_parts(self.scopes, self.resource_scopes)?;
+        let scope = self
+            .scope
+            .map(TokenScopeDetails::into_request_scope)
+            .transpose()?;
         Ok(PrincipalTokenCreateRequest::new(principal_id)
             .name(self.name)
             .description(self.description)

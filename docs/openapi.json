@@ -18174,26 +18174,18 @@
               "null"
             ]
           },
-          "resource_scopes": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/TokenResourceScope"
-            }
+          "scope": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TokenScopeDetails"
+              }
+            ]
           },
           "scoped": {
             "type": "boolean"
-          },
-          "scopes": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/Permissions"
-            }
           }
         }
       },
@@ -23416,28 +23408,19 @@
               "null"
             ]
           },
-          "resource_scopes": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/TokenResourceScope"
-            },
-            "description": "Optional resource boundary. Entries are additive within the boundary\nand are always intersected with the principal's live group grants. At\nmost 1,000 entries are accepted.",
-            "maxItems": 1000
-          },
-          "scopes": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/Permissions"
-            },
-            "description": "Optional scope set. Omit for an unscoped token; an **empty** array is\nrejected (almost certainly a client bug, not \"grant nothing\")."
+          "scope": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TokenScopeDetails",
+                "description": "Optional permission and resource boundaries. Omit or send `null` for an\nunscoped token."
+              }
+            ]
           }
-        }
+        },
+        "additionalProperties": false
       },
       "NewUser": {
         "type": "object",
@@ -24386,16 +24369,6 @@
             "type": "integer",
             "format": "int32"
           },
-          "resource_scopes": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/TokenResourceScope"
-            },
-            "description": "Collection, class, and object boundary. `None` leaves this dimension\nunrestricted."
-          },
           "revoked_at": {
             "type": [
               "string",
@@ -24403,19 +24376,20 @@
             ],
             "format": "date-time"
           },
+          "scope": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TokenScopeDetails",
+                "description": "Exact permission and resource boundaries. `None` means that this token\nis unscoped."
+              }
+            ]
+          },
           "scoped": {
             "type": "boolean",
             "description": "Whether either scope dimension narrows this token."
-          },
-          "scopes": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/Permissions"
-            },
-            "description": "Permission boundary. `None` leaves this dimension unrestricted."
           }
         }
       },
@@ -25989,6 +25963,34 @@
           }
         ],
         "description": "One resource explicitly included in a token's resource boundary.\n\nResource scopes are additive within the boundary: a collection entry covers\nthat collection, its classes, and their objects; a class entry covers that\nclass and its objects; and an object entry covers only that object. The\nboundary is still intersected with the principal's live group grants."
+      },
+      "TokenScopeDetails": {
+        "type": "object",
+        "description": "API representation of a token's independent permission and resource\nboundaries.\n\nThis type is nested under a singular `scope` field. An absent outer\n`scope` means that the token is unscoped; within a present scope, an absent\ndimension is unrestricted.",
+        "properties": {
+          "permissions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Permissions"
+            },
+            "description": "Permission boundary. `None` leaves this dimension unrestricted."
+          },
+          "resources": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/TokenResourceScope"
+            },
+            "description": "Collection, class, and object boundary. `None` leaves this dimension\nunrestricted.",
+            "maxItems": 1000
+          }
+        },
+        "additionalProperties": false
       },
       "UnifiedSearchBatchResponse": {
         "type": "object",

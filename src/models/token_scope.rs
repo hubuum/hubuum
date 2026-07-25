@@ -22,6 +22,23 @@ pub enum TokenResourceScope {
     Object(HubuumObjectID),
 }
 
+/// API representation of a token's independent permission and resource
+/// boundaries.
+///
+/// This type is nested under a singular `scope` field. An absent outer
+/// `scope` means that the token is unscoped; within a present scope, an absent
+/// dimension is unrestricted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TokenScopeDetails {
+    /// Permission boundary. `None` leaves this dimension unrestricted.
+    permissions: Option<Vec<Permissions>>,
+    /// Collection, class, and object boundary. `None` leaves this dimension
+    /// unrestricted.
+    #[schema(max_items = 1000)]
+    resources: Option<Vec<TokenResourceScope>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum TokenResourceScopeKey {
     Collection(i32),
@@ -159,7 +176,53 @@ impl<'a> TokenResourceScopeIds<'a> {
 
 pub(crate) struct TokenScopeParts {
     pub(crate) permissions: Option<Vec<Permissions>>,
-    pub(crate) resource_scopes: Option<Vec<TokenResourceScope>>,
+    pub(crate) resources: Option<Vec<TokenResourceScope>>,
+}
+
+impl TokenScopeDetails {
+    /// Build and validate a client-facing scope representation.
+    pub fn new(
+        permissions: Option<Vec<Permissions>>,
+        resources: Option<Vec<TokenResourceScope>>,
+    ) -> Result<Self, ApiError> {
+        Self::from_scope(Self::request_scope(permissions, resources)?)
+    }
+
+    /// Build an API representation from a validated domain scope.
+    pub fn from_scope(scope: TokenScope) -> Result<Self, ApiError> {
+        let parts = scope.into_parts()?;
+        Ok(Self {
+            permissions: parts.permissions,
+            resources: parts.resources,
+        })
+    }
+
+    /// Validate a client-supplied scope and convert it to the domain model.
+    ///
+    /// A present scope must narrow at least one dimension. Clients create an
+    /// unscoped token by omitting `scope` or sending it as `null`.
+    pub fn into_request_scope(self) -> Result<TokenScope, ApiError> {
+        Self::request_scope(self.permissions, self.resources)
+    }
+
+    fn request_scope(
+        permissions: Option<Vec<Permissions>>,
+        resources: Option<Vec<TokenResourceScope>>,
+    ) -> Result<TokenScope, ApiError> {
+        TokenScope::from_request_parts(permissions, resources)?.ok_or_else(|| {
+            ApiError::BadRequest(
+                "scope must include at least one of permissions or resources".to_string(),
+            )
+        })
+    }
+
+    pub fn permissions(&self) -> Option<&[Permissions]> {
+        self.permissions.as_deref()
+    }
+
+    pub fn resources(&self) -> Option<&[TokenResourceScope]> {
+        self.resources.as_deref()
+    }
 }
 
 impl TokenScope {
@@ -197,12 +260,12 @@ impl TokenScope {
     ) -> Result<Option<Self>, ApiError> {
         if permissions.as_ref().is_some_and(Vec::is_empty) {
             return Err(ApiError::BadRequest(
-                "scopes must be non-empty when provided".to_string(),
+                "scope.permissions must be non-empty when provided".to_string(),
             ));
         }
         if resources.as_ref().is_some_and(Vec::is_empty) {
             return Err(ApiError::BadRequest(
-                "resource_scopes must be non-empty when provided".to_string(),
+                "scope.resources must be non-empty when provided".to_string(),
             ));
         }
         if resources
@@ -210,7 +273,7 @@ impl TokenScope {
             .is_some_and(|resources| resources.len() > MAX_TOKEN_RESOURCE_SCOPES)
         {
             return Err(ApiError::BadRequest(format!(
-                "resource_scopes must contain at most {MAX_TOKEN_RESOURCE_SCOPES} entries"
+                "scope.resources must contain at most {MAX_TOKEN_RESOURCE_SCOPES} entries"
             )));
         }
         if let Some(permissions) = &permissions {
@@ -219,7 +282,7 @@ impl TokenScope {
             unique.dedup();
             if unique.len() != permissions.len() {
                 return Err(ApiError::BadRequest(
-                    "scopes must not contain duplicates".to_string(),
+                    "scope.permissions must not contain duplicates".to_string(),
                 ));
             }
         }
@@ -233,7 +296,7 @@ impl TokenScope {
             keys.dedup();
             if keys.len() != resources.len() {
                 return Err(ApiError::BadRequest(
-                    "resource_scopes must not contain duplicates".to_string(),
+                    "scope.resources must not contain duplicates".to_string(),
                 ));
             }
         }
@@ -333,13 +396,13 @@ impl TokenScope {
     }
 
     pub(crate) fn into_parts(self) -> Result<TokenScopeParts, ApiError> {
-        let resource_scopes = self
+        let resources = self
             .resources
             .map(|resources| resources.entries())
             .transpose()?;
         Ok(TokenScopeParts {
             permissions: self.permissions,
-            resource_scopes,
+            resources,
         })
     }
 
@@ -600,7 +663,7 @@ mod tests {
 
         assert!(
             matches!(error, ApiError::BadRequest(message) if message == format!(
-                "resource_scopes must contain at most {MAX_TOKEN_RESOURCE_SCOPES} entries"
+                "scope.resources must contain at most {MAX_TOKEN_RESOURCE_SCOPES} entries"
             ))
         );
     }

@@ -13,8 +13,8 @@ use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    Group, GroupResponse, Permissions, PrincipalID, PrincipalMemberResponse, PrincipalSettings,
-    PrincipalToken, PrincipalTokenMetadata, TokenResourceScope,
+    Group, GroupResponse, PrincipalID, PrincipalMemberResponse, PrincipalSettings, PrincipalToken,
+    PrincipalTokenMetadata, TokenScopeDetails,
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::traits::GroupAccessors;
@@ -44,8 +44,7 @@ pub struct CurrentTokenMetadata {
     pub expires_at: Option<chrono::NaiveDateTime>,
     pub last_used_at: Option<chrono::NaiveDateTime>,
     pub scoped: bool,
-    pub scopes: Option<Vec<Permissions>>,
-    pub resource_scopes: Option<Vec<TokenResourceScope>>,
+    pub scope: Option<TokenScopeDetails>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -72,13 +71,10 @@ pub async fn get_me(
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
     let scoped = requestor.token_meta.is_scoped();
-    let (scopes, resource_scopes) = match requestor.scope {
-        Some(scope) => {
-            let parts = scope.into_parts()?;
-            (parts.permissions, parts.resource_scopes)
-        }
-        None => (None, None),
-    };
+    let scope = requestor
+        .scope
+        .map(TokenScopeDetails::from_scope)
+        .transpose()?;
     let token = CurrentTokenMetadata {
         id: requestor.token_meta.id,
         name: requestor.token_meta.name,
@@ -87,8 +83,7 @@ pub async fn get_me(
         expires_at: requestor.token_meta.expires_at,
         last_used_at: requestor.token_meta.last_used_at,
         scoped,
-        scopes,
-        resource_scopes,
+        scope,
     };
 
     Ok(ApiResponse::new(

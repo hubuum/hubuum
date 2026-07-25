@@ -10,8 +10,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Added
 
 - Token-list responses now include each visible token's exact permission and
-  resource scope dimensions instead of exposing only a combined `scoped`
-  boolean.
+  resource scope dimensions in a shared `scope` object instead of exposing
+  only a combined `scoped` boolean.
 - Added durable task provenance across audit events, task lifecycle history,
   temporal resource history, event subscriptions, and all event sinks. Worker
   and system actions now retain the root task initiator and task ID, API and
@@ -30,6 +30,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (HTTP and Rust API):** Token-mint and token-metadata payloads now
+  use a singular `scope` object with optional `permissions` and `resources`
+  fields. Token-mint clients must replace top-level `scopes` and
+  `resource_scopes` with `scope.permissions` and `scope.resources`; legacy flat
+  fields are rejected with `400` to prevent accidentally minting an unscoped
+  token. Token metadata consumers must replace the flat `scopes` and
+  `resource_scopes` fields with `scope` and use
+  `TokenScopeDetails::permissions()` or `TokenScopeDetails::resources()` in
+  Rust.
 - **Breaking (Rust API):** `PrincipalTokenMetadata` no longer implements
   `From<PrincipalToken>` because exact scope metadata requires a database
   lookup. Downstream callers must replace `PrincipalTokenMetadata::from(token)`
