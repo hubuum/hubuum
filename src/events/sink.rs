@@ -7,32 +7,41 @@ use crate::config::{
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
     DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
 };
-use crate::events::Event;
+use crate::events::{Event, PrincipalNames};
 use crate::models::{EventSink, EventSinkKind, EventSubscription};
 
 pub use hubuum_event_sinks_common::{EventEnvelope, SinkError};
 
 impl From<Event> for EventEnvelope {
     fn from(event: Event) -> Self {
-        Self {
-            id: event.id,
-            event_id: event.event_id,
-            occurred_at: event.occurred_at,
-            entity_type: event.entity_type,
-            entity_id: event.entity_id,
-            entity_name: event.entity_name,
-            collection_id: event.collection_id,
-            action: event.action,
-            actor_user_id: event.actor_user_id,
-            actor_kind: event.actor_kind,
-            request_id: event.request_id,
-            correlation_id: event.correlation_id,
-            summary: event.summary,
-            before: event.before,
-            after: event.after,
-            metadata: event.metadata,
-            schema_version: event.schema_version,
-        }
+        event_envelope_with_names(event, &PrincipalNames::default())
+    }
+}
+
+pub(crate) fn event_envelope_with_names(
+    event: Event,
+    principal_names: &PrincipalNames,
+) -> EventEnvelope {
+    let provenance = event.resolved_provenance(principal_names);
+    EventEnvelope {
+        id: event.id,
+        event_id: event.event_id,
+        occurred_at: event.occurred_at,
+        entity_type: event.entity_type,
+        entity_id: event.entity_id,
+        entity_name: event.entity_name,
+        collection_id: event.collection_id,
+        action: event.action,
+        actor_user_id: event.actor_user_id,
+        actor_kind: event.actor_kind,
+        provenance,
+        request_id: event.request_id,
+        correlation_id: event.correlation_id,
+        summary: event.summary,
+        before: event.before,
+        after: event.after,
+        metadata: event.metadata,
+        schema_version: event.schema_version,
     }
 }
 
@@ -233,6 +242,7 @@ mod tests {
             action: "created".to_string(),
             actor_user_id: None,
             actor_kind: "system".to_string(),
+            provenance: hubuum_events_core::Provenance::default(),
             request_id: None,
             correlation_id: None,
             summary: "created collection".to_string(),

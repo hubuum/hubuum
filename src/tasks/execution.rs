@@ -8,7 +8,7 @@ use crate::errors::ApiError;
 use crate::models::{
     Collection, EventSinkKey, GroupKey, IdentityScopeKey, ImportAtomicity, ImportCollisionPolicy,
     ImportExportTemplateInput, ImportMode, ImportPermissionPolicy, ImportPrincipalSubtype,
-    ImportRequest, NewTaskEventRecord, PrincipalKey, TaskRecord, TaskStatus,
+    ImportRequest, NewTaskEventRecord, PrincipalKey, TaskRecord, TaskResultCounts, TaskStatus,
 };
 use crate::observability::metrics;
 use crate::traits::BackendContext;
@@ -232,9 +232,7 @@ where
                 TerminalTaskUpdate {
                     status: TaskStatus::Failed,
                     summary,
-                    processed_items: failed_count,
-                    success_items: 0,
-                    failed_items: failed_count,
+                    counts: TaskResultCounts::from_outcomes(0, failed_count)?,
                     event_data: None,
                 },
             )
@@ -282,15 +280,8 @@ where
 
         task.update_state(
             pool,
-            TaskStateUpdate {
-                status: TaskStatus::Running,
-                summary: None,
-                processed_items: 0,
-                success_items: 0,
-                failed_items: 0,
-                started_at: task.started_at,
-                finished_at: None,
-            },
+            TaskStateUpdate::new(TaskStatus::Running, TaskResultCounts::default())
+                .with_started_at(task.started_at),
         )
         .await?;
 
@@ -372,9 +363,7 @@ where
             TerminalTaskUpdate {
                 status,
                 summary,
-                processed_items: accumulator.processed,
-                success_items: accumulator.success,
-                failed_items: accumulator.failed,
+                counts: TaskResultCounts::from_outcomes(accumulator.success, accumulator.failed)?,
                 event_data: Some(serde_json::json!({
                     "processed_items": accumulator.processed,
                     "success_items": accumulator.success,
@@ -403,15 +392,9 @@ async fn finalize_task(
 ) -> Result<(), ApiError> {
     task.finalize_terminal(
         pool,
-        TaskStateUpdate {
-            status: terminal.status,
-            summary: Some(terminal.summary.clone()),
-            processed_items: terminal.processed_items,
-            success_items: terminal.success_items,
-            failed_items: terminal.failed_items,
-            started_at: task.started_at,
-            finished_at: None,
-        },
+        TaskStateUpdate::new(terminal.status, terminal.counts)
+            .with_summary(terminal.summary.clone())
+            .with_started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: terminal.status.as_str().to_string(),

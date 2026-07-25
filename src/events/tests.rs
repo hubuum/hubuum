@@ -24,6 +24,7 @@ use crate::db::traits::event_retention::{
     EventRetentionSettings, purge_event_retention_without_archive, try_acquire_event_retention_lock,
 };
 use crate::db::traits::event_subscription::{SaveEventSinkRecord, SaveEventSubscriptionRecord};
+use crate::db::traits::events::{EventListFilters, list_events_with_total_count};
 use crate::db::traits::remote_target::{
     DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
     emit_remote_target_invoked_event,
@@ -38,6 +39,7 @@ use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::collection::{NewCollectionWithAssignee, UpdateCollection, move_collection};
 use crate::models::group::{NewGroup, UpdateGroup};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
+use crate::models::search::QueryOptions;
 use crate::models::token::{create_principal_token, revoke_token_by_id_for_principal};
 use crate::models::{
     CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink as EventSinkModel,
@@ -296,6 +298,90 @@ async fn emit_collection_created_event(scope: &TestScope, collection_id: i32) ->
     with_connection(&scope.pool, async |conn| emit_event(conn, &event).await)
         .await
         .unwrap()
+}
+
+#[actix_web::test]
+async fn audit_page_filters_and_enriches_legacy_task_initiators_in_bounded_queries() {
+    let scope = test_scope();
+    let initiator = create_test_user(&scope.pool).await;
+    let initiator_name = initiator.name(&scope.pool).await.unwrap();
+    let task_id = (Uuid::new_v4().as_u128() as i32 & (i32::MAX - 1)) + 1;
+    let queued = NewEvent::new(
+        EntityType::Task,
+        Action::Queued,
+        ActorKind::User,
+        "legacy task queued",
+    )
+    .unwrap()
+    .with_entity_id(task_id)
+    .with_actor_user_id(initiator.id);
+    let running = NewEvent::new(
+        EntityType::Task,
+        Action::Running,
+        ActorKind::Worker,
+        "legacy task running",
+    )
+    .unwrap()
+    .with_entity_id(task_id);
+    with_transaction(&scope.pool, async |conn| {
+        emit_event(conn, &queued).await?;
+        emit_event(conn, &running).await?;
+        Ok::<_, diesel::result::Error>(())
+    })
+    .await
+    .unwrap();
+
+    let filters = EventListFilters {
+        initiator_user_id: Some(initiator.id),
+        ..EventListFilters::default()
+    };
+    let query_options = QueryOptions {
+        filters: Vec::new(),
+        sort: Vec::new(),
+        limit: None,
+        cursor: None,
+        include_total: false,
+    };
+    let (result, queries) = capture_queries(list_events_with_total_count(
+        &scope.pool,
+        &[],
+        true,
+        &filters,
+        &query_options,
+    ))
+    .await;
+    let (event_responses, _) = result.unwrap();
+
+    assert_eq!(event_responses.len(), 2);
+    for event in event_responses {
+        assert_eq!(event.provenance.task_id, Some(task_id));
+        assert_eq!(
+            event
+                .provenance
+                .initiator
+                .as_ref()
+                .map(|principal| principal.principal_id),
+            Some(initiator.id)
+        );
+        assert_eq!(
+            event
+                .provenance
+                .initiator
+                .as_ref()
+                .and_then(|principal| principal.name.as_deref()),
+            Some(initiator_name.as_str())
+        );
+    }
+    assert_eq!(
+        queries.queries_matching("FROM \"events\""),
+        2,
+        "one page query and one queued-event fallback query"
+    );
+    assert_eq!(
+        queries.queries_matching("FROM \"principals\""),
+        1,
+        "actor and initiator names share one batch lookup"
+    );
 }
 
 async fn insert_collection_created_event_at(

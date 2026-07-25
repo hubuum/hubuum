@@ -24,8 +24,8 @@ use uuid::Uuid;
 /// The kind of actor that originated an event.
 ///
 /// Stored as text on the `events.actor_kind` column. System actors cover
-/// maintenance/migration paths; worker actors carry task causation in event
-/// `metadata` (see #72/#87).
+/// maintenance and recovery paths; worker actors carry root-task causation
+/// through the event's durable initiator and task provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActorKind {
@@ -53,29 +53,59 @@ impl ActorKind {
     }
 }
 
-/// Actor + request provenance attached to an event-producing mutation.
+/// Durable principal identity used in provenance responses and sink envelopes.
 ///
-/// This type intentionally has no Actix, Diesel, or application-model
-/// dependencies so producer code can pass it across future crate boundaries.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EventContext {
-    actor_kind: ActorKind,
-    actor_user_id: Option<i32>,
-    request_id: Option<Uuid>,
-    correlation_id: Option<String>,
+/// Names are resolved at read/delivery time rather than copied into immutable
+/// event and history storage. The id therefore remains available even when no
+/// current principal name can be resolved.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(ToSchema))]
+pub struct ProvenancePrincipal {
+    pub principal_id: i32,
+    pub name: Option<String>,
 }
 
-impl EventContext {
-    pub fn user(
-        actor_user_id: i32,
-        request_id: Option<Uuid>,
-        correlation_id: Option<String>,
-    ) -> Self {
+/// The immediate actor that performed a mutation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(ToSchema))]
+pub struct ProvenanceActor {
+    pub kind: Option<String>,
+    pub principal: Option<ProvenancePrincipal>,
+}
+
+/// Shared provenance returned by audit/history APIs and serialized to sinks.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(ToSchema))]
+pub struct Provenance {
+    pub actor: ProvenanceActor,
+    pub initiator: Option<ProvenancePrincipal>,
+    pub task_id: Option<i32>,
+}
+
+/// Typed mutation attribution propagated through database task-local state.
+///
+/// The actor is the user, worker, or system process that performed the write.
+/// The initiator is the durable principal that submitted the root task, if the
+/// write runs asynchronously on that principal's behalf.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MutationProvenance {
+    actor_kind: ActorKind,
+    actor_user_id: Option<i32>,
+    initiator_user_id: Option<i32>,
+    task_id: Option<i32>,
+}
+
+impl MutationProvenance {
+    pub fn user(actor_user_id: i32) -> Self {
+        Self::new(ActorKind::User, Some(actor_user_id), None, None)
+    }
+
+    pub fn user_for_task(actor_user_id: i32, initiator_user_id: Option<i32>, task_id: i32) -> Self {
         Self::new(
             ActorKind::User,
             Some(actor_user_id),
-            request_id,
-            correlation_id,
+            initiator_user_id,
+            Some(task_id),
         )
     }
 
@@ -83,8 +113,12 @@ impl EventContext {
         Self::new(ActorKind::System, None, None, None)
     }
 
-    pub fn worker(request_id: Option<Uuid>, correlation_id: Option<String>) -> Self {
-        Self::new(ActorKind::Worker, None, request_id, correlation_id)
+    pub fn system_for_task(initiator_user_id: Option<i32>, task_id: i32) -> Self {
+        Self::new(ActorKind::System, None, initiator_user_id, Some(task_id))
+    }
+
+    pub fn worker(initiator_user_id: Option<i32>, task_id: i32) -> Self {
+        Self::new(ActorKind::Worker, None, initiator_user_id, Some(task_id))
     }
 
     pub fn actor_kind(&self) -> ActorKind {
@@ -93,6 +127,78 @@ impl EventContext {
 
     pub fn actor_user_id(&self) -> Option<i32> {
         self.actor_user_id
+    }
+
+    pub fn initiator_user_id(&self) -> Option<i32> {
+        self.initiator_user_id
+    }
+
+    pub fn task_id(&self) -> Option<i32> {
+        self.task_id
+    }
+
+    fn new(
+        actor_kind: ActorKind,
+        actor_user_id: Option<i32>,
+        initiator_user_id: Option<i32>,
+        task_id: Option<i32>,
+    ) -> Self {
+        Self {
+            actor_kind,
+            actor_user_id,
+            initiator_user_id,
+            task_id,
+        }
+    }
+}
+
+/// Actor + request provenance attached to an event-producing mutation.
+///
+/// This type intentionally has no Actix, Diesel, or application-model
+/// dependencies so producer code can pass it across future crate boundaries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventContext {
+    mutation: MutationProvenance,
+    request_id: Option<Uuid>,
+    correlation_id: Option<String>,
+}
+
+impl EventContext {
+    /// Build an event context from already-typed mutation provenance.
+    pub fn from_mutation(mutation: MutationProvenance) -> Self {
+        Self::new(mutation, None, None)
+    }
+
+    pub fn user(
+        actor_user_id: i32,
+        request_id: Option<Uuid>,
+        correlation_id: Option<String>,
+    ) -> Self {
+        Self::new(
+            MutationProvenance::user(actor_user_id),
+            request_id,
+            correlation_id,
+        )
+    }
+
+    pub fn system() -> Self {
+        Self::new(MutationProvenance::system(), None, None)
+    }
+
+    pub fn actor_kind(&self) -> ActorKind {
+        self.mutation.actor_kind()
+    }
+
+    pub fn actor_user_id(&self) -> Option<i32> {
+        self.mutation.actor_user_id()
+    }
+
+    pub fn initiator_user_id(&self) -> Option<i32> {
+        self.mutation.initiator_user_id()
+    }
+
+    pub fn task_id(&self) -> Option<i32> {
+        self.mutation.task_id()
     }
 
     pub fn request_id(&self) -> Option<Uuid> {
@@ -104,14 +210,12 @@ impl EventContext {
     }
 
     fn new(
-        actor_kind: ActorKind,
-        actor_user_id: Option<i32>,
+        mutation: MutationProvenance,
         request_id: Option<Uuid>,
         correlation_id: Option<String>,
     ) -> Self {
         Self {
-            actor_kind,
-            actor_user_id,
+            mutation,
             request_id,
             correlation_id,
         }
@@ -324,6 +428,7 @@ pub struct EventEnvelope {
     pub action: String,
     pub actor_user_id: Option<i32>,
     pub actor_kind: String,
+    pub provenance: Provenance,
     pub request_id: Option<Uuid>,
     pub correlation_id: Option<String>,
     pub summary: String,
@@ -375,6 +480,8 @@ pub struct EventSubscriptionFilter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actor_user_ids: Vec<i32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub initiator_user_ids: Vec<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub request_ids: Vec<Uuid>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub correlation_ids: Vec<String>,
@@ -391,6 +498,14 @@ impl EventSubscriptionFilter {
             && matches_optional_str(&self.entity_names, event.entity_name.as_deref())
             && matches_str(&self.actor_kinds, &event.actor_kind)
             && matches_optional_i32(&self.actor_user_ids, event.actor_user_id)
+            && matches_optional_i32(
+                &self.initiator_user_ids,
+                event
+                    .provenance
+                    .initiator
+                    .as_ref()
+                    .map(|principal| principal.principal_id),
+            )
             && matches_optional_uuid(&self.request_ids, event.request_id)
             && matches_optional_str(&self.correlation_ids, event.correlation_id.as_deref())
     }
@@ -402,6 +517,7 @@ impl EventSubscriptionFilter {
         ensure_unique_str("entity_names", &self.entity_names)?;
         ensure_unique_str("actor_kinds", &self.actor_kinds)?;
         ensure_unique_i32("actor_user_ids", &self.actor_user_ids)?;
+        ensure_unique_i32("initiator_user_ids", &self.initiator_user_ids)?;
         ensure_unique_uuid("request_ids", &self.request_ids)?;
         ensure_unique_str("correlation_ids", &self.correlation_ids)?;
 
@@ -416,6 +532,9 @@ impl EventSubscriptionFilter {
         }
         for value in &self.actor_user_ids {
             ensure_positive("actor_user_ids", *value)?;
+        }
+        for value in &self.initiator_user_ids {
+            ensure_positive("initiator_user_ids", *value)?;
         }
         for value in &self.entity_names {
             ensure_non_empty("entity_names", value)?;
@@ -794,6 +913,7 @@ mod tests {
             entity_names: vec!["test entity".to_string()],
             actor_kinds: vec!["user".to_string()],
             actor_user_ids: vec![40],
+            initiator_user_ids: vec![],
             request_ids: vec![request_id],
             correlation_ids: vec!["correlation".to_string()],
         };
@@ -809,6 +929,21 @@ mod tests {
         };
 
         assert!(!filter.matches(&envelope()));
+    }
+
+    #[test]
+    fn subscription_filter_matches_task_initiator() {
+        let mut event = envelope();
+        event.provenance.initiator = Some(ProvenancePrincipal {
+            principal_id: 77,
+            name: Some("submitter".to_string()),
+        });
+        let filter = EventSubscriptionFilter {
+            initiator_user_ids: vec![77],
+            ..EventSubscriptionFilter::default()
+        };
+
+        assert!(filter.matches(&event));
     }
 
     #[test]
@@ -849,6 +984,7 @@ mod tests {
             action: "created".to_string(),
             actor_user_id: Some(40),
             actor_kind: "user".to_string(),
+            provenance: Provenance::default(),
             request_id: None,
             correlation_id: Some("correlation".to_string()),
             summary: "summary".to_string(),

@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::db::prelude::{QueryableByName, RunQueryDsl};
 use crate::db::traits::history::{
-    HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_actor_usernames,
+    HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_principal_names,
 };
 use crate::db::traits::user::UserSearchBackend;
 use crate::db::with_actor_scope;
@@ -637,25 +637,29 @@ async fn collection_history_query_count_is_constant_with_page_size() {
                 HistoryCollectionFilter::All,
             )
             .await?;
-            let actor_ids = rows.iter().filter_map(|row| row.actor_id).collect();
-            let actors = resolve_actor_usernames(&pool, actor_ids).await?;
-            Ok::<_, crate::errors::ApiError>((rows, total, actors))
+            let principal_ids = rows
+                .iter()
+                .flat_map(|row| [row.actor_id, row.initiator_user_id])
+                .flatten()
+                .collect();
+            let principal_names = resolve_principal_names(&pool, principal_ids).await?;
+            Ok::<_, crate::errors::ApiError>((rows, total, principal_names))
         }
     };
 
     let (small_page, small_queries) = capture_queries(load_history(1)).await;
-    let (small_rows, small_total, small_actors) =
+    let (small_rows, small_total, small_principal_names) =
         small_page.expect("small history page should load");
     assert_eq!(small_rows.len(), 1);
     assert!(small_total >= 12);
-    assert!(small_actors.contains_key(&actor.id));
+    assert!(small_principal_names.contains(actor.id));
 
     let (large_page, large_queries) = capture_queries(load_history(20)).await;
-    let (large_rows, large_total, large_actors) =
+    let (large_rows, large_total, large_principal_names) =
         large_page.expect("large history page should load");
     assert!(large_rows.len() >= 12);
     assert_eq!(large_total, small_total);
-    assert!(large_actors.contains_key(&actor.id));
+    assert!(large_principal_names.contains(actor.id));
 
     assert_same_query_shape(&small_queries, &large_queries);
     assert_eq!(large_queries.total_queries(), 3);

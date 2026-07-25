@@ -12,7 +12,7 @@ use crate::extractors::Authenticated;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     ImportRequest, ImportTaskResultResponse, PrincipalID, TaskID, TaskKind, TaskRecord,
-    TaskResponse,
+    TaskResponse, TokenID,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
@@ -22,25 +22,20 @@ use crate::tasks::{
 
 async fn find_or_create_import_task(
     pool: &DbPool,
-    submitted_by: i32,
+    submitted_by: PrincipalID,
     snapshot: TaskScopeSnapshot,
     idempotency_key: Option<IdempotencyKey>,
     payload: serde_json::Value,
     request_hash: String,
     total_items: i32,
 ) -> Result<TaskRecord, ApiError> {
-    TaskCreateRequest::builder(
-        TaskKind::Import,
-        PrincipalID::new(submitted_by)?,
-        payload,
-        total_items,
-    )
-    .idempotency_key(idempotency_key)
-    .request_hash(Some(request_hash))
-    .scope_snapshot(snapshot)
-    .build()
-    .create_idempotently_with_active_limit(pool, max_active_import_tasks_per_user())
-    .await
+    TaskCreateRequest::builder(TaskKind::Import, submitted_by, payload, total_items)
+        .idempotency_key(idempotency_key)
+        .request_hash(Some(request_hash))
+        .scope_snapshot(snapshot)
+        .build()
+        .create_idempotently_with_active_limit(pool, max_active_import_tasks_per_user())
+        .await
 }
 
 #[utoipa::path(
@@ -78,11 +73,12 @@ pub async fn create_import(
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
-    let snapshot = TaskScopeSnapshot::from_request(Some(requestor.token_meta.id), None);
+    let snapshot =
+        TaskScopeSnapshot::from_request(Some(TokenID::new(requestor.token_meta.id)?), None);
 
     let task = find_or_create_import_task(
         &pool,
-        requestor.principal.id,
+        PrincipalID::new(requestor.principal.id)?,
         snapshot,
         idempotency_key,
         payload,

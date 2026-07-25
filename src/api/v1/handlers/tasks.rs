@@ -4,7 +4,7 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::traits::task::{
     TaskBackend, list_backup_task_output_summaries, list_export_task_output_summaries,
-    list_tasks_with_total_count,
+    list_tasks_with_total_count, task_event_responses,
 };
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
@@ -304,9 +304,6 @@ pub async fn get_task_events(
     let (events, total_count) = task_id
         .list_events_with_total_count(&pool, &search_params)
         .await?;
-    let events = events
-        .into_iter()
-        .map(TaskEventResponse::from)
-        .collect::<Vec<_>>();
+    let events = task_event_responses(&pool, events).await?;
     ApiResponse::paginated(events, total_count, &params)
 }

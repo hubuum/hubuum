@@ -193,6 +193,20 @@ mod tests {
             action: "created".to_string(),
             actor_user_id: Some(1),
             actor_kind: "user".to_string(),
+            provenance: hubuum_events_core::Provenance {
+                actor: hubuum_events_core::ProvenanceActor {
+                    kind: Some("user".to_string()),
+                    principal: Some(hubuum_events_core::ProvenancePrincipal {
+                        principal_id: 1,
+                        name: Some("admin".to_string()),
+                    }),
+                },
+                initiator: Some(hubuum_events_core::ProvenancePrincipal {
+                    principal_id: 1,
+                    name: Some("admin".to_string()),
+                }),
+                task_id: Some(99),
+            },
             request_id: None,
             correlation_id: Some("corr-1".to_string()),
             summary: "collection created".to_string(),
@@ -318,6 +332,8 @@ mod tests {
         assert!(request.contains("x-custom: custom"));
         assert!(request.contains("\"entity_type\":\"collection\""));
         assert!(request.contains("\"event_id\""));
+        assert!(request.contains("\"provenance\""));
+        assert!(request.contains("\"task_id\":99"));
     }
 
     #[tokio::test]

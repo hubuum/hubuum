@@ -414,11 +414,15 @@ write_environment "$DATABASE_URL"
 assert_same_id "primary API after migration failure" "$initial_primary_id" "$(service_id hubuum-api)"
 assert_same_id "standby API after migration failure" "$initial_standby_id" "$(service_id hubuum-api-standby)"
 
-echo "Verifying that an unhealthy standby aborts before replacing the primary..."
+echo "Verifying that an unhealthy candidate standby leaves the replaced primary healthy..."
 COMPOSE_CMD=("${BASE_COMPOSE_CMD[@]}" --file "$TEST_ROOT/unhealthy-standby.yml")
 expect_rollout_failure standby-failure
 COMPOSE_CMD=("${BASE_COMPOSE_CMD[@]}")
-assert_same_id "primary API after standby failure" "$initial_primary_id" "$(service_id hubuum-api)"
+assert_changed_id "primary API after standby failure" "$initial_primary_id" "$(service_id hubuum-api)"
+hubuum_service_is_healthy hubuum-api || {
+  echo "ERROR: primary API was not healthy after the standby replacement failed" >&2
+  exit 1
+}
 assert_same_id "Caddy after standby failure" "$initial_caddy_id" "$(service_id caddy)"
 assert_same_id "PostgreSQL after standby failure" "$initial_postgres_id" "$(service_id postgres)"
 

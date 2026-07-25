@@ -244,6 +244,9 @@ pub struct HubuumClassHistory {
     pub valid_to: Option<chrono::DateTime<chrono::Utc>>,
     pub actor_id: Option<i32>,
     pub history_id: i64,
+    pub actor_kind: Option<String>,
+    pub initiator_user_id: Option<i32>,
+    pub task_id: Option<i32>,
 }
 
 crate::impl_history_pagination!(HubuumClassHistory, "hubuumclass_history");

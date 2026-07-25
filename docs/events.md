@@ -32,14 +32,44 @@ Supported audit filters are:
 | `entity_type` | Event entity type, such as `collection`, `class`, `object`, or `task` |
 | `entity_id` | Integer id of the affected entity |
 | `action` | Event action for the entity type, such as `created`, `updated`, or `deleted` |
-| `actor_kind` | Actor class, such as `user`, `service_account`, or `system` |
-| `actor_user_id` | Principal id for user or service-account actors |
+| `actor_kind` | Immediate actor class: `user`, `worker`, or `system` |
+| `actor_user_id` | Principal id for user actors, including service accounts |
+| `initiator_user_id` | Root task initiator principal id; legacy task events derive this from their queued event |
 | `collection_id` | Collection directly attached to the event |
 | `occurred_after` | Lower `occurred_at` bound; accepts RFC 3339 or `YYYY-MM-DD` |
 | `occurred_before` | Upper `occurred_at` bound; accepts RFC 3339 or `YYYY-MM-DD` |
 
 Supported sorts are `id` and `occurred_at`, with `-` for descending order.
 For example, `sort=-occurred_at` returns the newest visible events first.
+
+Every audit response retains the compatibility fields `actor_user_id` and
+`actor_kind` and also includes shared mutation provenance:
+
+```json
+{
+  "actor_user_id": null,
+  "actor_kind": "worker",
+  "provenance": {
+    "actor": {
+      "kind": "worker",
+      "principal": null
+    },
+    "initiator": {
+      "principal_id": 1,
+      "name": "admin"
+    },
+    "task_id": 12
+  }
+}
+```
+
+The actor is the principal or server component that performed the immediate
+mutation. The initiator is the principal that submitted the root task. Direct
+request mutations normally have a user actor and no separate initiator.
+Principal names are resolved when a page is read; durable IDs remain present
+when a principal has been deleted, while an unavailable name is `null`.
+Historical task events that predate stored initiator provenance derive it from
+the task's queued event with one bounded query per response page.
 
 Audit visibility is collection-scoped:
 
@@ -61,7 +91,8 @@ authorization model and returns task-focused history.
 
 Convenience audit routes are available for common resources. These routes are
 thin wrappers around `GET /api/v1/events`, apply the same `ReadAudit` scoping,
-and accept the same pagination, actor, action, collection, and time filters:
+and accept the same pagination, actor, initiator, action, collection, and time
+filters:
 
 ```http
 GET /api/v1/collections/12/events
@@ -108,6 +139,7 @@ Supported `filter` fields are:
 | `entity_names` | Match affected entity names exactly |
 | `actor_kinds` | Match actor kinds: `user`, `system`, or `worker` |
 | `actor_user_ids` | Match actor principal ids |
+| `initiator_user_ids` | Match root task initiator principal ids |
 | `request_ids` | Match request UUIDs |
 | `correlation_ids` | Match correlation ids exactly |
 
@@ -193,6 +225,11 @@ the event envelope as JSON to the URL in the subscription `routing` object:
 The request method is always `POST`. Hubuum sends the event UUID in both
 `Idempotency-Key` and `X-Hubuum-Event-Id`, and the JSON body includes the same
 `event_id` field. Consumers should deduplicate by `event_id`.
+
+Webhook, AMQP, Valkey, and email deliveries all receive the same `provenance`
+object shown above. Actor and initiator names are resolved once for each
+claimed delivery batch. A deleted principal keeps its durable ID and has a
+`null` name when no current or tombstoned principal record can be resolved.
 
 Webhook sink `config` may include static string headers and optional local
 delivery limits:
@@ -347,10 +384,10 @@ instead.
 
 Template context exposes the event envelope fields at the top level, including
 `event_id`, `entity_type`, `entity_name`, `action`, `summary`, and
-`occurred_at`. The full envelope is also available as `event`. Subjects must
-render to a single non-empty line, and bodies must render to non-empty text.
-Webhook `max_request_bytes` and the transport `max_payload_bytes` settings
-default to 1,000,000 bytes.
+`occurred_at`, and `provenance`. The full envelope is also available as
+`event`. Subjects must render to a single non-empty line, and bodies must
+render to non-empty text. Webhook `max_request_bytes` and the transport
+`max_payload_bytes` settings default to 1,000,000 bytes.
 
 ## Delivery Semantics
 
@@ -483,7 +520,9 @@ HUBUUM_EVENT_RETENTION_FILE_ARCHIVE_ENABLED=true
 HUBUUM_EVENT_RETENTION_ARCHIVE_PATH=/var/lib/hubuum/event-archive.jsonl
 ```
 
-Each archive line contains `archived_at` and the full event row. If archive
-writing or durable file synchronization fails, the worker does not delete that
-batch. On Unix, newly created archive files are created with mode `0600`;
-existing file permissions are not changed.
+Each archive line contains `archived_at` and the full event row, including
+durable `initiator_user_id` and `task_id` values. Event `schema_version`
+remains `1` because these nullable fields are additive. If archive writing or
+durable file synchronization fails, the worker does not delete that batch. On
+Unix, newly created archive files are created with mode `0600`; existing file
+permissions are not changed.

@@ -26,7 +26,7 @@ use crate::models::search::parse_query_parameter;
 use crate::models::{
     CollectionID, HistoryAuthorizationSnapshot, HubuumClassID, NewRemoteTarget, Permissions,
     PrincipalID, RemoteTarget, RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest,
-    StoredRemoteCallTaskPayload, TaskKind, TaskRecord, TaskResponse, UpdateRemoteTarget,
+    StoredRemoteCallTaskPayload, TaskKind, TaskRecord, TaskResponse, TokenID, UpdateRemoteTarget,
     authorize_remote_invocation,
 };
 use crate::pagination::prepare_db_pagination;
@@ -327,11 +327,13 @@ pub async fn invoke_remote_target(
         parameters: invoke.parameters,
         body_override: invoke.body_override,
     })?;
-    let snapshot =
-        TaskScopeSnapshot::from_request(Some(requestor.token_meta.id), requestor.scopes());
+    let snapshot = TaskScopeSnapshot::from_request(
+        Some(TokenID::new(requestor.token_meta.id)?),
+        requestor.scopes(),
+    );
     let task = find_or_create_remote_call_task(
         &pool,
-        user.id,
+        PrincipalID::new(user.id)?,
         snapshot,
         idempotency_key_from_headers(req.headers())?,
         payload,
@@ -365,7 +367,7 @@ pub async fn invoke_remote_target(
 
 async fn find_or_create_remote_call_task(
     pool: &DbPool,
-    submitted_by: i32,
+    submitted_by: PrincipalID,
     snapshot: TaskScopeSnapshot,
     idempotency_key: Option<IdempotencyKey>,
     payload: serde_json::Value,
@@ -374,20 +376,15 @@ async fn find_or_create_remote_call_task(
 
     info!(
         message = "Creating remote call task",
-        submitted_by = submitted_by
+        submitted_by = submitted_by.id()
     );
-    TaskCreateRequest::builder(
-        TaskKind::RemoteCall,
-        PrincipalID::new(submitted_by)?,
-        payload,
-        1,
-    )
-    .idempotency_key(idempotency_key)
-    .request_hash(Some(hash))
-    .scope_snapshot(snapshot)
-    .build()
-    .create_idempotently_with_active_limit(pool, max_active_remote_call_tasks_per_user())
-    .await
+    TaskCreateRequest::builder(TaskKind::RemoteCall, submitted_by, payload, 1)
+        .idempotency_key(idempotency_key)
+        .request_hash(Some(hash))
+        .scope_snapshot(snapshot)
+        .build()
+        .create_idempotently_with_active_limit(pool, max_active_remote_call_tasks_per_user())
+        .await
 }
 
 fn max_active_remote_call_tasks_per_user() -> usize {
@@ -418,7 +415,8 @@ pub async fn get_remote_target_history(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_page, can_read_deleted_history,
-        history_candidate_query_options, readable_history_collection_ids, resolve_actor_usernames,
+        history_candidate_query_options, readable_history_collection_ids,
+        resolve_history_principal_names,
     };
     use crate::models::search::parse_query_parameter;
     use crate::pagination::prepare_db_pagination;
@@ -500,18 +498,11 @@ pub async fn get_remote_target_history(
         )));
     }
 
-    let actor_ids = rows.iter().filter_map(|r| r.actor_id).collect();
-    let actor_map = resolve_actor_usernames(&pool, actor_ids).await?;
+    let principal_names = resolve_history_principal_names(&pool, &rows).await?;
 
     ApiResponse::mapped_paginated(rows, total_count, &params, move |rows| {
         rows.into_iter()
-            .map(|row| {
-                let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-                HistoryResponse {
-                    entry: row,
-                    actor_username,
-                }
-            })
+            .map(|row| HistoryResponse::new(row, &principal_names))
             .collect()
     })
 }
@@ -542,7 +533,7 @@ pub async fn get_remote_target_as_of(
 ) -> Result<impl Responder, ApiError> {
     use crate::api::v1::handlers::history::{
         HistoryResponse, authorize_history_snapshot, can_read_deleted_history, parse_as_of,
-        resolve_actor_usernames,
+        resolve_history_principal_names,
     };
 
     let user = &requestor.principal;
@@ -589,10 +580,7 @@ pub async fn get_remote_target_as_of(
         .await?;
     }
 
-    let actor_map = resolve_actor_usernames(&pool, row.actor_id.into_iter().collect()).await?;
-    let actor_username = row.actor_id.and_then(|aid| actor_map.get(&aid).cloned());
-    Ok(ApiResponse::ok(HistoryResponse {
-        entry: row,
-        actor_username,
-    }))
+    let principal_names =
+        resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
+    Ok(ApiResponse::ok(HistoryResponse::new(row, &principal_names)))
 }

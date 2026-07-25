@@ -9,7 +9,7 @@ use crate::exports::submit_export_task;
 use crate::extractors::Authenticated;
 use crate::models::{
     ExportContentType, ExportJsonResponse, ExportMeta, ExportOutputLookup, ExportRequest,
-    ExportTaskOutputRecord, ExportWarning, TaskID, TaskResponse,
+    ExportTaskOutputRecord, ExportWarning, TaskID, TaskResponse, TokenID,
 };
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::tasks::{ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker};
@@ -76,7 +76,7 @@ pub async fn run_export(
     let task = submit_export_task(
         &pool,
         &requestor.principal,
-        Some(requestor.token_meta.id),
+        Some(TokenID::new(requestor.token_meta.id)?),
         idempotency_key_from_headers(req.headers())?,
         export,
         None,

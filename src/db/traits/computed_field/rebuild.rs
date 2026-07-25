@@ -130,21 +130,18 @@ pub async fn execute_computed_reindex_task(
     )?;
     payload.validate()?;
     let mut cursor = 0;
-    let mut processed = 0;
+    let mut processed: i32 = 0;
     loop {
         match process_reindex_batch(pool, task, &payload, cursor).await? {
             ReindexBatch::Superseded => {
                 task.finalize_terminal(
                     pool,
-                    TaskStateUpdate {
-                        status: TaskStatus::Cancelled,
-                        summary: Some("Computed-field rebuild superseded".to_string()),
-                        processed_items: processed,
-                        success_items: processed,
-                        failed_items: 0,
-                        started_at: task.started_at,
-                        finished_at: None,
-                    },
+                    TaskStateUpdate::new(
+                        TaskStatus::Cancelled,
+                        TaskResultCounts::from_outcomes(processed, 0)?,
+                    )
+                    .with_summary("Computed-field rebuild superseded")
+                    .with_started_at(task.started_at),
                     NewTaskEventRecord {
                         task_id: task.id,
                         event_type: TaskStatus::Cancelled.as_str().to_string(),
@@ -165,18 +162,15 @@ pub async fn execute_computed_reindex_task(
                 processed = processed.saturating_add(count);
                 task.update_state(
                     pool,
-                    TaskStateUpdate {
-                        status: TaskStatus::Running,
-                        summary: Some(format!(
-                            "Rebuilt {processed} of {} objects",
-                            task.total_items
-                        )),
-                        processed_items: processed,
-                        success_items: processed,
-                        failed_items: 0,
-                        started_at: task.started_at,
-                        finished_at: None,
-                    },
+                    TaskStateUpdate::new(
+                        TaskStatus::Running,
+                        TaskResultCounts::from_outcomes(processed, 0)?,
+                    )
+                    .with_summary(format!(
+                        "Rebuilt {processed} of {} objects",
+                        task.total_items
+                    ))
+                    .with_started_at(task.started_at),
                 )
                 .await?;
             }
@@ -223,15 +217,9 @@ pub async fn execute_computed_reindex_task(
     };
     task.finalize_terminal(
         pool,
-        TaskStateUpdate {
-            status,
-            summary: Some(summary.clone()),
-            processed_items: processed,
-            success_items: processed,
-            failed_items: 0,
-            started_at: task.started_at,
-            finished_at: None,
-        },
+        TaskStateUpdate::new(status, TaskResultCounts::from_outcomes(processed, 0)?)
+            .with_summary(summary.clone())
+            .with_started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: status.as_str().to_string(),

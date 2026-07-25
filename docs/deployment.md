@@ -294,16 +294,19 @@ sudo ./update-single-host.sh
 
 For image-based installs, the update command pulls the latest configured
 images. For source-build installs, it fetches the source checkouts and rebuilds
-the local app images. It then performs a rolling application update:
+the local app images. On an established rolling installation, it then performs
+a rolling application update:
 
-1. Run embedded database migrations as a one-shot command while the current
-   primary continues serving HTTP.
-2. Replace the HTTP-only backend standby and wait for `/readyz`.
-3. Replace the frontend standby in all mode and wait for its health check.
-4. Reload Caddy after all standbys are healthy. This clears passive failure
-   state recorded while their old containers were unavailable.
-5. Replace the primary backend, then the primary frontend in all mode, and
-   reload Caddy once more after both are healthy.
+1. Stop the all-role primary gracefully while the API-only standby continues
+   serving HTTP. This drains old-version workers before schema migration.
+2. Run embedded database migrations as a one-shot command. If migration fails,
+   restart the unchanged primary.
+3. Replace the primary backend, wait for `/readyz`, reload Caddy, and wait for
+   its passive upstream failure state to clear.
+4. Replace the HTTP-only backend standby and the frontend standby in all mode,
+   wait for their health checks, then reload Caddy.
+5. Replace the primary frontend in all mode and reload Caddy once more after it
+   is healthy.
 
 If a previous attempt left a primary unhealthy while its standby is healthy,
 the next run recovers and reloads that primary before touching the only usable
@@ -332,11 +335,12 @@ rolling-update services.
 The live container contract test covers adoption from the published v0.0.1
 image: the old API remains online while the candidate applies all newer
 migrations, starts a ready standby, and replaces the old primary. Before this
-specific upgrade, allow queued and running tasks to drain. v0.0.1 co-locates
-lease-unaware task workers with its API, and the task-lease migration cannot
-safely transfer an in-flight task to a new worker. The tested idle-queue upgrade
-preserves HTTP availability; it does not promise uninterrupted background task
-execution.
+specific first-adoption upgrade, prevent new task submissions and allow queued
+and running tasks to drain. v0.0.1 co-locates lease-unaware task workers with
+its API and has no API-only standby to own traffic before migration, so the
+task-lease and task-provenance migrations cannot safely transfer an in-flight
+task to a new worker. The tested idle-queue upgrade preserves HTTP
+availability; it does not promise uninterrupted background task execution.
 
 ### Re-running The Installer To Update
 

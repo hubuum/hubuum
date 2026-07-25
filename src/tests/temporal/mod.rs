@@ -6,8 +6,9 @@ use crate::traits::{CanSave, CanUpdate};
 use chrono::{DateTime, Utc};
 use diesel::sql_types::{Integer, Text, Timestamp, Timestamptz};
 
-/// Driving INSERT/UPDATE/DELETE on a base table through raw SQL (with the
-/// actor GUC set) must produce I/U/D history rows carrying that actor.
+/// Driving INSERT/UPDATE/DELETE on a base table through raw SQL with only the
+/// legacy actor GUC set must produce I/U/D history rows carrying compatible
+/// direct-user provenance.
 #[actix_rt::test]
 async fn trigger_records_ops_and_actor() {
     let scope = TestScope::new();
@@ -55,34 +56,62 @@ async fn trigger_records_ops_and_actor() {
     .unwrap();
 
     // Read back the history for that class, oldest first.
-    type HistRow = (String, DateTime<Utc>, Option<DateTime<Utc>>, Option<i32>);
+    type HistRow = (
+        String,
+        DateTime<Utc>,
+        Option<DateTime<Utc>>,
+        Option<i32>,
+        Option<String>,
+        Option<i32>,
+        Option<i32>,
+    );
     let rows: Vec<HistRow> = with_connection(&pool, async |conn| {
         use crate::schema::hubuumclass_history::dsl as h;
         // The class itself is deleted; find history by the name snapshot instead.
         h::hubuumclass_history
             .filter(h::name.eq(&cname))
             .order(h::history_id.asc())
-            .select((h::op, h::valid_from, h::valid_to, h::actor_id))
+            .select((
+                h::op,
+                h::valid_from,
+                h::valid_to,
+                h::actor_id,
+                h::actor_kind,
+                h::initiator_user_id,
+                h::task_id,
+            ))
             .load(conn)
             .await
     })
     .await
     .unwrap();
 
-    let ops: Vec<&str> = rows.iter().map(|(op, _, _, _)| op.as_str()).collect();
+    let ops: Vec<&str> = rows
+        .iter()
+        .map(|(op, _, _, _, _, _, _)| op.as_str())
+        .collect();
     assert_eq!(
         ops,
         vec!["I", "U", "D"],
         "expected insert/update/delete history"
     );
     assert!(
-        rows.iter().all(|(_, _, _, actor)| *actor == Some(4242)),
+        rows.iter()
+            .all(|(_, _, _, actor, actor_kind, initiator, task_id)| {
+                *actor == Some(4242)
+                    && actor_kind.as_deref() == Some("user")
+                    && initiator.is_none()
+                    && task_id.is_none()
+            }),
         "actor must be 4242 on every row"
     );
 
     // The DELETE row must be a zero-width tombstone.
-    let delete_row = rows.iter().find(|(op, _, _, _)| op == "D").unwrap();
-    let (_, valid_from, valid_to, _) = delete_row;
+    let delete_row = rows
+        .iter()
+        .find(|(op, _, _, _, _, _, _)| op == "D")
+        .unwrap();
+    let (_, valid_from, valid_to, _, _, _, _) = delete_row;
     assert_eq!(
         valid_from,
         valid_to.as_ref().unwrap(),
@@ -120,7 +149,10 @@ async fn trigger_inserts_history_by_column_name() {
                     valid_from timestamptz NOT NULL,
                     valid_to timestamptz,
                     actor_id int,
-                    history_id bigint NOT NULL
+                    history_id bigint NOT NULL,
+                    task_id int,
+                    actor_kind text,
+                    initiator_user_id int
                  )",
             )
             .execute(conn)
@@ -389,22 +421,92 @@ async fn actor_scope_sets_actor_and_default_is_null() {
     .await
     .unwrap();
 
-    let read_actor = async |id: i32| {
+    let read_provenance = async |id: i32| {
         with_connection(&pool, async move |conn| {
             use crate::schema::hubuumclass_history::dsl as h;
             h::hubuumclass_history
                 .filter(h::id.eq(id))
                 .order(h::history_id.desc())
-                .select(h::actor_id)
-                .first::<Option<i32>>(conn)
+                .select((h::actor_id, h::actor_kind, h::initiator_user_id, h::task_id))
+                .first::<(Option<i32>, Option<String>, Option<i32>, Option<i32>)>(conn)
                 .await
         })
         .await
         .unwrap()
     };
 
-    assert_eq!(read_actor(in_class.id).await, Some(4242));
-    assert_eq!(read_actor(out_class.id).await, None);
+    assert_eq!(
+        read_provenance(in_class.id).await,
+        (Some(4242), Some("user".to_string()), None, None)
+    );
+    assert_eq!(
+        read_provenance(out_class.id).await,
+        (None, None, None, None)
+    );
+
+    collection_fixture.cleanup().await.unwrap();
+}
+
+#[actix_rt::test]
+async fn worker_mutation_scope_records_root_task_provenance() {
+    use crate::db::{with_connection, with_mutation_provenance_scope};
+    use crate::events::{EventContext, MutationProvenance};
+    use crate::models::NewHubuumClass;
+    use crate::traits::CanSave;
+
+    let scope = TestScope::new();
+    let pool = scope.pool.clone();
+    let collection_fixture = scope.collection_fixture("worker_provenance").await;
+    let initiator_user_id = 5151;
+    let task_id = 6161;
+    let class = with_mutation_provenance_scope(
+        Some(MutationProvenance::worker(Some(initiator_user_id), task_id)),
+        async {
+            NewHubuumClass {
+                name: scope.scoped_name("worker_created_class"),
+                collection_id: collection_fixture.collection.id,
+                json_schema: None,
+                validate_schema: Some(false),
+                description: "created by import worker".to_string(),
+            }
+            .save(
+                &pool,
+                &EventContext::from_mutation(MutationProvenance::worker(
+                    Some(initiator_user_id),
+                    task_id,
+                )),
+            )
+            .await
+        },
+    )
+    .await
+    .unwrap();
+
+    let stored = with_connection(&pool, async |conn| {
+        use crate::schema::hubuumclass_history::dsl as history;
+        history::hubuumclass_history
+            .filter(history::id.eq(class.id))
+            .order(history::history_id.desc())
+            .select((
+                history::actor_id,
+                history::actor_kind,
+                history::initiator_user_id,
+                history::task_id,
+            ))
+            .first::<(Option<i32>, Option<String>, Option<i32>, Option<i32>)>(conn)
+            .await
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        (
+            None,
+            Some("worker".to_string()),
+            Some(initiator_user_id),
+            Some(task_id),
+        )
+    );
 
     collection_fixture.cleanup().await.unwrap();
 }

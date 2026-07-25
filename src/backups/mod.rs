@@ -10,7 +10,8 @@ use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::models::{
     BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState,
-    CURRENT_BACKUP_VERSION, NewBackupTaskOutputRecord, NewTaskEventRecord, TaskRecord, TaskStatus,
+    CURRENT_BACKUP_VERSION, NewBackupTaskOutputRecord, NewTaskEventRecord, TaskRecord,
+    TaskResultCounts, TaskStatus,
 };
 use crate::permissions::{AppContext, PrincipalRef};
 use crate::traits::AuthzSubject;
@@ -137,15 +138,12 @@ pub async fn execute_backup_task(
     );
     task.finalize_backup_with_output(
         context,
-        TaskStateUpdate {
-            status: TaskStatus::Succeeded,
-            summary: Some(summary.clone()),
-            processed_items: total_items,
-            success_items: total_items,
-            failed_items: 0,
-            started_at: task.started_at,
-            finished_at: None,
-        },
+        TaskStateUpdate::new(
+            TaskStatus::Succeeded,
+            TaskResultCounts::from_outcomes(total_items, 0)?,
+        )
+        .with_summary(summary.clone())
+        .with_started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: TaskStatus::Succeeded.as_str().to_string(),

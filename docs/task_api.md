@@ -277,7 +277,21 @@ Example:
     "event_type": "queued",
     "message": "Task queued",
     "data": null,
-    "created_at": "2026-03-07T10:15:22"
+    "created_at": "2026-03-07T10:15:22",
+    "provenance": {
+      "actor": {
+        "kind": "user",
+        "principal": {
+          "principal_id": 7,
+          "name": "admin"
+        }
+      },
+      "initiator": {
+        "principal_id": 7,
+        "name": "admin"
+      },
+      "task_id": 12
+    }
   },
   {
     "id": 202,
@@ -285,7 +299,18 @@ Example:
     "event_type": "validating",
     "message": "Task claimed for validation",
     "data": null,
-    "created_at": "2026-03-07T10:15:22"
+    "created_at": "2026-03-07T10:15:22",
+    "provenance": {
+      "actor": {
+        "kind": "worker",
+        "principal": null
+      },
+      "initiator": {
+        "principal_id": 7,
+        "name": "admin"
+      },
+      "task_id": 12
+    }
   },
   {
     "id": 203,
@@ -309,6 +334,14 @@ Example:
   }
 ]
 ```
+
+The actor identifies who or what performed that lifecycle transition. The
+initiator identifies the principal that submitted the root task and stays the
+same for worker, recovery, cleanup, and terminal events. Queue events record
+the submitter as both actor and initiator. Names are resolved in one batch for
+the response page; deleted principals keep their durable ID and may have a
+`null` name. Legacy task events without stored initiator fields use their
+queued event as a bounded fallback.
 
 ## Polling pattern
 

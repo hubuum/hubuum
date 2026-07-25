@@ -57,10 +57,6 @@ impl RequestProvenance {
         )
     }
 
-    pub fn worker_event_context(&self) -> EventContext {
-        EventContext::worker(Some(self.request_id), self.correlation_id.clone())
-    }
-
     /// Read provenance previously inserted by [`crate::middlewares::TracingMiddleware`].
     pub fn from_request(req: &HttpRequest) -> Option<Self> {
         req.extensions().get::<Self>().cloned()

@@ -19,7 +19,9 @@ use crate::db::traits::task::{
     TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_backup_outputs,
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
-use crate::db::{DatabasePoolSettings, DbPool, init_pool_with_settings};
+use crate::db::{
+    DatabasePoolSettings, DbPool, init_pool_with_settings, with_mutation_provenance_scope,
+};
 use crate::errors::ApiError;
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
@@ -366,56 +368,60 @@ async fn process_one_task_with_settings(
         worker = std::thread::current().name().unwrap_or("task-worker")
     );
 
-    let mut heartbeat = start_task_lease_heartbeat(
-        task_lease_pool(),
-        &task,
-        claim_started_at + settings.lease_duration,
-    );
-    let execution = async {
-        match shutdown {
-            Some(shutdown) => {
-                tokio::select! {
-                    biased;
-                    _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
-                        "Task interrupted by graceful server shutdown".to_string(),
-                    )),
-                    result = process_claimed_task(context, &task, backup_settings) => result,
+    let provenance = task.worker_provenance();
+    with_mutation_provenance_scope(Some(provenance), async {
+        let mut heartbeat = start_task_lease_heartbeat(
+            task_lease_pool(),
+            &task,
+            claim_started_at + settings.lease_duration,
+        );
+        let execution = async {
+            match shutdown {
+                Some(shutdown) => {
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.requested() => Err(ApiError::ServiceUnavailable(
+                            "Task interrupted by graceful server shutdown".to_string(),
+                        )),
+                        result = process_claimed_task(context, &task, backup_settings) => result,
+                    }
                 }
+                None => process_claimed_task(context, &task, backup_settings).await,
             }
-            None => process_claimed_task(context, &task, backup_settings).await,
+        };
+        let mut ownership_lost = false;
+        let result = tokio::select! {
+            result = execution => result,
+            _ = wait_for_lost_task_lease(&mut heartbeat) => {
+                ownership_lost = true;
+                Err(ApiError::ServiceUnavailable(
+                    "Task execution stopped because its worker lease was lost".to_string(),
+                ))
+            }
+        };
+        if let Err(err) = &result
+            && !ownership_lost
+        {
+            let finalized = finalize_failure_while_lease_owned(
+                &mut heartbeat,
+                mark_claimed_task_failed(context, &task, err),
+            )
+            .await?;
+            if !finalized {
+                warn!(
+                    message = "Task failure finalization stopped because its worker lease was lost",
+                    task_id = task.id,
+                    claim_token = ?task.lease_token,
+                );
+            }
         }
-    };
-    let mut ownership_lost = false;
-    let result = tokio::select! {
-        result = execution => result,
-        _ = wait_for_lost_task_lease(&mut heartbeat) => {
-            ownership_lost = true;
-            Err(ApiError::ServiceUnavailable(
-                "Task execution stopped because its worker lease was lost".to_string(),
-            ))
+        if let Some(heartbeat) = heartbeat {
+            heartbeat.stop().await;
         }
-    };
-    if let Err(err) = &result
-        && !ownership_lost
-    {
-        let finalized = finalize_failure_while_lease_owned(
-            &mut heartbeat,
-            mark_claimed_task_failed(context, &task, err),
-        )
-        .await?;
-        if !finalized {
-            warn!(
-                message = "Task failure finalization stopped because its worker lease was lost",
-                task_id = task.id,
-                claim_token = ?task.lease_token,
-            );
-        }
-    }
-    if let Some(heartbeat) = heartbeat {
-        heartbeat.stop().await;
-    }
 
-    Ok(true)
+        Ok(true)
+    })
+    .await
 }
 
 #[derive(Debug, Default)]
@@ -797,10 +803,12 @@ pub(super) async fn mark_claimed_task_failed(
     }
     let counts = match task_kind {
         TaskKind::Import => task.count_import_results(pool).await?,
-        TaskKind::Export => TaskResultCounts::new(1, 0, 1)?,
-        TaskKind::RemoteCall => TaskResultCounts::new(1, 0, 1)?,
-        TaskKind::Backup => TaskResultCounts::new(1, 0, 1)?,
-        TaskKind::Reindex => TaskResultCounts::new(task.processed_items, task.success_items, 1)?,
+        TaskKind::Export => TaskResultCounts::from_outcomes(0, 1)?,
+        TaskKind::RemoteCall => TaskResultCounts::from_outcomes(0, 1)?,
+        TaskKind::Backup => TaskResultCounts::from_outcomes(0, 1)?,
+        TaskKind::Reindex => {
+            TaskResultCounts::from_stored(task.processed_items, task.success_items, 1)?
+        }
     };
 
     warn!(
@@ -808,23 +816,17 @@ pub(super) async fn mark_claimed_task_failed(
         task_id = task.id,
         task_kind = task.kind.as_str(),
         status = task.status.as_str(),
-        processed_items = counts.processed,
-        success_items = counts.success,
-        failed_items = counts.failed,
+        processed_items = counts.processed(),
+        success_items = counts.success(),
+        failed_items = counts.failed(),
         error = %err
     );
 
     task.finalize_terminal(
         pool,
-        TaskStateUpdate {
-            status: TaskStatus::Failed,
-            summary: Some(summary.clone()),
-            processed_items: counts.processed,
-            success_items: counts.success,
-            failed_items: counts.failed,
-            started_at: task.started_at,
-            finished_at: None,
-        },
+        TaskStateUpdate::new(TaskStatus::Failed, counts)
+            .with_summary(summary.clone())
+            .with_started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: "failed".to_string(),

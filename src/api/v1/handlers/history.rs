@@ -5,17 +5,20 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use crate::db::DbPool;
 use crate::db::traits::authz::scope_allows;
+use crate::db::traits::history::resolve_principal_names;
 use crate::errors::ApiError;
+use crate::events::{PrincipalNames, Provenance, StoredProvenance};
 use crate::models::collection::user_can_on_any;
 use crate::models::search::QueryOptions;
-use crate::models::{HistoryAuthorizationSnapshot, Permissions, TokenScope};
+use crate::models::{
+    HistoryAuthorizationSnapshot, Permissions, TemporalHistoryProvenance, TokenScope,
+};
 use crate::pagination::count_query_options;
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
 use crate::traits::{AuthzSubject, CursorPaginated};
-
-pub use crate::db::traits::history::resolve_actor_usernames;
 
 /// A serialized history row plus the resolved username of its actor (if any).
 #[derive(Serialize, ToSchema)]
@@ -23,6 +26,44 @@ pub struct HistoryResponse<T: Serialize + ToSchema> {
     #[serde(flatten)]
     pub entry: T,
     pub actor_username: Option<String>,
+    pub provenance: Provenance,
+}
+
+impl<T> HistoryResponse<T>
+where
+    T: Serialize + ToSchema + TemporalHistoryProvenance,
+{
+    pub(crate) fn new(entry: T, principal_names: &PrincipalNames) -> Self {
+        let actor_username = entry
+            .actor_id()
+            .and_then(|actor_id| principal_names.name(actor_id).map(ToOwned::to_owned));
+        let provenance = StoredProvenance::from_actor_kind(entry.actor_kind())
+            .with_actor_user_id(entry.actor_id())
+            .with_initiator_user_id(entry.initiator_user_id())
+            .with_task_id(entry.task_id())
+            .resolve(principal_names);
+        Self {
+            entry,
+            actor_username,
+            provenance,
+        }
+    }
+}
+
+/// Resolve the union of actor and initiator ids with one principal query.
+pub(crate) async fn resolve_history_principal_names<T>(
+    pool: &DbPool,
+    rows: &[T],
+) -> Result<PrincipalNames, ApiError>
+where
+    T: TemporalHistoryProvenance,
+{
+    let principal_ids = rows
+        .iter()
+        .flat_map(|row| [row.actor_id(), row.initiator_user_id()])
+        .flatten()
+        .collect();
+    resolve_principal_names(pool, principal_ids).await
 }
 
 /// Authorize one historical resource shape, including its stored attributes.
@@ -317,6 +358,9 @@ mod tests {
             valid_to: None,
             actor_id: None,
             history_id: 2,
+            actor_kind: None,
+            initiator_user_id: None,
+            task_id: None,
         };
         authorize_history_snapshot(
             &context,

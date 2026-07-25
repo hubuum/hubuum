@@ -14,6 +14,11 @@ set -euo pipefail
 
 printf '%s\n' "$*" >> "$COMMAND_LOG"
 
+if [[ "$*" == *" run "* && "$*" == *" hubuum-api --migrate" &&
+  "${FAKE_MIGRATION_FAIL:-false}" == "true" ]]; then
+  exit 1
+fi
+
 if [[ "$*" == *" exec -T caddy caddy reload "* ]]; then
   printf '{"level":"info","msg":"fake reload diagnostic"}\n' >&2
   [[ "$FAKE_CADDY_RELOAD_FAIL" != "true" ]]
@@ -66,6 +71,9 @@ if [[ "$*" == *" ps -q"* ]]; then
   }
 
   for service in caddy postgres valkey hubuum-api hubuum-api-standby hubuum-web hubuum-web-standby; do
+    if [[ -e "$TEST_ROOT/stopped-$service" ]]; then
+      continue
+    fi
     if [[ "$service" == "caddy" && "$FAKE_CADDY_RUNNING" != "true" && ! -e "$TEST_ROOT/started-caddy" ]]; then
       continue
     fi
@@ -77,15 +85,27 @@ fi
 
 if [[ "$*" == *" up "* ]]; then
   service="${*: -1}"
+  rm -f "$TEST_ROOT/stopped-$service"
   touch "$TEST_ROOT/started-$service"
+fi
+
+if [[ "$*" == *" stop "* ]]; then
+  service="${*: -1}"
+  touch "$TEST_ROOT/stopped-$service"
+fi
+
+if [[ "$*" == *" start "* ]]; then
+  service="${*: -1}"
+  rm -f "$TEST_ROOT/stopped-$service"
 fi
 EOF
 chmod +x "$FAKE_ENGINE"
 
 FAKE_CADDY_DEPENDENCIES="false"
 FAKE_CADDY_RELOAD_FAIL="false"
+FAKE_MIGRATION_FAIL="false"
 export COMMAND_LOG FAKE_CADDY_DEPENDENCIES FAKE_CADDY_RELOAD_FAIL
-export FAKE_CADDY_RUNNING TEST_ROOT
+export FAKE_CADDY_RUNNING FAKE_MIGRATION_FAIL TEST_ROOT
 export FAKE_MISSING_SERVICES=""
 export FAKE_UNHEALTHY_SERVICES=""
 ENGINE_PATH="$FAKE_ENGINE"
@@ -98,7 +118,7 @@ assert_commands() {
   local expected="$1"
   local actual="$TEST_ROOT/actual.log"
 
-  grep -E '(^| )(run|up|exec) ' "$COMMAND_LOG" > "$actual"
+  grep -E '(^| )(run|up|exec|start|stop) ' "$COMMAND_LOG" > "$actual"
   diff -u "$expected" "$actual"
 }
 
@@ -147,12 +167,15 @@ INSTALL_MODE="all"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-rolling.log" <<EOF
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate caddy
+compose --env-file .env -f compose.yml stop hubuum-api
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
-compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
@@ -164,15 +187,43 @@ INSTALL_MODE="backend"
 : > "$COMMAND_LOG"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-reload.log" <<EOF
+compose --env-file .env -f compose.yml stop hubuum-api
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
-compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
-compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 EOF
 assert_commands "$TEST_ROOT/expected-reload.log"
+
+FAKE_MIGRATION_FAIL="true"
+: > "$COMMAND_LOG"
+if hubuum_rollout; then
+  echo "rollout with a failed migration unexpectedly succeeded" >&2
+  exit 1
+fi
+cat > "$TEST_ROOT/expected-migration-failure.log" <<EOF
+compose --env-file .env -f compose.yml stop hubuum-api
+compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml start hubuum-api
+EOF
+assert_commands "$TEST_ROOT/expected-migration-failure.log"
+FAKE_MIGRATION_FAIL="false"
+
+FAKE_UNHEALTHY_SERVICES="hubuum-api-standby"
+rm -f "$TEST_ROOT/started-hubuum-api-standby"
+: > "$COMMAND_LOG"
+if unhealthy_standby_output="$(hubuum_rollout 2>&1)"; then
+  echo "rollout with an unhealthy API standby unexpectedly succeeded" >&2
+  exit 1
+fi
+[[ "$unhealthy_standby_output" == *"refusing to migrate while old-version workers remain online"* ]]
+if grep -Eq '(^| )(run|start|stop) ' "$COMMAND_LOG"; then
+  echo "rollout changed application state with an unhealthy API standby" >&2
+  exit 1
+fi
 
 FAKE_CADDY_RUNNING="true"
 FAKE_UNHEALTHY_SERVICES="hubuum-api"
@@ -202,12 +253,15 @@ rm -f "$TEST_ROOT/started-valkey"
 hubuum_rollout
 cat > "$TEST_ROOT/expected-missing-infrastructure.log" <<EOF
 compose --env-file .env -f compose.yml up -d --no-deps --no-recreate valkey
+compose --env-file .env -f compose.yml stop hubuum-api
 compose --env-file .env -f compose.yml run --rm --no-deps -T --entrypoint /usr/local/bin/hubuum-admin hubuum-api --migrate
+compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
+compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api-standby
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web-standby
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
-compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-api
 compose --env-file .env -f compose.yml up -d --no-deps --force-recreate hubuum-web
 compose --env-file .env -f compose.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 compose --env-file .env -f compose.yml exec -T caddy wget -qO- http://127.0.0.1:2019/reverse_proxy/upstreams
@@ -230,7 +284,9 @@ assert_commands "$TEST_ROOT/expected-initial.log"
 printf '2\n' > "$TEST_ROOT/caddy-failure-polls"
 : > "$COMMAND_LOG"
 sleep() { :; }
-hubuum_wait_for_caddy_upstreams 1
+# Bash's integer SECONDS clock can cross a boundary immediately after the
+# deadline is calculated. Keep enough synthetic time for all no-sleep polls.
+hubuum_wait_for_caddy_upstreams 5
 unset -f sleep
 [[ "$(grep -c 'reverse_proxy/upstreams' "$COMMAND_LOG")" -eq 3 ]] || {
   echo "Caddy upstream wait did not poll until passive failures cleared" >&2

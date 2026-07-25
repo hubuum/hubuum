@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added durable task provenance across audit events, task lifecycle history,
+  temporal resource history, event subscriptions, and all event sinks. Worker
+  and system actions now retain the root task initiator and task ID, API and
+  delivery responses batch-resolve actor and initiator names, legacy task
+  events use their queued event as a bounded fallback, and full backups and
+  event archives retain the additive nullable provenance fields.
 - Service-account and human bearer tokens can now be narrowed to specific
   collections, classes, and objects in addition to permission types. Resource
   scopes compose hierarchically, filter list totals and relation endpoints, are
@@ -21,6 +27,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking:** Before applying the task-provenance migration, stop
+  old-version worker replicas and allow their bounded graceful shutdown to
+  finish or fail active tasks. Old API replicas may stay online: legacy
+  actor-only writes retain direct-user attribution, and task inserts derive the
+  durable initiator from `submitted_by`. The single-host updater drains its
+  all-role primary automatically when the API-only standby is available.
 - **Breaking (Rust API):** `DatabaseUrlComponents` now parses through `FromStr`,
   exposes a typed `DatabaseVendor`, and keeps its representation private.
   Downstream Rust callers must replace `DatabaseUrlComponents::new(url)` with

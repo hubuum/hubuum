@@ -263,6 +263,20 @@ mod tests {
             action: "created".to_string(),
             actor_user_id: Some(1),
             actor_kind: "user".to_string(),
+            provenance: hubuum_events_core::Provenance {
+                actor: hubuum_events_core::ProvenanceActor {
+                    kind: Some("user".to_string()),
+                    principal: Some(hubuum_events_core::ProvenancePrincipal {
+                        principal_id: 1,
+                        name: Some("admin".to_string()),
+                    }),
+                },
+                initiator: Some(hubuum_events_core::ProvenancePrincipal {
+                    principal_id: 1,
+                    name: Some("admin".to_string()),
+                }),
+                task_id: Some(99),
+            },
             request_id: None,
             correlation_id: Some("corr-1".to_string()),
             summary: "collection created".to_string(),
@@ -335,6 +349,18 @@ mod tests {
         assert_eq!(rendered.subject, "Hubuum collection created: example");
         assert!(rendered.body.contains("collection created"));
         assert!(rendered.body.contains(&envelope.event_id.to_string()));
+    }
+
+    #[test]
+    fn template_context_exposes_provenance() {
+        let mut config = config();
+        config.body_template =
+            "Initiator {{ provenance.initiator.principal_id }}, task {{ provenance.task_id }}"
+                .to_string();
+
+        let rendered = render_email(&envelope(), &config).unwrap();
+
+        assert_eq!(rendered.body, "Initiator 1, task 99");
     }
 
     #[test]

@@ -278,6 +278,8 @@ mod tests {
             dispatched_at: None,
             fanout_locked_until: None,
             fanout_claim_token: None,
+            initiator_user_id: Some(17),
+            task_id: Some(18),
         }
     }
 
@@ -315,6 +317,8 @@ mod tests {
         assert!(archived.contains("\"archived_at\""));
         assert!(archived.contains("\"event\""));
         assert!(archived.contains("\"entity_type\":\"collection\""));
+        assert!(archived.contains("\"initiator_user_id\":17"));
+        assert!(archived.contains("\"task_id\":18"));
         std::fs::remove_file(path).unwrap();
     }
 

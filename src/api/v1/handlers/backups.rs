@@ -10,7 +10,7 @@ use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::{
     BackupDocument, BackupOutputLookup, BackupRequest, PrincipalID, TaskID, TaskKind, TaskRecord,
-    TaskResponse,
+    TaskResponse, TokenID,
 };
 use crate::permissions::{AppContext, AuthzTarget, PermissionDecision, PrincipalRef};
 use crate::tasks::{idempotency_key_from_headers, kick_task_worker, request_hash};
@@ -103,8 +103,10 @@ pub async fn create_backup(
     authorize_backup_request(&context, &requestor.principal, requestor.scopes()).await?;
     let payload = serde_json::to_value(&request)?;
     let hash = request_hash(&payload)?;
-    let scope_snapshot =
-        TaskScopeSnapshot::from_request(Some(requestor.token_meta.id), requestor.scopes());
+    let scope_snapshot = TaskScopeSnapshot::from_request(
+        Some(TokenID::new(requestor.token_meta.id)?),
+        requestor.scopes(),
+    );
     let task_request = TaskCreateRequest::builder(
         TaskKind::Backup,
         PrincipalID::new(requestor.principal.id)?,

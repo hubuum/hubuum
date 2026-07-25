@@ -4,7 +4,7 @@ use diesel::sql_types::Jsonb;
 use serde_json::Value;
 
 use crate::db::prelude::*;
-use crate::db::{DbConnection, DbPool, with_transaction};
+use crate::db::{DbConnection, DbPool, with_mutation_provenance_scope, with_transaction};
 use crate::errors::ApiError;
 use crate::models::backup::{
     BACKUP_AUXILIARY_HISTORY_SECTIONS, BACKUP_STATE_SECTIONS, BACKUP_TEMPORAL_HISTORY_SECTIONS,
@@ -184,20 +184,28 @@ pub(crate) async fn snapshot_backup_db(
     pool: &DbPool,
     include_history: bool,
 ) -> Result<(BackupState, Option<BackupHistory>), ApiError> {
-    with_transaction(pool, async |conn| -> Result<_, ApiError> {
-        // This must be the first statement in the transaction. Every state and
-        // history query below consequently observes one PostgreSQL snapshot.
-        diesel::sql_query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(conn)
-            .await?;
-        let state = snapshot_state(conn).await?;
-        let history = if include_history {
-            Some(snapshot_history(conn).await?)
-        } else {
-            None
-        };
-        Ok((state, history))
-    })
+    // Ambient provenance would issue `set_config` before the snapshot's
+    // isolation declaration. This read-only transaction cannot create history
+    // rows, so temporarily clear provenance to preserve PostgreSQL's
+    // first-statement requirement.
+    with_mutation_provenance_scope(
+        None,
+        with_transaction(pool, async |conn| -> Result<_, ApiError> {
+            // This must be the first statement in the transaction. Every state
+            // and history query below consequently observes one PostgreSQL
+            // snapshot.
+            diesel::sql_query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                .execute(conn)
+                .await?;
+            let state = snapshot_state(conn).await?;
+            let history = if include_history {
+                Some(snapshot_history(conn).await?)
+            } else {
+                None
+            };
+            Ok((state, history))
+        }),
+    )
     .await
 }
 

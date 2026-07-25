@@ -7,8 +7,9 @@ use utoipa::ToSchema;
 use crate::db::DbPool;
 use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
-use crate::events::Event;
+use crate::events::{Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance};
 use crate::models::BackupOutputLookup;
+use crate::models::principal::PrincipalID;
 use crate::models::search::{FilterField, SortParam};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::{backup_task_outputs, export_task_outputs, import_task_results, tasks};
@@ -112,32 +113,74 @@ impl TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TaskResultCounts {
-    pub processed: i32,
-    pub success: i32,
-    pub failed: i32,
+    processed: i32,
+    success: i32,
+    failed: i32,
 }
 
 impl TaskResultCounts {
-    pub fn new<T, U, V>(processed: T, success: U, failed: V) -> Result<Self, ApiError>
+    /// Build counts loaded from durable task state, where `processed` may not
+    /// equal `success + failed` while a task is still running or recovering.
+    pub fn from_stored<T, U, V>(processed: T, success: U, failed: V) -> Result<Self, ApiError>
     where
         T: TryInto<i32>,
         U: TryInto<i32>,
         V: TryInto<i32>,
     {
         Ok(Self {
-            processed: processed.try_into().map_err(|_| {
-                ApiError::InternalServerError("processed count is out of range".to_string())
-            })?,
-            success: success.try_into().map_err(|_| {
-                ApiError::InternalServerError("success count is out of range".to_string())
-            })?,
-            failed: failed.try_into().map_err(|_| {
-                ApiError::InternalServerError("failed count is out of range".to_string())
-            })?,
+            processed: task_result_count("processed", processed)?,
+            success: task_result_count("success", success)?,
+            failed: task_result_count("failed", failed)?,
         })
     }
+
+    /// Build terminal counts and derive the processed total from the two
+    /// mutually exclusive outcomes.
+    pub fn from_outcomes<U, V>(success: U, failed: V) -> Result<Self, ApiError>
+    where
+        U: TryInto<i32>,
+        V: TryInto<i32>,
+    {
+        let success = task_result_count("success", success)?;
+        let failed = task_result_count("failed", failed)?;
+        let processed = success.checked_add(failed).ok_or_else(|| {
+            ApiError::InternalServerError("processed count is out of range".to_string())
+        })?;
+        Ok(Self {
+            processed,
+            success,
+            failed,
+        })
+    }
+
+    pub fn processed(self) -> i32 {
+        self.processed
+    }
+
+    pub fn success(self) -> i32 {
+        self.success
+    }
+
+    pub fn failed(self) -> i32 {
+        self.failed
+    }
+}
+
+fn task_result_count<T>(name: &str, value: T) -> Result<i32, ApiError>
+where
+    T: TryInto<i32>,
+{
+    let value = value
+        .try_into()
+        .map_err(|_| ApiError::InternalServerError(format!("{name} count is out of range")))?;
+    if value < 0 {
+        return Err(ApiError::InternalServerError(format!(
+            "{name} count must not be negative"
+        )));
+    }
+    Ok(value)
 }
 
 impl From<TaskResultCounts> for (i32, i32, i32) {
@@ -182,6 +225,21 @@ pub struct TaskRecord {
     pub lease_token: Option<uuid::Uuid>,
     pub lease_expires_at: Option<NaiveDateTime>,
     pub attempt_count: i32,
+    pub initiator_user_id: Option<i32>,
+}
+
+impl TaskRecord {
+    pub(crate) fn worker_provenance(&self) -> MutationProvenance {
+        MutationProvenance::worker(self.initiator_user_id, self.id)
+    }
+
+    pub(crate) fn system_provenance(&self) -> MutationProvenance {
+        MutationProvenance::system_for_task(self.initiator_user_id, self.id)
+    }
+
+    pub(crate) fn user_provenance(&self, actor: PrincipalID) -> MutationProvenance {
+        MutationProvenance::user_for_task(actor.id(), self.initiator_user_id, self.id)
+    }
 }
 
 #[derive(Debug, Insertable)]
@@ -217,6 +275,10 @@ pub struct TaskEventRecord {
     pub message: String,
     pub data: Option<serde_json::Value>,
     pub created_at: NaiveDateTime,
+    pub actor_user_id: Option<i32>,
+    pub actor_kind: String,
+    pub initiator_user_id: Option<i32>,
+    pub provenance_task_id: Option<i32>,
 }
 
 #[derive(Debug)]
@@ -335,6 +397,7 @@ pub struct TaskEventResponse {
     pub message: String,
     pub data: Option<serde_json::Value>,
     pub created_at: NaiveDateTime,
+    pub provenance: Provenance,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -565,6 +628,20 @@ impl TaskRecord {
 
 impl From<TaskEventRecord> for TaskEventResponse {
     fn from(value: TaskEventRecord) -> Self {
+        Self::from_record_with_names(value, &PrincipalNames::default())
+    }
+}
+
+impl TaskEventResponse {
+    pub(crate) fn from_record_with_names(
+        value: TaskEventRecord,
+        principal_names: &PrincipalNames,
+    ) -> Self {
+        let provenance = StoredProvenance::from_actor_kind(Some(&value.actor_kind))
+            .with_actor_user_id(value.actor_user_id)
+            .with_initiator_user_id(value.initiator_user_id)
+            .with_task_id(value.provenance_task_id)
+            .resolve(principal_names);
         Self {
             id: value.id,
             task_id: value.task_id,
@@ -572,6 +649,7 @@ impl From<TaskEventRecord> for TaskEventResponse {
             message: value.message,
             data: value.data,
             created_at: value.created_at,
+            provenance,
         }
     }
 }
@@ -597,6 +675,10 @@ impl TryFrom<Event> for TaskEventRecord {
             message: value.summary,
             data,
             created_at: value.occurred_at,
+            actor_user_id: value.actor_user_id,
+            actor_kind: value.actor_kind,
+            initiator_user_id: value.initiator_user_id,
+            provenance_task_id: value.task_id.or(Some(task_id)),
         })
     }
 }
@@ -860,6 +942,26 @@ impl AuthzTarget for TaskID {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_result_counts_derive_processed_from_terminal_outcomes() {
+        let counts = TaskResultCounts::from_outcomes(2, 1).unwrap();
+
+        assert_eq!(
+            (counts.processed(), counts.success(), counts.failed()),
+            (3, 2, 1)
+        );
+    }
+
+    #[test]
+    fn task_result_counts_reject_negative_stored_values() {
+        assert!(TaskResultCounts::from_stored(-1, 0, 0).is_err());
+    }
+
+    #[test]
+    fn task_result_counts_reject_processed_overflow() {
+        assert!(TaskResultCounts::from_outcomes(i32::MAX, 1).is_err());
+    }
 
     #[test]
     fn task_id_new_accepts_positive() {
