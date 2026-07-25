@@ -17,6 +17,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (Rust API):** `ExternalIdentityProvider::refresh_user` now accepts
+  an `ExternalUserRefreshRequest` containing the current username and expected
+  stable subject. Provider implementations must locate the user by username
+  and reject a result whose subject does not match.
 - Newly issued tokens now materialize an explicit expiry when the request omits
   one, so later configuration changes cannot alter their lifetime. Login and
   token-mint responses now return that authoritative `expires_at` alongside the
@@ -31,6 +35,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   permission and resource boundary against live grants; stored-template exports
   require `ReadTemplate`, and identity, template, and integration imports remain
   restricted to unscoped administrators.
+- LDAP identity refresh now reuses the configured username lookup and verifies
+  the returned stable subject, avoiding directory-wide subject searches that
+  can exceed provider administrative limits. Provider errors are also logged
+  when cached memberships have exceeded the maximum stale window.
 
 ## [0.0.4] - 2026-07-25
 

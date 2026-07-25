@@ -55,6 +55,29 @@ pub struct AuthenticatedExternalUser {
     pub groups: Vec<ExternalGroup>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalUserRefreshRequest {
+    username: String,
+    expected_subject: String,
+}
+
+impl ExternalUserRefreshRequest {
+    pub fn new(username: impl Into<String>, expected_subject: impl Into<String>) -> Self {
+        Self {
+            username: username.into(),
+            expected_subject: expected_subject.into(),
+        }
+    }
+
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    pub fn expected_subject(&self) -> &str {
+        &self.expected_subject
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum AuthProviderError {
     #[error("authentication failed")]
@@ -78,6 +101,6 @@ pub trait ExternalIdentityProvider: Send + Sync {
 
     async fn refresh_user(
         &self,
-        subject: &str,
+        request: &ExternalUserRefreshRequest,
     ) -> Result<AuthenticatedExternalUser, AuthProviderError>;
 }

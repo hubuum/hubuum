@@ -1,7 +1,7 @@
 use chrono::NaiveDateTime;
 #[cfg(feature = "integration-test-support")]
 use hubuum_auth_core::AuthenticatedExternalUser;
-use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider};
+use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider, ExternalUserRefreshRequest};
 use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -272,9 +272,13 @@ impl AuthProviderBackend for LdapAuthProvider {
         state: &'a ExternalUserState,
     ) -> AuthProviderRefreshFuture<'a> {
         Box::pin(async move {
+            let refresh_request = ExternalUserRefreshRequest::new(
+                state.username.clone(),
+                state.external_subject.clone(),
+            );
             let refreshed = self
                 .provider
-                .refresh_user(&state.external_subject)
+                .refresh_user(&refresh_request)
                 .await
                 .map_err(|error| AuthProviderRefreshError::Provider(provider_error(error)))?;
             sync_external_user_from_backend(pool, &self.scope, LDAP_PROVIDER_KIND, refreshed)
@@ -348,6 +352,12 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
                                         );
                                         Ok(())
                                     } else {
+                                        tracing::error!(
+                                            principal_id,
+                                            identity_scope = state.identity_scope,
+                                            error = %err,
+                                            "External identity refresh failed; cached memberships exceed max-stale window"
+                                        );
                                         stale_external_state_error()
                                     }
                                 }
@@ -498,6 +508,12 @@ fn cached_external_state_result_at(
         );
         Ok(())
     } else {
+        tracing::warn!(
+            identity_scope = state.identity_scope,
+            last_sync_attempted_at = ?state.last_sync_attempted_at,
+            last_sync_success_at = ?state.last_sync_success_at,
+            "External identity refresh is in retry backoff; cached memberships exceed max-stale window"
+        );
         stale_external_state_error()
     }
 }
@@ -510,6 +526,7 @@ fn stale_external_state_error() -> Result<(), ApiError> {
 
 struct ExternalUserState {
     identity_scope: String,
+    username: String,
     external_subject: String,
     last_sync_attempted_at: Option<NaiveDateTime>,
     last_sync_success_at: Option<NaiveDateTime>,
@@ -533,6 +550,7 @@ async fn external_user_state(
     })?;
     Ok(Some(ExternalUserState {
         identity_scope: state.identity_scope,
+        username: state.username,
         external_subject: state.external_subject,
         last_sync_attempted_at: state.last_sync_attempted_at,
         last_sync_success_at: state.last_sync_success_at,
@@ -654,6 +672,7 @@ mod tests {
         let current = timestamp();
         let state = ExternalUserState {
             identity_scope: "directory".to_string(),
+            username: "alice".to_string(),
             external_subject: "subject".to_string(),
             last_sync_attempted_at: Some(current - chrono::Duration::seconds(1)),
             last_sync_success_at: Some(current - chrono::Duration::seconds(3600)),
