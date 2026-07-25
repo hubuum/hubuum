@@ -21,7 +21,8 @@ use crate::errors::ApiError;
 use crate::models::{
     NewRemoteCallResult, NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod,
     RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTemplateContext,
-    StoredRemoteCallTaskPayload, TaskRecord, TaskStatus, authorize_remote_invocation,
+    StoredRemoteCallTaskPayload, TaskRecord, TaskResultCounts, TaskStatus,
+    authorize_remote_invocation,
 };
 use crate::observability::metrics;
 use crate::traits::{AuthzSubject, BackendContext};
@@ -68,15 +69,8 @@ where
 
     task.update_state(
         pool,
-        TaskStateUpdate {
-            status: TaskStatus::Running,
-            summary: None,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            started_at: task.started_at,
-            finished_at: None,
-        },
+        TaskStateUpdate::new(TaskStatus::Running, TaskResultCounts::default())
+            .with_started_at(task.started_at),
     )
     .await?;
 
@@ -348,15 +342,15 @@ async fn finalize_remote_task(
     };
     task.finalize_terminal(
         pool,
-        TaskStateUpdate {
+        TaskStateUpdate::new(
             status,
-            summary: Some(outcome.summary.clone()),
-            processed_items: 1,
-            success_items: i32::from(outcome.success),
-            failed_items: i32::from(!outcome.success),
-            started_at: task.started_at,
-            finished_at: None,
-        },
+            TaskResultCounts::from_outcomes(
+                i32::from(outcome.success),
+                i32::from(!outcome.success),
+            )?,
+        )
+        .with_summary(outcome.summary.clone())
+        .with_started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: status.as_str().to_string(),

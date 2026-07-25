@@ -27,7 +27,8 @@ use crate::models::{
     ComputedFieldErrorResponse, ComputedFieldMutationResponse, ComputedObjectScopesResponse,
     ComputedResultType, ComputedScopeResponse, HubuumClass, HubuumObject,
     HubuumObjectComputedResponse, NewObjectComputedData, NewTaskEventRecord, ObjectComputedData,
-    SharedComputedScopeResponse, TaskKind, TaskRecord, TaskStatus, ValidatedComputedFieldPatch,
+    SharedComputedScopeResponse, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
+    ValidatedComputedFieldPatch,
 };
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
 

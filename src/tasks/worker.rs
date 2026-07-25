@@ -803,10 +803,12 @@ pub(super) async fn mark_claimed_task_failed(
     }
     let counts = match task_kind {
         TaskKind::Import => task.count_import_results(pool).await?,
-        TaskKind::Export => TaskResultCounts::new(1, 0, 1)?,
-        TaskKind::RemoteCall => TaskResultCounts::new(1, 0, 1)?,
-        TaskKind::Backup => TaskResultCounts::new(1, 0, 1)?,
-        TaskKind::Reindex => TaskResultCounts::new(task.processed_items, task.success_items, 1)?,
+        TaskKind::Export => TaskResultCounts::from_outcomes(0, 1)?,
+        TaskKind::RemoteCall => TaskResultCounts::from_outcomes(0, 1)?,
+        TaskKind::Backup => TaskResultCounts::from_outcomes(0, 1)?,
+        TaskKind::Reindex => {
+            TaskResultCounts::from_stored(task.processed_items, task.success_items, 1)?
+        }
     };
 
     warn!(
@@ -814,23 +816,17 @@ pub(super) async fn mark_claimed_task_failed(
         task_id = task.id,
         task_kind = task.kind.as_str(),
         status = task.status.as_str(),
-        processed_items = counts.processed,
-        success_items = counts.success,
-        failed_items = counts.failed,
+        processed_items = counts.processed(),
+        success_items = counts.success(),
+        failed_items = counts.failed(),
         error = %err
     );
 
     task.finalize_terminal(
         pool,
-        TaskStateUpdate {
-            status: TaskStatus::Failed,
-            summary: Some(summary.clone()),
-            processed_items: counts.processed,
-            success_items: counts.success,
-            failed_items: counts.failed,
-            started_at: task.started_at,
-            finished_at: None,
-        },
+        TaskStateUpdate::new(TaskStatus::Failed, counts)
+            .with_summary(summary.clone())
+            .with_started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: "failed".to_string(),

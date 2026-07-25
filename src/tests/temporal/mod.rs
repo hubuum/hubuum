@@ -450,7 +450,7 @@ async fn actor_scope_sets_actor_and_default_is_null() {
 #[actix_rt::test]
 async fn worker_mutation_scope_records_root_task_provenance() {
     use crate::db::{with_connection, with_mutation_provenance_scope};
-    use crate::events::MutationProvenance;
+    use crate::events::{EventContext, MutationProvenance};
     use crate::models::NewHubuumClass;
     use crate::traits::CanSave;
 
@@ -471,12 +471,10 @@ async fn worker_mutation_scope_records_root_task_provenance() {
             }
             .save(
                 &pool,
-                &hubuum_events_core::EventContext::worker_for_task(
+                &EventContext::from_mutation(MutationProvenance::worker(
                     Some(initiator_user_id),
                     task_id,
-                    None,
-                    None,
-                ),
+                )),
             )
             .await
         },

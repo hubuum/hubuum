@@ -113,32 +113,74 @@ impl TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TaskResultCounts {
-    pub processed: i32,
-    pub success: i32,
-    pub failed: i32,
+    processed: i32,
+    success: i32,
+    failed: i32,
 }
 
 impl TaskResultCounts {
-    pub fn new<T, U, V>(processed: T, success: U, failed: V) -> Result<Self, ApiError>
+    /// Build counts loaded from durable task state, where `processed` may not
+    /// equal `success + failed` while a task is still running or recovering.
+    pub fn from_stored<T, U, V>(processed: T, success: U, failed: V) -> Result<Self, ApiError>
     where
         T: TryInto<i32>,
         U: TryInto<i32>,
         V: TryInto<i32>,
     {
         Ok(Self {
-            processed: processed.try_into().map_err(|_| {
-                ApiError::InternalServerError("processed count is out of range".to_string())
-            })?,
-            success: success.try_into().map_err(|_| {
-                ApiError::InternalServerError("success count is out of range".to_string())
-            })?,
-            failed: failed.try_into().map_err(|_| {
-                ApiError::InternalServerError("failed count is out of range".to_string())
-            })?,
+            processed: task_result_count("processed", processed)?,
+            success: task_result_count("success", success)?,
+            failed: task_result_count("failed", failed)?,
         })
     }
+
+    /// Build terminal counts and derive the processed total from the two
+    /// mutually exclusive outcomes.
+    pub fn from_outcomes<U, V>(success: U, failed: V) -> Result<Self, ApiError>
+    where
+        U: TryInto<i32>,
+        V: TryInto<i32>,
+    {
+        let success = task_result_count("success", success)?;
+        let failed = task_result_count("failed", failed)?;
+        let processed = success.checked_add(failed).ok_or_else(|| {
+            ApiError::InternalServerError("processed count is out of range".to_string())
+        })?;
+        Ok(Self {
+            processed,
+            success,
+            failed,
+        })
+    }
+
+    pub fn processed(self) -> i32 {
+        self.processed
+    }
+
+    pub fn success(self) -> i32 {
+        self.success
+    }
+
+    pub fn failed(self) -> i32 {
+        self.failed
+    }
+}
+
+fn task_result_count<T>(name: &str, value: T) -> Result<i32, ApiError>
+where
+    T: TryInto<i32>,
+{
+    let value = value
+        .try_into()
+        .map_err(|_| ApiError::InternalServerError(format!("{name} count is out of range")))?;
+    if value < 0 {
+        return Err(ApiError::InternalServerError(format!(
+            "{name} count must not be negative"
+        )));
+    }
+    Ok(value)
 }
 
 impl From<TaskResultCounts> for (i32, i32, i32) {
@@ -900,6 +942,26 @@ impl AuthzTarget for TaskID {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_result_counts_derive_processed_from_terminal_outcomes() {
+        let counts = TaskResultCounts::from_outcomes(2, 1).unwrap();
+
+        assert_eq!(
+            (counts.processed(), counts.success(), counts.failed()),
+            (3, 2, 1)
+        );
+    }
+
+    #[test]
+    fn task_result_counts_reject_negative_stored_values() {
+        assert!(TaskResultCounts::from_stored(-1, 0, 0).is_err());
+    }
+
+    #[test]
+    fn task_result_counts_reject_processed_overflow() {
+        assert!(TaskResultCounts::from_outcomes(i32::MAX, 1).is_err());
+    }
 
     #[test]
     fn task_id_new_accepts_positive() {

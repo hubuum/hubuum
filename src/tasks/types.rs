@@ -6,7 +6,7 @@ use crate::models::{
     ImportEventSubscriptionInput, ImportExportTemplateInput, ImportGroupInput,
     ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
     ImportObjectRelationInput, ImportPrincipalInput, ImportRemoteTargetInput,
-    NewImportTaskResultRecord, Permissions, TaskStatus,
+    NewImportTaskResultRecord, Permissions, TaskResultCounts, TaskStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -97,9 +97,7 @@ pub(super) struct RuntimeState {
 pub(super) struct TerminalTaskUpdate {
     pub(super) status: TaskStatus,
     pub(super) summary: String,
-    pub(super) processed_items: i32,
-    pub(super) success_items: i32,
-    pub(super) failed_items: i32,
+    pub(super) counts: TaskResultCounts,
     pub(super) event_data: Option<serde_json::Value>,
 }
 

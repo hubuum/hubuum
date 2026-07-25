@@ -27,7 +27,8 @@ use crate::models::{
     HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath, NewExportTaskOutputRecord,
     NewTaskEventRecord, PrincipalID, RELATED_INCLUDE_DEFAULT_LIMIT,
     RELATED_INCLUDE_DEFAULT_MAX_DEPTH, RelatedObjectForRootRow, RelatedObjectGraphRow,
-    RelatedObjectIncludeRow, TaskKind, TaskRecord, ValidatedExportScope,
+    RelatedObjectIncludeRow, TaskKind, TaskRecord, TaskResultCounts, TaskStatus, TokenID,
+    ValidatedExportScope,
 };
 use crate::observability::metrics;
 use crate::pagination::page_limits_or_defaults;
@@ -310,7 +311,7 @@ where
 pub(crate) async fn submit_export_task<S: AuthzSubject>(
     pool: &DbPool,
     subject: &S,
-    submitted_token_id: Option<i32>,
+    submitted_token_id: Option<TokenID>,
     idempotency_key: Option<IdempotencyKey>,
     export: ExportRequest,
     template: Option<ExportTemplate>,
@@ -330,7 +331,7 @@ pub(crate) async fn submit_export_task<S: AuthzSubject>(
 
     find_or_create_export_task(
         pool,
-        subject.principal_id(),
+        PrincipalID::new(subject.principal_id())?,
         snapshot,
         idempotency_key,
         serde_json::to_value(task_payload)?,
@@ -415,24 +416,19 @@ fn runtime_to_task_payload(runtime: &ExportRuntime) -> Result<StoredExportTaskPa
 
 async fn find_or_create_export_task(
     pool: &DbPool,
-    submitted_by: i32,
+    submitted_by: PrincipalID,
     snapshot: TaskScopeSnapshot,
     idempotency_key: Option<IdempotencyKey>,
     payload: serde_json::Value,
     request_hash_value: String,
 ) -> Result<TaskRecord, ApiError> {
-    TaskCreateRequest::builder(
-        TaskKind::Export,
-        PrincipalID::new(submitted_by)?,
-        payload,
-        1,
-    )
-    .idempotency_key(idempotency_key)
-    .request_hash(Some(request_hash_value))
-    .scope_snapshot(snapshot)
-    .build()
-    .create_idempotently_with_active_limit(pool, max_active_export_tasks_per_user())
-    .await
+    TaskCreateRequest::builder(TaskKind::Export, submitted_by, payload, 1)
+        .idempotency_key(idempotency_key)
+        .request_hash(Some(request_hash_value))
+        .scope_snapshot(snapshot)
+        .build()
+        .create_idempotently_with_active_limit(pool, max_active_export_tasks_per_user())
+        .await
 }
 
 pub(crate) async fn execute_export_task(
@@ -461,15 +457,8 @@ pub(crate) async fn execute_export_task(
     .await?;
     task.update_state(
         pool,
-        TaskStateUpdate {
-            status: crate::models::TaskStatus::Running,
-            summary: None,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            started_at: task.started_at,
-            finished_at: None,
-        },
+        TaskStateUpdate::new(TaskStatus::Running, TaskResultCounts::default())
+            .with_started_at(task.started_at),
     )
     .await?;
 
@@ -603,18 +592,15 @@ pub(crate) async fn execute_export_task(
 
     task.finalize_export_with_output(
         pool,
-        TaskStateUpdate {
-            status: crate::models::TaskStatus::Succeeded,
-            summary: Some("Export completed successfully".to_string()),
-            processed_items: 1,
-            success_items: 1,
-            failed_items: 0,
-            started_at: task.started_at,
-            finished_at: None,
-        },
+        TaskStateUpdate::new(
+            TaskStatus::Succeeded,
+            TaskResultCounts::from_outcomes(1, 0)?,
+        )
+        .with_summary("Export completed successfully")
+        .with_started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
-            event_type: crate::models::TaskStatus::Succeeded.as_str().to_string(),
+            event_type: TaskStatus::Succeeded.as_str().to_string(),
             message: format!(
                 "Export completed successfully in {:?}",
                 total_start.elapsed()

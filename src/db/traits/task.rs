@@ -1,6 +1,6 @@
 use crate::db::prelude::*;
 use crate::models::token_scope::TokenScope;
-use chrono::Utc;
+use chrono::{NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::expression::AsExpression;
 use diesel::sql_types::{BigInt, Bool, Nullable, Timestamp};
@@ -22,7 +22,7 @@ use crate::models::{
     ExportTaskOutputRecord, ExportTaskOutputSummaryRecord, ImportTaskResultRecord,
     NewBackupTaskOutputRecord, NewExportTaskOutputRecord, NewImportTaskResultRecord,
     NewTaskEventRecord, NewTaskRecord, PrincipalID, TaskEventRecord, TaskID, TaskKind, TaskRecord,
-    TaskResponse, TaskResultCounts, TaskStatus,
+    TaskResponse, TaskResultCounts, TaskStatus, TokenID,
 };
 use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
@@ -33,13 +33,33 @@ const DATABASE_UTC_LEASE_EXPIRY_SQL_PREFIX: &str = "((clock_timestamp() AT TIME 
 const DATABASE_LEASE_EXPIRY_SQL_SUFFIX: &str = " * INTERVAL '1 millisecond'))";
 
 pub struct TaskStateUpdate {
-    pub status: TaskStatus,
-    pub summary: Option<String>,
-    pub processed_items: i32,
-    pub success_items: i32,
-    pub failed_items: i32,
-    pub started_at: Option<chrono::NaiveDateTime>,
-    pub finished_at: Option<chrono::NaiveDateTime>,
+    status: TaskStatus,
+    summary: Option<String>,
+    counts: TaskResultCounts,
+    started_at: Option<NaiveDateTime>,
+    finished_at: Option<NaiveDateTime>,
+}
+
+impl TaskStateUpdate {
+    pub fn new(status: TaskStatus, counts: TaskResultCounts) -> Self {
+        Self {
+            status,
+            summary: None,
+            counts,
+            started_at: None,
+            finished_at: None,
+        }
+    }
+
+    pub fn with_summary(mut self, summary: impl Into<String>) -> Self {
+        self.summary = Some(summary.into());
+        self
+    }
+
+    pub fn with_started_at(mut self, started_at: Option<NaiveDateTime>) -> Self {
+        self.started_at = started_at;
+        self
+    }
 }
 
 pub struct TaskCreateRequest {
@@ -70,11 +90,11 @@ pub fn scope_snapshot_json(scopes: Option<&TokenScope>) -> serde_json::Value {
 /// persisted so async execution can never exceed it.
 #[derive(Debug, Clone)]
 pub struct TaskScopeSnapshot {
-    pub token_id: Option<i32>,
+    token_id: Option<TokenID>,
     /// Whether the submitting token was scoped. This remains explicit for task
     /// metadata and for compatibility with legacy permission-array snapshots.
-    pub scoped: bool,
-    pub scopes: serde_json::Value,
+    scoped: bool,
+    scopes: serde_json::Value,
 }
 
 pub struct TaskCreateRequestBuilder {
@@ -89,7 +109,7 @@ pub struct TaskCreateRequestBuilder {
 
 impl TaskScopeSnapshot {
     /// Build from the submitting token id and its live scope set.
-    pub fn from_request(token_id: Option<i32>, scopes: Option<&TokenScope>) -> Self {
+    pub fn from_request(token_id: Option<TokenID>, scopes: Option<&TokenScope>) -> Self {
         Self {
             token_id,
             scoped: scopes.is_some(),
@@ -150,7 +170,7 @@ impl TaskCreateRequestBuilder {
             request_hash: self.request_hash,
             request_payload: self.request_payload,
             total_items: self.total_items,
-            submitted_token_id: token_id,
+            submitted_token_id: token_id.map(TokenID::id),
             submitted_token_scoped: scoped,
             submitted_token_scopes: scopes,
         }
@@ -486,7 +506,7 @@ pub trait TaskBackend: TaskIdentifier {
                 .count()
                 .get_result::<i64>(conn)
                 .await?;
-            TaskResultCounts::new(processed, processed - failed, failed)
+            TaskResultCounts::from_outcomes(processed - failed, failed)
         })
         .await
     }
@@ -517,9 +537,9 @@ pub trait TaskBackend: TaskIdentifier {
             .set((
                 status.eq(update.status.as_str()),
                 summary.eq(update.summary),
-                processed_items.eq(update.processed_items),
-                success_items.eq(update.success_items),
-                failed_items.eq(update.failed_items),
+                processed_items.eq(update.counts.processed()),
+                success_items.eq(update.counts.success()),
+                failed_items.eq(update.counts.failed()),
                 started_at.eq(update.started_at),
                 finished_at.eq(update.finished_at),
                 updated_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL)),
@@ -577,9 +597,9 @@ pub trait TaskBackend: TaskIdentifier {
             .set((
                 status.eq(update.status.as_str()),
                 summary.eq(update.summary),
-                processed_items.eq(update.processed_items),
-                success_items.eq(update.success_items),
-                failed_items.eq(update.failed_items),
+                processed_items.eq(update.counts.processed()),
+                success_items.eq(update.counts.success()),
+                failed_items.eq(update.counts.failed()),
                 started_at.eq(update.started_at),
                 finished_at.eq(Some(event_record.occurred_at)),
                 request_payload.eq::<Option<serde_json::Value>>(None),
@@ -657,9 +677,9 @@ pub trait TaskBackend: TaskIdentifier {
             .set((
                 status.eq(update.status.as_str()),
                 summary.eq(update.summary),
-                processed_items.eq(update.processed_items),
-                success_items.eq(update.success_items),
-                failed_items.eq(update.failed_items),
+                processed_items.eq(update.counts.processed()),
+                success_items.eq(update.counts.success()),
+                failed_items.eq(update.counts.failed()),
                 started_at.eq(update.started_at),
                 finished_at.eq(Some(event_record.occurred_at)),
                 request_payload.eq::<Option<serde_json::Value>>(None),
@@ -734,9 +754,9 @@ pub trait TaskBackend: TaskIdentifier {
             .set((
                 status.eq(update.status.as_str()),
                 summary.eq(update.summary),
-                processed_items.eq(update.processed_items),
-                success_items.eq(update.success_items),
-                failed_items.eq(update.failed_items),
+                processed_items.eq(update.counts.processed()),
+                success_items.eq(update.counts.success()),
+                failed_items.eq(update.counts.failed()),
                 started_at.eq(update.started_at),
                 finished_at.eq(Some(event_record.occurred_at)),
                 request_payload.eq::<Option<serde_json::Value>>(None),
@@ -866,7 +886,7 @@ pub async fn list_tasks_with_total_count(
 
 /// Enrich one task-event page with legacy queued-event initiators and one
 /// batched principal-name lookup.
-pub async fn task_event_responses(
+pub(crate) async fn task_event_responses(
     pool: &DbPool,
     mut records: Vec<TaskEventRecord>,
 ) -> Result<Vec<crate::models::TaskEventResponse>, ApiError> {
@@ -1365,16 +1385,16 @@ async fn recovered_task_result_counts(
                 .count()
                 .get_result::<i64>(conn)
                 .await?;
-            TaskResultCounts::new(processed, processed - failed, failed)
+            TaskResultCounts::from_outcomes(processed - failed, failed)
         }
         TaskKind::Export | TaskKind::Backup | TaskKind::RemoteCall => {
-            TaskResultCounts::new(1, 0, 1)
+            TaskResultCounts::from_outcomes(0, 1)
         }
-        TaskKind::Reindex => Ok(TaskResultCounts {
-            processed: task.processed_items,
-            success: task.success_items,
-            failed: task.failed_items,
-        }),
+        TaskKind::Reindex => TaskResultCounts::from_stored(
+            task.processed_items,
+            task.success_items,
+            task.failed_items,
+        ),
     }
 }
 
@@ -1454,9 +1474,9 @@ async fn recover_expired_task_leases_matching(
                 .set((
                     status.eq(TaskStatus::Failed.as_str()),
                     summary.eq(Some(message.to_string())),
-                    processed_items.eq(counts.processed),
-                    success_items.eq(counts.success),
-                    failed_items.eq(counts.failed),
+                    processed_items.eq(counts.processed()),
+                    success_items.eq(counts.success()),
+                    failed_items.eq(counts.failed()),
                     finished_at.eq(Some(now)),
                     request_payload.eq::<Option<serde_json::Value>>(None),
                     request_redacted_at.eq(Some(now)),
@@ -1774,7 +1794,8 @@ mod tests {
         CollectionID, NewBackupTaskOutputRecord, NewImportTaskResultRecord, NewTaskEventRecord,
         NewTaskRecord, Permissions, PrincipalID, RemoteInvocationBodyOverride,
         RemoteInvocationParameters, RemoteInvocationSubject, RemoteTargetID,
-        StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskStatus, TokenScope,
+        StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskResultCounts, TaskStatus, TokenID,
+        TokenScope,
     };
     use crate::tests::{TestContext, create_test_user};
 
@@ -1811,7 +1832,10 @@ mod tests {
             serde_json::json!({}),
             1,
         )
-        .scope_snapshot(TaskScopeSnapshot::from_request(Some(11), Some(&scope)))
+        .scope_snapshot(TaskScopeSnapshot::from_request(
+            Some(TokenID::new(11).unwrap()),
+            Some(&scope),
+        ))
         .build();
 
         assert_eq!(request.submitted_token_id, Some(11));
@@ -2357,15 +2381,8 @@ mod tests {
         let result = leased
             .update_state(
                 &context.pool,
-                TaskStateUpdate {
-                    status: TaskStatus::Running,
-                    summary: None,
-                    processed_items: 0,
-                    success_items: 0,
-                    failed_items: 0,
-                    started_at: leased.started_at,
-                    finished_at: None,
-                },
+                TaskStateUpdate::new(TaskStatus::Running, TaskResultCounts::default())
+                    .with_started_at(leased.started_at),
             )
             .await;
 
@@ -2394,15 +2411,12 @@ mod tests {
         let result = leased
             .finalize_backup_with_output(
                 &context.pool,
-                TaskStateUpdate {
-                    status: TaskStatus::Succeeded,
-                    summary: Some("stale backup completion".to_string()),
-                    processed_items: 1,
-                    success_items: 1,
-                    failed_items: 0,
-                    started_at: leased.started_at,
-                    finished_at: None,
-                },
+                TaskStateUpdate::new(
+                    TaskStatus::Succeeded,
+                    TaskResultCounts::from_outcomes(1, 0).unwrap(),
+                )
+                .with_summary("stale backup completion")
+                .with_started_at(leased.started_at),
                 NewTaskEventRecord {
                     task_id: leased.id,
                     event_type: TaskStatus::Succeeded.as_str().to_string(),
@@ -2505,15 +2519,8 @@ mod tests {
         let result = leased
             .update_state(
                 &context.pool,
-                TaskStateUpdate {
-                    status: TaskStatus::Running,
-                    summary: None,
-                    processed_items: 0,
-                    success_items: 0,
-                    failed_items: 0,
-                    started_at: leased.started_at,
-                    finished_at: None,
-                },
+                TaskStateUpdate::new(TaskStatus::Running, TaskResultCounts::default())
+                    .with_started_at(leased.started_at),
             )
             .await;
 

@@ -164,6 +164,11 @@ pub struct EventContext {
 }
 
 impl EventContext {
+    /// Build an event context from already-typed mutation provenance.
+    pub fn from_mutation(mutation: MutationProvenance) -> Self {
+        Self::new(mutation, None, None)
+    }
+
     pub fn user(
         actor_user_id: i32,
         request_id: Option<Uuid>,
@@ -178,27 +183,6 @@ impl EventContext {
 
     pub fn system() -> Self {
         Self::new(MutationProvenance::system(), None, None)
-    }
-
-    pub fn worker(request_id: Option<Uuid>, correlation_id: Option<String>) -> Self {
-        Self::new(
-            MutationProvenance::new(ActorKind::Worker, None, None, None),
-            request_id,
-            correlation_id,
-        )
-    }
-
-    pub fn worker_for_task(
-        initiator_user_id: Option<i32>,
-        task_id: i32,
-        request_id: Option<Uuid>,
-        correlation_id: Option<String>,
-    ) -> Self {
-        Self::new(
-            MutationProvenance::worker(initiator_user_id, task_id),
-            request_id,
-            correlation_id,
-        )
     }
 
     pub fn actor_kind(&self) -> ActorKind {

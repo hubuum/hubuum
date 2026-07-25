@@ -14,8 +14,8 @@ mod tests {
         ExportScopeKind, ExportTemplateKind, HubuumClass, HubuumClassRelation,
         HubuumObjectRelation, NewExportTaskOutputRecord, NewExportTemplate, NewHubuumClass,
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewTaskEventRecord,
-        NewTaskRecord, Permissions, TaskEventResponse, TaskID, TaskKind, TaskResponse, TaskStatus,
-        UpdateExportTemplate,
+        NewTaskRecord, Permissions, TaskEventResponse, TaskID, TaskKind, TaskResponse,
+        TaskResultCounts, TaskStatus, UpdateExportTemplate,
     };
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -1871,15 +1871,11 @@ mod tests {
         let record = task_handle
             .finalize_export_with_output(
                 &context.pool,
-                TaskStateUpdate {
-                    status: TaskStatus::Succeeded,
-                    summary: Some("re-finalized".to_string()),
-                    processed_items: 1,
-                    success_items: 1,
-                    failed_items: 0,
-                    started_at: None,
-                    finished_at: None,
-                },
+                TaskStateUpdate::new(
+                    TaskStatus::Succeeded,
+                    TaskResultCounts::from_outcomes(1, 0).unwrap(),
+                )
+                .with_summary("re-finalized"),
                 NewTaskEventRecord {
                     task_id: task.id,
                     event_type: TaskStatus::Succeeded.as_str().to_string(),

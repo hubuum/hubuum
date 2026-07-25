@@ -2340,7 +2340,7 @@ async fn test_count_import_results_summary_counts_success_and_failure_rows() {
 
     let counts = (task.count_import_results(&context.pool)).await.unwrap();
 
-    assert_eq!(counts.processed, 3);
-    assert_eq!(counts.success, 2);
-    assert_eq!(counts.failed, 1);
+    assert_eq!(counts.processed(), 3);
+    assert_eq!(counts.success(), 2);
+    assert_eq!(counts.failed(), 1);
 }

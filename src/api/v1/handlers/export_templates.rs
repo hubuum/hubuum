@@ -20,7 +20,7 @@ use crate::models::search::parse_query_parameter;
 use crate::models::{
     CollectionID, ExportTemplate, ExportTemplateHistory, ExportTemplateID,
     ExportTemplateRunRequest, HistoryAuthorizationSnapshot, NewExportTemplate, Permissions,
-    TaskResponse, UpdateExportTemplate,
+    TaskResponse, TokenID, UpdateExportTemplate,
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
@@ -265,7 +265,7 @@ pub async fn run_template_export(
     let task = submit_export_task(
         &pool,
         user,
-        Some(requestor.token_meta.id),
+        Some(TokenID::new(requestor.token_meta.id)?),
         idempotency_key,
         export,
         Some(template),

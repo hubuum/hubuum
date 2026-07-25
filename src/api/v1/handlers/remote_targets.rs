@@ -26,7 +26,7 @@ use crate::models::search::parse_query_parameter;
 use crate::models::{
     CollectionID, HistoryAuthorizationSnapshot, HubuumClassID, NewRemoteTarget, Permissions,
     PrincipalID, RemoteTarget, RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest,
-    StoredRemoteCallTaskPayload, TaskKind, TaskRecord, TaskResponse, UpdateRemoteTarget,
+    StoredRemoteCallTaskPayload, TaskKind, TaskRecord, TaskResponse, TokenID, UpdateRemoteTarget,
     authorize_remote_invocation,
 };
 use crate::pagination::prepare_db_pagination;
@@ -327,11 +327,13 @@ pub async fn invoke_remote_target(
         parameters: invoke.parameters,
         body_override: invoke.body_override,
     })?;
-    let snapshot =
-        TaskScopeSnapshot::from_request(Some(requestor.token_meta.id), requestor.scopes());
+    let snapshot = TaskScopeSnapshot::from_request(
+        Some(TokenID::new(requestor.token_meta.id)?),
+        requestor.scopes(),
+    );
     let task = find_or_create_remote_call_task(
         &pool,
-        user.id,
+        PrincipalID::new(user.id)?,
         snapshot,
         idempotency_key_from_headers(req.headers())?,
         payload,
@@ -365,7 +367,7 @@ pub async fn invoke_remote_target(
 
 async fn find_or_create_remote_call_task(
     pool: &DbPool,
-    submitted_by: i32,
+    submitted_by: PrincipalID,
     snapshot: TaskScopeSnapshot,
     idempotency_key: Option<IdempotencyKey>,
     payload: serde_json::Value,
@@ -374,20 +376,15 @@ async fn find_or_create_remote_call_task(
 
     info!(
         message = "Creating remote call task",
-        submitted_by = submitted_by
+        submitted_by = submitted_by.id()
     );
-    TaskCreateRequest::builder(
-        TaskKind::RemoteCall,
-        PrincipalID::new(submitted_by)?,
-        payload,
-        1,
-    )
-    .idempotency_key(idempotency_key)
-    .request_hash(Some(hash))
-    .scope_snapshot(snapshot)
-    .build()
-    .create_idempotently_with_active_limit(pool, max_active_remote_call_tasks_per_user())
-    .await
+    TaskCreateRequest::builder(TaskKind::RemoteCall, submitted_by, payload, 1)
+        .idempotency_key(idempotency_key)
+        .request_hash(Some(hash))
+        .scope_snapshot(snapshot)
+        .build()
+        .create_idempotently_with_active_limit(pool, max_active_remote_call_tasks_per_user())
+        .await
 }
 
 fn max_active_remote_call_tasks_per_user() -> usize {
