@@ -284,7 +284,9 @@ assert_commands "$TEST_ROOT/expected-initial.log"
 printf '2\n' > "$TEST_ROOT/caddy-failure-polls"
 : > "$COMMAND_LOG"
 sleep() { :; }
-hubuum_wait_for_caddy_upstreams 1
+# Bash's integer SECONDS clock can cross a boundary immediately after the
+# deadline is calculated. Keep enough synthetic time for all no-sleep polls.
+hubuum_wait_for_caddy_upstreams 5
 unset -f sleep
 [[ "$(grep -c 'reverse_proxy/upstreams' "$COMMAND_LOG")" -eq 3 ]] || {
   echo "Caddy upstream wait did not poll until passive failures cleared" >&2
