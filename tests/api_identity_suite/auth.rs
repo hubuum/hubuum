@@ -128,6 +128,9 @@ mod tests {
             body_json.get("token").is_some(),
             "Response does not contain token"
         );
+        let returned_expiry =
+            serde_json::from_value::<chrono::NaiveDateTime>(body_json["expires_at"].clone())
+                .expect("login response should contain a valid expiry");
 
         let token_value = body_json
             .get("token")
@@ -140,7 +143,7 @@ mod tests {
         use crate::models::token::{PrincipalToken, Token};
         use crate::schema::tokens::dsl::*;
         let token_hash = Token::storage_hash_from_raw(&token_value);
-        let token_exists = with_connection(&pool, async |conn| {
+        let stored_token = with_connection(&pool, async |conn| {
             tokens
                 .filter(token.eq(&token_hash))
                 .filter(principal_id.eq(new_user.id))
@@ -148,9 +151,13 @@ mod tests {
                 .await
         })
         .await
-        .is_ok();
+        .expect("token should be stored");
 
-        assert!(token_exists, "Token not found in database");
+        assert_eq!(stored_token.expires_at, Some(returned_expiry));
+        assert_eq!(
+            returned_expiry,
+            stored_token.issued + chrono::Duration::hours(config.token_lifetime_hours)
+        );
 
         // Validate token via endpoint.
         let resp = test::TestRequest::get()

@@ -149,12 +149,26 @@ impl StoreUserTokenRecord for User {
         pool: &DbPool,
         token_value: &Token,
     ) -> Result<(), ApiError> {
-        use crate::schema::tokens::dsl::{principal_id, token};
+        use crate::schema::tokens::dsl::{expires_at, issued, principal_id, token};
         let token_hash = token_value.storage_hash();
+        let lifetime_hours = crate::models::configured_default_token_lifetime_hours();
 
         with_connection(pool, async |conn| {
+            let issued_at = diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+                "statement_timestamp() AT TIME ZONE 'UTC'",
+            );
+            let expiry = diesel::dsl::sql::<
+                diesel::sql_types::Nullable<diesel::sql_types::Timestamp>,
+            >("(statement_timestamp() AT TIME ZONE 'UTC') + (")
+            .bind::<diesel::sql_types::BigInt, _>(lifetime_hours)
+            .sql(" * INTERVAL '1 hour')");
             diesel::insert_into(crate::schema::tokens::table)
-                .values((principal_id.eq(self.id), token.eq(token_hash)))
+                .values((
+                    principal_id.eq(self.id),
+                    token.eq(token_hash),
+                    issued.eq(issued_at),
+                    expires_at.eq(expiry),
+                ))
                 .execute(conn)
                 .await
         })

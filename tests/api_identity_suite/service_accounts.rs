@@ -45,7 +45,8 @@ mod tests {
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
     use crate::test_support::{
-        LOGIN_RATE_LIMIT_TEST_LOCK, reset_login_rate_limit as reset_login_rate_limit_for_tests,
+        LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config,
+        reset_login_rate_limit as reset_login_rate_limit_for_tests,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -336,9 +337,8 @@ mod tests {
 
     // ----- Batch 2: token lifecycle / scopes / disabled SA -----
 
-    /// #3: a past `expires_at` rejects; a future `expires_at` validates; a NULL
-    /// `expires_at` falls back to the global lifetime window. `offset_hours` =
-    /// `Some(h)` mints with `now + h`; `None` mints a plain NULL-expiry token.
+    /// #3: a past `expires_at` rejects; a future `expires_at` validates; and a
+    /// legacy NULL `expires_at` falls back to the global lifetime window.
     #[rstest]
     #[case::expired(Some(-1), false)]
     #[case::future(Some(1), true)]
@@ -361,10 +361,95 @@ mod tests {
                     .await
                     .unwrap()
             }
-            None => user.create_token(pool).await.unwrap(),
+            None => {
+                let token = user.create_token(pool).await.unwrap();
+                let token_hash = token.storage_hash();
+                with_connection(pool, async |conn| {
+                    diesel::update(
+                        crate::schema::tokens::table
+                            .filter(crate::schema::tokens::token.eq(token_hash)),
+                    )
+                    .set(
+                        crate::schema::tokens::expires_at.eq::<Option<chrono::NaiveDateTime>>(None),
+                    )
+                    .execute(conn)
+                    .await
+                })
+                .await
+                .unwrap();
+                token
+            }
         };
 
         assert_eq!(token.is_valid(pool).await.is_ok(), expected_valid);
+    }
+
+    #[actix_web::test]
+    async fn token_mint_materializes_and_returns_the_configured_default_expiry() {
+        use crate::schema::tokens::dsl::{expires_at, token as token_column, tokens};
+
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        let sa = create_test_service_account(&context.pool, &group, None).await;
+        let lifetime_hours = integration_test_config().unwrap().token_lifetime_hours;
+        let earliest = chrono::Utc::now().naive_utc() + chrono::Duration::hours(lifetime_hours);
+
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
+            &serde_json::json!({ "name": "default-expiry" }),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::CREATED).await;
+        let body: serde_json::Value = test::read_body_json(response).await;
+        let raw_token = body["token"].as_str().unwrap();
+        let returned_expiry =
+            serde_json::from_value::<chrono::NaiveDateTime>(body["expires_at"].clone()).unwrap();
+        let latest = chrono::Utc::now().naive_utc() + chrono::Duration::hours(lifetime_hours);
+
+        let (persisted_issued, persisted_expiry) = with_connection(&context.pool, async |conn| {
+            tokens
+                .filter(token_column.eq(Token::storage_hash_from_raw(raw_token)))
+                .select((crate::schema::tokens::issued, expires_at))
+                .first::<(chrono::NaiveDateTime, Option<chrono::NaiveDateTime>)>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        assert!(returned_expiry >= earliest);
+        assert!(returned_expiry <= latest);
+        assert_eq!(persisted_expiry, Some(returned_expiry));
+        assert_eq!(
+            returned_expiry,
+            persisted_issued + chrono::Duration::hours(lifetime_hours)
+        );
+    }
+
+    #[actix_web::test]
+    async fn token_mint_returns_the_requested_expiry() {
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        let sa = create_test_service_account(&context.pool, &group, None).await;
+        let requested_expiry = chrono::Utc::now().naive_utc() + chrono::Duration::days(7);
+
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", sa.id),
+            &serde_json::json!({
+                "name": "requested-expiry",
+                "expires_at": requested_expiry,
+            }),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::CREATED).await;
+        let body: serde_json::Value = test::read_body_json(response).await;
+        let returned_expiry =
+            serde_json::from_value::<chrono::NaiveDateTime>(body["expires_at"].clone()).unwrap();
+
+        assert_eq!(returned_expiry, requested_expiry);
     }
 
     /// #4: revocation is a soft delete — the token no longer validates...

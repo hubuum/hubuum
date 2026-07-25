@@ -37,8 +37,8 @@ pub(crate) fn active_tokens_cutoff() -> chrono::NaiveDateTime {
 }
 
 /// Boxed Diesel predicate for "token is active": not revoked, and not expired —
-/// an explicit `expires_at` in the future, or (when null) issued within the
-/// global lifetime window from `issued`.
+/// an explicit `expires_at` in the future, or, for a legacy null expiry, issued
+/// within the global lifetime window.
 ///
 /// Single source for the security-critical validity rule so token validation
 /// ([`crate::db::traits::Status::is_valid`]) and active-token listing can never
@@ -47,9 +47,9 @@ pub(crate) fn active_tokens_cutoff() -> chrono::NaiveDateTime {
 /// Semantics note: an explicit `expires_at` is authoritative and overrides the
 /// global `token_lifetime_hours` window — a token with a non-null `expires_at`
 /// stays valid until that instant regardless of the global setting, and only
-/// `expires_at IS NULL` tokens are bounded by `cutoff`. Lowering
-/// `token_lifetime_hours` therefore does not shorten already-issued
-/// explicit-expiry tokens; revoke them explicitly if that is required.
+/// legacy `expires_at IS NULL` tokens are bounded by `cutoff`. Lowering
+/// `token_lifetime_hours` therefore does not shorten newly issued tokens;
+/// revoke them explicitly if that is required.
 pub(crate) fn active_token_predicate(
     now: chrono::NaiveDateTime,
     cutoff: chrono::NaiveDateTime,
@@ -65,8 +65,8 @@ pub(crate) fn active_token_predicate(
 }
 
 /// A token is active when it is not revoked and not expired: an explicit
-/// `expires_at` in the future, or (when null) within the global lifetime window
-/// from `issued`.
+/// `expires_at` in the future, or, for a legacy null expiry, within the global
+/// lifetime window from `issued`.
 async fn active_tokens_by_principal_id(
     principal: i32,
     pool: &DbPool,
