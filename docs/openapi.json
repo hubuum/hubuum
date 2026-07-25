@@ -36,7 +36,7 @@
         },
         "responses": {
           "200": {
-            "description": "Token issued",
+            "description": "Token and authoritative expiry issued",
             "content": {
               "application/json": {
                 "schema": {
@@ -13284,7 +13284,7 @@
         },
         "responses": {
           "201": {
-            "description": "Raw token (shown once)",
+            "description": "Raw token and authoritative expiry (shown once)",
             "content": {
               "application/json": {
                 "schema": {
@@ -17266,6 +17266,10 @@
         "type": "object",
         "required": [
           "token_lifetime_hours",
+          "token_retention_purge_enabled",
+          "token_retention_days",
+          "token_retention_purge_interval_seconds",
+          "token_retention_purge_batch_size",
           "stable_token_hash_key_configured",
           "admin_groupname",
           "provider_config_path",
@@ -17293,6 +17297,22 @@
           "token_lifetime_hours": {
             "type": "integer",
             "format": "int64"
+          },
+          "token_retention_days": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "token_retention_purge_batch_size": {
+            "type": "integer",
+            "minimum": 10
+          },
+          "token_retention_purge_enabled": {
+            "type": "boolean"
+          },
+          "token_retention_purge_interval_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -17548,13 +17568,31 @@
           }
         }
       },
+      "ClientAuthenticationConfig": {
+        "type": "object",
+        "required": [
+          "default_token_lifetime_hours"
+        ],
+        "properties": {
+          "default_token_lifetime_hours": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lifetime applied to newly issued tokens when the mint request omits an\nexplicit expiry.",
+            "minimum": 1
+          }
+        }
+      },
       "ClientConfig": {
         "type": "object",
         "description": "Public configuration values that API consumers need to use the service correctly.\n\nKeep this projection deliberately small. Adding a value here makes it available without\nauthentication through the client configuration endpoint.",
         "required": [
-          "pagination"
+          "pagination",
+          "authentication"
         ],
         "properties": {
+          "authentication": {
+            "$ref": "#/components/schemas/ClientAuthenticationConfig"
+          },
           "pagination": {
             "$ref": "#/components/schemas/ClientPaginationConfig"
           }
@@ -22730,14 +22768,22 @@
       "LoginResponse": {
         "type": "object",
         "required": [
-          "token"
+          "token",
+          "expires_at"
         ],
         "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Authoritative expiry persisted for the newly issued token."
+          },
           "token": {
-            "type": "string"
+            "type": "string",
+            "description": "Raw bearer token, shown only in this issuance response."
           }
         },
         "example": {
+          "expires_at": "2026-07-26T12:00:00",
           "token": "eyJhbGciOi...example-token"
         }
       },
@@ -23397,7 +23443,8 @@
               "string",
               "null"
             ],
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Requested expiry. When omitted, the server applies the public default\ntoken lifetime and returns the resulting timestamp in the response."
           },
           "name": {
             "type": [

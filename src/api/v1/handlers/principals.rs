@@ -60,6 +60,8 @@ async fn ensure_can_manage_principal_settings(
 pub struct NewTokenRequest {
     pub name: Option<String>,
     pub description: Option<String>,
+    /// Requested expiry. When omitted, the server applies the public default
+    /// token lifetime and returns the resulting timestamp in the response.
     pub expires_at: Option<chrono::NaiveDateTime>,
     /// Optional permission and resource boundaries. Omit or send `null` for an
     /// unscoped token.
@@ -156,7 +158,7 @@ pub(crate) async fn principal_permissions_response(
     params(("principal_id" = i32, Path, description = "Principal id")),
     request_body = NewTokenRequest,
     responses(
-        (status = 201, description = "Raw token (shown once)", body = LoginResponse),
+        (status = 201, description = "Raw token and authoritative expiry (shown once)", body = LoginResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
@@ -192,10 +194,12 @@ pub async fn create_token(
     );
 
     let event_context = requestor.event_context(&req);
-    let raw = token_request.create(&pool, Some(&event_context)).await?;
+    let issued = token_request
+        .create_issued(&pool, Some(&event_context))
+        .await?;
 
     Ok(ApiResponse::new(
-        LoginResponse::new(raw.get_token()),
+        LoginResponse::from_issued(&issued),
         StatusCode::CREATED,
     ))
 }

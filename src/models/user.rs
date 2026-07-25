@@ -1,12 +1,12 @@
 use crate::db::prelude::*;
 use crate::db::traits::user::{
-    AnonymizeUserRecord, CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord,
-    StoreUserTokenRecord, UpdateUserRecord,
+    AnonymizeUserRecord, CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord, UpdateUserRecord,
 };
 use crate::events::EventContext;
+use crate::models::PrincipalID;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::load_principal_by_id;
-use crate::models::token::{PrincipalToken, Token};
+use crate::models::token::{IssuedToken, PrincipalToken, PrincipalTokenCreateRequest, Token};
 use crate::schema::users;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -304,12 +304,16 @@ impl User {
     where
         C: BackendContext + ?Sized,
     {
-        let generated_token = crate::utilities::auth::generate_token();
+        Ok(self.create_issued_token(backend).await?.into_token())
+    }
 
-        self.store_user_token_record(backend.db_pool(), &generated_token)
-            .await?;
-
-        Ok(generated_token)
+    pub async fn create_issued_token<C>(&self, backend: &C) -> Result<IssuedToken, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        PrincipalTokenCreateRequest::new(PrincipalID::new(self.id)?)
+            .create_issued(backend, None)
+            .await
     }
 
     pub async fn token_is_mine<C>(

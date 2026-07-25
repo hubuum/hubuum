@@ -116,9 +116,9 @@ hash — the raw token is shown exactly once, at creation.
 | --- | --- |
 | `name`, `description` | Optional, human-facing labels |
 | `issued` | Creation time |
-| `expires_at` | Optional per-token expiry; **overrides** the global window |
+| `expires_at` | Authoritative expiry; newly issued tokens always store a value |
 | `last_used_at` | Advanced on every successful validation |
-| `revoked_at` | Soft-revoke marker (the row is retained) |
+| `revoked_at` | Soft-revoke marker (retained until the token passes expiry retention) |
 | `scope` | Optional object containing the independent `permissions` and `resources` boundaries; `null` means unscoped |
 
 ### Validation
@@ -127,8 +127,9 @@ Validation is a single atomic statement. A token is accepted **only if** it is
 simultaneously:
 
 1. present and not revoked (`revoked_at IS NULL`),
-2. unexpired — `expires_at > now()`, or, when `expires_at IS NULL`, issued within
-   the global window `HUBUUM_TOKEN_LIFETIME_HOURS` (default 24h), and
+2. unexpired — `expires_at > now()`, or, for a legacy row where
+   `expires_at IS NULL`, issued within the global window
+   `HUBUUM_TOKEN_LIFETIME_HOURS` (default 24h), and
 3. **not** owned by a disabled service account.
 
 On success, `last_used_at` is advanced. Any failure yields `401 Unauthorized` with a
@@ -136,8 +137,23 @@ generic message (no distinction between unknown / revoked / expired / disabled).
 
 ### Revocation
 
-Revocation is a **soft delete**: `revoked_at` is set and the row is retained for
-audit/history. Revoked tokens never validate again.
+Revocation is a **soft delete**: `revoked_at` is set and the row remains available
+for audit/history until its effective expiry passes the retention window. Revoked
+tokens never validate again.
+
+### Retention
+
+Expired token rows are retained for `HUBUUM_TOKEN_RETENTION_DAYS` (default 30)
+after their effective expiry, then deleted automatically. Newly issued tokens
+always use their stored `expires_at`; a legacy token without one uses `issued`
+plus `HUBUUM_TOKEN_LIFETIME_HOURS`.
+
+The purge worker is enabled by default and deletes at most
+`HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE` rows per batch (default 1000). It
+requires a batch size of at least 10 and checks hourly by default, controlled by
+`HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS`. Deleting a token also deletes
+its scope rows through their foreign keys; task provenance retains the task and
+clears its nullable submitted-token reference.
 
 ---
 
@@ -297,7 +313,7 @@ serves both kinds:
 
 | Endpoint | Purpose | Authorization |
 | --- | --- | --- |
-| `POST /api/v1/iam/principals/{principal_id}/tokens` | Mint a token (returns raw value once) | human: self or admin; SA: admin or human owner-group member |
+| `POST /api/v1/iam/principals/{principal_id}/tokens` | Mint a token (returns raw value and expiry once) | human: self or admin; SA: admin or human owner-group member |
 | `GET /api/v1/iam/principals/{principal_id}/tokens` | List token metadata (never the hash) | same as above |
 | `POST /api/v1/iam/principals/{principal_id}/tokens/{token_id}/revoke` | Soft-revoke a token | same as above |
 | `GET /api/v1/iam/principals/{principal_id}/groups` | List the principal's groups | same as above |
@@ -307,10 +323,15 @@ serves both kinds:
 | `POST` / `DELETE /api/v1/iam/groups/{group_id}/members/{principal_id}` | Add/remove a member (human or SA) | **admin only** |
 
 Mint accepts `name`, `description`, `expires_at`, and an optional `scope` object
-containing `permissions` and `resources`. `GET /api/v1/iam/me` returns that scope
-object for the current token. Both token-list endpoints return the same object for
-every visible token; `scope: null` identifies an unscoped token without a redundant
-boolean.
+containing `permissions` and `resources`. If `expires_at` is omitted, Hubuum
+materializes `issued + HUBUUM_TOKEN_LIFETIME_HOURS`; the response returns the raw
+token and authoritative `expires_at`. Clients can discover the configured
+default without authentication from `GET /api/v1/config` at
+`authentication.default_token_lifetime_hours`.
+
+`GET /api/v1/iam/me` returns the scope object for the current token. Both
+token-list endpoints return the same object for every visible token;
+`scope: null` identifies an unscoped token without a redundant boolean.
 
 Two safety properties worth calling out:
 
@@ -414,7 +435,8 @@ IAM/credential-management surfaces.
 
 - `POST /api/v0/auth/login` — humans only, **by `name`**. Service accounts have no
   password and receive a generic `401`. Failed attempts are rate-limited by
-  `name` + client IP (see [login_rate_limiting.md](login_rate_limiting.md)).
+  `name` + client IP (see [login_rate_limiting.md](login_rate_limiting.md)). A
+  successful response returns the raw token and its authoritative `expires_at`.
 - `GET /api/v0/auth/validate` and current-token logout use `Authenticated`, so a
   valid scoped service-account token validates as valid.
 - All-token logout / revoke-all are unscoped human/IAM management operations.

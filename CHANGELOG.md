@@ -7,6 +7,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Expired bearer-token rows are now purged automatically after a configurable
+  post-expiry retention period. Cleanup is coordinated across replicas and uses
+  bounded, non-blocking batches.
+- The public client configuration now exposes the default token lifetime at
+  `authentication.default_token_lifetime_hours`.
+
+### Changed
+
+- Newly issued tokens now materialize an explicit expiry when the request omits
+  one, so later configuration changes cannot alter their lifetime. Login and
+  token-mint responses now return that authoritative `expires_at` alongside the
+  raw token.
+- Token-retention purge batch sizes below 10 are now rejected so both explicit
+  and legacy expiry streams make progress in every cleanup transaction.
+
 ## [0.0.4] - 2026-07-25
 
 ### Added

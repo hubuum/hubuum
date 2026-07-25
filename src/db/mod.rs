@@ -59,7 +59,7 @@ pub type DbPool = Pool<DbConnection>;
 /// Latest migration required by this binary. The test below keeps this value
 /// synchronized with the migration directory so readiness cannot silently lag
 /// behind a newly added schema change.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260724000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260725000003";
 
 #[derive(diesel::QueryableByName)]
 struct DatabaseSchemaReadiness {

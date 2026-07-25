@@ -7,7 +7,7 @@ use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::principal::PrincipalKind;
 use crate::models::{
     PrincipalToken, PrincipalTokenCreateParts, PrincipalTokenCreateRequest, PrincipalTokenMetadata,
-    Token, TokenScope,
+    Token, TokenLifetime, TokenScope,
 };
 use crate::schema::{
     principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
@@ -165,8 +165,9 @@ pub async fn revoke_token_by_id_for_principal_db(
 pub(crate) async fn create_principal_token_request_db(
     pool: &DbPool,
     request: PrincipalTokenCreateRequest,
+    default_lifetime: TokenLifetime,
     context: Option<&EventContext>,
-) -> Result<Token, ApiError> {
+) -> Result<(Token, PrincipalToken), ApiError> {
     let PrincipalTokenCreateParts {
         principal_id,
         name,
@@ -199,7 +200,7 @@ pub(crate) async fn create_principal_token_request_db(
     let object_scope_ids = resource_ids
         .map(|ids| ids.object_ids().to_vec())
         .unwrap_or_default();
-    with_transaction(pool, async |conn| -> Result<(), ApiError> {
+    let persisted = with_transaction(pool, async |conn| -> Result<PrincipalToken, ApiError> {
         let principal_kind = principals::table
             .filter(principals::id.eq(principal))
             .select(principals::kind)
@@ -257,13 +258,24 @@ pub(crate) async fn create_principal_token_request_db(
             }
         }
 
+        let issued_at = diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+            "statement_timestamp() AT TIME ZONE 'UTC'",
+        );
+        let effective_expiry = diesel::dsl::sql::<
+            diesel::sql_types::Nullable<diesel::sql_types::Timestamp>,
+        >("COALESCE(")
+        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Timestamp>, _>(expires_at)
+        .sql(", (statement_timestamp() AT TIME ZONE 'UTC') + (")
+        .bind::<diesel::sql_types::BigInt, _>(default_lifetime.hours())
+        .sql(" * INTERVAL '1 hour'))");
         let token = diesel::insert_into(tokens::table)
             .values((
                 tokens::token.eq(&hash),
                 tokens::principal_id.eq(principal),
                 tokens::name.eq(&name),
                 tokens::description.eq(&description),
-                tokens::expires_at.eq(expires_at),
+                tokens::issued.eq(issued_at),
+                tokens::expires_at.eq(effective_expiry),
                 tokens::permission_scoped.eq(permission_scoped),
                 tokens::resource_scoped.eq(resource_scoped),
             ))
@@ -337,9 +349,9 @@ pub(crate) async fn create_principal_token_request_db(
             .with_after(token_snapshot(&token));
             emit_event(conn, &event).await?;
         }
-        Ok(())
+        Ok(token)
     })
     .await?;
 
-    Ok(raw)
+    Ok((raw, persisted))
 }

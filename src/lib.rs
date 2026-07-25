@@ -28,5 +28,6 @@ pub mod test_support;
 #[doc(hidden)]
 pub mod tests;
 pub mod tls;
+pub mod token_retention;
 pub mod traits;
 pub mod utilities;

@@ -12,6 +12,7 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use crate::errors::ApiError;
+use crate::models::TokenRetentionSettings;
 
 mod client_network;
 mod defaults;
@@ -598,6 +599,38 @@ pub struct AppConfig {
     )]
     pub token_lifetime_hours: i64,
 
+    /// Enable removal of token rows after expiry plus the retention window.
+    #[clap(
+        long,
+        env = "HUBUUM_TOKEN_RETENTION_PURGE_ENABLED",
+        default_value_t = DEFAULT_TOKEN_RETENTION_PURGE_ENABLED
+    )]
+    pub token_retention_purge_enabled: bool,
+
+    /// Days to retain expired token metadata before permanent deletion.
+    #[clap(
+        long,
+        env = "HUBUUM_TOKEN_RETENTION_DAYS",
+        default_value_t = DEFAULT_TOKEN_RETENTION_DAYS
+    )]
+    pub token_retention_days: i64,
+
+    /// How often the expired-token purge worker wakes up.
+    #[clap(
+        long,
+        env = "HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS",
+        default_value_t = DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS
+    )]
+    pub token_retention_purge_interval_seconds: u64,
+
+    /// Maximum expired tokens deleted in one transaction. Must be at least 10.
+    #[clap(
+        long,
+        env = "HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE",
+        default_value_t = DEFAULT_TOKEN_RETENTION_PURGE_BATCH_SIZE
+    )]
+    pub token_retention_purge_batch_size: usize,
+
     /// Master switch for login rate limiting. When false, no login throttling is applied.
     #[clap(
         long,
@@ -860,6 +893,14 @@ impl std::fmt::Debug for AppConfig {
 }
 
 impl AppConfig {
+    pub fn token_retention_settings(&self) -> Result<TokenRetentionSettings, ApiError> {
+        TokenRetentionSettings::builder()
+            .retention_days(self.token_retention_days)
+            .token_lifetime_hours(self.token_lifetime_hours)
+            .batch_size(self.token_retention_purge_batch_size)
+            .build()
+    }
+
     fn validate(self) -> Result<Self, ApiError> {
         if self.actix_workers == 0 {
             return Err(ApiError::BadRequest(
@@ -872,9 +913,10 @@ impl AppConfig {
             && self.event_fanout_workers == 0
             && self.event_delivery_workers == 0
             && !self.event_retention_purge_enabled
+            && !self.token_retention_purge_enabled
         {
             return Err(ApiError::BadRequest(
-                "runtime_role=worker requires at least one enabled task, event fan-out, event delivery, or event retention worker"
+                "runtime_role=worker requires at least one enabled task, event fan-out, event delivery, event retention, or token retention worker"
                     .to_string(),
             ));
         }
@@ -1104,9 +1146,11 @@ impl AppConfig {
             ));
         }
 
-        if self.token_lifetime_hours <= 0 {
+        self.token_retention_settings()?;
+
+        if self.token_retention_purge_interval_seconds == 0 {
             return Err(ApiError::BadRequest(
-                "token_lifetime_hours must be greater than 0".to_string(),
+                "token_retention_purge_interval_seconds must be greater than 0".to_string(),
             ));
         }
 
@@ -1272,20 +1316,6 @@ impl AppConfig {
 
         Ok(self)
     }
-}
-
-pub fn token_lifetime_hours_i32() -> i32 {
-    #[cfg(test)]
-    let hours = get_config_from_env()
-        .map(|config| config.token_lifetime_hours)
-        .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS);
-
-    #[cfg(not(test))]
-    let hours = get_config()
-        .map(|config| config.token_lifetime_hours)
-        .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS);
-
-    hours.clamp(1, i32::MAX as i64) as i32
 }
 
 pub fn max_transitive_depth() -> i32 {
@@ -1696,6 +1726,27 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         token_lifetime_hours: env_or_default("HUBUUM_TOKEN_LIFETIME_HOURS", "24")
             .parse()
             .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS),
+        token_retention_purge_enabled: env_or_default(
+            "HUBUUM_TOKEN_RETENTION_PURGE_ENABLED",
+            "true",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_TOKEN_RETENTION_PURGE_ENABLED),
+        token_retention_days: env_or_default("HUBUUM_TOKEN_RETENTION_DAYS", "30")
+            .parse()
+            .unwrap_or(DEFAULT_TOKEN_RETENTION_DAYS),
+        token_retention_purge_interval_seconds: env_or_default(
+            "HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS",
+            "3600",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS),
+        token_retention_purge_batch_size: env_or_default(
+            "HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE",
+            "1000",
+        )
+        .parse()
+        .unwrap_or(DEFAULT_TOKEN_RETENTION_PURGE_BATCH_SIZE),
         login_rate_limit_enabled: env_or_default("HUBUUM_LOGIN_RATE_LIMIT_ENABLED", "true")
             .parse()
             .unwrap_or(DEFAULT_LOGIN_RATE_LIMIT_ENABLED),
@@ -1840,9 +1891,11 @@ mod tests {
         DEFAULT_EXPORT_MAX_OUTPUT_BYTES, DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER,
         DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
         DEFAULT_PAGE_LIMIT, DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER,
-        DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS, MAX_PAGE_LIMIT, RuntimeRole,
-        TEST_ENV_LOCK, TlsBackend, default_actix_workers, default_task_workers,
-        get_config_from_env, token_hash_key_bytes, token_hash_key_is_ephemeral,
+        DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS, DEFAULT_TOKEN_RETENTION_DAYS,
+        DEFAULT_TOKEN_RETENTION_PURGE_BATCH_SIZE, DEFAULT_TOKEN_RETENTION_PURGE_ENABLED,
+        DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS, MAX_PAGE_LIMIT, RuntimeRole, TEST_ENV_LOCK,
+        TlsBackend, default_actix_workers, default_task_workers, get_config_from_env,
+        token_hash_key_bytes, token_hash_key_is_ephemeral,
     };
 
     struct EnvVarGuard {
@@ -1991,12 +2044,14 @@ mod tests {
         let _delivery_guard = EnvVarGuard::set("HUBUUM_EVENT_DELIVERY_WORKERS", Some("0"));
         let _retention_guard =
             EnvVarGuard::set("HUBUUM_EVENT_RETENTION_PURGE_ENABLED", Some("false"));
+        let _token_retention_guard =
+            EnvVarGuard::set("HUBUUM_TOKEN_RETENTION_PURGE_ENABLED", Some("false"));
 
         let error = get_config_from_env().unwrap_err();
 
         assert_eq!(
             error.to_string(),
-            "runtime_role=worker requires at least one enabled task, event fan-out, event delivery, or event retention worker"
+            "runtime_role=worker requires at least one enabled task, event fan-out, event delivery, event retention, or token retention worker"
         );
     }
 
@@ -2582,6 +2637,98 @@ mod tests {
             error.to_string(),
             "token_lifetime_hours must be greater than 0"
         );
+    }
+
+    #[test]
+    fn token_lifetime_hours_above_the_supported_range_are_rejected() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_TOKEN_LIFETIME_HOURS", Some("2147483648"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "token_lifetime_hours must not exceed 2147483647"
+        );
+    }
+
+    #[test]
+    fn token_retention_settings_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _enabled_guard =
+            EnvVarGuard::set("HUBUUM_TOKEN_RETENTION_PURGE_ENABLED", Some("false"));
+        let _days_guard = EnvVarGuard::set("HUBUUM_TOKEN_RETENTION_DAYS", Some("45"));
+        let _interval_guard =
+            EnvVarGuard::set("HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS", Some("600"));
+        let _batch_guard = EnvVarGuard::set("HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE", Some("250"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        for config in [&parsed, &loaded] {
+            assert!(!config.token_retention_purge_enabled);
+            assert_eq!(config.token_retention_days, 45);
+            assert_eq!(config.token_retention_purge_interval_seconds, 600);
+            assert_eq!(config.token_retention_purge_batch_size, 250);
+        }
+    }
+
+    #[test]
+    fn token_retention_settings_default_when_env_is_unset() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _enabled_guard = EnvVarGuard::set("HUBUUM_TOKEN_RETENTION_PURGE_ENABLED", None);
+        let _days_guard = EnvVarGuard::set("HUBUUM_TOKEN_RETENTION_DAYS", None);
+        let _interval_guard =
+            EnvVarGuard::set("HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS", None);
+        let _batch_guard = EnvVarGuard::set("HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE", None);
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        for config in [&parsed, &loaded] {
+            assert_eq!(
+                config.token_retention_purge_enabled,
+                DEFAULT_TOKEN_RETENTION_PURGE_ENABLED
+            );
+            assert_eq!(config.token_retention_days, DEFAULT_TOKEN_RETENTION_DAYS);
+            assert_eq!(
+                config.token_retention_purge_interval_seconds,
+                DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS
+            );
+            assert_eq!(
+                config.token_retention_purge_batch_size,
+                DEFAULT_TOKEN_RETENTION_PURGE_BATCH_SIZE
+            );
+        }
+    }
+
+    #[rstest]
+    #[case(
+        "HUBUUM_TOKEN_RETENTION_DAYS",
+        "0",
+        "token_retention_days must be greater than 0"
+    )]
+    #[case(
+        "HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS",
+        "0",
+        "token_retention_purge_interval_seconds must be greater than 0"
+    )]
+    #[case(
+        "HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE",
+        "1",
+        "token_retention_purge_batch_size must be at least 10"
+    )]
+    fn token_retention_settings_are_validated(
+        #[case] variable: &'static str,
+        #[case] value: &'static str,
+        #[case] expected: &'static str,
+    ) {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set(variable, Some(value));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(error.to_string(), expected);
     }
 
     #[test]

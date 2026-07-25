@@ -33,13 +33,15 @@ mod tests {
     use crate::config::AppConfig;
 
     #[actix_web::test]
-    async fn client_config_exposes_effective_pagination_limits_without_authentication() {
+    async fn client_config_exposes_effective_client_defaults_without_authentication() {
         let app_config = AppConfig::parse_from([
             "hubuum",
             "--default-page-limit",
             "125",
             "--max-page-limit",
             "500",
+            "--token-lifetime-hours",
+            "72",
         ]);
         let running_config = RunningConfig::from(&app_config);
         let app = test::init_service(
@@ -56,5 +58,6 @@ mod tests {
         let body: serde_json::Value = test::read_body_json(response).await;
         assert_eq!(body["pagination"]["default_page_limit"], 125);
         assert_eq!(body["pagination"]["max_page_limit"], 500);
+        assert_eq!(body["authentication"]["default_token_lifetime_hours"], 72);
     }
 }

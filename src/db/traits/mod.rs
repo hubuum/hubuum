@@ -31,6 +31,7 @@ pub mod service_account;
 pub mod task;
 pub mod task_import;
 pub mod token;
+pub mod token_retention;
 pub mod user;
 
 pub use user::UserPermissions;
