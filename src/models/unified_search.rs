@@ -1,4 +1,5 @@
 use crate::models::token_scope::TokenScope;
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
@@ -212,19 +213,19 @@ fn parse_required_query(value: &str) -> Result<String, ApiError> {
 }
 
 impl UnifiedSearchQueryParts {
-    fn apply(&mut self, key: &str, value: String) -> Result<(), ApiError> {
+    fn apply(&mut self, key: &str, value: Cow<'_, str>) -> Result<(), ApiError> {
         match key {
             "q" => {
                 reject_duplicate(&self.query, "q")?;
-                self.query = Some(parse_required_query(&value)?);
+                self.query = Some(parse_required_query(value.as_ref())?);
             }
             "kinds" => {
                 reject_duplicate(&self.kinds, "kinds")?;
-                self.kinds = Some(parse_kinds(&value)?);
+                self.kinds = Some(parse_kinds(value.as_ref())?);
             }
             "limit_per_kind" => {
                 reject_duplicate(&self.limit_per_kind, "limit_per_kind")?;
-                let parsed_limit = value.parse::<usize>().map_err(|error| {
+                let parsed_limit = value.as_ref().parse::<usize>().map_err(|error| {
                     ApiError::BadRequest(format!("bad limit_per_kind: {error}"))
                 })?;
                 // Validation against the max limit is deferred to `build`, which
@@ -233,23 +234,23 @@ impl UnifiedSearchQueryParts {
             }
             "search_class_schema" => {
                 reject_duplicate(&self.search_class_schema, "search_class_schema")?;
-                self.search_class_schema = Some(value.as_boolean()?);
+                self.search_class_schema = Some(value.as_ref().as_boolean()?);
             }
             "search_object_data" => {
                 reject_duplicate(&self.search_object_data, "search_object_data")?;
-                self.search_object_data = Some(value.as_boolean()?);
+                self.search_object_data = Some(value.as_ref().as_boolean()?);
             }
             "cursor_collections" => {
                 reject_duplicate(&self.collection_cursor, "cursor_collections")?;
-                self.collection_cursor = Some(decode_cursor(&value)?);
+                self.collection_cursor = Some(decode_cursor(value.as_ref())?);
             }
             "cursor_classes" => {
                 reject_duplicate(&self.class_cursor, "cursor_classes")?;
-                self.class_cursor = Some(decode_cursor(&value)?);
+                self.class_cursor = Some(decode_cursor(value.as_ref())?);
             }
             "cursor_objects" => {
                 reject_duplicate(&self.object_cursor, "cursor_objects")?;
-                self.object_cursor = Some(decode_cursor(&value)?);
+                self.object_cursor = Some(decode_cursor(value.as_ref())?);
             }
             _ => {
                 return Err(ApiError::BadRequest(format!(
@@ -296,7 +297,7 @@ pub fn parse_unified_search_query_with_limits(
     if !qs.is_empty() {
         for chunk in qs.split('&') {
             let (key, value) = hubuum_query::decode_query_parameter_pair(chunk)?;
-            parts.apply(key.as_ref(), value.into_owned())?;
+            parts.apply(key.as_ref(), value)?;
         }
     }
 
@@ -346,7 +347,8 @@ pub fn decode_cursor(cursor: &str) -> Result<UnifiedSearchCursorToken, ApiError>
             .try_into()
             .expect("validated unified-search cursor header"),
     );
-    let name = String::from_utf8(bytes.split_off(9))
+    bytes.drain(..9);
+    let name = String::from_utf8(bytes)
         .map_err(|error| ApiError::BadRequest(format!("Invalid search cursor: {error}")))?;
     Ok(UnifiedSearchCursorToken { rank, name, id })
 }
