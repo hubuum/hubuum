@@ -1242,6 +1242,49 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn test_scoped_administrator_cannot_create_collection(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let token = scoped_token(
+            &context.pool,
+            context.admin_user.id,
+            &[Permissions::ReadCollection],
+        )
+        .await;
+        let collection_name = context.scoped_name("scoped_admin_collection_create");
+        let body = collection_import_request(
+            collection_name.clone(),
+            "scoped administrators cannot create collections",
+            ImportMode {
+                atomicity: Some(ImportAtomicity::Strict),
+                collision_policy: Some(ImportCollisionPolicy::Abort),
+                permission_policy: Some(ImportPermissionPolicy::Abort),
+            },
+        );
+
+        let resp =
+            post_request_with_headers(&context.pool, &token, IMPORTS_ENDPOINT, &body, vec![]).await;
+        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(resp).await;
+        let completed =
+            wait_for_task_with_token(&context.pool, &token, task.id, &[TaskStatus::Failed]).await;
+        assert_eq!(completed.status, TaskStatus::Failed);
+
+        let created = with_connection(&context.pool, async |conn| {
+            collections
+                .filter(crate::schema::collections::name.eq(&collection_name))
+                .count()
+                .get_result::<i64>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(created, 0);
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_task_and_import_endpoints_forbid_non_owner_access(
         #[future(awt)] test_context: TestContext,
     ) {

@@ -230,6 +230,66 @@ fn retain_per_root<T>(
         .collect()
 }
 
+fn canonicalize_related_include_paths(
+    mut candidates: Vec<RelatedObjectIncludeRow>,
+    include: ExportIncludeRelatedQuery,
+) -> Vec<RelatedObjectIncludeRow> {
+    candidates.sort_by(|left, right| {
+        left.root_object_id
+            .cmp(&right.root_object_id)
+            .then_with(|| left.descendant_object_id.cmp(&right.descendant_object_id))
+            .then_with(|| left.depth.cmp(&right.depth))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    candidates.dedup_by(|left, right| {
+        left.root_object_id == right.root_object_id
+            && left.descendant_object_id == right.descendant_object_id
+    });
+    candidates.sort_by(|left, right| {
+        left.root_object_id
+            .cmp(&right.root_object_id)
+            .then_with(|| match include.sort {
+                ExportIncludeRelatedSort::Path => left
+                    .path
+                    .cmp(&right.path)
+                    .then_with(|| left.descendant_object_id.cmp(&right.descendant_object_id)),
+                ExportIncludeRelatedSort::Name => left
+                    .descendant_name
+                    .cmp(&right.descendant_name)
+                    .then_with(|| left.descendant_object_id.cmp(&right.descendant_object_id))
+                    .then_with(|| left.path.cmp(&right.path)),
+                ExportIncludeRelatedSort::CreatedAt => left
+                    .descendant_created_at
+                    .cmp(&right.descendant_created_at)
+                    .then_with(|| left.descendant_object_id.cmp(&right.descendant_object_id))
+                    .then_with(|| left.path.cmp(&right.path)),
+            })
+    });
+    retain_per_root(candidates, include.limit, |candidate| {
+        candidate.root_object_id
+    })
+}
+
+fn canonicalize_related_object_paths(
+    mut candidates: Vec<RelatedObjectForRootRow>,
+    per_root_cap: i32,
+) -> Vec<RelatedObjectForRootRow> {
+    candidates.sort_by(|left, right| {
+        left.root_object_id
+            .cmp(&right.root_object_id)
+            .then_with(|| left.descendant_object_id.cmp(&right.descendant_object_id))
+            .then_with(|| left.depth.cmp(&right.depth))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    candidates.dedup_by(|left, right| {
+        left.root_object_id == right.root_object_id
+            && left.descendant_object_id == right.descendant_object_id
+    });
+    retain_per_root(candidates, per_root_cap, |candidate| {
+        candidate.root_object_id
+    })
+}
+
 /// Permission-aware query capability for one export task.
 ///
 /// Local authorization stays inside the existing SQL visibility queries. An
@@ -526,6 +586,28 @@ where
             .await
     }
 
+    async fn class_relations_touching_class_ids(
+        &self,
+        class_ids: &[i32],
+    ) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        if self.external_backend().is_none() {
+            return self
+                .subject
+                .search_class_relations_touching_ids_from_backend_with_admin_status(
+                    self.pool(),
+                    class_ids,
+                    self.local_is_admin.unwrap_or(false),
+                    self.scopes,
+                )
+                .await;
+        }
+        let class_ids = ClassIdSet::new(class_ids.iter().copied())?;
+        let candidates = class_ids.load_relations_touching(self.pool()).await?;
+        let resources = class_relation_authorization_resources(self.pool(), &candidates).await?;
+        self.authorize_candidates(candidates, resources, vec![Permissions::ReadClassRelation])
+            .await
+    }
+
     async fn object_relations(
         &self,
         query: QueryOptions,
@@ -619,10 +701,9 @@ where
                 )
                 .await;
         }
-        let requested_limit = include.limit;
         let candidates = self
             .subject
-            .related_objects_for_roots_from_backend_with_admin_status(
+            .related_objects_for_roots_preserving_paths_from_backend_with_admin_status(
                 self.pool(),
                 root_ids,
                 ExportIncludeRelatedQuery {
@@ -643,14 +724,13 @@ where
                 vec![Permissions::ReadObjectRelation],
             )
             .await?;
-        Ok(retain_per_root(
+        Ok(canonicalize_related_include_paths(
             candidates
                 .into_iter()
                 .zip(allowed_paths)
                 .filter_map(|(candidate, allowed)| allowed.then_some(candidate))
                 .collect(),
-            requested_limit,
-            |candidate: &RelatedObjectIncludeRow| candidate.root_object_id,
+            include,
         ))
     }
 
@@ -675,7 +755,7 @@ where
         }
         let candidates = self
             .subject
-            .bidirectionally_related_objects_for_roots_from_backend_with_admin_status(
+            .bidirectionally_related_objects_for_roots_preserving_paths_from_backend_with_admin_status(
                 self.pool(),
                 root_ids,
                 max_depth,
@@ -694,14 +774,13 @@ where
                 vec![Permissions::ReadObjectRelation],
             )
             .await?;
-        Ok(retain_per_root(
+        Ok(canonicalize_related_object_paths(
             candidates
                 .into_iter()
                 .zip(allowed_paths)
                 .filter_map(|(candidate, allowed)| allowed.then_some(candidate))
                 .collect(),
             per_root_cap,
-            |candidate: &RelatedObjectForRootRow| candidate.root_object_id,
         ))
     }
 
@@ -1504,7 +1583,7 @@ where
                 let object = row.to_descendant_object_with_path();
                 all_objects.entry(object.id).or_insert(object);
             }
-            let class_metadata = load_hydration_class_metadata(pool, &all_objects).await?;
+            let class_metadata = load_hydration_class_metadata(exporter, &all_objects).await?;
 
             let mut hydrated_items = Vec::with_capacity(roots.len());
             for root in &roots {
@@ -1578,7 +1657,6 @@ where
     C: BackendContext + ?Sized,
     S: crate::traits::Search + ?Sized,
 {
-    let pool = exporter.pool();
     let max_related_objects = hydration_budget.remaining_related_capacity()?;
     if related_objects.len() > max_related_objects {
         return Err(ApiError::BadRequest(format!(
@@ -1600,7 +1678,7 @@ where
             .entry(object.id)
             .or_insert_with(|| object.clone());
     }
-    let class_metadata = load_hydration_class_metadata(pool, &all_objects).await?;
+    let class_metadata = load_hydration_class_metadata(exporter, &all_objects).await?;
 
     let neighborhood =
         build_object_neighborhood(source.clone(), related_objects, relations, &class_metadata)?;
@@ -1623,14 +1701,21 @@ struct HydrationClassMetadata {
 // normalized-pair last-write-wins is deterministic), and primes class names for both
 // object classes AND every relation endpoint class (the adjacent class name is needed
 // by relation_alias_for_viewer even when no object of that class is in a neighborhood).
-async fn load_hydration_class_metadata(
-    pool: &DbPool,
+async fn load_hydration_class_metadata<C, S>(
+    exporter: &PermissionAwareExport<'_, C, S>,
     objects_by_id: &BTreeMap<i32, HubuumObjectWithPath>,
-) -> Result<HydrationClassMetadata, ApiError> {
+) -> Result<HydrationClassMetadata, ApiError>
+where
+    C: BackendContext + ?Sized,
+    S: crate::traits::Search + ?Sized,
+{
+    let pool = exporter.pool();
     let object_class_ids =
         ClassIdSet::new(objects_by_id.values().map(|object| object.hubuum_class_id))?;
 
-    let mut class_relations = object_class_ids.load_relations_touching(pool).await?;
+    let mut class_relations = exporter
+        .class_relations_touching_class_ids(object_class_ids.as_slice())
+        .await?;
     class_relations.sort_by_key(|relation| relation.id);
 
     let mut class_relations_by_object_class = BTreeMap::<i32, Vec<HubuumClassRelation>>::new();
@@ -2616,13 +2701,14 @@ fn enforce_json_output_limit(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::sync::Arc;
 
     use crate::models::search::QueryOptions;
     use crate::models::{
-        ExportContentType, ExportInclude, ExportIncludeRelatedObject, ExportLimits,
-        ExportMissingDataPolicy, ExportRelationContext, ExportRequest, ExportScope,
+        ExportContentType, ExportInclude, ExportIncludeRelatedDirection,
+        ExportIncludeRelatedObject, ExportIncludeRelatedQuery, ExportIncludeRelatedSort,
+        ExportLimits, ExportMissingDataPolicy, ExportRelationContext, ExportRequest, ExportScope,
         ExportScopeKind, ExportTemplate, ExportTemplateKind, NewHubuumClass,
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
     };
@@ -2631,7 +2717,8 @@ mod tests {
 
     use super::{
         ExportRuntime, HydrationBudget, PermissionAwareExport, RelationHydrationPlan,
-        build_template_items, inferred_relation_alias, normalize_alias_segment, pluralize_alias,
+        build_template_items, inferred_relation_alias, load_hydration_class_metadata,
+        normalize_alias_segment, object_with_root_path, pluralize_alias,
         take_related_within_budget, validate_export_limits, validate_export_submission,
     };
     use crate::db::capture_queries;
@@ -2730,6 +2817,272 @@ mod tests {
 
         visible.cleanup().await.unwrap();
         hidden.cleanup().await.unwrap();
+        group.delete_without_events(&context.pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn hydration_metadata_hides_unauthorized_class_relations() {
+        let context = TestContext::new().await;
+        let fixture = context
+            .collection_fixture("external_export_hydration_metadata")
+            .await;
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+
+        let source_class = NewHubuumClass {
+            collection_id: fixture.collection.id,
+            name: context.scoped_name("external_export_source_class"),
+            description: "source class".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let hidden_adjacent_class = NewHubuumClass {
+            collection_id: fixture.collection.id,
+            name: context.scoped_name("external_export_hidden_adjacent_class"),
+            description: "hidden adjacent class".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        NewHubuumClassRelation {
+            from_hubuum_class_id: source_class.id,
+            to_hubuum_class_id: hidden_adjacent_class.id,
+            forward_template_alias: Some("secret_alias".to_string()),
+            reverse_template_alias: Some("secret_reverse_alias".to_string()),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let source_object = NewHubuumObject {
+            collection_id: fixture.collection.id,
+            hubuum_class_id: source_class.id,
+            name: context.scoped_name("external_export_source_object"),
+            description: "source object".to_string(),
+            data: serde_json::json!({}),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+
+        let permission_backend = MockTreetopBackend::new();
+        permission_backend.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadObject,
+            resource_kind: ResourceKind::Object,
+            resource_id: Some(source_object.id),
+            attrs: ResourceAttrs::default(),
+        });
+        let backend = AppContext::new(context.pool.get_ref().clone(), Arc::new(permission_backend));
+        let exporter = PermissionAwareExport::new(&backend, &context.normal_user, None)
+            .await
+            .unwrap();
+        let objects = BTreeMap::from([(source_object.id, object_with_root_path(&source_object))]);
+
+        let metadata = load_hydration_class_metadata(&exporter, &objects)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            metadata.class_names.get(&source_class.id),
+            Some(&source_class.name)
+        );
+        assert!(!metadata.class_names.contains_key(&hidden_adjacent_class.id));
+        assert!(
+            metadata
+                .class_relations_by_object_class
+                .get(&source_class.id)
+                .is_none_or(Vec::is_empty)
+        );
+
+        fixture.cleanup().await.unwrap();
+        group.delete_without_events(&context.pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn external_graph_authorization_preserves_allowed_alternative_path() {
+        let context = TestContext::new().await;
+        let fixture = context
+            .collection_fixture("external_export_alternative_path")
+            .await;
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &context.normal_user)
+            .await
+            .unwrap();
+
+        let endpoint_class = NewHubuumClass {
+            collection_id: fixture.collection.id,
+            name: context.scoped_name("external_export_endpoint_class"),
+            description: "endpoint class".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let intermediate_class = NewHubuumClass {
+            collection_id: fixture.collection.id,
+            name: context.scoped_name("external_export_intermediate_class"),
+            description: "intermediate class".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let outbound_class_relation = NewHubuumClassRelation {
+            from_hubuum_class_id: endpoint_class.id,
+            to_hubuum_class_id: intermediate_class.id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+
+        let root = NewHubuumObject {
+            collection_id: fixture.collection.id,
+            hubuum_class_id: endpoint_class.id,
+            name: context.scoped_name("external_export_path_root"),
+            description: "path root".to_string(),
+            data: serde_json::json!({}),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let denied_intermediate = NewHubuumObject {
+            collection_id: fixture.collection.id,
+            hubuum_class_id: intermediate_class.id,
+            name: context.scoped_name("external_export_denied_intermediate"),
+            description: "denied intermediate".to_string(),
+            data: serde_json::json!({}),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let allowed_intermediate = NewHubuumObject {
+            collection_id: fixture.collection.id,
+            hubuum_class_id: intermediate_class.id,
+            name: context.scoped_name("external_export_allowed_intermediate"),
+            description: "allowed intermediate".to_string(),
+            data: serde_json::json!({}),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let target = NewHubuumObject {
+            collection_id: fixture.collection.id,
+            hubuum_class_id: endpoint_class.id,
+            name: context.scoped_name("external_export_path_target"),
+            description: "path target".to_string(),
+            data: serde_json::json!({}),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+
+        let _denied_first_edge = NewHubuumObjectRelation {
+            from_hubuum_object_id: root.id,
+            to_hubuum_object_id: denied_intermediate.id,
+            class_relation_id: outbound_class_relation.id,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let _denied_second_edge = NewHubuumObjectRelation {
+            from_hubuum_object_id: denied_intermediate.id,
+            to_hubuum_object_id: target.id,
+            class_relation_id: outbound_class_relation.id,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let allowed_first_edge = NewHubuumObjectRelation {
+            from_hubuum_object_id: root.id,
+            to_hubuum_object_id: allowed_intermediate.id,
+            class_relation_id: outbound_class_relation.id,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let allowed_second_edge = NewHubuumObjectRelation {
+            from_hubuum_object_id: allowed_intermediate.id,
+            to_hubuum_object_id: target.id,
+            class_relation_id: outbound_class_relation.id,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+
+        let permission_backend = MockTreetopBackend::new();
+        for object_id in [root.id, allowed_intermediate.id, target.id] {
+            permission_backend.add_rule(MockAllowRule {
+                group_id: group.id,
+                action: Permissions::ReadObject,
+                resource_kind: ResourceKind::Object,
+                resource_id: Some(object_id),
+                attrs: ResourceAttrs::default(),
+            });
+        }
+        for relation_id in [allowed_first_edge.id, allowed_second_edge.id] {
+            permission_backend.add_rule(MockAllowRule {
+                group_id: group.id,
+                action: Permissions::ReadObjectRelation,
+                resource_kind: ResourceKind::ObjectRelation,
+                resource_id: Some(relation_id),
+                attrs: ResourceAttrs::default(),
+            });
+        }
+        let backend = AppContext::new(context.pool.get_ref().clone(), Arc::new(permission_backend));
+        let exporter = PermissionAwareExport::new(&backend, &context.normal_user, None)
+            .await
+            .unwrap();
+
+        let included = exporter
+            .related_objects_for_roots(
+                &[root.id],
+                ExportIncludeRelatedQuery {
+                    class_id: endpoint_class.id,
+                    class_relation_id: None,
+                    direction: ExportIncludeRelatedDirection::Outgoing,
+                    sort: ExportIncludeRelatedSort::Path,
+                    max_depth: 2,
+                    limit: 10,
+                },
+            )
+            .await
+            .unwrap();
+        let included_target = included
+            .iter()
+            .find(|candidate| candidate.descendant_object_id == target.id)
+            .unwrap();
+        assert_eq!(
+            included_target.path,
+            vec![root.id, allowed_intermediate.id, target.id]
+        );
+
+        let hydrated = exporter
+            .bidirectionally_related_objects_for_roots(&[root.id], 2, 10)
+            .await
+            .unwrap();
+        let hydrated_target = hydrated
+            .iter()
+            .find(|candidate| candidate.descendant_object_id == target.id)
+            .unwrap();
+        assert_eq!(
+            hydrated_target.path,
+            vec![root.id, allowed_intermediate.id, target.id]
+        );
+
+        fixture.cleanup().await.unwrap();
         group.delete_without_events(&context.pool).await.unwrap();
     }
 
@@ -3003,13 +3356,13 @@ mod tests {
         );
         assert_eq!(
             large_queries.total_queries(),
-            6,
+            7,
             "{:#?}",
             large_queries.query_counts()
         );
-        assert_eq!(large_queries.domain_queries(), 6);
+        assert_eq!(large_queries.domain_queries(), 7);
         assert_eq!(large_queries.control_queries(), 0);
-        assert_eq!(large_queries.connection_checkouts(), 6);
+        assert_eq!(large_queries.connection_checkouts(), 7);
         assert_eq!(
             large_queries.queries_matching("FROM \"hubuumclass_relation\""),
             1

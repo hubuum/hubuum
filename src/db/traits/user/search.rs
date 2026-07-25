@@ -15,6 +15,7 @@ use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::traits::PrincipalIdAccessor;
 use crate::traits::{CursorPaginated, CursorSqlMapping};
 use crate::utilities::extensions::CustomStringExtensions;
+use diesel::BoolExpressionMethods;
 use diesel_async::RunQueryDsl;
 
 #[derive(diesel::QueryableByName)]
@@ -1385,6 +1386,81 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         .await
     }
 
+    async fn search_class_relations_touching_ids_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        class_ids: &[i32],
+        is_admin: bool,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        use crate::schema::hubuumclass::dsl::{
+            collection_id as class_collection_id, hubuumclass, id as class_id,
+        };
+        use crate::schema::hubuumclass_relation::dsl::{
+            from_hubuum_class_id, hubuumclass_relation, id as relation_id, to_hubuum_class_id,
+        };
+
+        if class_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let permission_list = [Permissions::ReadClassRelation];
+        let collection_ids: Vec<i32> = self
+            .load_collections_with_permissions_with_admin_status(
+                pool,
+                &permission_list,
+                is_admin,
+                scopes,
+            )
+            .await?
+            .into_iter()
+            .map(|collection| collection.id)
+            .collect();
+
+        let mut base_query = hubuumclass_relation
+            .filter(
+                from_hubuum_class_id
+                    .eq_any(class_ids)
+                    .or(to_hubuum_class_id.eq_any(class_ids)),
+            )
+            .filter(
+                from_hubuum_class_id.eq_any(
+                    hubuumclass
+                        .select(class_id)
+                        .filter(class_collection_id.eq_any(&collection_ids)),
+                ),
+            )
+            .filter(
+                to_hubuum_class_id.eq_any(
+                    hubuumclass
+                        .select(class_id)
+                        .filter(class_collection_id.eq_any(&collection_ids)),
+                ),
+            )
+            .into_boxed();
+        if let Some(scope) = resource_scope_ids(scopes) {
+            let scoped_class_query = || {
+                hubuumclass
+                    .select(class_id)
+                    .filter(class_scope_predicate(scope))
+            };
+            base_query = base_query
+                .filter(from_hubuum_class_id.eq_any(scoped_class_query()))
+                .filter(to_hubuum_class_id.eq_any(scoped_class_query()));
+        }
+        let base_query = base_query.order(relation_id.asc());
+
+        trace_query!(
+            base_query,
+            "Searching visible class relations touching class IDs"
+        );
+
+        with_connection(pool, async |conn| {
+            base_query.load::<HubuumClassRelation>(conn).await
+        })
+        .await
+    }
+
     async fn search_class_relations_between_ids_from_backend_with_admin_status(
         &self,
         pool: &DbPool,
@@ -2203,63 +2279,35 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         is_admin: bool,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
-        if root_object_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let permissions =
-            PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
-        let collection_ids: Vec<i32> = self
-            .load_collections_with_permissions_with_admin_status(
-                pool,
-                &permissions,
-                is_admin,
-                scopes,
-            )
-            .await?
-            .into_iter()
-            .map(|collection| collection.id)
-            .collect();
-
-        if collection_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let spec = build_root_graph_walk_query(RootGraphWalkSpec {
+        related_objects_for_roots_query(
+            self,
+            pool,
             root_object_ids,
-            collection_ids: &collection_ids,
-            scope: scopes,
-            max_depth: include.max_depth,
-            per_root_limit: include.limit,
-            edges: GraphWalkEdges::Directional {
-                direction: include.direction,
-                class_relation_id: include.class_relation_id,
-            },
-            ranking: GraphWalkRanking::ByTargetClass {
-                class_id: include.class_id,
-                sort: include.sort,
-            },
-            projection: GraphWalkProjection::AncestorAndDescendant,
-        });
+            include,
+            is_admin,
+            scopes,
+            true,
+        )
+        .await
+    }
 
-        let query = bind_raw_sql_query!(spec.clone());
-        debug!(
-            message = "Searching batched related objects",
-            root_object_count = root_object_ids.len(),
-            target_class_id = include.class_id,
-            class_relation_id = include.class_relation_id,
-            direction = ?include.direction,
-            sort = ?include.sort,
-            max_depth = include.max_depth,
-            per_root_limit = include.limit,
-            raw_sql = %spec.sql,
-            bind_variables = ?spec.bind_variables
-        );
-        trace_query!(query, "Searching batched related objects");
-
-        with_connection(pool, async |conn| {
-            query.get_results::<RelatedObjectIncludeRow>(conn).await
-        })
+    async fn related_objects_for_roots_preserving_paths_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        root_object_ids: &[i32],
+        include: ExportIncludeRelatedQuery,
+        is_admin: bool,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
+        related_objects_for_roots_query(
+            self,
+            pool,
+            root_object_ids,
+            include,
+            is_admin,
+            scopes,
+            false,
+        )
         .await
     }
 
@@ -2292,55 +2340,180 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         is_admin: bool,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
-        if root_object_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let permissions =
-            PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
-        let collection_ids: Vec<i32> = self
-            .load_collections_with_permissions_with_admin_status(
-                pool,
-                &permissions,
+        bidirectionally_related_objects_for_roots_query(
+            self,
+            pool,
+            BidirectionalRootGraphQuery {
+                root_object_ids,
+                max_depth,
+                per_root_cap,
                 is_admin,
                 scopes,
-            )
-            .await?
-            .into_iter()
-            .map(|collection| collection.id)
-            .collect();
-
-        if collection_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let spec = build_root_graph_walk_query(RootGraphWalkSpec {
-            root_object_ids,
-            collection_ids: &collection_ids,
-            scope: scopes,
-            max_depth,
-            per_root_limit: per_root_cap,
-            edges: GraphWalkEdges::Bidirectional,
-            ranking: GraphWalkRanking::ByDescendant,
-            projection: GraphWalkProjection::DescendantOnly,
-        });
-
-        let query = bind_raw_sql_query!(spec.clone());
-        debug!(
-            message = "Searching batched bidirectionally related objects",
-            root_object_count = root_object_ids.len(),
-            max_depth = max_depth,
-            per_root_cap = per_root_cap,
-            raw_sql = %spec.sql,
-            bind_variables = ?spec.bind_variables
-        );
-        trace_query!(query, "Searching batched bidirectionally related objects");
-
-        with_connection(pool, async |conn| {
-            query.get_results::<RelatedObjectForRootRow>(conn).await
-        })
+                deduplicate_paths: true,
+            },
+        )
         .await
     }
+
+    async fn bidirectionally_related_objects_for_roots_preserving_paths_from_backend_with_admin_status(
+        &self,
+        pool: &DbPool,
+        root_object_ids: &[i32],
+        max_depth: i32,
+        per_root_cap: i32,
+        is_admin: bool,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
+        bidirectionally_related_objects_for_roots_query(
+            self,
+            pool,
+            BidirectionalRootGraphQuery {
+                root_object_ids,
+                max_depth,
+                per_root_cap,
+                is_admin,
+                scopes,
+                deduplicate_paths: false,
+            },
+        )
+        .await
+    }
+}
+
+async fn related_objects_for_roots_query<U>(
+    user: &U,
+    pool: &DbPool,
+    root_object_ids: &[i32],
+    include: ExportIncludeRelatedQuery,
+    is_admin: bool,
+    scopes: Option<&TokenScope>,
+    deduplicate_paths: bool,
+) -> Result<Vec<RelatedObjectIncludeRow>, ApiError>
+where
+    U: UserCollectionAccessors + ?Sized,
+{
+    if root_object_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let permissions =
+        PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
+    let collection_ids: Vec<i32> = user
+        .load_collections_with_permissions_with_admin_status(pool, &permissions, is_admin, scopes)
+        .await?
+        .into_iter()
+        .map(|collection| collection.id)
+        .collect();
+
+    if collection_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let spec = build_root_graph_walk_query(RootGraphWalkSpec {
+        root_object_ids,
+        collection_ids: &collection_ids,
+        scope: scopes,
+        max_depth: include.max_depth,
+        per_root_limit: include.limit,
+        edges: GraphWalkEdges::Directional {
+            direction: include.direction,
+            class_relation_id: include.class_relation_id,
+        },
+        ranking: GraphWalkRanking::ByTargetClass {
+            class_id: include.class_id,
+            sort: include.sort,
+        },
+        projection: GraphWalkProjection::AncestorAndDescendant,
+        deduplicate_paths,
+    });
+
+    let query = bind_raw_sql_query!(spec.clone());
+    debug!(
+        message = "Searching batched related objects",
+        root_object_count = root_object_ids.len(),
+        target_class_id = include.class_id,
+        class_relation_id = include.class_relation_id,
+        direction = ?include.direction,
+        sort = ?include.sort,
+        max_depth = include.max_depth,
+        per_root_limit = include.limit,
+        raw_sql = %spec.sql,
+        bind_variables = ?spec.bind_variables
+    );
+    trace_query!(query, "Searching batched related objects");
+
+    with_connection(pool, async |conn| {
+        query.get_results::<RelatedObjectIncludeRow>(conn).await
+    })
+    .await
+}
+
+struct BidirectionalRootGraphQuery<'a> {
+    root_object_ids: &'a [i32],
+    max_depth: i32,
+    per_root_cap: i32,
+    is_admin: bool,
+    scopes: Option<&'a TokenScope>,
+    deduplicate_paths: bool,
+}
+
+async fn bidirectionally_related_objects_for_roots_query<U>(
+    user: &U,
+    pool: &DbPool,
+    request: BidirectionalRootGraphQuery<'_>,
+) -> Result<Vec<RelatedObjectForRootRow>, ApiError>
+where
+    U: UserCollectionAccessors + ?Sized,
+{
+    if request.root_object_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let permissions =
+        PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
+    let collection_ids: Vec<i32> = user
+        .load_collections_with_permissions_with_admin_status(
+            pool,
+            &permissions,
+            request.is_admin,
+            request.scopes,
+        )
+        .await?
+        .into_iter()
+        .map(|collection| collection.id)
+        .collect();
+
+    if collection_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let spec = build_root_graph_walk_query(RootGraphWalkSpec {
+        root_object_ids: request.root_object_ids,
+        collection_ids: &collection_ids,
+        scope: request.scopes,
+        max_depth: request.max_depth,
+        per_root_limit: request.per_root_cap,
+        edges: GraphWalkEdges::Bidirectional,
+        ranking: GraphWalkRanking::ByDescendant,
+        projection: GraphWalkProjection::DescendantOnly,
+        deduplicate_paths: request.deduplicate_paths,
+    });
+
+    let query = bind_raw_sql_query!(spec.clone());
+    debug!(
+        message = "Searching batched bidirectionally related objects",
+        root_object_count = request.root_object_ids.len(),
+        max_depth = request.max_depth,
+        per_root_cap = request.per_root_cap,
+        raw_sql = %spec.sql,
+        bind_variables = ?spec.bind_variables
+    );
+    trace_query!(query, "Searching batched bidirectionally related objects");
+
+    with_connection(pool, async |conn| {
+        query.get_results::<RelatedObjectForRootRow>(conn).await
+    })
+    .await
 }
 
 fn related_include_object_edges_sql(
@@ -2460,6 +2633,7 @@ struct RootGraphWalkSpec<'a> {
     edges: GraphWalkEdges,
     ranking: GraphWalkRanking,
     projection: GraphWalkProjection,
+    deduplicate_paths: bool,
 }
 
 fn bidirectional_object_edges_sql() -> &'static str {
@@ -2475,10 +2649,10 @@ fn bidirectional_object_edges_sql() -> &'static str {
 /// Builds the recursive per-root object-graph walk shared by `related_objects_for_roots`
 /// (include path) and `bidirectionally_related_objects_for_roots` (templated hydration).
 ///
-/// The `root_objects`/`valid_collections`/`graph_walk`/`deduped_walk` CTEs are identical for both
-/// callers; only the edge set, the per-root ranking, and the final projection differ. Bind order
-/// is fixed here: collection ids, resource-scope ids, root ids, (edge class-relation filter),
-/// max_depth ×2, (target class id), per_root_limit.
+/// The `root_objects`/`valid_collections`/`graph_walk` CTEs are identical for both callers; only
+/// the edge set, optional path deduplication, per-root ranking, and final projection differ. Bind
+/// order is fixed here: collection ids, resource-scope ids, root ids, (edge class-relation
+/// filter), max_depth ×2, (target class id), per_root_limit.
 fn build_root_graph_walk_query(spec: RootGraphWalkSpec) -> RawSqlQuerySpec {
     let mut bind_variables = Vec::<SQLValue>::new();
     let collection_array_sql = sql_integer_array(spec.collection_ids, &mut bind_variables);
@@ -2504,6 +2678,25 @@ fn build_root_graph_walk_query(spec: RootGraphWalkSpec) -> RawSqlQuerySpec {
 
     bind_variables.push(SQLValue::Integer(spec.max_depth));
     bind_variables.push(SQLValue::Integer(spec.max_depth));
+
+    let deduplicated_walk_sql = if spec.deduplicate_paths {
+        r#"    SELECT DISTINCT ON (root_object_id, descendant_object_id)
+        root_object_id,
+        ancestor_object_id,
+        descendant_object_id,
+        depth,
+        path
+    FROM graph_walk
+    ORDER BY root_object_id ASC, descendant_object_id ASC, depth ASC, path ASC"#
+    } else {
+        r#"    SELECT
+        root_object_id,
+        ancestor_object_id,
+        descendant_object_id,
+        depth,
+        path
+    FROM graph_walk"#
+    };
 
     let ranked_walk_sql = match spec.ranking {
         GraphWalkRanking::ByDescendant => r#"    SELECT
@@ -2641,14 +2834,7 @@ graph_walk AS (
       AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
 ),
 deduped_walk AS (
-    SELECT DISTINCT ON (root_object_id, descendant_object_id)
-        root_object_id,
-        ancestor_object_id,
-        descendant_object_id,
-        depth,
-        path
-    FROM graph_walk
-    ORDER BY root_object_id ASC, descendant_object_id ASC, depth ASC, path ASC
+{deduplicated_walk_sql}
 ),
 ranked_walk AS (
 {ranked_walk_sql}

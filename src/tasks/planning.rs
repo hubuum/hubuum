@@ -961,18 +961,19 @@ where
             }),
         })
     } else {
-        if !is_import_admin(backend, user, state)
-            .await
-            .map_err(|err| PlanningFailure {
-                kind: FailureKind::Permission,
-                item: planned_result(
-                    "collection",
-                    "create",
-                    input.ref_.clone(),
-                    Some(input.name.clone()),
-                ),
-                message: err,
-            })?
+        if state.scopes.is_some()
+            || !is_import_admin(backend, user, state)
+                .await
+                .map_err(|err| PlanningFailure {
+                    kind: FailureKind::Permission,
+                    item: planned_result(
+                        "collection",
+                        "create",
+                        input.ref_.clone(),
+                        Some(input.name.clone()),
+                    ),
+                    message: err,
+                })?
         {
             return Err(PlanningFailure {
                 kind: FailureKind::Permission,
@@ -982,7 +983,7 @@ where
                     input.ref_.clone(),
                     Some(input.name.clone()),
                 ),
-                message: "Only admins may create collections".to_string(),
+                message: "Only unscoped administrators may create collections".to_string(),
             });
         }
 
