@@ -16,6 +16,7 @@ mod tests {
 
     use crate::db::prelude::*;
     use actix_web::{App, http::StatusCode, test, web};
+    use chrono::SubsecRound;
     use diesel::sql_types::{Bool, Integer};
     use rstest::rstest;
 
@@ -432,7 +433,8 @@ mod tests {
         let context = TestContext::new().await;
         let group = create_test_group(&context.pool).await;
         let sa = create_test_service_account(&context.pool, &group, None).await;
-        let requested_expiry = chrono::Utc::now().naive_utc() + chrono::Duration::days(7);
+        let requested_expiry =
+            (chrono::Utc::now().naive_utc() + chrono::Duration::days(7)).trunc_subsecs(6);
 
         let response = post_request(
             &context.pool,
