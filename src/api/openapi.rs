@@ -555,14 +555,22 @@ impl MessageResponse {
 #[derive(Serialize, ToSchema)]
 #[schema(example = login_response_example)]
 pub struct LoginResponse {
+    /// Raw bearer token, shown only in this issuance response.
     token: String,
+    /// Authoritative expiry persisted for the newly issued token.
+    expires_at: chrono::NaiveDateTime,
 }
 
 impl LoginResponse {
-    pub fn new(token: impl Into<String>) -> Self {
+    pub fn new(token: impl Into<String>, expires_at: chrono::NaiveDateTime) -> Self {
         Self {
             token: token.into(),
+            expires_at,
         }
+    }
+
+    pub fn from_issued(token: &crate::models::IssuedToken) -> Self {
+        Self::new(token.get_token(), token.expires_at())
     }
 }
 
@@ -587,7 +595,12 @@ fn message_response_example() -> MessageResponse {
 }
 
 fn login_response_example() -> LoginResponse {
-    LoginResponse::new("eyJhbGciOi...example-token")
+    LoginResponse::new(
+        "eyJhbGciOi...example-token",
+        chrono::NaiveDate::from_ymd_opt(2026, 7, 26)
+            .and_then(|date| date.and_hms_opt(12, 0, 0))
+            .expect("example token expiry must be valid"),
+    )
 }
 
 fn counts_response_example() -> CountsResponse {

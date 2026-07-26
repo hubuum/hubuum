@@ -31,6 +31,7 @@ pub struct RunningConfig {
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct ClientConfig {
     pub pagination: ClientPaginationConfig,
+    pub authentication: ClientAuthenticationConfig,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -41,6 +42,14 @@ pub struct ClientPaginationConfig {
     /// Largest effective page size used for a client request.
     #[schema(minimum = 1)]
     pub max_page_limit: usize,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ClientAuthenticationConfig {
+    /// Lifetime applied to newly issued tokens when the mint request omits an
+    /// explicit expiry.
+    #[schema(minimum = 1)]
+    pub default_token_lifetime_hours: i64,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -149,6 +158,11 @@ pub struct RemoteCallConfig {
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct AuthenticationConfig {
     pub token_lifetime_hours: i64,
+    pub token_retention_purge_enabled: bool,
+    pub token_retention_days: i64,
+    pub token_retention_purge_interval_seconds: u64,
+    #[schema(minimum = 10)]
+    pub token_retention_purge_batch_size: usize,
     pub stable_token_hash_key_configured: bool,
     pub admin_groupname: String,
     pub admin_identity_scope: Option<String>,
@@ -210,6 +224,9 @@ impl From<&RunningConfig> for ClientConfig {
             pagination: ClientPaginationConfig {
                 default_page_limit: config.pagination.default_page_limit,
                 max_page_limit: config.pagination.max_page_limit,
+            },
+            authentication: ClientAuthenticationConfig {
+                default_token_lifetime_hours: config.authentication.token_lifetime_hours,
             },
         }
     }
@@ -318,6 +335,11 @@ impl From<&AppConfig> for RunningConfig {
             },
             authentication: AuthenticationConfig {
                 token_lifetime_hours: config.token_lifetime_hours,
+                token_retention_purge_enabled: config.token_retention_purge_enabled,
+                token_retention_days: config.token_retention_days,
+                token_retention_purge_interval_seconds: config
+                    .token_retention_purge_interval_seconds,
+                token_retention_purge_batch_size: config.token_retention_purge_batch_size,
                 stable_token_hash_key_configured: !token_hash_key_is_ephemeral(),
                 admin_groupname: config.admin_groupname.clone(),
                 admin_identity_scope: config.admin_identity_scope.clone(),

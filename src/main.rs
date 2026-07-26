@@ -39,6 +39,7 @@ use hubuum::restores::{RestoreSettings, ensure_restore_coordinator_running};
 use hubuum::tasks::{
     TaskWorkerSettings, ensure_task_worker_running_with_settings, initialize_task_worker_settings,
 };
+use hubuum::token_retention::ensure_token_retention_worker_running;
 use hubuum::utilities::is_valid_log_level;
 use hubuum::{api, db, logger, middlewares, observability, tls, utilities};
 
@@ -359,6 +360,7 @@ fn start_background_workers(context: &AppContext, backup_settings: &BackupSettin
     ensure_event_fanout_worker_running(context.db_pool.clone());
     ensure_event_delivery_worker_running(context.db_pool.clone());
     ensure_event_retention_worker_running(context.db_pool.clone());
+    ensure_token_retention_worker_running(context.db_pool.clone());
 }
 
 fn login_rate_limit_store_settings(

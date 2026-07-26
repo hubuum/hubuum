@@ -1,10 +1,9 @@
-use crate::config::token_lifetime_hours_i32;
 use crate::db::prelude::*;
 use crate::db::traits::ActiveTokens;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
-use crate::models::PrincipalToken;
 use crate::models::search::{FilterField, QueryOptions};
+use crate::models::{PrincipalToken, configured_token_lifetime};
 use crate::traits::PrincipalIdAccessor;
 use diesel::pg::Pg;
 use diesel::sql_types::{Bool, Nullable};
@@ -31,14 +30,13 @@ where
     }
 }
 
-pub(crate) fn active_tokens_cutoff() -> chrono::NaiveDateTime {
-    let hours = token_lifetime_hours_i32() as i64;
-    chrono::Utc::now().naive_utc() - chrono::Duration::hours(hours)
+pub(crate) fn active_tokens_cutoff() -> Result<chrono::NaiveDateTime, ApiError> {
+    configured_token_lifetime()?.cutoff_from(chrono::Utc::now().naive_utc())
 }
 
 /// Boxed Diesel predicate for "token is active": not revoked, and not expired —
-/// an explicit `expires_at` in the future, or (when null) issued within the
-/// global lifetime window from `issued`.
+/// an explicit `expires_at` in the future, or, for a legacy null expiry, issued
+/// within the global lifetime window.
 ///
 /// Single source for the security-critical validity rule so token validation
 /// ([`crate::db::traits::Status::is_valid`]) and active-token listing can never
@@ -47,9 +45,9 @@ pub(crate) fn active_tokens_cutoff() -> chrono::NaiveDateTime {
 /// Semantics note: an explicit `expires_at` is authoritative and overrides the
 /// global `token_lifetime_hours` window — a token with a non-null `expires_at`
 /// stays valid until that instant regardless of the global setting, and only
-/// `expires_at IS NULL` tokens are bounded by `cutoff`. Lowering
-/// `token_lifetime_hours` therefore does not shorten already-issued
-/// explicit-expiry tokens; revoke them explicitly if that is required.
+/// legacy `expires_at IS NULL` tokens are bounded by `cutoff`. Lowering
+/// `token_lifetime_hours` therefore does not shorten newly issued tokens;
+/// revoke them explicitly if that is required.
 pub(crate) fn active_token_predicate(
     now: chrono::NaiveDateTime,
     cutoff: chrono::NaiveDateTime,
@@ -65,14 +63,14 @@ pub(crate) fn active_token_predicate(
 }
 
 /// A token is active when it is not revoked and not expired: an explicit
-/// `expires_at` in the future, or (when null) within the global lifetime window
-/// from `issued`.
+/// `expires_at` in the future, or, for a legacy null expiry, within the global
+/// lifetime window from `issued`.
 async fn active_tokens_by_principal_id(
     principal: i32,
     pool: &DbPool,
 ) -> Result<Vec<PrincipalToken>, ApiError> {
     use crate::schema::tokens::dsl::*;
-    let active_after = active_tokens_cutoff();
+    let active_after = active_tokens_cutoff()?;
     let now = chrono::Utc::now().naive_utc();
 
     with_connection(pool, async |conn| {
@@ -96,7 +94,7 @@ async fn active_tokens_by_principal_id_paginated_with_total_count(
     };
     use crate::{date_search, string_search};
 
-    let active_after = active_tokens_cutoff();
+    let active_after = active_tokens_cutoff()?;
     let now = chrono::Utc::now().naive_utc();
     let build_query = || -> Result<_, ApiError> {
         let mut base_query = tokens

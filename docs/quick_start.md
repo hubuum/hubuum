@@ -194,6 +194,10 @@ Paginated responses include `X-Page-Limit` with the effective page size.
 | `HUBUUM_ADMIN_IDENTITY_SCOPE` | `local` | Identity scope containing the admin group |
 | `HUBUUM_AUTH_CONFIG_PATH` | *(empty)* | Optional TOML file for external auth providers such as LDAP |
 | `HUBUUM_TOKEN_LIFETIME_HOURS` | `24` | Token lifetime in hours |
+| `HUBUUM_TOKEN_RETENTION_PURGE_ENABLED` | `true` | Delete expired token rows after the retention period |
+| `HUBUUM_TOKEN_RETENTION_DAYS` | `30` | Days to retain a token after its effective expiry |
+| `HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS` | `3600` | Delay between token-retention purge runs |
+| `HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE` | `1000` | Maximum token rows deleted in one purge batch; minimum `10` |
 | `HUBUUM_LOGIN_RATE_LIMIT_ENABLED` | `true` | Master switch for login throttling |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `5` | Max failed attempts per `(name, IP)` per window |
 | `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` | `20` | Max failed attempts per client IP per window (`0` disables) |
@@ -210,6 +214,13 @@ Paginated responses include `X-Page-Limit` with the effective page size.
 | `HUBUUM_TOKEN_HASH_KEY` | *(generated per startup if unset)* | Key used for deterministic token hashing at rest |
 
 See [External Authentication](external_auth.md) for LDAP scopes.
+
+**Token lifetime note**: Newly issued tokens always receive an explicit
+`expires_at`. If a mint request omits it, the server applies
+`HUBUUM_TOKEN_LIFETIME_HOURS`. Clients can read the effective default without
+authentication from `GET /api/v1/config` at
+`authentication.default_token_lifetime_hours`; issuance responses return the
+authoritative `expires_at`.
 
 **Login rate-limit note**: These settings throttle failed logins across layered scopes with exponential backoff. For the full model, client-IP resolution behind proxies, and the admin endpoints for inspecting and releasing throttled scopes, see [login_rate_limiting.md](login_rate_limiting.md).
 

@@ -36,7 +36,7 @@ impl Status<PrincipalToken> for Token {
         // ahead of the stored value, breaking non-decreasing comparisons on
         // platforms whose clock has sub-microsecond resolution (e.g. Linux).
         let now = chrono::Utc::now().naive_utc().trunc_subsecs(6);
-        let cutoff = active_tokens_cutoff();
+        let cutoff = active_tokens_cutoff()?;
 
         let result = with_connection_async(pool.clone(), async move |conn| {
             tokens

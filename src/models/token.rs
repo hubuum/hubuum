@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use utoipa::ToSchema;
 
-use crate::config::token_hash_key_bytes;
+use crate::config::{get_config, token_hash_key_bytes};
 use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{PrincipalID, TokenScope, TokenScopeDetails};
+use crate::models::{PrincipalID, TokenLifetime, TokenScope, TokenScopeDetails};
 use crate::schema::tokens;
 use crate::traits::{
     BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -106,12 +106,37 @@ impl PrincipalTokenCreateRequest {
     where
         C: BackendContext + ?Sized,
     {
-        crate::db::traits::token::create_principal_token_request_db(
+        Ok(self.create_issued(backend, context).await?.into_token())
+    }
+
+    /// Persist this token request and return both its raw bearer value and
+    /// authoritative expiry.
+    ///
+    /// An omitted expiry is materialized during persistence from the same
+    /// database timestamp stored as `issued`, so later configuration changes
+    /// cannot alter the lifetime of an already-issued token.
+    pub async fn create_issued<C>(
+        self,
+        backend: &C,
+        context: Option<&EventContext>,
+    ) -> Result<IssuedToken, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let default_lifetime = configured_token_lifetime()?;
+        let (token, persisted) = crate::db::traits::token::create_principal_token_request_db(
             backend.db_pool(),
             self,
+            default_lifetime,
             context,
         )
-        .await
+        .await?;
+        let expires_at = persisted.expires_at.ok_or_else(|| {
+            ApiError::InternalServerError(
+                "newly issued token is missing its persisted expiry".to_string(),
+            )
+        })?;
+        Ok(IssuedToken::new(token, expires_at))
     }
 
     pub(crate) fn into_parts(self) -> PrincipalTokenCreateParts {
@@ -252,6 +277,39 @@ impl PrincipalToken {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Token(pub String);
+
+/// A newly persisted bearer token paired with its authoritative expiry.
+#[derive(Clone)]
+pub struct IssuedToken {
+    token: Token,
+    expires_at: NaiveDateTime,
+}
+
+impl IssuedToken {
+    pub(crate) fn new(token: Token, expires_at: NaiveDateTime) -> Self {
+        Self { token, expires_at }
+    }
+
+    pub fn token(&self) -> &Token {
+        &self.token
+    }
+
+    pub fn get_token(&self) -> String {
+        self.token.get_token()
+    }
+
+    pub fn expires_at(&self) -> NaiveDateTime {
+        self.expires_at
+    }
+
+    pub fn into_token(self) -> Token {
+        self.token
+    }
+}
+
+pub(crate) fn configured_token_lifetime() -> Result<TokenLifetime, ApiError> {
+    TokenLifetime::from_hours(get_config()?.token_lifetime_hours)
+}
 
 impl Token {
     pub fn get_token(&self) -> String {

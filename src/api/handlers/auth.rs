@@ -49,7 +49,7 @@ pub async fn get_auth_providers() -> Result<impl Responder, ApiError> {
     tag = "auth",
     request_body = LoginUser,
     responses(
-        (status = 200, description = "Token issued", body = LoginResponse),
+        (status = 200, description = "Token and authoritative expiry issued", body = LoginResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 429, description = "Too many login attempts", body = ApiErrorResponse),
         (status = 500, description = "Internal server error", body = ApiErrorResponse)
@@ -100,7 +100,7 @@ pub async fn login(
 
     finish_login_attempt(login_permit, LoginAttemptOutcome::Succeeded).await?;
 
-    let token_generation_result = user.create_token(&pool).await;
+    let token_generation_result = user.create_issued_token(&pool).await;
 
     let token = match token_generation_result {
         Ok(token) => token,
@@ -120,7 +120,7 @@ pub async fn login(
     debug!(message = "Login successful", name = name, user_id = user.id,);
     metrics::login_attempt("success");
 
-    Ok(ApiResponse::ok(LoginResponse::new(token.get_token())))
+    Ok(ApiResponse::ok(LoginResponse::from_issued(&token)))
 }
 
 #[utoipa::path(
