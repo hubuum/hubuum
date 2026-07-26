@@ -112,12 +112,16 @@ Local users can omit `identity_scope` or use `local`.
 
 The response is the normal bearer token response. Token validation may refresh
 provider-managed group membership when the cached sync is older than the scope
-TTL. If refresh fails, cached membership remains usable only inside the
-configured max-stale window. Further requests back off for the scope refresh TTL
-before retrying the provider, so one outage does not serialize every request on
-repeated LDAP timeouts. Once the cache exceeds `max_stale_seconds`, requests fail
-with `503 Service Unavailable` during that backoff instead of using stale
-membership.
+TTL. Refresh locates the current directory entry with `user_filter` and the
+materialized principal name, then verifies that the entry's
+`subject_attribute` still matches the stable subject stored at login. The
+subject attribute therefore does not need to support an efficient
+directory-wide search. If refresh fails, cached membership remains usable only
+inside the configured max-stale window. Further requests back off for the scope
+refresh TTL before retrying the provider, so one outage does not serialize
+every request on repeated LDAP timeouts. Once the cache exceeds
+`max_stale_seconds`, requests fail with `503 Service Unavailable` during that
+backoff instead of using stale membership.
 
 ## Users And Groups
 

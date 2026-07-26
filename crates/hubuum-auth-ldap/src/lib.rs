@@ -2,7 +2,7 @@
 
 use hubuum_auth_core::{
     AuthProviderError, AuthenticatedExternalUser, ExternalGroup, ExternalIdentityProvider,
-    ExternalUserProfile, IdentityScopeName,
+    ExternalUserProfile, ExternalUserRefreshRequest, IdentityScopeName,
 };
 use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
 use regex::Regex;
@@ -208,6 +208,10 @@ impl LdapIdentityProvider {
             .replace("{username}", &escape_filter_value(username))
     }
 
+    fn refresh_filter(&self, request: &ExternalUserRefreshRequest) -> String {
+        self.user_filter(request.username())
+    }
+
     fn search_attributes(&self) -> Vec<String> {
         let mut attrs = BTreeSet::new();
         attrs.insert(self.config.username_attribute.clone());
@@ -342,6 +346,24 @@ impl LdapIdentityProvider {
         groups.into_values().collect()
     }
 
+    fn refreshed_user_from_entry(
+        &self,
+        request: &ExternalUserRefreshRequest,
+        dn: &str,
+        entry: &SearchEntry,
+    ) -> Result<AuthenticatedExternalUser, AuthProviderError> {
+        let profile = self.profile_from_entry(request.username(), dn, entry)?;
+        if profile.subject != request.expected_subject() {
+            return Err(AuthProviderError::Protocol(
+                "ldap refresh returned a different external subject".to_string(),
+            ));
+        }
+        Ok(AuthenticatedExternalUser {
+            profile,
+            groups: self.groups_from_entry(entry),
+        })
+    }
+
     async fn bind_user(&self, dn: &str, password: &str) -> Result<(), AuthProviderError> {
         if password.is_empty() {
             return Err(AuthProviderError::AuthenticationFailed);
@@ -382,42 +404,11 @@ impl ExternalIdentityProvider for LdapIdentityProvider {
 
     async fn refresh_user(
         &self,
-        subject: &str,
+        request: &ExternalUserRefreshRequest,
     ) -> Result<AuthenticatedExternalUser, AuthProviderError> {
-        let filter = if self.subject_is_dn() {
-            "(objectClass=*)".to_string()
-        } else {
-            format!(
-                "({}={})",
-                self.config.subject_attribute,
-                escape_filter_value(subject)
-            )
-        };
-        let (dn, entry) = if self.subject_is_dn() {
-            let mut ldap = self.ldap().await?;
-            self.bind_service(&mut ldap).await?;
-            let attrs = self.search_attributes();
-            let (entries, _) = ldap
-                .with_timeout(self.operation_timeout())
-                .search(subject, Scope::Base, &filter, attrs)
-                .await
-                .map_err(|e| AuthProviderError::Unavailable(e.to_string()))?
-                .success()
-                .map_err(|e| AuthProviderError::Protocol(e.to_string()))?;
-            if entries.len() != 1 {
-                return Err(AuthProviderError::AuthenticationFailed);
-            }
-            let entry = SearchEntry::construct(entries.into_iter().next().unwrap());
-            (entry.dn.clone(), entry)
-        } else {
-            self.load_user_by_filter(&filter).await?
-        };
-        let username = first_attr(&entry, &self.config.username_attribute)
-            .unwrap_or_else(|| subject.to_string());
-        Ok(AuthenticatedExternalUser {
-            profile: self.profile_from_entry(&username, &dn, &entry)?,
-            groups: self.groups_from_entry(&entry),
-        })
+        let filter = self.refresh_filter(request);
+        let (dn, entry) = self.load_user_by_filter(&filter).await?;
+        self.refreshed_user_from_entry(request, &dn, &entry)
     }
 }
 
@@ -590,6 +581,78 @@ mod tests {
         assert_eq!(profile.name, "alice");
         assert_eq!(profile.proper_name.as_deref(), Some("Alice Example"));
         assert_eq!(profile.email.as_deref(), Some("alice@example.org"));
+    }
+
+    #[test]
+    fn refresh_filter_uses_username_instead_of_stable_subject() {
+        let provider = LdapIdentityProvider::new(LdapScopeConfig {
+            subject_attribute: "entryUUID".into(),
+            ..ldap_config("ldaps://localhost")
+        })
+        .unwrap();
+        let request = ExternalUserRefreshRequest::new(
+            "alice*(admin)",
+            "66a9137d-2c10-4cc0-948f-6f589a25f9d9",
+        )
+        .unwrap();
+
+        assert_eq!(
+            provider.refresh_filter(&request),
+            "(uid=alice\\2a\\28admin\\29)"
+        );
+    }
+
+    #[test]
+    fn refreshed_user_must_match_expected_stable_subject() {
+        let provider = LdapIdentityProvider::new(LdapScopeConfig {
+            subject_attribute: "entryUUID".into(),
+            ..ldap_config("ldaps://localhost")
+        })
+        .unwrap();
+        let entry = SearchEntry {
+            dn: "uid=alice,ou=people,dc=example,dc=org".into(),
+            attrs: HashMap::from([
+                ("uid".into(), vec!["alice".into()]),
+                ("entryUUID".into(), vec!["actual-subject".into()]),
+            ]),
+            bin_attrs: HashMap::new(),
+        };
+        let request = ExternalUserRefreshRequest::new("alice", "expected-subject").unwrap();
+
+        let error = provider
+            .refreshed_user_from_entry(&request, &entry.dn, &entry)
+            .unwrap_err();
+
+        assert!(matches!(error, AuthProviderError::Protocol(_)));
+        assert_eq!(
+            error.to_string(),
+            "provider protocol error: ldap refresh returned a different external subject"
+        );
+    }
+
+    #[test]
+    fn refreshed_user_accepts_matching_stable_subject() {
+        let provider = LdapIdentityProvider::new(LdapScopeConfig {
+            subject_attribute: "entryUUID".into(),
+            ..ldap_config("ldaps://localhost")
+        })
+        .unwrap();
+        let entry = SearchEntry {
+            dn: "uid=alice,ou=people,dc=example,dc=org".into(),
+            attrs: HashMap::from([
+                ("uid".into(), vec!["alice".into()]),
+                ("entryUUID".into(), vec!["stable-subject".into()]),
+            ]),
+            bin_attrs: HashMap::new(),
+        };
+        let request = ExternalUserRefreshRequest::new("alice", "stable-subject").unwrap();
+
+        let refreshed = provider
+            .refreshed_user_from_entry(&request, &entry.dn, &entry)
+            .unwrap();
+
+        assert_eq!(refreshed.profile.subject, "stable-subject");
+        assert_eq!(refreshed.profile.name, "alice");
     }
 
     #[test]

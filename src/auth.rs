@@ -1,7 +1,7 @@
 use chrono::NaiveDateTime;
 #[cfg(feature = "integration-test-support")]
 use hubuum_auth_core::AuthenticatedExternalUser;
-use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider};
+use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider, ExternalUserRefreshRequest};
 use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 
 use crate::db::DbPool;
 use crate::db::traits::external_identity::{
-    external_principal_state, mark_external_sync_attempted,
+    ExternalPrincipalState, external_principal_state, mark_external_sync_attempted,
     sync_external_user as sync_external_user_from_backend,
 };
 use crate::db::traits::identity::ensure_identity_scope;
@@ -73,13 +73,12 @@ pub struct ConfiguredLdapScope {
 }
 
 impl ConfiguredLdapScope {
-    pub fn refresh_ttl_seconds(&self) -> i64 {
-        self.refresh_ttl_seconds
-            .unwrap_or(DEFAULT_REFRESH_TTL_SECONDS)
-    }
-
-    pub fn max_stale_seconds(&self) -> i64 {
-        self.max_stale_seconds.unwrap_or(DEFAULT_MAX_STALE_SECONDS)
+    fn refresh_policy(&self) -> Result<RefreshPolicy, ApiError> {
+        RefreshPolicy::new(
+            self.refresh_ttl_seconds
+                .unwrap_or(DEFAULT_REFRESH_TTL_SECONDS),
+            self.max_stale_seconds.unwrap_or(DEFAULT_MAX_STALE_SECONDS),
+        )
     }
 }
 
@@ -120,8 +119,53 @@ struct RegisteredAuthProvider {
 
 #[derive(Clone, Copy)]
 struct RefreshPolicy {
-    refresh_ttl_seconds: i64,
-    max_stale_seconds: i64,
+    refresh_ttl: RefreshTtl,
+    max_stale: MaxStale,
+}
+
+impl RefreshPolicy {
+    fn new(refresh_ttl_seconds: i64, max_stale_seconds: i64) -> Result<Self, ApiError> {
+        Ok(Self {
+            refresh_ttl: RefreshTtl::new(refresh_ttl_seconds)?,
+            max_stale: MaxStale::new(max_stale_seconds)?,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RefreshTtl(chrono::Duration);
+
+impl RefreshTtl {
+    fn new(seconds: i64) -> Result<Self, ApiError> {
+        if seconds <= 0 {
+            return Err(ApiError::BadRequest(
+                "ldap refresh_ttl_seconds must be positive".to_string(),
+            ));
+        }
+        Ok(Self(chrono::Duration::seconds(seconds)))
+    }
+
+    fn contains(self, elapsed: chrono::Duration) -> bool {
+        elapsed < self.0
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MaxStale(chrono::Duration);
+
+impl MaxStale {
+    fn new(seconds: i64) -> Result<Self, ApiError> {
+        if seconds <= 0 {
+            return Err(ApiError::BadRequest(
+                "ldap max_stale_seconds must be positive".to_string(),
+            ));
+        }
+        Ok(Self(chrono::Duration::seconds(seconds)))
+    }
+
+    fn contains(self, elapsed: chrono::Duration) -> bool {
+        elapsed < self.0
+    }
 }
 
 struct LocalAuthProvider;
@@ -222,28 +266,14 @@ impl LdapAuthProvider {
         configured: ConfiguredLdapScope,
         registry: &mut AuthProviderRegistry,
     ) -> Result<(), ApiError> {
-        let refresh_ttl_seconds = configured.refresh_ttl_seconds();
-        let max_stale_seconds = configured.max_stale_seconds();
-        if refresh_ttl_seconds <= 0 {
-            return Err(ApiError::BadRequest(
-                "ldap refresh_ttl_seconds must be positive".to_string(),
-            ));
-        }
-        if max_stale_seconds <= 0 {
-            return Err(ApiError::BadRequest(
-                "ldap max_stale_seconds must be positive".to_string(),
-            ));
-        }
+        let refresh_policy = configured.refresh_policy()?;
         let scope = configured.ldap.scope.clone();
         let provider = LdapIdentityProvider::new(configured.ldap).map_err(provider_config_error)?;
         registry.register(RegisteredAuthProvider {
             name: scope.clone(),
             kind: LDAP_PROVIDER_KIND.to_string(),
             display_order: 100,
-            refresh_policy: Some(RefreshPolicy {
-                refresh_ttl_seconds,
-                max_stale_seconds,
-            }),
+            refresh_policy: Some(refresh_policy),
             backend: Box::new(Self { scope, provider }),
         })
     }
@@ -274,7 +304,7 @@ impl AuthProviderBackend for LdapAuthProvider {
         Box::pin(async move {
             let refreshed = self
                 .provider
-                .refresh_user(&state.external_subject)
+                .refresh_user(&state.refresh_request)
                 .await
                 .map_err(|error| AuthProviderRefreshError::Provider(provider_error(error)))?;
             sync_external_user_from_backend(pool, &self.scope, LDAP_PROVIDER_KIND, refreshed)
@@ -338,7 +368,7 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
                                 Ok(()) => {
                                     if within_max_stale(
                                         state.last_sync_success_at,
-                                        state.max_stale_seconds,
+                                        state.refresh_policy.max_stale,
                                     ) {
                                         tracing::warn!(
                                             principal_id,
@@ -348,6 +378,12 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
                                         );
                                         Ok(())
                                     } else {
+                                        tracing::error!(
+                                            principal_id,
+                                            identity_scope = state.identity_scope,
+                                            error = %err,
+                                            "External identity refresh failed; cached memberships exceed max-stale window"
+                                        );
                                         stale_external_state_error()
                                     }
                                 }
@@ -441,7 +477,7 @@ fn refresh_status(state: &ExternalUserState) -> RefreshStatus {
         now(),
         state.last_sync_success_at,
         state.last_sync_attempted_at,
-        state.refresh_ttl_seconds,
+        state.refresh_policy.refresh_ttl,
     )
 }
 
@@ -449,10 +485,9 @@ fn refresh_status_at(
     current: NaiveDateTime,
     last_success: Option<NaiveDateTime>,
     last_attempt: Option<NaiveDateTime>,
-    ttl_seconds: i64,
+    refresh_ttl: RefreshTtl,
 ) -> RefreshStatus {
-    let ttl = chrono::Duration::seconds(ttl_seconds);
-    if last_success.is_some_and(|success| current - success < ttl) {
+    if last_success.is_some_and(|success| refresh_ttl.contains(current - success)) {
         return RefreshStatus::Fresh;
     }
 
@@ -461,26 +496,26 @@ fn refresh_status_at(
         (Some(attempt), None) => Some(attempt),
         _ => None,
     };
-    if failed_attempt.is_some_and(|attempt| current - attempt < ttl) {
+    if failed_attempt.is_some_and(|attempt| refresh_ttl.contains(current - attempt)) {
         RefreshStatus::Backoff
     } else {
         RefreshStatus::Due
     }
 }
 
-fn within_max_stale(last_success: Option<NaiveDateTime>, max_stale_seconds: i64) -> bool {
-    within_max_stale_at(now(), last_success, max_stale_seconds)
+fn within_max_stale(last_success: Option<NaiveDateTime>, max_stale: MaxStale) -> bool {
+    within_max_stale_at(now(), last_success, max_stale)
 }
 
 fn within_max_stale_at(
     current: NaiveDateTime,
     last_success: Option<NaiveDateTime>,
-    max_stale_seconds: i64,
+    max_stale: MaxStale,
 ) -> bool {
     let Some(last_success) = last_success else {
         return false;
     };
-    current - last_success < chrono::Duration::seconds(max_stale_seconds)
+    max_stale.contains(current - last_success)
 }
 
 fn cached_external_state_result(state: &ExternalUserState) -> Result<(), ApiError> {
@@ -491,13 +526,23 @@ fn cached_external_state_result_at(
     current: NaiveDateTime,
     state: &ExternalUserState,
 ) -> Result<(), ApiError> {
-    if within_max_stale_at(current, state.last_sync_success_at, state.max_stale_seconds) {
+    if within_max_stale_at(
+        current,
+        state.last_sync_success_at,
+        state.refresh_policy.max_stale,
+    ) {
         tracing::debug!(
             identity_scope = state.identity_scope,
             "External identity refresh is in retry backoff; using cached memberships"
         );
         Ok(())
     } else {
+        tracing::warn!(
+            identity_scope = state.identity_scope,
+            last_sync_attempted_at = ?state.last_sync_attempted_at,
+            last_sync_success_at = ?state.last_sync_success_at,
+            "External identity refresh is in retry backoff; cached memberships exceed max-stale window"
+        );
         stale_external_state_error()
     }
 }
@@ -510,11 +555,31 @@ fn stale_external_state_error() -> Result<(), ApiError> {
 
 struct ExternalUserState {
     identity_scope: String,
-    external_subject: String,
+    refresh_request: ExternalUserRefreshRequest,
     last_sync_attempted_at: Option<NaiveDateTime>,
     last_sync_success_at: Option<NaiveDateTime>,
-    refresh_ttl_seconds: i64,
-    max_stale_seconds: i64,
+    refresh_policy: RefreshPolicy,
+}
+
+impl ExternalUserState {
+    fn new(state: ExternalPrincipalState, refresh_policy: RefreshPolicy) -> Result<Self, ApiError> {
+        let refresh_request =
+            match ExternalUserRefreshRequest::new(state.username, state.external_subject) {
+                Ok(request) => request,
+                Err(error) => {
+                    return Err(ApiError::InternalServerError(format!(
+                        "Invalid external identity state: {error}"
+                    )));
+                }
+            };
+        Ok(Self {
+            identity_scope: state.identity_scope,
+            refresh_request,
+            last_sync_attempted_at: state.last_sync_attempted_at,
+            last_sync_success_at: state.last_sync_success_at,
+            refresh_policy,
+        })
+    }
 }
 
 async fn external_user_state(
@@ -531,14 +596,7 @@ async fn external_user_state(
             configured.name
         ))
     })?;
-    Ok(Some(ExternalUserState {
-        identity_scope: state.identity_scope,
-        external_subject: state.external_subject,
-        last_sync_attempted_at: state.last_sync_attempted_at,
-        last_sync_success_at: state.last_sync_success_at,
-        refresh_ttl_seconds: refresh_policy.refresh_ttl_seconds,
-        max_stale_seconds: refresh_policy.max_stale_seconds,
-    }))
+    ExternalUserState::new(state, refresh_policy).map(Some)
 }
 
 #[cfg(feature = "integration-test-support")]
@@ -593,6 +651,14 @@ mod tests {
             .unwrap()
     }
 
+    fn refresh_ttl(seconds: i64) -> RefreshTtl {
+        RefreshTtl::new(seconds).unwrap()
+    }
+
+    fn refresh_policy() -> RefreshPolicy {
+        RefreshPolicy::new(300, 3600).unwrap()
+    }
+
     #[test]
     fn provider_names_include_local_and_sorted_external_scopes() {
         let registry = AuthProviderRegistry::from_config(AuthProvidersConfig {
@@ -609,7 +675,7 @@ mod tests {
         let success = current - chrono::Duration::seconds(299);
 
         assert_eq!(
-            refresh_status_at(current, Some(success), Some(success), 300),
+            refresh_status_at(current, Some(success), Some(success), refresh_ttl(300)),
             RefreshStatus::Fresh
         );
     }
@@ -621,7 +687,12 @@ mod tests {
         let failed_attempt = current - chrono::Duration::seconds(1);
 
         assert_eq!(
-            refresh_status_at(current, Some(success), Some(failed_attempt), 300),
+            refresh_status_at(
+                current,
+                Some(success),
+                Some(failed_attempt),
+                refresh_ttl(300)
+            ),
             RefreshStatus::Backoff
         );
     }
@@ -633,7 +704,12 @@ mod tests {
         let failed_attempt = current - chrono::Duration::seconds(300);
 
         assert_eq!(
-            refresh_status_at(current, Some(success), Some(failed_attempt), 300),
+            refresh_status_at(
+                current,
+                Some(success),
+                Some(failed_attempt),
+                refresh_ttl(300)
+            ),
             RefreshStatus::Due
         );
     }
@@ -644,7 +720,7 @@ mod tests {
         let success = current - chrono::Duration::seconds(300);
 
         assert_eq!(
-            refresh_status_at(current, Some(success), Some(success), 300),
+            refresh_status_at(current, Some(success), Some(success), refresh_ttl(300)),
             RefreshStatus::Due
         );
     }
@@ -654,16 +730,55 @@ mod tests {
         let current = timestamp();
         let state = ExternalUserState {
             identity_scope: "directory".to_string(),
-            external_subject: "subject".to_string(),
+            refresh_request: ExternalUserRefreshRequest::new("alice", "subject").unwrap(),
             last_sync_attempted_at: Some(current - chrono::Duration::seconds(1)),
             last_sync_success_at: Some(current - chrono::Duration::seconds(3600)),
-            refresh_ttl_seconds: 300,
-            max_stale_seconds: 3600,
+            refresh_policy: refresh_policy(),
         };
 
         assert!(matches!(
             cached_external_state_result_at(current, &state),
             Err(ApiError::ServiceUnavailable(_))
         ));
+    }
+
+    #[test]
+    fn refresh_policy_rejects_a_non_positive_ttl() {
+        let error = RefreshPolicy::new(0, 3600).err().unwrap();
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert_eq!(
+            error.to_string(),
+            "ldap refresh_ttl_seconds must be positive"
+        );
+    }
+
+    #[test]
+    fn refresh_policy_rejects_a_non_positive_max_stale_window() {
+        let error = RefreshPolicy::new(300, 0).err().unwrap();
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert_eq!(error.to_string(), "ldap max_stale_seconds must be positive");
+    }
+
+    #[test]
+    fn external_user_state_rejects_an_empty_provider_subject() {
+        let state = ExternalPrincipalState {
+            identity_scope: "directory".to_string(),
+            username: "alice".to_string(),
+            external_subject: String::new(),
+            last_sync_attempted_at: None,
+            last_sync_success_at: None,
+        };
+
+        let error = ExternalUserState::new(state, refresh_policy())
+            .err()
+            .unwrap();
+
+        assert!(matches!(error, ApiError::InternalServerError(_)));
+        assert_eq!(
+            error.to_string(),
+            "Invalid external identity state: external subject must not be empty"
+        );
     }
 }
