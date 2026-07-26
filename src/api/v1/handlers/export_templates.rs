@@ -13,7 +13,7 @@ use crate::db::traits::history::{
     export_template_history_paginated_with_total_count,
 };
 use crate::errors::ApiError;
-use crate::exports::submit_export_task;
+use crate::exports::{ExportTaskSubmission, submit_export_task};
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection::user_can_on_any;
 use crate::models::search::parse_query_parameter;
@@ -26,7 +26,6 @@ use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{
     AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef, authorize_resources,
-    require_unscoped_runtime_admin,
 };
 use crate::tasks::{idempotency_key_from_headers, kick_task_worker};
 use crate::traits::{CanDelete, CanSave, CanUpdate, SelfAccessors};
@@ -242,12 +241,6 @@ pub async fn run_template_export(
     template_id: web::Path<ExportTemplateID>,
     run: web::Json<ExportTemplateRunRequest>,
 ) -> Result<impl Responder, ApiError> {
-    require_unscoped_runtime_admin(
-        &pool,
-        &requestor.principal,
-        requestor.token_meta.is_scoped(),
-    )
-    .await?;
     let user = &requestor.principal;
     let template_id = template_id.into_inner();
     let run = run.into_inner();
@@ -260,17 +253,24 @@ pub async fn run_template_export(
 
     let template = template_id.instance(&pool).await?;
 
-    let export = template.build_export_request(run)?;
-    let idempotency_key = idempotency_key_from_headers(req.headers())?;
-    let task = submit_export_task(
+    can!(
         &pool,
         user,
-        Some(TokenID::new(requestor.token_meta.id)?),
-        idempotency_key,
+        requestor.scopes(),
+        [Permissions::ReadTemplate],
+        &template
+    );
+
+    let export = template.build_export_request(run)?;
+    let idempotency_key = idempotency_key_from_headers(req.headers())?;
+    let submission = ExportTaskSubmission::for_token(
         export,
-        Some(template),
+        TokenID::new(requestor.token_meta.id)?,
+        requestor.scopes(),
     )
-    .await?;
+    .template(template)
+    .idempotency_key(idempotency_key);
+    let task = submit_export_task(&pool, user, submission).await?;
     kick_task_worker(pool.clone());
     let response = task.to_response()?;
 

@@ -24,6 +24,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Token-retention purge batch sizes below 10 are now rejected so both explicit
   and legacy expiry streams make progress in every cleanup transaction.
 
+### Fixed
+
+- Restored permission-aware import and export submission for ordinary users and
+  scoped tokens. Workers now enforce the submitting token's persisted
+  permission and resource boundary against live grants; stored-template exports
+  require `ReadTemplate`, and identity, template, and integration imports remain
+  restricted to unscoped administrators.
+
 ## [0.0.4] - 2026-07-25
 
 ### Added

@@ -249,15 +249,16 @@ Unknown strings are rejected (fail-closed) wherever scopes are parsed.
 ### Scopes and async tasks
 
 Asynchronous work must not later run with more authority than the request that
-enqueued it. Remote-call tasks record a **scope snapshot** at enqueue time: the
-submitting token id, its effective scoped flag, and both optional scope dimensions.
-The worker reconstructs that snapshot fail-closed and enforces it during execution.
-Legacy permission-only snapshots remain readable.
+enqueued it. Import, export, and remote-call tasks record a **scope snapshot** at
+enqueue time: the submitting token id, its effective scoped flag, and both
+optional scope dimensions. The worker reconstructs that snapshot fail-closed
+and intersects it with the principal's live grants during execution. Legacy
+permission-only snapshots remain readable.
 
-Import and export tasks accept only unscoped runtime administrators, so they store
-an unscoped marker instead of resource scopes. The worker rechecks the principal's
-current runtime-admin authority before execution. Revoking that authority or
-disabling the service account while the task is queued makes the task fail closed.
+Collection-scoped import and export work is available to ordinary principals.
+Identity, template, and integration imports still require an unscoped
+administrator. Disabling a submitting service account while a task is queued
+makes the task fail closed.
 
 ---
 
@@ -409,9 +410,8 @@ Each handler declares the authority it requires. There are two families.
 - `Authenticated` — resolves the principal and, if the token is scoped, its scope
   set. Every downstream authority decision threads the scopes into the
   fail-closed pre-filter. Resource endpoints and task submission use this
-  extractor. Imports and exports add an unscoped runtime-admin gate after
-  authentication; the gate accepts service accounts but rejects scoped tokens.
-  Remote-target invocation retains ordinary scope-aware authorization.
+  extractor. Imports, exports, and remote-target invocation retain ordinary
+  scope-aware authorization.
 
 **Human/IAM (privilege-separated):**
 

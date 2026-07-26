@@ -10880,7 +10880,7 @@
             }
           },
           "403": {
-            "description": "Runtime administrator required",
+            "description": "Forbidden",
             "content": {
               "application/json": {
                 "schema": {
@@ -14565,7 +14565,7 @@
             }
           },
           "403": {
-            "description": "Runtime administrator required",
+            "description": "Forbidden",
             "content": {
               "application/json": {
                 "schema": {

@@ -745,18 +745,14 @@ async fn process_claimed_task(
         ));
     }
 
-    if matches!(
-        task_kind,
-        TaskKind::Import | TaskKind::Export | TaskKind::Backup
-    ) {
+    if task_kind == TaskKind::Backup {
         require_unscoped_runtime_admin(context, &principal, task.submitted_token_scoped).await?;
     }
 
     // Reconstruct the submitting token's scope boundary from the snapshot,
-    // failing closed on any unknown permission string. Import, export, and
-    // backup are runtime-admin operations, so only remote calls consume scoped
-    // snapshots.
-    let snapshot_scope = if task_kind == TaskKind::RemoteCall && task.submitted_token_scoped {
+    // failing closed on any unknown permission or resource entry. Import,
+    // export, and remote-call workers enforce the persisted boundary.
+    let snapshot_scope = if task.submitted_token_scoped {
         Some(crate::models::TokenScope::from_snapshot_json(
             &task.submitted_token_scopes,
         )?)
@@ -775,8 +771,8 @@ async fn process_claimed_task(
     );
 
     match task_kind {
-        TaskKind::Import => execute_import_task(context, task, &principal).await,
-        TaskKind::Export => execute_export_task(pool, task, &principal).await,
+        TaskKind::Import => execute_import_task(context, task, &principal, scopes).await,
+        TaskKind::Export => execute_export_task(context, task, &principal, scopes).await,
         TaskKind::Backup => {
             execute_backup_task(context, task, &principal, scopes, backup_settings).await
         }
