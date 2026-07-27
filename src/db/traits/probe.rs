@@ -3,13 +3,22 @@ use crate::db::{database_schema_is_ready, with_connection};
 use crate::errors::ApiError;
 use crate::traits::BackendContext;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReadinessSnapshot {
-    pub schema_ready: bool,
-    pub maintenance_state: String,
+pub(crate) struct ReadinessSnapshot {
+    schema_ready: bool,
+    maintenance_state: String,
 }
 
-pub trait ProbeBackend {
+impl ReadinessSnapshot {
+    pub(crate) fn schema_is_ready(&self) -> bool {
+        self.schema_ready
+    }
+
+    pub(crate) fn maintenance_state(&self) -> &str {
+        &self.maintenance_state
+    }
+}
+
+pub(crate) trait ProbeBackend {
     async fn readiness_snapshot(&self) -> Result<ReadinessSnapshot, ApiError>;
 }
 

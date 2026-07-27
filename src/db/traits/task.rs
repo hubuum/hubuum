@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::apply_query_options;
 use crate::config::get_config;
 use crate::db::traits::history::resolve_principal_names;
-use crate::db::traits::restore::maintenance_state_conn;
+use crate::db::traits::maintenance::maintenance_state_conn;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{

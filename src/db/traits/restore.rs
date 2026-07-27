@@ -117,6 +117,26 @@ pub(crate) struct RestoreCompletion {
     pub(crate) finished_at: NaiveDateTime,
 }
 
+pub(crate) struct RestoreCoordinatorSnapshot {
+    maintenance_state: String,
+    restore_job_id: Option<i64>,
+    database_now: NaiveDateTime,
+}
+
+impl RestoreCoordinatorSnapshot {
+    pub(crate) fn maintenance_state(&self) -> &str {
+        &self.maintenance_state
+    }
+
+    pub(crate) fn restore_job_id(&self) -> Option<i64> {
+        self.restore_job_id
+    }
+
+    pub(crate) fn database_now(&self) -> NaiveDateTime {
+        self.database_now
+    }
+}
+
 fn validate_restore_identifier(table: &str, column: Option<&str>) -> Result<(), ApiError> {
     let known_table = BACKUP_STATE_SECTIONS
         .iter()
@@ -437,15 +457,15 @@ pub(crate) async fn fail_restore_and_resume_db(
     .await
 }
 
-pub(crate) async fn maintenance_restore_reference_db(
+pub(crate) async fn load_restore_coordinator_snapshot_db(
     pool: &DbPool,
-) -> Result<(String, Option<i64>, NaiveDateTime), ApiError> {
+) -> Result<RestoreCoordinatorSnapshot, ApiError> {
     with_connection(pool, async |conn| {
         use crate::schema::system_maintenance::dsl::{
             id, restore_job_id, state, system_maintenance,
         };
 
-        system_maintenance
+        let (maintenance_state, restore_job_id_value, database_now) = system_maintenance
             .filter(id.eq(1_i16))
             .select((
                 state,
@@ -453,7 +473,12 @@ pub(crate) async fn maintenance_restore_reference_db(
                 sql::<Timestamp>(DATABASE_UTC_NOW_SQL),
             ))
             .first::<(String, Option<i64>, NaiveDateTime)>(conn)
-            .await
+            .await?;
+        Ok::<_, diesel::result::Error>(RestoreCoordinatorSnapshot {
+            maintenance_state,
+            restore_job_id: restore_job_id_value,
+            database_now,
+        })
     })
     .await
 }
@@ -493,15 +518,12 @@ pub(crate) async fn resume_terminal_restore_db(pool: &DbPool, job_id: i64) -> Re
     .await
 }
 
-pub(crate) async fn restore_coordinator_tick_db<F>(
+pub(crate) async fn restore_coordinator_tick_db(
     pool: &DbPool,
     instance_id_value: Uuid,
-    local_work_is_idle: F,
+    local_work_is_idle: impl FnOnce() -> bool + Send,
     expire_validated_jobs: bool,
-) -> Result<(String, Option<i64>, NaiveDateTime), ApiError>
-where
-    F: FnOnce() -> bool + Send,
-{
+) -> Result<RestoreCoordinatorSnapshot, ApiError> {
     with_transaction(pool, async move |conn| -> Result<_, ApiError> {
         if expire_validated_jobs {
             diesel::sql_query(
@@ -556,7 +578,11 @@ where
             .execute(conn)
             .await?;
 
-        Ok((state_value, restore_job_id_value, database_now))
+        Ok(RestoreCoordinatorSnapshot {
+            maintenance_state: state_value,
+            restore_job_id: restore_job_id_value,
+            database_now,
+        })
     })
     .await
 }
@@ -598,22 +624,6 @@ pub(crate) async fn delete_server_instance_db(
     })
     .await?;
     Ok(())
-}
-
-pub(crate) async fn maintenance_state_conn(
-    conn: &mut DbConnection,
-) -> Result<String, diesel::result::Error> {
-    use crate::schema::system_maintenance::dsl::{id, state, system_maintenance};
-
-    system_maintenance
-        .filter(id.eq(1_i16))
-        .select(state)
-        .first::<String>(conn)
-        .await
-}
-
-pub(crate) async fn maintenance_state_db(pool: &DbPool) -> Result<String, ApiError> {
-    with_connection(pool, maintenance_state_conn).await
 }
 
 pub(crate) async fn identity_scope_name_db(
@@ -674,7 +684,7 @@ mod tests {
         let sampled = Arc::new(AtomicBool::new(false));
         let sampled_by_tick = sampled.clone();
 
-        let (state, _, _) = restore_coordinator_tick_db(
+        let snapshot = restore_coordinator_tick_db(
             &pool,
             instance_id,
             move || {
@@ -686,7 +696,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(state, "normal");
+        assert_eq!(snapshot.maintenance_state(), "normal");
         assert!(!sampled.load(Ordering::Acquire));
         delete_server_instance_db(&pool, instance_id).await.unwrap();
     }

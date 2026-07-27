@@ -2,7 +2,7 @@ use crate::db::prelude::*;
 use chrono::{NaiveDateTime, Utc};
 use diesel::sql_types::{BigInt, Bool, Timestamp};
 
-use crate::db::traits::restore::maintenance_state_conn;
+use crate::db::traits::maintenance::maintenance_state_conn;
 use crate::db::{DbConnection, DbPool, with_transaction};
 use crate::errors::ApiError;
 use crate::models::TokenRetentionSettings;

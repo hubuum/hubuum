@@ -62,7 +62,7 @@ pub type DbPool = Pool<DbConnection>;
 /// boundaries can add useful low-cardinality metrics without threading a
 /// label through every backend trait method.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum DbCallSite {
+pub(crate) enum DbCallSite {
     EventDelivery,
     EventFanout,
     EventRetention,
@@ -79,7 +79,7 @@ pub enum DbCallSite {
 }
 
 impl DbCallSite {
-    pub const fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::EventDelivery => "event_delivery",
             Self::EventFanout => "event_fanout",
@@ -380,7 +380,7 @@ fn ambient_db_call_site() -> DbCallSite {
 }
 
 /// Run `future` with bounded database metrics attribution.
-pub async fn with_db_call_site<F>(call_site: DbCallSite, future: F) -> F::Output
+pub(crate) async fn with_db_call_site<F>(call_site: DbCallSite, future: F) -> F::Output
 where
     F: Future,
 {

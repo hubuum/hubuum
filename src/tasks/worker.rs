@@ -57,8 +57,7 @@ static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| 
         .expect("task lease heartbeat runtime must start")
 });
 
-const TASK_LEASE_POOL_SIZE: u32 = 1;
-const TASK_NOTIFICATION_LISTENER_POOL_SIZE: u32 = 1;
+const TASK_AUXILIARY_POOL_SIZE: u32 = 1;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TaskWorkerSettings {
@@ -156,26 +155,23 @@ fn configured_task_poll_interval() -> Duration {
     task_worker_settings().poll_interval
 }
 
-fn new_task_lease_pool() -> DbPool {
-    let config = get_config().expect("task lease renewal requires database configuration");
+fn new_task_auxiliary_pool() -> DbPool {
+    let config = get_config().expect("task worker auxiliary pools require database configuration");
     let settings = DatabasePoolSettings::builder(config.database_url.clone())
-        .max_size(TASK_LEASE_POOL_SIZE)
+        .max_size(TASK_AUXILIARY_POOL_SIZE)
         .statement_timeout_ms(config.db_statement_timeout_ms)
         .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
         .build()
-        .expect("task lease pool settings must be valid");
+        .expect("task worker auxiliary pool settings must be valid");
     init_pool_with_settings(&settings)
 }
 
+fn new_task_lease_pool() -> DbPool {
+    new_task_auxiliary_pool()
+}
+
 fn new_task_notification_listener_pool() -> DbPool {
-    let config = get_config().expect("task notification listener requires database configuration");
-    let settings = DatabasePoolSettings::builder(config.database_url.clone())
-        .max_size(TASK_NOTIFICATION_LISTENER_POOL_SIZE)
-        .statement_timeout_ms(config.db_statement_timeout_ms)
-        .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
-        .build()
-        .expect("task notification listener pool settings must be valid");
-    init_pool_with_settings(&settings)
+    new_task_auxiliary_pool()
 }
 
 #[cfg(not(test))]
@@ -933,6 +929,17 @@ mod lease_heartbeat_tests {
 
     use super::*;
 
+    fn new_single_connection_execution_pool() -> DbPool {
+        let config = get_config().expect("test requires database configuration");
+        let settings = DatabasePoolSettings::builder(config.database_url.clone())
+            .max_size(1)
+            .statement_timeout_ms(config.db_statement_timeout_ms)
+            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+            .build()
+            .unwrap();
+        init_pool_with_settings(&settings)
+    }
+
     #[test]
     fn heartbeat_progresses_while_task_runtime_thread_is_blocked() {
         let renewal_attempts = Arc::new(AtomicUsize::new(0));
@@ -1035,14 +1042,7 @@ mod lease_heartbeat_tests {
 
     #[tokio::test]
     async fn lease_pool_remains_available_when_execution_pool_is_exhausted() {
-        let config = get_config().expect("test requires database configuration");
-        let execution_settings = DatabasePoolSettings::builder(config.database_url.clone())
-            .max_size(1)
-            .statement_timeout_ms(config.db_statement_timeout_ms)
-            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
-            .build()
-            .unwrap();
-        let execution_pool = init_pool_with_settings(&execution_settings);
+        let execution_pool = new_single_connection_execution_pool();
         let _execution_connection = execution_pool.get().await.unwrap();
 
         let lease_pool = new_task_lease_pool();
@@ -1057,14 +1057,7 @@ mod lease_heartbeat_tests {
         let listener_pool = new_task_notification_listener_pool();
         let _listener_connection = listener_pool.get().await.unwrap();
 
-        let config = get_config().expect("test requires database configuration");
-        let execution_settings = DatabasePoolSettings::builder(config.database_url.clone())
-            .max_size(1)
-            .statement_timeout_ms(config.db_statement_timeout_ms)
-            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
-            .build()
-            .unwrap();
-        let execution_pool = init_pool_with_settings(&execution_settings);
+        let execution_pool = new_single_connection_execution_pool();
 
         timeout(Duration::from_secs(5), execution_pool.get())
             .await

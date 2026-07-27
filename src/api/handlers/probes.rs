@@ -48,15 +48,15 @@ pub async fn readyz(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError>
     let snapshot = with_db_call_site(DbCallSite::Readiness, pool.readiness_snapshot())
         .await
         .map_err(|_| ApiError::ServiceUnavailable("Database is not ready".to_string()))?;
-    if !snapshot.schema_ready {
+    if !snapshot.schema_is_ready() {
         return Err(ApiError::ServiceUnavailable(
             "Database schema is not ready".to_string(),
         ));
     }
-    if snapshot.maintenance_state != "normal" {
+    if snapshot.maintenance_state() != "normal" {
         return Err(ApiError::ServiceUnavailable(format!(
             "Service is in '{}' maintenance",
-            snapshot.maintenance_state
+            snapshot.maintenance_state()
         )));
     }
 

@@ -9,12 +9,14 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::db::traits::maintenance::maintenance_state_db;
 use crate::db::traits::restore::{
-    RestoreCompletion, apply_restore_db, delete_server_instance_db, expire_restore_stage_db,
-    fail_restore_and_resume_db, identity_scope_name_db, insert_restore_job_db, load_restore_job_db,
+    RestoreCompletion, RestoreCoordinatorSnapshot, apply_restore_db, delete_server_instance_db,
+    expire_restore_stage_db, fail_restore_and_resume_db, identity_scope_name_db,
+    insert_restore_job_db, load_restore_coordinator_snapshot_db, load_restore_job_db,
     load_restore_status_job_db, maintenance_generation_and_instances_db,
-    maintenance_restore_reference_db, maintenance_state_db, restore_coordinator_tick_db,
-    resume_maintenance_without_job_db, resume_terminal_restore_db, start_restore_draining_db,
+    restore_coordinator_tick_db, resume_maintenance_without_job_db, resume_terminal_restore_db,
+    start_restore_draining_db,
 };
 use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
@@ -637,14 +639,15 @@ pub async fn confirm_restore(
 /// re-checks the job/maintenance state. Once one coordinator commits, the
 /// maintenance row is normal and every restore staging row has been removed.
 pub async fn reconcile_interrupted_restore(pool: &DbPool) -> Result<(), ApiError> {
-    let snapshot = maintenance_restore_reference_db(pool).await?;
+    let snapshot = load_restore_coordinator_snapshot_db(pool).await?;
     reconcile_interrupted_restore_from_snapshot(pool, snapshot).await
 }
 
 async fn reconcile_interrupted_restore_from_snapshot(
     pool: &DbPool,
-    (maintenance_state, restore_job_id, database_now): (String, Option<i64>, NaiveDateTime),
+    snapshot: RestoreCoordinatorSnapshot,
 ) -> Result<(), ApiError> {
+    let maintenance_state = snapshot.maintenance_state();
     if maintenance_state == "normal" {
         return Ok(());
     }
@@ -653,7 +656,7 @@ async fn reconcile_interrupted_restore_from_snapshot(
             "Unknown maintenance state '{maintenance_state}'"
         )));
     }
-    let Some(job_id) = restore_job_id else {
+    let Some(job_id) = snapshot.restore_job_id() else {
         let error = ApiError::InternalServerError(format!(
             "Maintenance state '{maintenance_state}' has no restore job"
         ));
@@ -686,7 +689,7 @@ async fn reconcile_interrupted_restore_from_snapshot(
         fail_restore_and_resume(pool, job_id, &error).await?;
         return Err(error);
     };
-    if !confirmation_is_stale(confirmed_at, database_now) {
+    if !confirmation_is_stale(confirmed_at, snapshot.database_now()) {
         return Ok(());
     }
 
@@ -719,7 +722,7 @@ async fn heartbeat_instance(
     pool: &DbPool,
     instance_id: Uuid,
     expire_validated_jobs: bool,
-) -> Result<(String, Option<i64>, NaiveDateTime), ApiError> {
+) -> Result<RestoreCoordinatorSnapshot, ApiError> {
     restore_coordinator_tick_db(
         pool,
         instance_id,
@@ -760,7 +763,7 @@ async fn wait_for_instances_drained(pool: &DbPool) -> Result<(), ApiError> {
 async fn reconcile_interrupted_restore_with_heartbeat(
     pool: &DbPool,
     instance_id: Uuid,
-    snapshot: (String, Option<i64>, NaiveDateTime),
+    snapshot: RestoreCoordinatorSnapshot,
 ) -> Result<(), ApiError> {
     let reconciliation = reconcile_interrupted_restore_from_snapshot(pool, snapshot);
     tokio::pin!(reconciliation);

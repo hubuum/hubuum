@@ -19,7 +19,7 @@ use crate::db::traits::event_retention::{
     EventRetentionPurgeSummary, EventRetentionSettings, purge_event_retention_batch_conn,
     select_events_for_retention_purge_conn, try_acquire_event_retention_lock,
 };
-use crate::db::traits::restore::maintenance_state_conn;
+use crate::db::traits::maintenance::maintenance_state_conn;
 use crate::db::with_transaction;
 use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;

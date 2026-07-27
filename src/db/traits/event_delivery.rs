@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::db::prelude::*;
-use crate::db::traits::restore::maintenance_state_conn;
+use crate::db::traits::maintenance::maintenance_state_conn;
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
