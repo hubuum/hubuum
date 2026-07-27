@@ -91,13 +91,12 @@ fn record_export_phase_duration(
     }
 }
 
-pub fn export_phase_duration(phase: ExportMetricPhase, duration: Duration) {
-    record_export_phase_duration(
-        phase.as_str(),
-        ExportMetricOutcome::Success.as_str(),
-        duration,
-        None,
-    );
+/// Record a successful export phase using the legacy direct-observation API.
+///
+/// New task instrumentation should prefer [`export_phase_timer`] so failures
+/// and unfinished phases are recorded automatically.
+pub fn export_phase_duration(phase: &'static str, duration: Duration) {
+    record_export_phase_duration(phase, ExportMetricOutcome::Success.as_str(), duration, None);
 }
 
 pub fn export_output_cleanup_run() {

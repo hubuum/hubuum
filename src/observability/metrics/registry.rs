@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use opentelemetry::KeyValue;
-use opentelemetry::metrics::MeterProvider as _;
+use opentelemetry::metrics::{Histogram, Meter, MeterProvider as _};
 use opentelemetry_sdk::metrics::{Aggregation, Instrument, SdkMeterProvider, Stream};
 use prometheus::{IntGaugeVec, Opts, Registry};
 
@@ -24,18 +24,29 @@ const BACKGROUND_BUCKETS_SECONDS: &[f64] = &[
     1800.0, 3600.0,
 ];
 
+const HTTP_REQUEST_DURATION: &str = "hubuum_http_request_duration";
+const DB_CONNECTION_ACQUIRE_DURATION: &str = "hubuum_db_connection_acquire_duration";
+const DB_OPERATION_DURATION: &str = "hubuum_db_operation_duration";
+const REMOTE_CALL_DURATION: &str = "hubuum_remote_call_duration";
+const TASK_QUEUE_WAIT_DURATION: &str = "hubuum_task_queue_wait_duration";
+const TASK_EXECUTION_DURATION: &str = "hubuum_task_execution_duration";
+const COMPUTED_REBUILD_DURATION: &str = "hubuum_computed_field_rebuild_duration";
+const EXPORT_PHASE_DURATION: &str = "hubuum_export_phase_duration";
+const EXPORT_DURATION: &str = "hubuum_export_duration";
+const IMPORT_PHASE_DURATION: &str = "hubuum_import_phase_duration";
+
 fn duration_histogram_view(instrument: &Instrument) -> Option<Stream> {
     let boundaries = match instrument.name() {
-        "hubuum_http_request_duration"
-        | "hubuum_db_connection_acquire_duration"
-        | "hubuum_db_operation_duration" => LATENCY_BUCKETS_SECONDS,
-        "hubuum_remote_call_duration" => OUTBOUND_BUCKETS_SECONDS,
-        "hubuum_task_queue_wait_duration"
-        | "hubuum_task_execution_duration"
-        | "hubuum_computed_field_rebuild_duration"
-        | "hubuum_export_phase_duration"
-        | "hubuum_export_duration"
-        | "hubuum_import_phase_duration" => BACKGROUND_BUCKETS_SECONDS,
+        HTTP_REQUEST_DURATION | DB_CONNECTION_ACQUIRE_DURATION | DB_OPERATION_DURATION => {
+            LATENCY_BUCKETS_SECONDS
+        }
+        REMOTE_CALL_DURATION => OUTBOUND_BUCKETS_SECONDS,
+        TASK_QUEUE_WAIT_DURATION
+        | TASK_EXECUTION_DURATION
+        | COMPUTED_REBUILD_DURATION
+        | EXPORT_PHASE_DURATION
+        | EXPORT_DURATION
+        | IMPORT_PHASE_DURATION => BACKGROUND_BUCKETS_SECONDS,
         _ => return None,
     };
 
@@ -43,11 +54,25 @@ fn duration_histogram_view(instrument: &Instrument) -> Option<Stream> {
         Stream::builder()
             .with_aggregation(Aggregation::ExplicitBucketHistogram {
                 boundaries: boundaries.to_vec(),
-                record_min_max: true,
+                // The Prometheus classic-histogram format exports buckets,
+                // count, and sum, but not exact minima or maxima.
+                record_min_max: false,
             })
             .build()
             .expect("hard-coded duration histogram boundaries should be valid"),
     )
+}
+
+fn duration_histogram(
+    meter: &Meter,
+    name: &'static str,
+    description: &'static str,
+) -> Histogram<f64> {
+    meter
+        .f64_histogram(name)
+        .with_description(description)
+        .with_unit("s")
+        .build()
 }
 
 fn build_provider(registry: &Registry) -> Result<SdkMeterProvider, ApiError> {
@@ -114,11 +139,11 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_http_requests")
             .with_description("HTTP requests handled")
             .build(),
-        http_request_duration: meter
-            .f64_histogram("hubuum_http_request_duration")
-            .with_description("HTTP request duration")
-            .with_unit("s")
-            .build(),
+        http_request_duration: duration_histogram(
+            &meter,
+            HTTP_REQUEST_DURATION,
+            "HTTP request duration",
+        ),
         http_in_flight: meter
             .i64_up_down_counter("hubuum_http_requests_in_flight")
             .with_description("HTTP requests currently in flight")
@@ -135,20 +160,20 @@ pub fn init() -> Result<(), ApiError> {
             .u64_gauge("hubuum_db_pool_connections")
             .with_description("Database pool connections by state")
             .build(),
-        db_connection_acquire_duration: meter
-            .f64_histogram("hubuum_db_connection_acquire_duration")
-            .with_description("Database connection acquisition duration")
-            .with_unit("s")
-            .build(),
+        db_connection_acquire_duration: duration_histogram(
+            &meter,
+            DB_CONNECTION_ACQUIRE_DURATION,
+            "Database connection acquisition duration",
+        ),
         db_connection_acquire_failures: meter
             .u64_counter("hubuum_db_connection_acquire_failures")
             .with_description("Database connection acquisition failures")
             .build(),
-        db_operation_duration: meter
-            .f64_histogram("hubuum_db_operation_duration")
-            .with_description("Database helper operation duration")
-            .with_unit("s")
-            .build(),
+        db_operation_duration: duration_histogram(
+            &meter,
+            DB_OPERATION_DURATION,
+            "Database helper operation duration",
+        ),
         db_operation_errors: meter
             .u64_counter("hubuum_db_operation_errors")
             .with_description("Database helper operation failures")
@@ -169,16 +194,16 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_task_completions")
             .with_description("Tasks completed by terminal status")
             .build(),
-        task_queue_wait_duration: meter
-            .f64_histogram("hubuum_task_queue_wait_duration")
-            .with_description("Task queue wait duration")
-            .with_unit("s")
-            .build(),
-        task_execution_duration: meter
-            .f64_histogram("hubuum_task_execution_duration")
-            .with_description("Task execution duration")
-            .with_unit("s")
-            .build(),
+        task_queue_wait_duration: duration_histogram(
+            &meter,
+            TASK_QUEUE_WAIT_DURATION,
+            "Task queue wait duration",
+        ),
+        task_execution_duration: duration_histogram(
+            &meter,
+            TASK_EXECUTION_DURATION,
+            "Task execution duration",
+        ),
         task_workers_configured: meter
             .u64_gauge("hubuum_task_workers_configured")
             .with_description("Configured task workers in this process")
@@ -221,11 +246,11 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_computed_field_rebuild_completions")
             .with_description("Computed-field rebuild terminal outcomes")
             .build(),
-        computed_rebuild_duration: meter
-            .f64_histogram("hubuum_computed_field_rebuild_duration")
-            .with_description("Computed-field rebuild duration")
-            .with_unit("s")
-            .build(),
+        computed_rebuild_duration: duration_histogram(
+            &meter,
+            COMPUTED_REBUILD_DURATION,
+            "Computed-field rebuild duration",
+        ),
         task_output_cleanup_runs: meter
             .u64_counter("hubuum_task_output_cleanup_runs")
             .with_description("Stored task output cleanup runs")
@@ -239,16 +264,16 @@ pub fn init() -> Result<(), ApiError> {
             .with_description("Stored task outputs deleted by cleanup")
             .build(),
         export_template_info,
-        export_phase_duration: meter
-            .f64_histogram("hubuum_export_phase_duration")
-            .with_description("Export phase duration")
-            .with_unit("s")
-            .build(),
-        export_template_duration: meter
-            .f64_histogram("hubuum_export_duration")
-            .with_description("Overall export duration by stored template identity")
-            .with_unit("s")
-            .build(),
+        export_phase_duration: duration_histogram(
+            &meter,
+            EXPORT_PHASE_DURATION,
+            "Export phase duration",
+        ),
+        export_template_duration: duration_histogram(
+            &meter,
+            EXPORT_DURATION,
+            "Overall export duration by stored template identity",
+        ),
         export_completions: meter
             .u64_counter("hubuum_export_completions")
             .with_description("Successfully persisted export outputs")
@@ -261,11 +286,11 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_export_warnings")
             .with_description("Warnings on successfully persisted exports")
             .build(),
-        import_duration: meter
-            .f64_histogram("hubuum_import_phase_duration")
-            .with_description("Import phase duration")
-            .with_unit("s")
-            .build(),
+        import_phase_duration: duration_histogram(
+            &meter,
+            IMPORT_PHASE_DURATION,
+            "Import phase duration",
+        ),
         import_processed_items: meter
             .u64_counter("hubuum_import_processed_items")
             .with_description("Import items processed by terminal tasks")
@@ -278,11 +303,11 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_import_failed_items")
             .with_description("Import items completed with failure")
             .build(),
-        remote_call_duration: meter
-            .f64_histogram("hubuum_remote_call_duration")
-            .with_description("Remote call duration")
-            .with_unit("s")
-            .build(),
+        remote_call_duration: duration_histogram(
+            &meter,
+            REMOTE_CALL_DURATION,
+            "Remote call duration",
+        ),
         remote_call_results: meter
             .u64_counter("hubuum_remote_call_results")
             .with_description("Remote call outcomes")
@@ -433,7 +458,7 @@ mod tests {
 
     #[test]
     fn request_histograms_use_subsecond_latency_buckets() {
-        let bounds = histogram_bucket_bounds("hubuum_http_request_duration", 0.004);
+        let bounds = histogram_bucket_bounds(HTTP_REQUEST_DURATION, 0.004);
 
         assert_eq!(
             bounds,
@@ -446,7 +471,7 @@ mod tests {
 
     #[test]
     fn task_histograms_cover_long_running_background_work() {
-        let bounds = histogram_bucket_bounds("hubuum_task_execution_duration", 75.0);
+        let bounds = histogram_bucket_bounds(TASK_EXECUTION_DURATION, 75.0);
 
         assert_eq!(
             bounds,

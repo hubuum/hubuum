@@ -1,15 +1,13 @@
 use std::time::{Duration, Instant};
 
-use crate::db::traits::metrics::{
-    EventMetricsSnapshot, InventoryMetricsSnapshot, TaskMetricsSnapshot,
-};
+use crate::db::traits::metrics::{EventMetricsSnapshot, InventoryGaugeSnapshot, TaskGaugeSnapshot};
 
 const DB_SCRAPE_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub(super) struct ScrapeCache {
-    pub(super) inventory: CachedSnapshot<InventoryMetricsSnapshot>,
-    pub(super) tasks: CachedSnapshot<TaskMetricsSnapshot>,
+    pub(super) inventory: CachedSnapshot<InventoryGaugeSnapshot>,
+    pub(super) tasks: CachedSnapshot<TaskGaugeSnapshot>,
     pub(super) events: CachedSnapshot<EventMetricsSnapshot>,
 }
 
@@ -46,5 +44,34 @@ impl<T: Clone> CachedSnapshot<T> {
     pub(super) fn store(&mut self, value: T, now: Instant) {
         self.value = Some(value);
         self.refreshed_at = Some(now);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::{CachedSnapshot, DB_SCRAPE_CACHE_TTL};
+
+    #[test]
+    fn cached_snapshot_is_fresh_before_the_ttl() {
+        let stored_at = Instant::now();
+        let mut snapshot = CachedSnapshot::default();
+        snapshot.store("value", stored_at);
+
+        assert_eq!(
+            snapshot.fresh_value(stored_at + Duration::from_secs(29)),
+            Some("value")
+        );
+    }
+
+    #[test]
+    fn expired_snapshot_remains_available_as_a_stale_fallback() {
+        let stored_at = Instant::now();
+        let mut snapshot = CachedSnapshot::default();
+        snapshot.store("value", stored_at);
+
+        assert_eq!(snapshot.fresh_value(stored_at + DB_SCRAPE_CACHE_TTL), None);
+        assert_eq!(snapshot.cached_value(), Some("value"));
     }
 }

@@ -1185,6 +1185,7 @@ where
     .await?;
     if let Err(error) = enforce_export_stage_timeout(query_metric.elapsed(), "query execution") {
         query_metric.finish(metrics::ExportMetricOutcome::Timeout);
+        total_metric.finish(metrics::ExportMetricOutcome::Timeout);
         return Err(error);
     }
     let query_elapsed = query_metric.finish(metrics::ExportMetricOutcome::Success);
@@ -1220,6 +1221,7 @@ where
         enforce_export_stage_timeout(hydration_metric.elapsed(), "relation hydration")
     {
         hydration_metric.finish(metrics::ExportMetricOutcome::Timeout);
+        total_metric.finish(metrics::ExportMetricOutcome::Timeout);
         return Err(error);
     }
     let hydration_elapsed = hydration_metric.finish(metrics::ExportMetricOutcome::Success);
@@ -1265,10 +1267,11 @@ where
     if let Err(error) = enforce_export_stage_timeout(render_metric.elapsed(), "template rendering")
     {
         render_metric.finish(metrics::ExportMetricOutcome::Timeout);
+        total_metric.finish(metrics::ExportMetricOutcome::Timeout);
         return Err(error);
     }
     let render_elapsed = render_metric.finish(metrics::ExportMetricOutcome::Success);
-    let total_elapsed = total_metric.finish(metrics::ExportMetricOutcome::Success);
+    let total_elapsed = total_metric.elapsed();
     timings.render = render_elapsed;
     timings.total = total_elapsed;
     log_export_stage_metrics(task.id, &runtime, timings);
@@ -1317,6 +1320,10 @@ where
     )
     .await?;
 
+    // Only label the total phase successful after the output and terminal task
+    // state have been persisted. If finalization fails, the timer's drop path
+    // records an error outcome instead.
+    total_metric.finish(metrics::ExportMetricOutcome::Success);
     metrics::export_completed(metric_scope, metric_content_type);
     if metric_truncated {
         metrics::export_truncated(metric_scope, metric_content_type);

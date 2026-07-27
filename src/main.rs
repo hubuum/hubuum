@@ -340,14 +340,12 @@ async fn main() -> std::io::Result<()> {
     let result = if background_worker_count() > 0 {
         tokio::select! {
             result = server => result,
-            exit = wait_for_background_worker_exit() => {
+            error = wait_for_background_worker_failure() => {
                 error!(
                     message = "Background worker supervision failed",
-                    reason = %exit,
+                    reason = %error,
                 );
-                Err(std::io::Error::other(format!(
-                    "Background worker supervision failed: {exit}"
-                )))
+                Err(error)
             }
         }
     } else {
@@ -367,22 +365,23 @@ fn start_background_workers(context: &AppContext, backup_settings: &BackupSettin
     ensure_token_retention_worker_running(context.db_pool.clone());
 }
 
+async fn wait_for_background_worker_failure() -> std::io::Error {
+    let exit = wait_for_background_worker_exit().await;
+    std::io::Error::other(format!("Background worker supervision failed: {exit}"))
+}
+
 async fn supervise_worker_process(metrics_server: Option<Server>) -> std::io::Result<()> {
     let Some(metrics_server) = metrics_server else {
         return tokio::select! {
             shutdown = wait_for_shutdown_signal() => shutdown,
-            exit = wait_for_background_worker_exit() => Err(std::io::Error::other(format!(
-                "Background worker supervision failed: {exit}"
-            ))),
+            error = wait_for_background_worker_failure() => Err(error),
         };
     };
 
     let metrics_server_handle = metrics_server.handle();
     let result = tokio::select! {
         shutdown = wait_for_shutdown_signal() => shutdown,
-        exit = wait_for_background_worker_exit() => Err(std::io::Error::other(format!(
-            "Background worker supervision failed: {exit}"
-        ))),
+        error = wait_for_background_worker_failure() => Err(error),
         result = metrics_server => match result {
             Ok(()) => Err(std::io::Error::other(
                 "Worker metrics HTTP server stopped unexpectedly",

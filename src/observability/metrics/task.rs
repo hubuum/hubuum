@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 use opentelemetry::KeyValue;
 
 use crate::db::DbPool;
-use crate::db::traits::metrics::{MetricsBackend, TaskMetricsSnapshot};
+use crate::db::traits::metrics::{MetricsRefreshBackend, TaskGaugeSnapshot};
 use crate::models::{TaskKind, TaskStatus};
 
-use super::scrape::{RefreshOutcome, record_refresh_attempt};
+use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use super::{Metrics, current};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,11 +126,11 @@ pub(super) async fn refresh_task_gauges(metrics: &Metrics, pool: &DbPool) {
     }
 
     let refresh_started_at = Instant::now();
-    match pool.metrics_task_snapshot().await {
+    match pool.metrics_task_gauge_snapshot().await {
         Ok(snapshot) => {
             record_refresh_attempt(
                 metrics,
-                "tasks",
+                RefreshSource::Tasks,
                 refresh_started_at,
                 RefreshOutcome::Succeeded,
             );
@@ -138,7 +138,12 @@ pub(super) async fn refresh_task_gauges(metrics: &Metrics, pool: &DbPool) {
             store_task_snapshot(metrics, snapshot);
         }
         Err(_) => {
-            record_refresh_attempt(metrics, "tasks", refresh_started_at, RefreshOutcome::Failed);
+            record_refresh_attempt(
+                metrics,
+                RefreshSource::Tasks,
+                refresh_started_at,
+                RefreshOutcome::Failed,
+            );
             if let Some(snapshot) = stale_task_snapshot(metrics) {
                 record_task_snapshot(metrics, &snapshot);
             } else {
@@ -148,7 +153,7 @@ pub(super) async fn refresh_task_gauges(metrics: &Metrics, pool: &DbPool) {
     }
 }
 
-fn cached_task_snapshot(metrics: &Metrics) -> Option<TaskMetricsSnapshot> {
+fn cached_task_snapshot(metrics: &Metrics) -> Option<TaskGaugeSnapshot> {
     let now = Instant::now();
     metrics
         .scrape_cache
@@ -157,7 +162,7 @@ fn cached_task_snapshot(metrics: &Metrics) -> Option<TaskMetricsSnapshot> {
         .and_then(|cache| cache.tasks.fresh_value(now))
 }
 
-fn stale_task_snapshot(metrics: &Metrics) -> Option<TaskMetricsSnapshot> {
+fn stale_task_snapshot(metrics: &Metrics) -> Option<TaskGaugeSnapshot> {
     metrics
         .scrape_cache
         .lock()
@@ -165,13 +170,13 @@ fn stale_task_snapshot(metrics: &Metrics) -> Option<TaskMetricsSnapshot> {
         .and_then(|cache| cache.tasks.cached_value())
 }
 
-fn store_task_snapshot(metrics: &Metrics, snapshot: TaskMetricsSnapshot) {
+fn store_task_snapshot(metrics: &Metrics, snapshot: TaskGaugeSnapshot) {
     if let Ok(mut cache) = metrics.scrape_cache.lock() {
         cache.tasks.store(snapshot, Instant::now());
     }
 }
 
-fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskMetricsSnapshot) {
+fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskGaugeSnapshot) {
     let now = chrono::Utc::now().naive_utc();
     let mut counts = HashMap::new();
 

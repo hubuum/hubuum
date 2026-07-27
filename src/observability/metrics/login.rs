@@ -4,7 +4,7 @@ use opentelemetry::KeyValue;
 
 use crate::middlewares::rate_limit;
 
-use super::scrape::{RefreshOutcome, record_refresh_attempt};
+use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use super::{Metrics, current};
 
 pub fn login_attempt(outcome: &'static str) {
@@ -42,7 +42,7 @@ pub(super) async fn refresh_login_limiter_gauges(metrics: &Metrics) {
         Ok(snapshots) => {
             record_refresh_attempt(
                 metrics,
-                "login_limiter",
+                RefreshSource::LoginLimiter,
                 refresh_started_at,
                 RefreshOutcome::Succeeded,
             );
@@ -51,7 +51,7 @@ pub(super) async fn refresh_login_limiter_gauges(metrics: &Metrics) {
         Err(_) => {
             record_refresh_attempt(
                 metrics,
-                "login_limiter",
+                RefreshSource::LoginLimiter,
                 refresh_started_at,
                 RefreshOutcome::Failed,
             );

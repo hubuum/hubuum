@@ -7,7 +7,7 @@ use crate::db::traits::event_observability::load_event_metrics_snapshot;
 use crate::db::traits::metrics::EventMetricsSnapshot;
 use crate::models::{EventDeliveryStatusCounts, EventWorkerHealth};
 
-use super::scrape::{RefreshOutcome, record_refresh_attempt};
+use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use super::{Metrics, current};
 
 pub fn event_worker_wakeup(worker: &'static str, kind: &'static str) {
@@ -30,7 +30,7 @@ pub(super) async fn refresh_event_gauges(metrics: &Metrics, pool: &DbPool) {
         Ok(snapshot) => {
             record_refresh_attempt(
                 metrics,
-                "events",
+                RefreshSource::Events,
                 refresh_started_at,
                 RefreshOutcome::Succeeded,
             );
@@ -40,7 +40,7 @@ pub(super) async fn refresh_event_gauges(metrics: &Metrics, pool: &DbPool) {
         Err(_) => {
             record_refresh_attempt(
                 metrics,
-                "events",
+                RefreshSource::Events,
                 refresh_started_at,
                 RefreshOutcome::Failed,
             );

@@ -51,17 +51,17 @@ fn import_phase_attrs(phase: &'static str, outcome: &'static str) -> [KeyValue; 
 fn record_import_phase_duration(phase: &'static str, outcome: &'static str, duration: Duration) {
     if let Some(metrics) = current() {
         metrics
-            .import_duration
+            .import_phase_duration
             .record(duration.as_secs_f64(), &import_phase_attrs(phase, outcome));
     }
 }
 
-pub fn import_phase_duration(phase: ImportMetricPhase, duration: Duration) {
-    record_import_phase_duration(
-        phase.as_str(),
-        ImportMetricOutcome::Success.as_str(),
-        duration,
-    );
+/// Record a successful import phase using the legacy direct-observation API.
+///
+/// New task instrumentation should prefer [`import_phase_timer`] so failures
+/// and unfinished phases are recorded automatically.
+pub fn import_phase_duration(phase: &'static str, duration: Duration) {
+    record_import_phase_duration(phase, ImportMetricOutcome::Success.as_str(), duration);
 }
 
 #[must_use = "an import phase timer must be finished or dropped to record its outcome"]

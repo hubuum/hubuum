@@ -16,6 +16,27 @@ pub(super) enum RefreshOutcome {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RefreshSource {
+    Database,
+    Events,
+    Inventory,
+    LoginLimiter,
+    Tasks,
+}
+
+impl RefreshSource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Database => "database",
+            Self::Events => "events",
+            Self::Inventory => "inventory",
+            Self::LoginLimiter => "login_limiter",
+            Self::Tasks => "tasks",
+        }
+    }
+}
+
 pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
     let metrics = get()?;
     with_db_call_site(
@@ -49,7 +70,7 @@ async fn refresh_scrape_gauges(metrics: &Metrics, pool: &DbPool) {
         metrics.refresh_skipped.add(
             1,
             &[
-                KeyValue::new("source", "database"),
+                KeyValue::new("source", RefreshSource::Database.as_str()),
                 KeyValue::new("reason", "concurrent"),
             ],
         );
@@ -58,11 +79,11 @@ async fn refresh_scrape_gauges(metrics: &Metrics, pool: &DbPool) {
 
 pub(super) fn record_refresh_attempt(
     metrics: &Metrics,
-    source: &'static str,
+    source: RefreshSource,
     started_at: Instant,
     outcome: RefreshOutcome,
 ) {
-    let attrs = [KeyValue::new("source", source)];
+    let attrs = [KeyValue::new("source", source.as_str())];
     metrics
         .refresh_duration
         .record(started_at.elapsed().as_secs_f64(), &attrs);
@@ -77,5 +98,25 @@ pub(super) fn record_refresh_attempt(
             );
         }
         RefreshOutcome::Failed => metrics.refresh_failures.add(1, &attrs),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RefreshSource;
+
+    #[test]
+    fn refresh_sources_have_stable_bounded_labels() {
+        assert_eq!(
+            [
+                RefreshSource::Database,
+                RefreshSource::Events,
+                RefreshSource::Inventory,
+                RefreshSource::LoginLimiter,
+                RefreshSource::Tasks,
+            ]
+            .map(RefreshSource::as_str),
+            ["database", "events", "inventory", "login_limiter", "tasks",]
+        );
     }
 }

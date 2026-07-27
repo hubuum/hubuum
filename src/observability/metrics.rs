@@ -121,7 +121,7 @@ struct Metrics {
     export_completions: Counter<u64>,
     export_truncations: Counter<u64>,
     export_warnings: Counter<u64>,
-    import_duration: Histogram<f64>,
+    import_phase_duration: Histogram<f64>,
     import_processed_items: Counter<u64>,
     import_succeeded_items: Counter<u64>,
     import_failed_items: Counter<u64>,

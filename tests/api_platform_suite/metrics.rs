@@ -88,40 +88,18 @@ async fn metrics_endpoint_is_best_effort_when_database_refresh_fails() {
 }
 
 #[actix_web::test]
-async fn metrics_endpoint_exports_representative_bounded_families() {
-    let _lock = METRICS_TEST_LOCK.lock().await;
-    metrics::init().unwrap();
-    clear_metrics_scrape_cache();
-
-    metrics::export_completed("objects_in_class", "application/json");
-    metrics::export_truncated("objects_in_class", "application/json");
-    metrics::export_warnings("objects_in_class", "application/json", 2);
-    let template_id = ExportTemplateID::new(42).unwrap();
-    metrics::export_phase_timer(metrics::ExportMetricPhase::Render, Some(template_id))
-        .finish(metrics::ExportMetricOutcome::Success);
-    metrics::export_phase_timer(metrics::ExportMetricPhase::Total, Some(template_id))
-        .finish(metrics::ExportMetricOutcome::Success);
-    metrics::import_phase_duration(
-        metrics::ImportMetricPhase::Planning,
-        Duration::from_millis(5),
-    );
-    metrics::import_items(3, 2, 1);
-    metrics::login_lockout("subnet");
-    metrics::client_allowlist_rejected("disallowed_ip");
-    metrics::remote_call_finished("GET", "none", "timeout", Duration::from_millis(10));
-    metrics::event_worker_wakeup("fanout", "poll");
-    metrics::task_worker_config(0, Duration::from_millis(200));
-
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(unreachable_pool()))
-            .route("/metrics", web::get().to(metrics::scrape)),
-    )
+async fn export_metrics_use_bounded_phase_and_template_labels() {
+    let body = scrape_recorded_metrics(|| {
+        metrics::export_completed("objects_in_class", "application/json");
+        metrics::export_truncated("objects_in_class", "application/json");
+        metrics::export_warnings("objects_in_class", "application/json", 2);
+        let template_id = ExportTemplateID::new(42).unwrap();
+        metrics::export_phase_timer(metrics::ExportMetricPhase::Render, Some(template_id))
+            .finish(metrics::ExportMetricOutcome::Success);
+        metrics::export_phase_timer(metrics::ExportMetricPhase::Total, Some(template_id))
+            .finish(metrics::ExportMetricOutcome::Success);
+    })
     .await;
-    let response =
-        test::call_service(&app, test::TestRequest::get().uri("/metrics").to_request()).await;
-    let body = test::read_body(response).await;
-    let body = std::str::from_utf8(&body).unwrap();
 
     for metric_name in [
         "hubuum_export_completions_total",
@@ -129,47 +107,85 @@ async fn metrics_endpoint_exports_representative_bounded_families() {
         "hubuum_export_phase_duration_seconds",
         "hubuum_export_truncations_total",
         "hubuum_export_warnings_total",
-        "hubuum_import_phase_duration_seconds",
-        "hubuum_import_processed_items_total",
-        "hubuum_import_succeeded_items_total",
-        "hubuum_import_failed_items_total",
-        "hubuum_login_lockouts_total",
-        "hubuum_client_allowlist_rejections_total",
-        "hubuum_remote_call_results_total",
-        "hubuum_event_worker_wakeups_total",
-        "hubuum_task_workers_configured",
-        "hubuum_task_poll_interval_seconds",
     ] {
         assert!(body.contains(metric_name), "missing metric: {metric_name}");
     }
     assert!(body.contains("template_id=\"42\""));
     assert!(body.contains("phase=\"render\""));
     assert!(body.contains("outcome=\"success\""));
+}
+
+#[actix_web::test]
+async fn import_metrics_export_phase_and_item_families() {
+    let body = scrape_recorded_metrics(|| {
+        metrics::import_phase_duration("planning", Duration::from_millis(5));
+        metrics::import_items(3, 2, 1);
+    })
+    .await;
+
+    for metric_name in [
+        "hubuum_import_phase_duration_seconds",
+        "hubuum_import_processed_items_total",
+        "hubuum_import_succeeded_items_total",
+        "hubuum_import_failed_items_total",
+    ] {
+        assert!(body.contains(metric_name), "missing metric: {metric_name}");
+    }
+    assert!(body.contains("phase=\"planning\""));
+    assert!(body.contains("outcome=\"success\""));
+}
+
+#[actix_web::test]
+async fn login_lockout_metrics_export_the_scope() {
+    let body = scrape_recorded_metrics(|| metrics::login_lockout("subnet")).await;
+
+    assert!(body.contains("hubuum_login_lockouts_total{scope=\"subnet\"}"));
+}
+
+#[actix_web::test]
+async fn client_allowlist_metrics_export_the_rejection_reason() {
+    let body =
+        scrape_recorded_metrics(|| metrics::client_allowlist_rejected("disallowed_ip")).await;
+
+    assert!(body.contains("hubuum_client_allowlist_rejections_total{reason=\"disallowed_ip\"}"));
+}
+
+#[actix_web::test]
+async fn remote_call_metrics_export_the_terminal_outcome() {
+    let body = scrape_recorded_metrics(|| {
+        metrics::remote_call_finished("GET", "none", "timeout", Duration::from_millis(10));
+    })
+    .await;
+
+    assert!(body.contains("hubuum_remote_call_duration_seconds"));
+    assert!(body.contains("hubuum_remote_call_results_total"));
     assert!(body.contains("outcome=\"timeout\""));
+}
+
+#[actix_web::test]
+async fn event_worker_metrics_export_bounded_wakeup_labels() {
+    let body = scrape_recorded_metrics(|| metrics::event_worker_wakeup("fanout", "poll")).await;
+
     assert!(body.contains("hubuum_event_worker_wakeups_total{kind=\"poll\",worker=\"fanout\"}"));
+}
+
+#[actix_web::test]
+async fn task_worker_config_metrics_use_dimensionally_typed_families() {
+    let body =
+        scrape_recorded_metrics(|| metrics::task_worker_config(0, Duration::from_millis(200)))
+            .await;
+
     assert!(body.contains("hubuum_task_workers_configured 0"));
     assert!(body.contains("hubuum_task_poll_interval_seconds 0.2"));
 }
 
 #[actix_web::test]
 async fn task_queue_wait_uses_kind_only_labels() {
-    let _lock = METRICS_TEST_LOCK.lock().await;
-    metrics::init().unwrap();
-    clear_metrics_scrape_cache();
-
-    metrics::task_claimed("remote_call", Some(Duration::from_millis(25)));
-    metrics::task_completed("remote_call", "succeeded", Some(Duration::from_millis(5)));
-
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(unreachable_pool()))
-            .route("/metrics", web::get().to(metrics::scrape)),
-    )
+    let body = scrape_recorded_metrics(|| {
+        metrics::task_claimed("remote_call", Some(Duration::from_millis(25)));
+        metrics::task_completed("remote_call", "succeeded", Some(Duration::from_millis(5)));
+    })
     .await;
-    let req = test::TestRequest::get().uri("/metrics").to_request();
-    let response = test::call_service(&app, req).await;
-    let body = test::read_body(response).await;
-    let body = std::str::from_utf8(&body).unwrap();
 
     assert!(body.contains("hubuum_task_queue_wait_duration_seconds_bucket{kind=\"remote_call\""));
     assert!(!body.contains("hubuum_task_queue_wait_duration_seconds_bucket{final_status="));
@@ -268,4 +284,22 @@ fn unreachable_pool() -> DbPool {
         .max_size(1)
         .connection_timeout(Duration::from_millis(5))
         .build_unchecked(manager)
+}
+
+async fn scrape_recorded_metrics(record: impl FnOnce()) -> String {
+    let _lock = METRICS_TEST_LOCK.lock().await;
+    metrics::init().unwrap();
+    clear_metrics_scrape_cache();
+    record();
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(unreachable_pool()))
+            .route("/metrics", web::get().to(metrics::scrape)),
+    )
+    .await;
+    let response =
+        test::call_service(&app, test::TestRequest::get().uri("/metrics").to_request()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    String::from_utf8(test::read_body(response).await.to_vec()).unwrap()
 }
