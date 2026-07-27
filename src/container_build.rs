@@ -501,6 +501,23 @@ fn single_host_installer_generates_redundant_http_upstreams() {
 }
 
 #[test]
+fn single_host_direct_routing_proxies_metrics_to_the_api() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
+        .expect("single-host installer should be readable");
+    let direct_start = installer
+        .find(r#"elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "direct" ]]; then"#)
+        .expect("installer should generate direct shared-host routing");
+    let direct_end = installer[direct_start..]
+        .find(r#"elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "prefixed" ]]; then"#)
+        .map(|offset| direct_start + offset)
+        .expect("direct shared-host routing should end before prefixed routing");
+    let direct_template = &installer[direct_start..direct_end];
+
+    assert!(direct_template.contains("handle /metrics {\n\t\timport api_proxy\n\t}"));
+}
+
+#[test]
 fn single_host_installer_emits_canonical_caddyfile_indentation() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))

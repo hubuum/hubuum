@@ -15,6 +15,8 @@ Database-backed gauges are refreshed on a short in-process cache and are best-ef
 
 The metrics endpoint uses the main HTTP listener and is subject to `HUBUUM_CLIENT_ALLOWLIST`. Put it behind network-level access controls appropriate for operational data.
 
+For single-host deployments using shared-host `direct` routing, Caddy sends `/metrics` to the backend. With shared-host `prefixed` routing, scrape `/hubuum-api/metrics` instead. Shared-host `bff` routing does not expose the backend metrics endpoint publicly.
+
 ## Cardinality Rules
 
 Metric labels must stay bounded. Hubuum metrics do not use usernames, user IDs, client IPs, raw URL paths, object IDs, class names, collection names, rendered remote URLs, template names, idempotency keys, or error messages.

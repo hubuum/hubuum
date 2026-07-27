@@ -110,7 +110,7 @@ sudo ./scripts/install-single-host.sh \
 
 Modes:
 
-- `direct`: sends backend-owned paths such as `/api/v0...`, `/api/v1...`, `/api-doc...`, and `/swagger-ui...` directly to the backend, with everything else going to the frontend. This is the recommended shared-host mode now that frontend-owned BFF routes live under `/_hubuum-bff/...`.
+- `direct`: sends backend-owned paths such as `/api/v0...`, `/api/v1...`, `/api-doc...`, `/swagger-ui...`, and `/metrics` directly to the backend, with everything else going to the frontend. This is the recommended shared-host mode now that frontend-owned BFF routes live under `/_hubuum-bff/...`.
 - `prefixed`: exposes the backend under `/hubuum-api/` and sends everything else to the frontend. This is useful if you want to avoid exposing backend routes at their native paths.
 - `bff`: sends all traffic to the frontend. The backend is not directly exposed by Caddy in this mode; use it only when frontend proxy coverage is the intended public API surface.
 
