@@ -89,6 +89,8 @@ async fn metrics_endpoint_exports_representative_bounded_families() {
     metrics::export_completed("objects_in_class", "application/json");
     metrics::export_truncated("objects_in_class", "application/json");
     metrics::export_warnings("objects_in_class", "application/json", 2);
+    metrics::export_template_observed(42, "inventory");
+    metrics::export_phase_duration("render", Duration::from_millis(12), Some(42));
     metrics::import_phase_duration("planning", Duration::from_millis(5));
     metrics::import_items(3, 2, 1);
     metrics::login_lockout("subnet");
@@ -108,6 +110,8 @@ async fn metrics_endpoint_exports_representative_bounded_families() {
 
     for metric_name in [
         "hubuum_export_completions_total",
+        "hubuum_export_phase_duration_seconds",
+        "hubuum_export_template_info",
         "hubuum_export_truncations_total",
         "hubuum_export_warnings_total",
         "hubuum_import_phase_duration_seconds",
@@ -120,6 +124,8 @@ async fn metrics_endpoint_exports_representative_bounded_families() {
     ] {
         assert!(body.contains(metric_name), "missing metric: {metric_name}");
     }
+    assert!(body.contains("template_id=\"42\""));
+    assert!(body.contains("template_name=\"inventory\""));
     assert!(body.contains("outcome=\"timeout\""));
 }
 

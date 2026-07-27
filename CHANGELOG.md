@@ -14,12 +14,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   retention, restore-coordinator, lease, and metrics-refresh work.
 - Queued task transactions now wake task workers across processes with
   transactional PostgreSQL notifications.
+- Export phase metrics now identify the stored template ID, with a separate
+  template-info metric mapping observed IDs to names. Export task details also
+  expose the persisted total, query, hydration, and render timings.
 
 ### Changed
 
 - **Breaking (metrics):** database metric series now include the `caller`
   label. Update recording rules or exact label-set matches that assume the old
   unlabeled acquisition series.
+- Duration histograms now use workload-specific fractional-second buckets for
+  useful HTTP, database, remote-call, and background-task percentiles instead
+  of OpenTelemetry's unit-agnostic defaults.
 - Task, event fan-out, and event delivery safety polling now default to five
   seconds. Transactional notifications preserve prompt normal wakeups, and
   delivery workers still wake at scheduled retry deadlines below that interval.

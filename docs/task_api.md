@@ -254,10 +254,16 @@ Export example:
     "template_name": "export.host_room_people",
     "output_content_type": "text/plain",
     "warning_count": 1,
-    "truncated": false
+    "truncated": false,
+    "total_duration_ms": 148,
+    "query_duration_ms": 42,
+    "hydration_duration_ms": 31,
+    "render_duration_ms": 68
   }
 }
 ```
+
+The export phase timings are returned while the stored export output remains available; after output expiry these fields are `null`. `total_duration_ms` covers query execution, relation-aware hydration, and rendering plus the intervening task bookkeeping. It does not include initial template preparation or final output persistence.
 
 ## Task events
 

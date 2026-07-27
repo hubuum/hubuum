@@ -32,7 +32,8 @@ pub(crate) use self::db::{
 };
 pub use self::export::{
     export_completed, export_output_cleanup_deleted, export_output_cleanup_failed,
-    export_output_cleanup_run, export_phase_duration, export_truncated, export_warnings,
+    export_output_cleanup_run, export_phase_duration, export_template_observed, export_truncated,
+    export_warnings,
 };
 pub use self::http::{api_error, extraction_failure, http_request_finished, http_request_started};
 pub use self::import::{import_items, import_phase_duration};
@@ -101,6 +102,7 @@ struct Metrics {
     export_output_cleanup_runs: Counter<u64>,
     export_output_cleanup_failures: Counter<u64>,
     export_output_cleanup_deleted: Counter<u64>,
+    export_template_info: Gauge<u64>,
     export_duration: Histogram<f64>,
     export_completions: Counter<u64>,
     export_truncations: Counter<u64>,

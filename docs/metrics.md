@@ -29,9 +29,66 @@ The bounded `caller` database label uses one of `event_delivery`,
 
 ## Cardinality Rules
 
-Metric labels must stay bounded. Hubuum metrics do not use usernames, user IDs, client IPs, raw URL paths, object IDs, class names, collection names, rendered remote URLs, template names, idempotency keys, or error messages.
+Metric labels must stay bounded. Hubuum metrics do not use usernames, user IDs, client IPs, raw URL paths, object IDs, class names, collection names, rendered remote URLs, idempotency keys, or error messages.
 
-Use admin JSON/API endpoints for detailed high-cardinality views.
+Export duration histograms use the stored template ID as a controlled operational dimension. `hubuum_export_template_info` maps IDs to the names observed by the current process without repeating the mutable name across every histogram bucket. Do not use task IDs as metric labels.
+
+Use admin JSON/API endpoints for detailed per-task views.
+
+## Histograms
+
+Durations are recorded as fractional seconds. For example, a 4.7 millisecond request is recorded as `0.0047`, preserving sub-millisecond precision while following Prometheus naming conventions.
+
+Hubuum uses three explicit duration bucket profiles:
+
+- HTTP and database latency: `0.0005` seconds through `30` seconds
+- outbound remote calls: `0.01` seconds through `120` seconds
+- queued and background work: `0.01` seconds through `3600` seconds
+
+Prometheus histogram buckets are cumulative. Use `histogram_quantile` for an estimated percentile. The following query calculates HTTP p95 latency by route over five minutes:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le, route) (
+    rate(hubuum_http_request_duration_seconds_bucket[5m])
+  )
+)
+```
+
+The histogram sum divided by its count gives the mean. Apply `rate` before division when querying a time window:
+
+```promql
+sum by (route) (
+  rate(hubuum_http_request_duration_seconds_sum[5m])
+)
+/
+sum by (route) (
+  rate(hubuum_http_request_duration_seconds_count[5m])
+)
+```
+
+Classic Prometheus histograms do not export exact minimum or maximum observations. Percentiles are bounded by the configured buckets and remain aggregatable across Hubuum instances, unlike client-calculated summary quantiles.
+
+Counter and histogram label sets appear only after the current process observes a matching event. Seeing `/readyz` without application routes means that the process has handled readiness probes but has not yet observed those application routes; it does not indicate that application routes are filtered out.
+
+For stored-template exports, join the phase histogram to the template-info gauge to display names without placing mutable names on every histogram bucket:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le, template_id) (
+    rate(
+      hubuum_export_phase_duration_seconds_bucket{
+        phase="total",
+        template_id!="none"
+      }[15m]
+    )
+  )
+)
+* on (template_id) group_left (template_name)
+hubuum_export_template_info
+```
 
 ## Metrics
 
@@ -67,7 +124,8 @@ Use admin JSON/API endpoints for detailed high-cardinality views.
 | `hubuum_export_output_cleanup_runs_total` | none | Stored export and backup artifact cleanup runs (legacy metric name) |
 | `hubuum_export_output_cleanup_failures_total` | none | Stored export and backup artifact cleanup failures (legacy metric name) |
 | `hubuum_export_output_cleanup_deleted_total` | none | Stored export and backup artifacts deleted by cleanup (legacy metric name) |
-| `hubuum_export_phase_duration_seconds` | `phase` | Export query, hydration, render, and total phase duration |
+| `hubuum_export_template_info` | `template_id`, `template_name` | Stored export template identities observed by the current process |
+| `hubuum_export_phase_duration_seconds` | `phase`, `template_id` | Export query, hydration, render, and total phase duration; untemplated exports use `template_id="none"` |
 | `hubuum_export_completions_total` | `scope`, `content_type` | Successfully persisted export outputs |
 | `hubuum_export_truncations_total` | `scope`, `content_type` | Successfully persisted truncated exports |
 | `hubuum_export_warnings_total` | `scope`, `content_type` | Warning count on successfully persisted exports |

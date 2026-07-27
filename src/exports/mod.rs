@@ -1109,6 +1109,10 @@ where
     let runtime = prepare_export_runtime(pool, payload.export, template).await?;
     validate_export_submission(&runtime)?;
     let exporter = PermissionAwareExport::new(backend, subject, scopes).await?;
+    let metric_template_id = runtime.template.as_ref().map(|template| template.id);
+    if let Some(template) = &runtime.template {
+        metrics::export_template_observed(template.id, &template.name);
+    }
     let total_start = Instant::now();
     let mut timings = ExportExecutionTimings::default();
 
@@ -1160,7 +1164,7 @@ where
     .await?;
     let query_elapsed = query_start.elapsed();
     timings.query_duration_ms = duration_to_millis_i32(query_elapsed);
-    metrics::export_phase_duration("query", query_elapsed);
+    metrics::export_phase_duration("query", query_elapsed, metric_template_id);
     enforce_export_stage_timeout(query_start, "query execution")?;
 
     if relation_hydration
@@ -1190,7 +1194,7 @@ where
     .await?;
     let hydration_elapsed = hydration_start.elapsed();
     timings.hydration_duration_ms = duration_to_millis_i32(hydration_elapsed);
-    metrics::export_phase_duration("hydration", hydration_elapsed);
+    metrics::export_phase_duration("hydration", hydration_elapsed, metric_template_id);
     enforce_export_stage_timeout(hydration_start, "relation hydration")?;
     let template_export = runtime.template.is_some();
     let item_count = if template_export {
@@ -1233,8 +1237,8 @@ where
     let total_elapsed = total_start.elapsed();
     timings.render_duration_ms = duration_to_millis_i32(render_elapsed);
     timings.total_duration_ms = duration_to_millis_i32(total_elapsed);
-    metrics::export_phase_duration("render", render_elapsed);
-    metrics::export_phase_duration("total", total_elapsed);
+    metrics::export_phase_duration("render", render_elapsed, metric_template_id);
+    metrics::export_phase_duration("total", total_elapsed, metric_template_id);
     enforce_export_stage_timeout(render_start, "template rendering")?;
     log_export_stage_metrics(task.id, &runtime, timings);
     let artifact = ExportArtifact {

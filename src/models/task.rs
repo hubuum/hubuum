@@ -354,6 +354,10 @@ pub struct ExportTaskDetails {
     pub output_content_type: Option<String>,
     pub warning_count: Option<i32>,
     pub truncated: Option<bool>,
+    pub total_duration_ms: Option<i32>,
+    pub query_duration_ms: Option<i32>,
+    pub hydration_duration_ms: Option<i32>,
+    pub render_duration_ms: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -565,6 +569,12 @@ impl TaskRecord {
                             .map(|summary| summary.content_type.clone()),
                         warning_count: output_summary.map(|summary| summary.warning_count),
                         truncated: output_summary.map(|summary| summary.truncated),
+                        total_duration_ms: output_summary.map(|summary| summary.total_duration_ms),
+                        query_duration_ms: output_summary.map(|summary| summary.query_duration_ms),
+                        hydration_duration_ms: output_summary
+                            .map(|summary| summary.hydration_duration_ms),
+                        render_duration_ms: output_summary
+                            .map(|summary| summary.render_duration_ms),
                     }),
                     backup: None,
                 }
@@ -943,6 +953,12 @@ impl AuthzTarget for TaskID {
 mod tests {
     use super::*;
 
+    fn test_timestamp() -> NaiveDateTime {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc()
+    }
+
     #[test]
     fn task_result_counts_derive_processed_from_terminal_outcomes() {
         let counts = TaskResultCounts::from_outcomes(2, 1).unwrap();
@@ -984,5 +1000,67 @@ mod tests {
         assert_eq!(serde_json::from_str::<TaskID>("7").unwrap().id(), 7);
         assert!(serde_json::from_str::<TaskID>("0").is_err());
         assert!(serde_json::from_str::<TaskID>("-3").is_err());
+    }
+
+    #[test]
+    fn export_task_details_include_persisted_phase_timings() {
+        let timestamp = test_timestamp();
+        let task = TaskRecord {
+            id: 7,
+            kind: TaskKind::Export.as_str().to_string(),
+            status: TaskStatus::Succeeded.as_str().to_string(),
+            submitted_by: Some(1),
+            idempotency_key: None,
+            request_hash: None,
+            request_payload: None,
+            summary: None,
+            total_items: 1,
+            processed_items: 1,
+            success_items: 1,
+            failed_items: 0,
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            request_redacted_at: Some(timestamp),
+            started_at: Some(timestamp),
+            finished_at: Some(timestamp),
+            deleted_at: None,
+            deleted_by: None,
+            created_at: timestamp,
+            updated_at: timestamp,
+            lease_token: None,
+            lease_expires_at: None,
+            attempt_count: 1,
+            initiator_user_id: Some(1),
+        };
+        let output = ExportTaskOutputSummaryRecord {
+            id: 3,
+            task_id: task.id,
+            template_name: Some("inventory".to_string()),
+            content_type: "text/plain".to_string(),
+            warning_count: 0,
+            truncated: false,
+            output_expires_at: timestamp,
+            total_duration_ms: 150,
+            query_duration_ms: 40,
+            hydration_duration_ms: 30,
+            render_duration_ms: 70,
+            created_at: timestamp,
+        };
+
+        let response = task
+            .to_response_with_export_output(ExportOutputLookup::Available(&output))
+            .unwrap();
+        let details = response.details.unwrap().export.unwrap();
+
+        assert_eq!(
+            (
+                details.total_duration_ms,
+                details.query_duration_ms,
+                details.hydration_duration_ms,
+                details.render_duration_ms,
+            ),
+            (Some(150), Some(40), Some(30), Some(70))
+        );
     }
 }
