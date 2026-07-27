@@ -35,7 +35,10 @@ pub use sink::{
     DefaultSinkResolver, EventEnvelope, NoopSinkResolver, Sink, SinkError, SinkResolver,
 };
 
-pub(crate) use pg_notify::notify_event_delivery;
+pub(crate) use pg_notify::{
+    TASK_QUEUE_CHANNEL, notify_event_delivery, notify_task_queue,
+    spawn_postgres_notification_listener,
+};
 
 pub use hubuum_events_core::{
     Action, ActorKind, EntityType, EventCatalogError, EventContext, MutationProvenance, Provenance,

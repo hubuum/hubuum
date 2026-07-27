@@ -22,6 +22,7 @@ pub mod metrics;
 pub mod object;
 pub mod permissions;
 pub mod principal;
+pub mod probe;
 pub mod relations;
 pub mod remote_target;
 pub(crate) mod resource_scope;

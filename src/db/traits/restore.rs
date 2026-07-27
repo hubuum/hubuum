@@ -493,47 +493,52 @@ pub(crate) async fn resume_terminal_restore_db(pool: &DbPool, job_id: i64) -> Re
     .await
 }
 
-pub(crate) async fn expire_validated_restore_jobs_db(pool: &DbPool) -> Result<(), ApiError> {
-    with_connection(pool, async |conn| {
-        diesel::sql_query(
-            "UPDATE restore_jobs \
-             SET status='expired', document=''::bytea \
-             WHERE status='validated' AND expires_at <= now()",
-        )
-        .execute(conn)
-        .await
-    })
-    .await?;
-    Ok(())
-}
-
-pub(crate) async fn maintenance_generation_and_state_db(
+pub(crate) async fn restore_coordinator_tick_db(
     pool: &DbPool,
-) -> Result<(i64, String), ApiError> {
-    with_connection(pool, async |conn| {
-        use crate::schema::system_maintenance::dsl::{generation, id, state, system_maintenance};
+    instance_id_value: Uuid,
+    local_work_is_idle: bool,
+    expire_validated_jobs: bool,
+) -> Result<(String, Option<i64>, NaiveDateTime), ApiError> {
+    with_transaction(pool, async |conn| -> Result<_, ApiError> {
+        if expire_validated_jobs {
+            diesel::sql_query(
+                "UPDATE restore_jobs \
+                 SET status='expired', document=''::bytea \
+                 WHERE status='validated' AND expires_at <= now()",
+            )
+            .execute(conn)
+            .await?;
+        }
 
-        system_maintenance
-            .filter(id.eq(1_i16))
-            .select((generation, state))
-            .first::<(i64, String)>(conn)
-            .await
-    })
-    .await
-}
+        use crate::schema::system_maintenance::dsl::{
+            generation, id, restore_job_id, state, system_maintenance,
+        };
+        let (generation_value, state_value, restore_job_id_value, database_now) =
+            system_maintenance
+                .filter(id.eq(1_i16))
+                .select((
+                    generation,
+                    state,
+                    restore_job_id,
+                    sql::<Timestamp>(DATABASE_UTC_NOW_SQL),
+                ))
+                .first::<(i64, String, Option<i64>, NaiveDateTime)>(conn)
+                .await?;
 
-pub(crate) async fn upsert_server_instance_db(
-    pool: &DbPool,
-    record: &ServerInstanceRecord,
-) -> Result<(), ApiError> {
-    with_connection(pool, async |conn| {
+        let record = ServerInstanceRecord {
+            instance_id: instance_id_value,
+            maintenance_generation: generation_value,
+            drained: state_value != "normal" && local_work_is_idle,
+            last_heartbeat_at: database_now,
+            started_at: database_now,
+        };
         use crate::schema::server_instances::dsl::{
             drained, instance_id as row_id, last_heartbeat_at, maintenance_generation,
             server_instances,
         };
 
         diesel::insert_into(server_instances)
-            .values(record)
+            .values(&record)
             .on_conflict(row_id)
             .do_update()
             .set((
@@ -542,10 +547,11 @@ pub(crate) async fn upsert_server_instance_db(
                 last_heartbeat_at.eq(record.last_heartbeat_at),
             ))
             .execute(conn)
-            .await
+            .await?;
+
+        Ok((state_value, restore_job_id_value, database_now))
     })
-    .await?;
-    Ok(())
+    .await
 }
 
 pub(crate) async fn maintenance_generation_and_instances_db(
@@ -587,17 +593,20 @@ pub(crate) async fn delete_server_instance_db(
     Ok(())
 }
 
-pub(crate) async fn maintenance_state_db(pool: &DbPool) -> Result<String, ApiError> {
-    with_connection(pool, async |conn| {
-        use crate::schema::system_maintenance::dsl::{id, state, system_maintenance};
+pub(crate) async fn maintenance_state_conn(
+    conn: &mut DbConnection,
+) -> Result<String, diesel::result::Error> {
+    use crate::schema::system_maintenance::dsl::{id, state, system_maintenance};
 
-        system_maintenance
-            .filter(id.eq(1_i16))
-            .select(state)
-            .first::<String>(conn)
-            .await
-    })
-    .await
+    system_maintenance
+        .filter(id.eq(1_i16))
+        .select(state)
+        .first::<String>(conn)
+        .await
+}
+
+pub(crate) async fn maintenance_state_db(pool: &DbPool) -> Result<String, ApiError> {
+    with_connection(pool, maintenance_state_conn).await
 }
 
 pub(crate) async fn identity_scope_name_db(
@@ -620,8 +629,28 @@ pub(crate) async fn identity_scope_name_db(
 mod tests {
     use diesel::prelude::*;
     use rstest::rstest;
+    use uuid::Uuid;
 
-    use super::{RestoreJobStatusRecord, validate_restore_identifier};
+    use crate::db::capture_queries;
+    use crate::tests::get_test_pool;
+
+    use super::{
+        RestoreJobStatusRecord, delete_server_instance_db, restore_coordinator_tick_db,
+        validate_restore_identifier,
+    };
+
+    #[actix_rt::test]
+    async fn restore_coordinator_tick_uses_one_pool_checkout() {
+        let pool = get_test_pool();
+        let instance_id = Uuid::new_v4();
+
+        let (snapshot, queries) =
+            capture_queries(restore_coordinator_tick_db(&pool, instance_id, true, false)).await;
+
+        assert!(snapshot.is_ok());
+        assert_eq!(queries.connection_checkouts(), 1);
+        delete_server_instance_db(&pool, instance_id).await.unwrap();
+    }
 
     #[rstest]
     #[case::known("collections", Some("id"), true)]

@@ -56,6 +56,47 @@ use crate::utilities::db::DatabaseUrlComponents;
 pub type DbConnection = AsyncPgConnection;
 pub type DbPool = Pool<DbConnection>;
 
+/// Bounded attribution for database pool checkouts and helper operations.
+///
+/// The value is carried through an async task-local scope so subsystem
+/// boundaries can add useful low-cardinality metrics without threading a
+/// label through every backend trait method.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DbCallSite {
+    EventDelivery,
+    EventFanout,
+    EventRetention,
+    HttpRequest,
+    MetricsRefresh,
+    Readiness,
+    RequestMaintenance,
+    RestoreCoordinator,
+    TaskLease,
+    TaskWorker,
+    TokenRetention,
+    #[default]
+    Unattributed,
+}
+
+impl DbCallSite {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::EventDelivery => "event_delivery",
+            Self::EventFanout => "event_fanout",
+            Self::EventRetention => "event_retention",
+            Self::HttpRequest => "http_request",
+            Self::MetricsRefresh => "metrics_refresh",
+            Self::Readiness => "readiness",
+            Self::RequestMaintenance => "request_maintenance",
+            Self::RestoreCoordinator => "restore_coordinator",
+            Self::TaskLease => "task_lease",
+            Self::TaskWorker => "task_worker",
+            Self::TokenRetention => "token_retention",
+            Self::Unattributed => "unattributed",
+        }
+    }
+}
+
 /// Latest migration required by this binary. The test below keeps this value
 /// synchronized with the migration directory so readiness cannot silently lag
 /// behind a newly added schema change.
@@ -67,7 +108,7 @@ struct DatabaseSchemaReadiness {
     ready: bool,
 }
 
-async fn database_schema_is_ready(
+pub(crate) async fn database_schema_is_ready(
     connection: &mut DbConnection,
 ) -> Result<bool, diesel::result::Error> {
     Ok(diesel::sql_query(
@@ -292,20 +333,25 @@ where
 
 async fn acquire_connection(pool: &DbPool) -> Result<PooledConnection<'_, DbConnection>, ApiError> {
     let start = std::time::Instant::now();
+    let call_site = ambient_db_call_site();
     match pool.get().await {
         Ok(conn) => {
             #[cfg(any(test, feature = "query-capture", feature = "integration-test-support"))]
             let mut conn = conn;
             #[cfg(any(test, feature = "query-capture", feature = "integration-test-support"))]
             query_capture::configure_connection(&mut conn);
-            metrics::db_connection_acquired(start.elapsed());
+            metrics::db_connection_acquired(call_site.as_str(), start.elapsed());
             Ok(conn)
         }
         Err(error) => {
-            metrics::db_connection_acquire_failed(start.elapsed());
+            metrics::db_connection_acquire_failed(call_site.as_str(), start.elapsed());
             Err(ApiError::from(error))
         }
     }
+}
+
+tokio::task_local! {
+    static AMBIENT_DB_CALL_SITE: DbCallSite;
 }
 
 tokio::task_local! {
@@ -325,6 +371,20 @@ tokio::task_local! {
     /// actor, root task initiator, and task id without threading them through
     /// every persistence call.
     static AMBIENT_MUTATION_PROVENANCE: Option<MutationProvenance>;
+}
+
+fn ambient_db_call_site() -> DbCallSite {
+    AMBIENT_DB_CALL_SITE
+        .try_with(|call_site| *call_site)
+        .unwrap_or_default()
+}
+
+/// Run `future` with bounded database metrics attribution.
+pub async fn with_db_call_site<F>(call_site: DbCallSite, future: F) -> F::Output
+where
+    F: Future,
+{
+    AMBIENT_DB_CALL_SITE.scope(call_site, future).await
 }
 
 /// Run `future` with an ambient per-query `statement_timeout` in effect.
@@ -495,6 +555,7 @@ where
     E: Send,
     ApiError: From<E>,
 {
+    let call_site = ambient_db_call_site();
     let mut conn = acquire_connection(pool).await?;
     let start = std::time::Instant::now();
     let result = if statement_timeout.is_none() && provenance.is_none() {
@@ -515,7 +576,12 @@ where
         Ok(_) => ResultKind::Ok,
         Err(error) => ResultKind::Error(error.class()),
     };
-    metrics::db_operation_finished("connection", start.elapsed(), &result_kind);
+    metrics::db_operation_finished(
+        call_site.as_str(),
+        "connection",
+        start.elapsed(),
+        &result_kind,
+    );
     result
 }
 
@@ -604,6 +670,7 @@ where
 {
     let statement_timeout = ambient_statement_timeout();
     let provenance = ambient_mutation_provenance();
+    let call_site = ambient_db_call_site();
     let mut conn = acquire_connection(pool).await?;
     let start = std::time::Instant::now();
     let result = crate::logger::defer_operation_mutation_logs_until_commit(
@@ -622,7 +689,12 @@ where
         Ok(_) => ResultKind::Ok,
         Err(error) => ResultKind::Error(error.class()),
     };
-    metrics::db_operation_finished("transaction", start.elapsed(), &result_kind);
+    metrics::db_operation_finished(
+        call_site.as_str(),
+        "transaction",
+        start.elapsed(),
+        &result_kind,
+    );
     result
 }
 

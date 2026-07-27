@@ -9,9 +9,21 @@ use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 
 pub const EVENT_FANOUT_CHANNEL: &str = "hubuum_events_fanout";
 pub const EVENT_DELIVERY_CHANNEL: &str = "hubuum_event_delivery";
+pub const TASK_QUEUE_CHANNEL: &str = "hubuum_task_queue";
 
 pub async fn notify_event_delivery(conn: &mut crate::db::DbConnection) -> QueryResult<usize> {
     notify_channel(conn, EVENT_DELIVERY_CHANNEL).await
+}
+
+pub async fn notify_task_queue(
+    conn: &mut crate::db::DbConnection,
+    task_id: i32,
+) -> QueryResult<usize> {
+    diesel::sql_query("SELECT pg_notify($1, $2)")
+        .bind::<diesel::sql_types::Text, _>(TASK_QUEUE_CHANNEL)
+        .bind::<diesel::sql_types::Text, _>(task_id.to_string())
+        .execute(conn)
+        .await
 }
 
 async fn notify_channel(conn: &mut crate::db::DbConnection, channel: &str) -> QueryResult<usize> {
@@ -66,7 +78,7 @@ async fn listen_loop(
                 }
 
                 info!(
-                    message = "Listening for Postgres event worker notifications",
+                    message = "Listening for Postgres worker notifications",
                     channel = channel
                 );
                 on_listening();
@@ -148,7 +160,7 @@ async fn poll_notifications(
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicI32, AtomicI64, AtomicUsize, Ordering};
 
     use diesel::sql_types::Text;
     use futures_util::StreamExt;
@@ -164,6 +176,7 @@ mod tests {
 
     const TEST_CHANNEL: &str = "hubuum_shutdown_listener_test";
     static LISTENER_READY: AtomicUsize = AtomicUsize::new(0);
+    static NEXT_TASK_NOTIFICATION_ID: AtomicI32 = AtomicI32::new(1);
 
     #[derive(QueryableByName)]
     struct ListeningChannel {
@@ -218,6 +231,50 @@ mod tests {
                 let notification = notification.expect("fanout notification");
                 if notification.channel == EVENT_FANOUT_CHANNEL
                     && notification.payload == target_payload
+                {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        assert_eq!(received, commit);
+    }
+
+    #[rstest]
+    #[case::commit(true)]
+    #[case::rollback(false)]
+    #[tokio::test]
+    async fn task_queue_notification_is_delivered_only_after_commit(#[case] commit: bool) {
+        let scope = test_scope();
+        let mut listener = scope.pool.get().await.expect("listener connection");
+        diesel::sql_query(format!("LISTEN {TASK_QUEUE_CHANNEL}"))
+            .execute(&mut listener)
+            .await
+            .expect("listen on task queue channel");
+
+        let task_id = NEXT_TASK_NOTIFICATION_ID.fetch_add(1, Ordering::Relaxed);
+        let result: Result<(), ApiError> = with_transaction(&scope.pool, async |conn| {
+            notify_task_queue(conn, task_id).await?;
+            if commit {
+                Ok(())
+            } else {
+                Err(ApiError::InternalServerError(
+                    "notification rollback test".to_string(),
+                ))
+            }
+        })
+        .await;
+        assert_eq!(result.is_ok(), commit);
+
+        let notifications = listener.notifications_stream();
+        futures_util::pin_mut!(notifications);
+        let received = tokio::time::timeout(Duration::from_millis(500), async {
+            while let Some(notification) = notifications.next().await {
+                let notification = notification.expect("task queue notification");
+                if notification.channel == TASK_QUEUE_CHANNEL
+                    && notification.payload == task_id.to_string()
                 {
                     return true;
                 }

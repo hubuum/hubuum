@@ -9,15 +9,14 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::db::DbPool;
 use crate::db::traits::restore::{
     RestoreCompletion, apply_restore_db, delete_server_instance_db, expire_restore_stage_db,
-    expire_validated_restore_jobs_db, fail_restore_and_resume_db, identity_scope_name_db,
-    insert_restore_job_db, load_restore_job_db, load_restore_status_job_db,
-    maintenance_generation_and_instances_db, maintenance_generation_and_state_db,
-    maintenance_restore_reference_db, maintenance_state_db, resume_maintenance_without_job_db,
-    resume_terminal_restore_db, start_restore_draining_db, upsert_server_instance_db,
+    fail_restore_and_resume_db, identity_scope_name_db, insert_restore_job_db, load_restore_job_db,
+    load_restore_status_job_db, maintenance_generation_and_instances_db,
+    maintenance_restore_reference_db, maintenance_state_db, restore_coordinator_tick_db,
+    resume_maintenance_without_job_db, resume_terminal_restore_db, start_restore_draining_db,
 };
+use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::events::{Action, ActorKind, EntityType, NewEvent};
 use crate::lifecycle::spawn_background_worker;
@@ -29,12 +28,13 @@ use crate::models::{
     BackupDocument, COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED,
     ComputedFieldDefinitionRequest, ComputedResultType, NewRestoreJobRecord,
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobRecord, RestoreJobStatus,
-    RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary, ServerInstanceRecord,
+    RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
 };
 
 static RESTORE_COORDINATOR: Once = Once::new();
 static ACTIVE_MAINTENANCE_WORK: AtomicUsize = AtomicUsize::new(0);
 const RESTORE_DRAIN_TIMEOUT_SECONDS: u64 = 30;
+const RESTORE_STAGE_EXPIRY_INTERVAL_SECONDS: u64 = 60;
 // Keep this longer than the bounded drain so normal confirmations enter the
 // advisory-lock-protected restore transaction before recovery is eligible.
 const RESTORE_RECONCILIATION_GRACE_SECONDS: i64 = 60;
@@ -637,9 +637,14 @@ pub async fn confirm_restore(
 /// re-checks the job/maintenance state. Once one coordinator commits, the
 /// maintenance row is normal and every restore staging row has been removed.
 pub async fn reconcile_interrupted_restore(pool: &DbPool) -> Result<(), ApiError> {
-    let (maintenance_state, restore_job_id, database_now) =
-        maintenance_restore_reference_db(pool).await?;
+    let snapshot = maintenance_restore_reference_db(pool).await?;
+    reconcile_interrupted_restore_from_snapshot(pool, snapshot).await
+}
 
+async fn reconcile_interrupted_restore_from_snapshot(
+    pool: &DbPool,
+    (maintenance_state, restore_job_id, database_now): (String, Option<i64>, NaiveDateTime),
+) -> Result<(), ApiError> {
     if maintenance_state == "normal" {
         return Ok(());
     }
@@ -710,18 +715,18 @@ pub async fn reconcile_interrupted_restore(pool: &DbPool) -> Result<(), ApiError
     Ok(())
 }
 
-async fn heartbeat_instance(pool: &DbPool, instance_id: Uuid) -> Result<(), ApiError> {
-    expire_validated_restore_jobs_db(pool).await?;
-    let (generation, state) = maintenance_generation_and_state_db(pool).await?;
-    let now = Utc::now().naive_utc();
-    let record = ServerInstanceRecord {
+async fn heartbeat_instance(
+    pool: &DbPool,
+    instance_id: Uuid,
+    expire_validated_jobs: bool,
+) -> Result<(String, Option<i64>, NaiveDateTime), ApiError> {
+    restore_coordinator_tick_db(
+        pool,
         instance_id,
-        maintenance_generation: generation,
-        drained: state != "normal" && active_maintenance_work() == 0,
-        last_heartbeat_at: now,
-        started_at: now,
-    };
-    upsert_server_instance_db(pool, &record).await
+        active_maintenance_work() == 0,
+        expire_validated_jobs,
+    )
+    .await
 }
 
 async fn wait_for_instances_drained(pool: &DbPool) -> Result<(), ApiError> {
@@ -755,14 +760,15 @@ async fn wait_for_instances_drained(pool: &DbPool) -> Result<(), ApiError> {
 async fn reconcile_interrupted_restore_with_heartbeat(
     pool: &DbPool,
     instance_id: Uuid,
+    snapshot: (String, Option<i64>, NaiveDateTime),
 ) -> Result<(), ApiError> {
-    let reconciliation = reconcile_interrupted_restore(pool);
+    let reconciliation = reconcile_interrupted_restore_from_snapshot(pool, snapshot);
     tokio::pin!(reconciliation);
     loop {
         tokio::select! {
             result = &mut reconciliation => return result,
             _ = actix_rt::time::sleep(StdDuration::from_secs(1)) => {
-                heartbeat_instance(pool, instance_id).await?;
+                heartbeat_instance(pool, instance_id, false).await?;
             }
         }
     }
@@ -774,22 +780,46 @@ pub fn ensure_restore_coordinator_running(pool: DbPool) {
             let system = actix_rt::System::new();
             system.block_on(async move {
                 let instance_id = Uuid::new_v4();
+                let mut last_expiry_run = None;
                 loop {
-                    if let Err(error) = heartbeat_instance(&pool, instance_id).await {
-                        tracing::error!(
-                            message = "Restore coordinator heartbeat failed",
-                            instance_id = %instance_id,
-                            error = %error,
-                        );
-                    }
-                    if let Err(error) =
-                        reconcile_interrupted_restore_with_heartbeat(&pool, instance_id).await
-                    {
-                        tracing::error!(
-                            message = "Interrupted restore reconciliation failed",
-                            instance_id = %instance_id,
-                            error = %error,
-                        );
+                    let expire_validated_jobs = last_expiry_run.is_none_or(|last_run: Instant| {
+                        last_run.elapsed()
+                            >= StdDuration::from_secs(RESTORE_STAGE_EXPIRY_INTERVAL_SECONDS)
+                    });
+                    let snapshot = with_db_call_site(
+                        DbCallSite::RestoreCoordinator,
+                        heartbeat_instance(&pool, instance_id, expire_validated_jobs),
+                    )
+                    .await;
+                    match snapshot {
+                        Ok(snapshot) => {
+                            if expire_validated_jobs {
+                                last_expiry_run = Some(Instant::now());
+                            }
+                            if let Err(error) = with_db_call_site(
+                                DbCallSite::RestoreCoordinator,
+                                reconcile_interrupted_restore_with_heartbeat(
+                                    &pool,
+                                    instance_id,
+                                    snapshot,
+                                ),
+                            )
+                            .await
+                            {
+                                tracing::error!(
+                                    message = "Interrupted restore reconciliation failed",
+                                    instance_id = %instance_id,
+                                    error = %error,
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            tracing::error!(
+                                message = "Restore coordinator heartbeat failed",
+                                instance_id = %instance_id,
+                                error = %error,
+                            );
+                        }
                     }
                     tokio::select! {
                         _ = shutdown.requested() => break,

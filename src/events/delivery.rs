@@ -13,13 +13,13 @@ use crate::config::{
     DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS, DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS,
     DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_WORKERS, get_config,
 };
-use crate::db::DbPool;
 use crate::db::traits::event_delivery::{
     ClaimedEventDelivery, EventDeliverySettings, claim_event_deliveries,
     mark_event_delivery_failed, mark_event_delivery_succeeded,
 };
 use crate::db::traits::events::load_queued_task_initiators;
 use crate::db::traits::history::resolve_principal_names;
+use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::events::sink::{
     DefaultSinkResolver, EventEnvelope, SinkError, SinkResolver, event_envelope_with_names,
@@ -27,7 +27,7 @@ use crate::events::sink::{
 use crate::events::{EntityType, PrincipalNames};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
-use crate::restores::{MaintenanceActivityGuard, maintenance_state};
+use crate::restores::MaintenanceActivityGuard;
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();
 static EVENT_DELIVERY_LISTENER: Once = Once::new();
@@ -93,9 +93,6 @@ pub async fn process_event_delivery_batch(
     resolver: &dyn SinkResolver,
 ) -> Result<usize, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
-    if maintenance_state(pool).await? != "normal" {
-        return Ok(0);
-    }
     let mut deliveries = claim_event_deliveries(pool, settings).await?;
     let processed = deliveries.len();
     let legacy_task_ids = deliveries
@@ -270,7 +267,10 @@ async fn event_delivery_worker_loop(
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = process_event_delivery_batch(&pool, settings, resolver) => result,
+            result = with_db_call_site(
+                DbCallSite::EventDelivery,
+                process_event_delivery_batch(&pool, settings, resolver),
+            ) => result,
         };
         if delivery_worker_should_continue(&result) {
             continue;

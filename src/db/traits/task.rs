@@ -3,7 +3,7 @@ use crate::models::token_scope::TokenScope;
 use chrono::{NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::expression::AsExpression;
-use diesel::sql_types::{BigInt, Bool, Nullable, Timestamp};
+use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text, Timestamp};
 use hubuum_task_core::IdempotencyKey;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -13,9 +13,12 @@ use uuid::Uuid;
 use crate::apply_query_options;
 use crate::config::get_config;
 use crate::db::traits::history::resolve_principal_names;
+use crate::db::traits::restore::maintenance_state_conn;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, Event, MutationProvenance, NewEvent, emit_event};
+use crate::events::{
+    Action, EntityType, Event, MutationProvenance, NewEvent, emit_event, notify_task_queue,
+};
 use crate::models::search::QueryOptions;
 use crate::models::{
     BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
@@ -1221,6 +1224,12 @@ pub(crate) fn executable_task_kind_values() -> [&'static str; 5] {
 
 static NEXT_TASK_KIND: AtomicUsize = AtomicUsize::new(0);
 
+#[derive(QueryableByName)]
+struct ClaimableTaskId {
+    #[diesel(sql_type = Integer)]
+    id: i32,
+}
+
 fn task_kind_claim_order(start: usize) -> [&'static str; 5] {
     let kinds = executable_task_kind_values();
     std::array::from_fn(|offset| kinds[(start + offset) % kinds.len()])
@@ -1231,30 +1240,43 @@ pub async fn claim_next_queued_task(
     lease_duration: std::time::Duration,
 ) -> Result<Option<TaskRecord>, ApiError> {
     use crate::schema::tasks::dsl::{
-        attempt_count, created_at, id, kind, lease_expires_at, lease_token, started_at, status,
-        tasks, updated_at,
+        attempt_count, id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
     };
 
     let record = with_transaction(pool, async |conn| -> Result<Option<TaskRecord>, ApiError> {
+        if maintenance_state_conn(conn).await? != "normal" {
+            return Ok(None);
+        }
+
         let task_kinds = executable_task_kind_values();
         let first_kind = NEXT_TASK_KIND.fetch_add(1, Ordering::Relaxed) % task_kinds.len();
         let claim_order = task_kind_claim_order(first_kind);
-        let mut selected_task_id = None;
-        for selected_kind in claim_order {
-            selected_task_id = tasks
-                .filter(status.eq(TaskStatus::Queued.as_str()))
-                .filter(kind.eq(selected_kind))
-                .order(created_at.asc())
-                .for_update()
-                .skip_locked()
-                .select(id)
-                .first::<i32>(conn)
-                .await
-                .optional()?;
-            if selected_task_id.is_some() {
-                break;
-            }
-        }
+        let selected_task_id = diesel::sql_query(
+            "SELECT id \
+             FROM tasks \
+             WHERE status = $1 \
+               AND kind IN ($2, $3, $4, $5, $6) \
+             ORDER BY CASE kind \
+                 WHEN $2 THEN 0 \
+                 WHEN $3 THEN 1 \
+                 WHEN $4 THEN 2 \
+                 WHEN $5 THEN 3 \
+                 WHEN $6 THEN 4 \
+                 ELSE 5 \
+             END, created_at ASC \
+             FOR UPDATE SKIP LOCKED \
+             LIMIT 1",
+        )
+        .bind::<Text, _>(TaskStatus::Queued.as_str())
+        .bind::<Text, _>(claim_order[0])
+        .bind::<Text, _>(claim_order[1])
+        .bind::<Text, _>(claim_order[2])
+        .bind::<Text, _>(claim_order[3])
+        .bind::<Text, _>(claim_order[4])
+        .get_result::<ClaimableTaskId>(conn)
+        .await
+        .optional()?
+        .map(|row| row.id);
         let Some(task_id_value) = selected_task_id else {
             return Ok(None);
         };
@@ -1638,6 +1660,7 @@ async fn insert_queued_task_with_event(
         &task.user_provenance(submitter),
     )
     .await?;
+    notify_task_queue(conn, task.id).await?;
 
     Ok(task)
 }
@@ -1698,6 +1721,7 @@ pub(crate) async fn insert_internal_queued_task(
         &provenance,
     )
     .await?;
+    notify_task_queue(conn, task.id).await?;
 
     Ok(task)
 }
@@ -2200,13 +2224,20 @@ mod tests {
         });
 
         let locked_id = locked_rx.await.unwrap();
-        let claimed = claim_next_queued_task(&context.pool, std::time::Duration::from_secs(60))
-            .await
-            .unwrap()
-            .map(|task| task.id);
+        let (claimed, queries) = capture_queries(claim_next_queued_task(
+            &context.pool,
+            std::time::Duration::from_secs(60),
+        ))
+        .await;
+        let claimed = claimed.unwrap().map(|task| task.id);
         release_tx.send(()).unwrap();
         locker.await.unwrap();
 
+        assert_eq!(queries.connection_checkouts(), 1);
+        assert_eq!(
+            queries.queries_matching("SELECT id FROM tasks WHERE status = $1"),
+            1
+        );
         assert!(claimed.is_some());
         assert_ne!(claimed.unwrap(), locked_id);
         assert!(created_ids.contains(&locked_id));

@@ -49,6 +49,15 @@ two frontend containers. Caddy actively checks backend `/readyz` and frontend
 HTTP health, excludes unavailable replicas, and retries connection failures
 against a healthy replica.
 
+The generated configuration keeps the backend active-check interval at five
+seconds but defines only one health-checked reverse proxy per listener. In an
+all-mode public API deployment, each backend receives at most one public Caddy
+probe, one private BFF Caddy probe, and one Compose health check every five
+seconds. Increasing the interval would reduce this already small load but would
+also delay failed-upstream removal and rolling-update convergence. The
+readiness handler performs its schema and maintenance checks on one pooled
+connection.
+
 The frontend BFF reaches the backend through a private Caddy listener, so it
 uses the same readiness-aware backend pool as direct API traffic. All-mode
 installs also use the bundled Valkey service for shared backend login throttling
@@ -67,6 +76,11 @@ external PostgreSQL servers for both API pools, the primary's task-lease
 connection, migration/administration work, and operational headroom. See
 [Distributed Deployment](distributed_deployment.md#capacity-planning) for the
 connection-budget formula.
+
+Runtime metrics are also process-local. `/metrics` targets the worker-enabled
+primary, while `/metrics/standby` targets the HTTP-only standby; scrape both as
+separate Prometheus targets. They intentionally do not fail over to one another,
+because doing so would mix independent counters and produce invalid rates.
 
 The installer also creates an empty `/opt/hubuum/auth.toml` for local-only
 authentication. Use `--auth-config` to point the deployment at an existing
@@ -110,8 +124,8 @@ sudo ./scripts/install-single-host.sh \
 
 Modes:
 
-- `direct`: sends backend-owned paths such as `/api/v0...`, `/api/v1...`, `/api-doc...`, `/swagger-ui...`, and `/metrics` directly to the backend, with everything else going to the frontend. This is the recommended shared-host mode now that frontend-owned BFF routes live under `/_hubuum-bff/...`.
-- `prefixed`: exposes the backend under `/hubuum-api/` and sends everything else to the frontend. This is useful if you want to avoid exposing backend routes at their native paths.
+- `direct`: sends backend-owned paths such as `/api/v0...`, `/api/v1...`, `/api-doc...`, and `/swagger-ui...` through one load-balanced backend handler, routes `/metrics` and `/metrics/standby` to stable process targets, and sends everything else to the frontend. This is the recommended shared-host mode now that frontend-owned BFF routes live under `/_hubuum-bff/...`.
+- `prefixed`: exposes the backend under `/hubuum-api/`, including stable `/hubuum-api/metrics` and `/hubuum-api/metrics/standby` process targets, and sends everything else to the frontend. This is useful if you want to avoid exposing backend routes at their native paths.
 - `bff`: sends all traffic to the frontend. The backend is not directly exposed by Caddy in this mode; use it only when frontend proxy coverage is the intended public API surface.
 
 The frontend makes shared-host deployments easier by keeping internal/BFF routes under `/_hubuum-bff/...`, which does not collide with direct backend routes like `/api/v1/...`.

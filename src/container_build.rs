@@ -501,7 +501,7 @@ fn single_host_installer_generates_redundant_http_upstreams() {
 }
 
 #[test]
-fn single_host_direct_routing_proxies_metrics_to_the_api() {
+fn single_host_direct_routing_uses_one_health_checked_public_api_proxy() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
         .expect("single-host installer should be readable");
@@ -514,7 +514,38 @@ fn single_host_direct_routing_proxies_metrics_to_the_api() {
         .expect("direct shared-host routing should end before prefixed routing");
     let direct_template = &installer[direct_start..direct_end];
 
-    assert!(direct_template.contains("handle /metrics {\n\t\timport api_proxy\n\t}"));
+    assert!(direct_template.contains(
+        "@backend path /api/v0* /api/v1* /api-doc* /swagger-ui*\n\
+         \thandle @backend {\n\
+         \t\timport api_proxy\n\
+         \t}"
+    ));
+    assert_eq!(direct_template.matches("import api_proxy").count(), 1);
+}
+
+#[test]
+fn single_host_metrics_routes_target_each_backend_process() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
+        .expect("single-host installer should be readable");
+
+    assert!(installer.contains(
+        "(metrics_primary_proxy) {\n\
+                                \treverse_proxy hubuum-api:${API_PORT}\n\
+                                }"
+    ));
+    assert!(installer.contains(
+        "(metrics_standby_proxy) {\n\
+                                \treverse_proxy hubuum-api-standby:${API_PORT}\n\
+                                }"
+    ));
+    assert!(installer.contains(
+        "handle /metrics/standby {\n\
+                                \t\trewrite * /metrics\n\
+                                \t\timport metrics_standby_proxy\n\
+                                \t}"
+    ));
+    assert!(!installer.contains("handle /metrics {\n\t\timport api_proxy\n\t}"));
 }
 
 #[test]

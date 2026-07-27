@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::db::prelude::*;
+use crate::db::traits::restore::maintenance_state_conn;
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
@@ -44,6 +45,10 @@ pub(crate) async fn claim_event_deliveries(
     with_transaction(
         pool,
         async |conn| -> Result<Vec<ClaimedEventDelivery>, ApiError> {
+            if maintenance_state_conn(conn).await? != "normal" {
+                return Ok(Vec::new());
+            }
+
             let now = Utc::now().naive_utc();
             let delivery_ids = event_deliveries
                 .filter(

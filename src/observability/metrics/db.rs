@@ -20,26 +20,36 @@ impl ResultKind {
     }
 }
 
-pub fn db_connection_acquired(duration: Duration) {
+pub fn db_connection_acquired(call_site: &'static str, duration: Duration) {
     if let Some(metrics) = current() {
-        metrics
-            .db_connection_acquire_duration
-            .record(duration.as_secs_f64(), &[]);
+        metrics.db_connection_acquire_duration.record(
+            duration.as_secs_f64(),
+            &[KeyValue::new("caller", call_site)],
+        );
     }
 }
 
-pub fn db_connection_acquire_failed(duration: Duration) {
+pub fn db_connection_acquire_failed(call_site: &'static str, duration: Duration) {
     if let Some(metrics) = current() {
+        metrics.db_connection_acquire_duration.record(
+            duration.as_secs_f64(),
+            &[KeyValue::new("caller", call_site)],
+        );
         metrics
-            .db_connection_acquire_duration
-            .record(duration.as_secs_f64(), &[]);
-        metrics.db_connection_acquire_failures.add(1, &[]);
+            .db_connection_acquire_failures
+            .add(1, &[KeyValue::new("caller", call_site)]);
     }
 }
 
-pub fn db_operation_finished(operation: &'static str, duration: Duration, result: &ResultKind) {
+pub fn db_operation_finished(
+    call_site: &'static str,
+    operation: &'static str,
+    duration: Duration,
+    result: &ResultKind,
+) {
     if let Some(metrics) = current() {
         let attrs = [
+            KeyValue::new("caller", call_site),
             KeyValue::new("operation", operation),
             KeyValue::new("result", result.as_str()),
         ];

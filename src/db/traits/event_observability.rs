@@ -383,7 +383,13 @@ fn fanout_worker_health() -> EventWorkerHealth {
     EventWorkerHealth {
         workers_configured: config
             .as_ref()
-            .map(|config| config.event_fanout_workers)
+            .map(|config| {
+                if config.runtime_role.runs_background_workers() {
+                    config.event_fanout_workers
+                } else {
+                    0
+                }
+            })
             .unwrap_or(DEFAULT_EVENT_FANOUT_WORKERS),
         batch_size: config
             .as_ref()
@@ -406,7 +412,13 @@ fn delivery_worker_health() -> EventWorkerHealth {
     EventWorkerHealth {
         workers_configured: config
             .as_ref()
-            .map(|config| config.event_delivery_workers)
+            .map(|config| {
+                if config.runtime_role.runs_background_workers() {
+                    config.event_delivery_workers
+                } else {
+                    0
+                }
+            })
             .unwrap_or(DEFAULT_EVENT_DELIVERY_WORKERS),
         batch_size: config
             .as_ref()

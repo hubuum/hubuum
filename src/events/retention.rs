@@ -15,16 +15,17 @@ use crate::config::{
     DEFAULT_EVENT_RETENTION_PURGE_ENABLED, DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS,
     get_config,
 };
-use crate::db::DbPool;
 use crate::db::traits::event_retention::{
     EventRetentionPurgeSummary, EventRetentionSettings, purge_event_retention_batch_conn,
     select_events_for_retention_purge_conn, try_acquire_event_retention_lock,
 };
+use crate::db::traits::restore::maintenance_state_conn;
 use crate::db::with_transaction;
+use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::events::Event;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
-use crate::restores::{MaintenanceActivityGuard, maintenance_state};
+use crate::restores::MaintenanceActivityGuard;
 
 static EVENT_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
 
@@ -85,10 +86,10 @@ pub async fn process_event_retention_batch(
     archive_path: Option<&Path>,
 ) -> Result<EventRetentionPurgeSummary, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
-    if maintenance_state(pool).await? != "normal" {
-        return Ok(EventRetentionPurgeSummary::default());
-    }
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
+        if maintenance_state_conn(conn).await? != "normal" {
+            return Ok(EventRetentionPurgeSummary::default());
+        }
         if !try_acquire_event_retention_lock(conn).await? {
             return Ok(EventRetentionPurgeSummary::default());
         }
@@ -126,7 +127,10 @@ async fn event_retention_worker_loop(
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = process_event_retention_batch(&pool, config.settings, archive_path) => result,
+            result = with_db_call_site(
+                DbCallSite::EventRetention,
+                process_event_retention_batch(&pool, config.settings, archive_path),
+            ) => result,
         };
         if retention_worker_should_continue(&result) {
             continue;

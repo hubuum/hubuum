@@ -4,12 +4,12 @@ use actix_rt::time::sleep;
 use tracing::{error, info};
 
 use crate::config::get_config;
-use crate::db::DbPool;
 use crate::db::traits::token_retention::purge_expired_token_batch;
+use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::TokenRetentionSettings;
-use crate::restores::{MaintenanceActivityGuard, maintenance_state};
+use crate::restores::MaintenanceActivityGuard;
 
 static TOKEN_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
 
@@ -34,9 +34,6 @@ pub async fn process_token_retention_batch(
     settings: TokenRetentionSettings,
 ) -> Result<usize, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
-    if maintenance_state(pool).await? != "normal" {
-        return Ok(0);
-    }
     purge_expired_token_batch(pool, settings).await
 }
 
@@ -66,7 +63,10 @@ async fn token_retention_worker_loop(
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = process_token_retention_batch(&pool, config.settings) => result,
+            result = with_db_call_site(
+                DbCallSite::TokenRetention,
+                process_token_retention_batch(&pool, config.settings),
+            ) => result,
         };
         if retention_worker_should_continue(&result) {
             continue;
