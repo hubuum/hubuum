@@ -8,7 +8,7 @@ use crate::config::DEFAULT_METRICS_PATH;
 use crate::config::running::RunningConfig;
 use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
-use crate::restores::{MaintenanceActivityGuard, maintenance_state};
+use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
 
 fn allowed_during_maintenance(path: &str, metrics_path: Option<&str>) -> bool {
     matches!(path, "/healthz" | "/readyz")
@@ -40,9 +40,12 @@ pub async fn reject_during_maintenance(
             let pool = req.app_data::<Data<DbPool>>().cloned().ok_or_else(|| {
                 ApiError::InternalServerError("Database pool is unavailable".to_string())
             })?;
-            let state =
-                with_db_call_site(DbCallSite::RequestMaintenance, maintenance_state(&pool)).await?;
-            if state != "normal" {
+            let state = with_db_call_site(
+                DbCallSite::RequestMaintenance,
+                current_maintenance_state(&pool),
+            )
+            .await?;
+            if !state.is_normal() {
                 let response = ApiError::ServiceUnavailable(format!(
                     "Hubuum is in '{state}' maintenance for a destructive restore"
                 ))

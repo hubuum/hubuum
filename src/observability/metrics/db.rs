@@ -6,7 +6,7 @@ use crate::db::DbPool;
 
 use super::{Metrics, current};
 
-pub enum ResultKind {
+pub(crate) enum ResultKind {
     Ok,
     Error(&'static str),
 }
@@ -20,7 +20,7 @@ impl ResultKind {
     }
 }
 
-pub fn db_connection_acquired(call_site: &'static str, duration: Duration) {
+pub(crate) fn db_connection_acquired(call_site: &'static str, duration: Duration) {
     if let Some(metrics) = current() {
         metrics.db_connection_acquire_duration.record(
             duration.as_secs_f64(),
@@ -29,7 +29,7 @@ pub fn db_connection_acquired(call_site: &'static str, duration: Duration) {
     }
 }
 
-pub fn db_connection_acquire_failed(call_site: &'static str, duration: Duration) {
+pub(crate) fn db_connection_acquire_failed(call_site: &'static str, duration: Duration) {
     if let Some(metrics) = current() {
         metrics.db_connection_acquire_duration.record(
             duration.as_secs_f64(),
@@ -41,7 +41,7 @@ pub fn db_connection_acquire_failed(call_site: &'static str, duration: Duration)
     }
 }
 
-pub fn db_operation_finished(
+pub(crate) fn db_operation_finished(
     call_site: &'static str,
     operation: &'static str,
     duration: Duration,

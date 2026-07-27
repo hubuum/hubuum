@@ -126,6 +126,14 @@ impl RuntimeRole {
         matches!(self, Self::All | Self::Worker)
     }
 
+    pub(crate) const fn effective_worker_count(self, configured: usize) -> usize {
+        if self.runs_background_workers() {
+            configured
+        } else {
+            0
+        }
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::All => "all",
@@ -2033,6 +2041,17 @@ mod tests {
         assert_eq!(loaded.runtime_role, RuntimeRole::Worker);
         assert!(!loaded.runtime_role.serves_http());
         assert!(loaded.runtime_role.runs_background_workers());
+    }
+
+    #[rstest]
+    #[case::all(RuntimeRole::All, 3)]
+    #[case::api(RuntimeRole::Api, 0)]
+    #[case::worker(RuntimeRole::Worker, 3)]
+    fn runtime_role_controls_effective_worker_count(
+        #[case] runtime_role: RuntimeRole,
+        #[case] expected: usize,
+    ) {
+        assert_eq!(runtime_role.effective_worker_count(3), expected);
     }
 
     #[test]

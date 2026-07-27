@@ -45,7 +45,7 @@ pub(crate) async fn claim_event_deliveries(
     with_transaction(
         pool,
         async |conn| -> Result<Vec<ClaimedEventDelivery>, ApiError> {
-            if maintenance_state_conn(conn).await? != "normal" {
+            if !maintenance_state_conn(conn).await?.is_normal() {
                 return Ok(Vec::new());
             }
 

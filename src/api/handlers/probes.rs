@@ -53,7 +53,7 @@ pub async fn readyz(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError>
             "Database schema is not ready".to_string(),
         ));
     }
-    if snapshot.maintenance_state() != "normal" {
+    if !snapshot.maintenance_state().is_normal() {
         return Err(ApiError::ServiceUnavailable(format!(
             "Service is in '{}' maintenance",
             snapshot.maintenance_state()

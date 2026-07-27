@@ -50,7 +50,7 @@ async fn purge_expired_token_batch_at(
     let batch_size = settings.batch_size().as_i64();
 
     with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-        if maintenance_state_conn(conn).await? != "normal" {
+        if !maintenance_state_conn(conn).await?.is_normal() {
             return Ok(0);
         }
         if !try_acquire_token_retention_lock(conn).await? {

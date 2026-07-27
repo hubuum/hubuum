@@ -51,11 +51,9 @@ fn wake_event_delivery_worker_from_postgres() {
 fn configured_event_delivery_worker_count() -> usize {
     get_config()
         .map(|config| {
-            if config.runtime_role.runs_background_workers() {
-                config.event_delivery_workers
-            } else {
-                0
-            }
+            config
+                .runtime_role
+                .effective_worker_count(config.event_delivery_workers)
         })
         .unwrap_or(DEFAULT_EVENT_DELIVERY_WORKERS)
 }
@@ -322,16 +320,12 @@ pub fn ensure_event_delivery_worker_running(pool: DbPool) {
     let poll_interval = configured_event_delivery_poll_interval();
     let settings = configured_event_delivery_settings();
 
-    EVENT_DELIVERY_LISTENER.call_once({
-        let pool = pool.clone();
-        move || {
-            super::pg_notify::spawn_postgres_notification_listener(
-                pool,
-                super::pg_notify::EVENT_DELIVERY_CHANNEL,
-                "event-delivery-pg-listener",
-                wake_event_delivery_worker_from_postgres,
-            );
-        }
+    EVENT_DELIVERY_LISTENER.call_once(|| {
+        super::pg_notify::spawn_postgres_notification_listener(
+            super::pg_notify::EVENT_DELIVERY_CHANNEL,
+            "event-delivery-pg-listener",
+            wake_event_delivery_worker_from_postgres,
+        );
     });
 
     EVENT_DELIVERY_WORKER.call_once(move || {

@@ -44,8 +44,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Restore coordinators now sample guarded local activity only after observing
   the draining generation, preventing stale idle heartbeats from crossing the
   restore drain barrier.
-- Task notification listeners now use a dedicated connection so task-only
-  workers with a one-connection execution pool can still claim queued tasks.
+- Worker notification listeners now use dedicated connections so task-only or
+  event-only workers with a one-connection execution pool can still claim work.
 
 ## [0.0.5] - 2026-07-26
 

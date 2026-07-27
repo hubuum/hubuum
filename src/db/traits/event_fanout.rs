@@ -40,7 +40,7 @@ pub async fn claim_events_for_fanout(
     }
 
     with_transaction(pool, async |conn| -> Result<Vec<Event>, ApiError> {
-        if maintenance_state_conn(conn).await? != "normal" {
+        if !maintenance_state_conn(conn).await?.is_normal() {
             return Ok(Vec::new());
         }
 

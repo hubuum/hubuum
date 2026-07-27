@@ -87,7 +87,7 @@ pub async fn process_event_retention_batch(
 ) -> Result<EventRetentionPurgeSummary, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
-        if maintenance_state_conn(conn).await? != "normal" {
+        if !maintenance_state_conn(conn).await?.is_normal() {
             return Ok(EventRetentionPurgeSummary::default());
         }
         if !try_acquire_event_retention_lock(conn).await? {

@@ -1,11 +1,12 @@
 use crate::db::prelude::*;
 use crate::db::{database_schema_is_ready, with_connection};
 use crate::errors::ApiError;
+use crate::models::MaintenanceState;
 use crate::traits::BackendContext;
 
 pub(crate) struct ReadinessSnapshot {
     schema_ready: bool,
-    maintenance_state: String,
+    maintenance_state: MaintenanceState,
 }
 
 impl ReadinessSnapshot {
@@ -13,8 +14,8 @@ impl ReadinessSnapshot {
         self.schema_ready
     }
 
-    pub(crate) fn maintenance_state(&self) -> &str {
-        &self.maintenance_state
+    pub(crate) fn maintenance_state(&self) -> MaintenanceState {
+        self.maintenance_state
     }
 }
 
@@ -37,9 +38,9 @@ where
                 .first::<String>(conn)
                 .await?;
 
-            Ok::<_, diesel::result::Error>(ReadinessSnapshot {
+            Ok::<_, ApiError>(ReadinessSnapshot {
                 schema_ready,
-                maintenance_state,
+                maintenance_state: MaintenanceState::from_db(&maintenance_state)?,
             })
         })
         .await

@@ -4,8 +4,11 @@ use crate::db::prelude::*;
 use futures_util::StreamExt;
 use tracing::{debug, error, info};
 
-use crate::db::DbPool;
+use crate::config::get_config;
+use crate::db::{DatabasePoolSettings, DbPool, init_pool_with_settings};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
+
+const NOTIFICATION_LISTENER_POOL_SIZE: u32 = 1;
 
 #[derive(Clone, Copy)]
 pub(crate) struct NotificationChannel(&'static str);
@@ -54,15 +57,27 @@ async fn notify_channel(
 }
 
 pub(crate) fn spawn_postgres_notification_listener(
-    pool: DbPool,
     channel: NotificationChannel,
     thread_name: &'static str,
     on_notification: fn(),
 ) {
+    let pool = new_postgres_notification_listener_pool();
     spawn_background_worker(thread_name, move |shutdown| {
         let system = actix_rt::System::new();
         system.block_on(listen_loop(pool, channel, on_notification, || {}, shutdown));
     });
+}
+
+fn new_postgres_notification_listener_pool() -> DbPool {
+    let config =
+        get_config().expect("Postgres notification listeners require database configuration");
+    let settings = DatabasePoolSettings::builder(config.database_url.clone())
+        .max_size(NOTIFICATION_LISTENER_POOL_SIZE)
+        .statement_timeout_ms(config.db_statement_timeout_ms)
+        .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+        .build()
+        .expect("Postgres notification listener pool settings must be valid");
+    init_pool_with_settings(&settings)
 }
 
 async fn listen_loop(
@@ -355,5 +370,19 @@ mod tests {
                 .map(|row| row.channel)
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[tokio::test]
+    async fn notification_listener_pool_is_isolated_from_the_execution_pool() {
+        let listener_pool = new_postgres_notification_listener_pool();
+        let _listener_connection = listener_pool.get().await.unwrap();
+
+        let config = get_config().expect("test requires database configuration");
+        let execution_pool = init_pool(&config.database_url, 1);
+
+        tokio::time::timeout(Duration::from_secs(5), execution_pool.get())
+            .await
+            .expect("execution checkout must not wait for the notification listener")
+            .expect("the one-connection execution pool should remain available");
     }
 }

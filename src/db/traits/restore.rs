@@ -13,7 +13,8 @@ use crate::models::backup::{
     backup_history_sections,
 };
 use crate::models::{
-    BackupDocument, NewRestoreJobRecord, RestoreJobRecord, RestoreJobStatus, ServerInstanceRecord,
+    BackupDocument, MaintenanceState, NewRestoreJobRecord, RestoreJobRecord, RestoreJobStatus,
+    ServerInstanceRecord,
 };
 
 const TRUNCATE_TABLES: &[&str] = &[
@@ -118,14 +119,14 @@ pub(crate) struct RestoreCompletion {
 }
 
 pub(crate) struct RestoreCoordinatorSnapshot {
-    maintenance_state: String,
+    maintenance_state: MaintenanceState,
     restore_job_id: Option<i64>,
     database_now: NaiveDateTime,
 }
 
 impl RestoreCoordinatorSnapshot {
-    pub(crate) fn maintenance_state(&self) -> &str {
-        &self.maintenance_state
+    pub(crate) fn maintenance_state(&self) -> MaintenanceState {
+        self.maintenance_state
     }
 
     pub(crate) fn restore_job_id(&self) -> Option<i64> {
@@ -324,13 +325,14 @@ pub(crate) async fn apply_restore_db(
             .select(status)
             .first::<String>(conn)
             .await?;
-        let (maintenance_state, maintenance_restore_job_id) = system_maintenance
+        let (maintenance_state_value, maintenance_restore_job_id) = system_maintenance
             .filter(maintenance_id.eq(1_i16))
             .select((state, restore_job_id))
             .first::<(String, Option<i64>)>(conn)
             .await?;
+        let maintenance_state = MaintenanceState::from_db(&maintenance_state_value)?;
         if current_status != RestoreJobStatus::Confirmed.as_str()
-            || maintenance_state != "draining"
+            || maintenance_state != MaintenanceState::Draining
             || maintenance_restore_job_id != Some(job.id)
         {
             return Err(ApiError::Conflict(format!(
@@ -465,7 +467,7 @@ pub(crate) async fn load_restore_coordinator_snapshot_db(
             id, restore_job_id, state, system_maintenance,
         };
 
-        let (maintenance_state, restore_job_id_value, database_now) = system_maintenance
+        let (maintenance_state_value, restore_job_id_value, database_now) = system_maintenance
             .filter(id.eq(1_i16))
             .select((
                 state,
@@ -474,8 +476,8 @@ pub(crate) async fn load_restore_coordinator_snapshot_db(
             ))
             .first::<(String, Option<i64>, NaiveDateTime)>(conn)
             .await?;
-        Ok::<_, diesel::result::Error>(RestoreCoordinatorSnapshot {
-            maintenance_state,
+        Ok::<_, ApiError>(RestoreCoordinatorSnapshot {
+            maintenance_state: MaintenanceState::from_db(&maintenance_state_value)?,
             restore_job_id: restore_job_id_value,
             database_now,
         })
@@ -553,7 +555,8 @@ pub(crate) async fn restore_coordinator_tick_db(
         // Do not sample local activity until this transaction has observed
         // the maintenance generation. Work that began while the state was
         // still normal has already installed its guard by this point.
-        let drained_value = state_value != "normal" && local_work_is_idle();
+        let maintenance_state = MaintenanceState::from_db(&state_value)?;
+        let drained_value = !maintenance_state.is_normal() && local_work_is_idle();
         let record = ServerInstanceRecord {
             instance_id: instance_id_value,
             maintenance_generation: generation_value,
@@ -579,7 +582,7 @@ pub(crate) async fn restore_coordinator_tick_db(
             .await?;
 
         Ok(RestoreCoordinatorSnapshot {
-            maintenance_state: state_value,
+            maintenance_state,
             restore_job_id: restore_job_id_value,
             database_now,
         })
@@ -652,6 +655,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::db::capture_queries;
+    use crate::models::MaintenanceState;
     use crate::tests::get_test_pool;
 
     use super::{
@@ -696,7 +700,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(snapshot.maintenance_state(), "normal");
+        assert_eq!(snapshot.maintenance_state(), MaintenanceState::Normal);
         assert!(!sampled.load(Ordering::Acquire));
         delete_server_instance_db(&pool, instance_id).await.unwrap();
     }

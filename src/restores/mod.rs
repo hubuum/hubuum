@@ -28,7 +28,7 @@ use crate::models::backup::{
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use crate::models::{
     BackupDocument, COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED,
-    ComputedFieldDefinitionRequest, ComputedResultType, NewRestoreJobRecord,
+    ComputedFieldDefinitionRequest, ComputedResultType, MaintenanceState, NewRestoreJobRecord,
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobRecord, RestoreJobStatus,
     RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
 };
@@ -648,10 +648,10 @@ async fn reconcile_interrupted_restore_from_snapshot(
     snapshot: RestoreCoordinatorSnapshot,
 ) -> Result<(), ApiError> {
     let maintenance_state = snapshot.maintenance_state();
-    if maintenance_state == "normal" {
+    if maintenance_state.is_normal() {
         return Ok(());
     }
-    if maintenance_state != "draining" {
+    if maintenance_state != MaintenanceState::Draining {
         return Err(ApiError::InternalServerError(format!(
             "Unknown maintenance state '{maintenance_state}'"
         )));
@@ -835,8 +835,14 @@ pub fn ensure_restore_coordinator_running(pool: DbPool) {
     });
 }
 
-pub async fn maintenance_state(pool: &DbPool) -> Result<String, ApiError> {
+pub(crate) async fn current_maintenance_state(pool: &DbPool) -> Result<MaintenanceState, ApiError> {
     maintenance_state_db(pool).await
+}
+
+pub async fn maintenance_state(pool: &DbPool) -> Result<String, ApiError> {
+    current_maintenance_state(pool)
+        .await
+        .map(|state| state.as_str().to_string())
 }
 
 pub async fn identity_scope_name(

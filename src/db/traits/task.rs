@@ -3,7 +3,7 @@ use crate::models::token_scope::TokenScope;
 use chrono::{NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::expression::AsExpression;
-use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text, Timestamp};
+use diesel::sql_types::{Array, BigInt, Bool, Integer, Nullable, Text, Timestamp};
 use hubuum_task_core::IdempotencyKey;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1212,14 +1212,8 @@ pub async fn insert_import_results(
     .await
 }
 
-pub(crate) fn executable_task_kind_values() -> [&'static str; 5] {
-    [
-        TaskKind::Import.as_str(),
-        TaskKind::Export.as_str(),
-        TaskKind::Backup.as_str(),
-        TaskKind::Reindex.as_str(),
-        TaskKind::RemoteCall.as_str(),
-    ]
+pub(crate) fn executable_task_kind_values() -> [&'static str; TaskKind::ALL.len()] {
+    TaskKind::ALL.map(TaskKind::as_str)
 }
 
 static NEXT_TASK_KIND: AtomicUsize = AtomicUsize::new(0);
@@ -1230,7 +1224,7 @@ struct ClaimableTaskId {
     id: i32,
 }
 
-fn task_kind_claim_order(start: usize) -> [&'static str; 5] {
+fn task_kind_claim_order(start: usize) -> [&'static str; TaskKind::ALL.len()] {
     let kinds = executable_task_kind_values();
     std::array::from_fn(|offset| kinds[(start + offset) % kinds.len()])
 }
@@ -1244,7 +1238,7 @@ pub async fn claim_next_queued_task(
     };
 
     let record = with_transaction(pool, async |conn| -> Result<Option<TaskRecord>, ApiError> {
-        if maintenance_state_conn(conn).await? != "normal" {
+        if !maintenance_state_conn(conn).await?.is_normal() {
             return Ok(None);
         }
 
@@ -1255,24 +1249,13 @@ pub async fn claim_next_queued_task(
             "SELECT id \
              FROM tasks \
              WHERE status = $1 \
-               AND kind IN ($2, $3, $4, $5, $6) \
-             ORDER BY CASE kind \
-                 WHEN $2 THEN 0 \
-                 WHEN $3 THEN 1 \
-                 WHEN $4 THEN 2 \
-                 WHEN $5 THEN 3 \
-                 WHEN $6 THEN 4 \
-                 ELSE 5 \
-             END, created_at ASC \
+               AND kind = ANY($2) \
+             ORDER BY array_position($2, kind), created_at ASC \
              FOR UPDATE SKIP LOCKED \
              LIMIT 1",
         )
         .bind::<Text, _>(TaskStatus::Queued.as_str())
-        .bind::<Text, _>(claim_order[0])
-        .bind::<Text, _>(claim_order[1])
-        .bind::<Text, _>(claim_order[2])
-        .bind::<Text, _>(claim_order[3])
-        .bind::<Text, _>(claim_order[4])
+        .bind::<Array<Text>, _>(claim_order.to_vec())
         .get_result::<ClaimableTaskId>(conn)
         .await
         .optional()?

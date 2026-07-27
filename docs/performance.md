@@ -1,9 +1,10 @@
 # Database Pool Tuning and Load Testing
 
 Hubuum's primary asynchronous bb8 PostgreSQL pool is shared by HTTP handlers,
-task workers, event workers, retention work, and event notification listeners.
-Task-enabled processes also use dedicated one-connection pools for task queue
-notifications and task lease renewal. Tune the primary pool as a database
+task workers, event workers, and retention work. Each enabled task, event
+fan-out, or event-delivery notification listener uses a dedicated
+one-connection pool. Task-enabled processes use another dedicated
+one-connection pool for task lease renewal. Tune the primary pool as a database
 concurrency limit, not as a mirror of the Actix worker count, and include the
 auxiliary connections in the instance's total PostgreSQL connection budget.
 
@@ -23,23 +24,11 @@ Set `HUBUUM_DB_POOL_SIZE` no higher than that budget. Leave capacity for
 administration, migrations, monitoring, failover overlap, and non-Hubuum
 clients.
 
-Two event notification listeners normally hold pooled connections for the
-lifetime of the process: one for event fanout and one for event delivery. The
-remaining pool capacity serves requests and workers. For example, a pool size
-of `10` normally leaves up to `8` connections for concurrent query work.
-
-The task notification listener uses a separate one-connection pool, so a
-task-only worker can still execute with `HUBUUM_DB_POOL_SIZE=1`. Task lease
-renewal uses another dedicated one-connection pool while tasks are active.
-These auxiliary pools do not reduce primary-pool capacity, but they do count
-toward PostgreSQL's total connection budget.
-
-For processes with event workers, avoid configuring a primary pool that can be
-fully consumed by event listeners. A practical starting point is:
-
-```text
-pool_size >= long_lived_listener_connections + desired_concurrent_db_work
-```
+Notification listeners do not reduce primary-pool capacity, so a task-only or
+event-only worker can execute with `HUBUUM_DB_POOL_SIZE=1`. They do count toward
+PostgreSQL's total connection budget: one connection for each enabled task,
+fan-out, and delivery listener. Task lease renewal can use one additional
+connection while tasks are active.
 
 The pool is a deliberate backpressure boundary. More Actix or task workers do
 not require the same number of connections; they wait asynchronously when the
@@ -48,8 +37,8 @@ pool is busy.
 ## Relevant Settings
 
 - `HUBUUM_DB_POOL_SIZE` controls the maximum number of connections in the
-  primary pool. The default is `10`; dedicated task listener and lease pools
-  are additional to this limit.
+  primary pool. The default is `10`; dedicated notification-listener and task
+  lease pools are additional to this limit.
 - `HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS` bounds how long work waits for a
   connection. The default is `2000` ms. Keep it below the external request or
   proxy timeout so overload fails predictably inside Hubuum.
