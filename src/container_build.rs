@@ -12,6 +12,13 @@ use rstest::rstest;
 #[cfg(unix)]
 static TEST_DIRECTORY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+fn read_repository_text(relative_path: &str) -> String {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    fs::read_to_string(repository.join(relative_path))
+        .unwrap_or_else(|error| panic!("{relative_path} should be readable: {error}"))
+        .replace("\r\n", "\n")
+}
+
 #[cfg(unix)]
 fn test_directory(prefix: &str) -> PathBuf {
     let directory = std::env::temp_dir().join(format!(
@@ -266,8 +273,7 @@ fn container_dependency_images_are_pinned() {
     let benchmark_workflow =
         fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
             .expect("benchmark workflow should be readable");
-    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
-        .expect("single-host installer should be readable");
+    let installer = read_repository_text("scripts/install-single-host.sh");
 
     assert!(workflow.contains("postgres:18.4@sha256:"));
     assert!(benchmark_workflow.contains("postgres:18.4-alpine3.24@sha256:"));
@@ -458,8 +464,7 @@ fn compose_deployments_forward_page_limit_configuration() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let compose = fs::read_to_string(repository.join("docker-compose.yml"))
         .expect("repository docker-compose.yml should be readable");
-    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
-        .expect("single-host installer should be readable");
+    let installer = read_repository_text("scripts/install-single-host.sh");
 
     for variable in ["HUBUUM_DEFAULT_PAGE_LIMIT", "HUBUUM_MAX_PAGE_LIMIT"] {
         assert!(compose.contains(variable));
@@ -469,9 +474,7 @@ fn compose_deployments_forward_page_limit_configuration() {
 
 #[test]
 fn single_host_installer_limits_api_container_privileges() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
-        .expect("single-host installer should be readable");
+    let installer = read_repository_text("scripts/install-single-host.sh");
 
     assert!(installer.contains("read_only: true"));
     assert!(installer.contains("cap_drop:"));
@@ -480,9 +483,7 @@ fn single_host_installer_limits_api_container_privileges() {
 
 #[test]
 fn single_host_installer_generates_redundant_http_upstreams() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
-        .expect("single-host installer should be readable");
+    let installer = read_repository_text("scripts/install-single-host.sh");
 
     assert!(installer.contains("hubuum-api-standby:"));
     assert!(installer.contains("hubuum-web-standby:"));
@@ -502,9 +503,7 @@ fn single_host_installer_generates_redundant_http_upstreams() {
 
 #[test]
 fn single_host_direct_routing_uses_one_health_checked_public_api_proxy() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
-        .expect("single-host installer should be readable");
+    let installer = read_repository_text("scripts/install-single-host.sh");
     let direct_start = installer
         .find(r#"elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "direct" ]]; then"#)
         .expect("installer should generate direct shared-host routing");
@@ -525,9 +524,7 @@ fn single_host_direct_routing_uses_one_health_checked_public_api_proxy() {
 
 #[test]
 fn single_host_metrics_routes_target_each_backend_process() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
-        .expect("single-host installer should be readable");
+    let installer = read_repository_text("scripts/install-single-host.sh");
 
     assert!(installer.contains(
         "(metrics_primary_proxy) {\n\
@@ -550,9 +547,7 @@ fn single_host_metrics_routes_target_each_backend_process() {
 
 #[test]
 fn single_host_installer_emits_canonical_caddyfile_indentation() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
-        .expect("single-host installer should be readable");
+    let installer = read_repository_text("scripts/install-single-host.sh");
     let template_start = installer
         .find("CADDYFILE_TEMP=")
         .expect("installer should generate a Caddyfile");
@@ -568,9 +563,7 @@ fn single_host_installer_emits_canonical_caddyfile_indentation() {
 
 #[test]
 fn single_host_installer_preserves_the_bind_mounted_caddyfile_inode() {
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let installer = fs::read_to_string(repository.join("scripts/install-single-host.sh"))
-        .expect("single-host installer should be readable");
+    let installer = read_repository_text("scripts/install-single-host.sh");
 
     assert!(installer.contains("cp \"$CADDYFILE_TEMP\" \"$INSTALL_DIR/Caddyfile\""));
     assert!(!installer.contains("mv \"$CADDYFILE_TEMP\" \"$INSTALL_DIR/Caddyfile\""));
