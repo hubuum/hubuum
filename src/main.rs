@@ -2,7 +2,12 @@
 mod container_build;
 
 use actix_web::{
-    App, HttpServer, dev::Server, middleware::from_fn, web, web::Data, web::JsonConfig,
+    App, HttpServer,
+    dev::{HttpServiceFactory, Server},
+    middleware::from_fn,
+    web,
+    web::Data,
+    web::JsonConfig,
 };
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
@@ -20,7 +25,7 @@ use hubuum::config::get_config;
 use hubuum::config::initialize_config;
 use hubuum::config::running::RunningConfig;
 use hubuum::config::token_hash_key_is_ephemeral;
-use hubuum::config::{AppConfig, LoginRateLimitBackendKind};
+use hubuum::config::{AppConfig, ClientAllowlist, LoginRateLimitBackendKind, MetricsPath};
 use hubuum::db::{DatabasePoolSettings, init_pool_with_settings};
 use hubuum::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, EXIT_CODE_INIT_ERROR,
@@ -387,6 +392,25 @@ fn start_background_workers(context: &AppContext, backup_settings: &BackupSettin
     ensure_token_retention_worker_running(context.db_pool.clone());
 }
 
+fn worker_metrics_service(
+    client_allowlist: ClientAllowlist,
+    proxy_trust: middlewares::ProxyTrust,
+    metrics_path: MetricsPath,
+    pool: db::DbPool,
+) -> impl HttpServiceFactory {
+    web::scope("")
+        .wrap(middlewares::ClientAllowlistMiddleware::new_with_trust(
+            client_allowlist,
+            proxy_trust.clone(),
+        ))
+        .wrap(middlewares::TracingMiddleware::new_with_trust(proxy_trust))
+        .app_data(Data::new(pool))
+        .route(
+            metrics_path.as_str(),
+            web::get().to(observability::metrics::scrape),
+        )
+}
+
 fn start_worker_metrics_server(
     config: &AppConfig,
     pool: db::DbPool,
@@ -403,16 +427,12 @@ fn start_worker_metrics_server(
     );
     let metrics_path = config.metrics_path.clone();
     let server = HttpServer::new(move || {
-        App::new()
-            .wrap(middlewares::ClientAllowlistMiddleware::new_with_trust(
-                client_allowlist.clone(),
-                proxy_trust.clone(),
-            ))
-            .app_data(Data::new(pool.clone()))
-            .route(
-                metrics_path.as_str(),
-                web::get().to(observability::metrics::scrape),
-            )
+        App::new().service(worker_metrics_service(
+            client_allowlist.clone(),
+            proxy_trust.clone(),
+            metrics_path.clone(),
+            pool.clone(),
+        ))
     });
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
     let server = match (&config.tls_cert_path, &config.tls_key_path) {
@@ -439,7 +459,11 @@ fn start_worker_metrics_server(
         _ => server.bind(&bind_address)?,
     };
 
-    Ok(Some(server.workers(1).run()))
+    // The worker supervisor owns SIGINT/SIGTERM handling and initiates a
+    // graceful stop through the server handle. Letting Actix install a second
+    // signal handler creates a race that can misclassify normal shutdown as an
+    // unexpected metrics-server exit.
+    Ok(Some(server.disable_signals().workers(1).run()))
 }
 
 fn login_rate_limit_store_settings(
@@ -479,4 +503,79 @@ async fn wait_for_shutdown_signal() -> std::io::Result<()> {
 #[cfg(not(unix))]
 async fn wait_for_shutdown_signal() -> std::io::Result<()> {
     tokio::signal::ctrl_c().await
+}
+
+#[cfg(test)]
+mod tests {
+    use actix_web::{http::StatusCode, test as actix_test};
+
+    use super::*;
+
+    fn unreachable_pool() -> db::DbPool {
+        let settings = DatabasePoolSettings::builder(
+            "postgres://hubuum:hubuum@127.0.0.1:1/hubuum_worker_metrics_unreachable",
+        )
+        .max_size(1)
+        .statement_timeout_ms(0)
+        .acquire_timeout_ms(5)
+        .build()
+        .expect("unreachable test pool settings should be valid");
+        init_pool_with_settings(&settings)
+    }
+
+    #[actix_web::test]
+    async fn worker_metrics_service_instruments_scrape_requests() {
+        observability::metrics::init().expect("metrics should initialize");
+        let app = actix_test::init_service(App::new().service(worker_metrics_service(
+            ClientAllowlist::Any,
+            middlewares::ProxyTrust::peer_only(),
+            MetricsPath::new("/metrics").expect("metrics path should be valid"),
+            unreachable_pool(),
+        )))
+        .await;
+        let metrics_request = || {
+            actix_test::TestRequest::get()
+                .uri("/metrics")
+                .peer_addr(
+                    "127.0.0.1:4242"
+                        .parse()
+                        .expect("test peer address should parse"),
+                )
+                .to_request()
+        };
+
+        let response = actix_test::call_service(&app, metrics_request()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key("x-request-id"));
+        actix_test::read_body(response).await;
+
+        let response = actix_test::call_service(&app, metrics_request()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key("x-request-id"));
+        let body = actix_test::read_body(response).await;
+        let body = std::str::from_utf8(&body).expect("metrics body should be UTF-8");
+
+        assert!(body.contains(
+            "hubuum_http_requests_total{method=\"GET\",route=\"/metrics\",status_code=\"200\",status_family=\"2xx\"}"
+        ));
+        assert!(body.contains("hubuum_http_requests_in_flight{route=\"/metrics\"} 1"));
+    }
+
+    #[test]
+    fn worker_metrics_server_leaves_signal_handling_to_supervisor() {
+        let source = include_str!("main.rs");
+        let function_start = source
+            .find("fn start_worker_metrics_server(")
+            .expect("worker metrics server function should exist");
+        let function_end = source[function_start..]
+            .find("\nfn login_rate_limit_store_settings(")
+            .map(|offset| function_start + offset)
+            .expect("worker metrics server function should have a stable boundary");
+        let function = &source[function_start..function_end];
+
+        assert!(
+            function.contains("server.disable_signals()"),
+            "worker metrics server must not compete with supervisor signal handling"
+        );
+    }
 }
