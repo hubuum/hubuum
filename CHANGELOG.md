@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Shared-host installations using direct routing now proxy `/metrics` to the
+  backend instead of letting the request fall through to the frontend.
+
 ## [0.0.5] - 2026-07-26
 
 ### Added

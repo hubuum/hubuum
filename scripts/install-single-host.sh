@@ -613,6 +613,10 @@ ${WEB_FQDN} {
 		import api_proxy
 	}
 
+	handle /metrics {
+		import api_proxy
+	}
+
 	handle {
 		import web_proxy
 	}
