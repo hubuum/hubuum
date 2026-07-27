@@ -21,8 +21,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   label. Update recording rules or exact label-set matches that assume the old
   unlabeled acquisition series.
 - Task, event fan-out, and event delivery safety polling now default to five
-  seconds. Transactional notifications preserve prompt normal wakeups while
-  reducing empty database polling.
+  seconds. Transactional notifications preserve prompt normal wakeups, and
+  delivery workers still wake at scheduled retry deadlines below that interval.
 - Single-host `/metrics` now targets the worker-enabled primary deterministically,
   and `/metrics/standby` exposes the HTTP-only standby. Prefixed routing exposes
   the equivalent `/hubuum-api/metrics` and `/hubuum-api/metrics/standby` paths.

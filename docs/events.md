@@ -434,7 +434,9 @@ running past its claim window and racing with a retry worker.
 Workers use PostgreSQL `LISTEN`/`NOTIFY` for low-latency wakeups across
 processes and fall back to the configured poll intervals for eventual progress.
 Event writes notify the fan-out channel only after commit, and fan-out notifies
-delivery workers when it creates delivery rows.
+delivery workers when it creates delivery rows. An idle delivery worker also
+wakes at the earliest scheduled retry or expired-claim deadline, so retry
+backoffs shorter than the safety poll remain effective.
 
 ## Operational Health
 

@@ -14,7 +14,7 @@ use crate::config::{
     DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_WORKERS, get_config,
 };
 use crate::db::traits::event_delivery::{
-    ClaimedEventDelivery, EventDeliverySettings, claim_event_deliveries,
+    ClaimedEventDelivery, EventDeliverySettings, claim_event_delivery_batch,
     mark_event_delivery_failed, mark_event_delivery_succeeded,
 };
 use crate::db::traits::events::load_queued_task_initiators;
@@ -39,6 +39,12 @@ static DEFAULT_SINK_RESOLVER: std::sync::LazyLock<DefaultSinkResolver> =
     std::sync::LazyLock::new(DefaultSinkResolver::default);
 
 const EVENT_DELIVERY_MAX_CONCURRENCY_PER_WORKER: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EventDeliveryBatchOutcome {
+    processed: usize,
+    next_wakeup_in: Option<Duration>,
+}
 
 fn get_event_delivery_notify() -> &'static Notify {
     EVENT_DELIVERY_NOTIFY.get_or_init(Notify::new)
@@ -85,13 +91,15 @@ fn configured_event_delivery_settings() -> EventDeliverySettings {
         })
 }
 
-pub async fn process_event_delivery_batch(
+async fn process_event_delivery_batch_with_schedule(
     pool: &DbPool,
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,
-) -> Result<usize, ApiError> {
+) -> Result<EventDeliveryBatchOutcome, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
-    let mut deliveries = claim_event_deliveries(pool, settings).await?;
+    let (mut deliveries, next_wakeup_in) = claim_event_delivery_batch(pool, settings)
+        .await?
+        .into_parts();
     let processed = deliveries.len();
     let legacy_task_ids = deliveries
         .iter()
@@ -137,7 +145,10 @@ pub async fn process_event_delivery_batch(
         result?;
     }
 
-    Ok(processed)
+    Ok(EventDeliveryBatchOutcome {
+        processed,
+        next_wakeup_in,
+    })
 }
 
 #[cfg(test)]
@@ -226,9 +237,9 @@ async fn deliver_one(
     transport.deliver(envelope, subscription, sink).await
 }
 
-fn delivery_worker_should_continue(result: &Result<usize, ApiError>) -> bool {
+fn delivery_worker_should_continue(result: &Result<EventDeliveryBatchOutcome, ApiError>) -> bool {
     match result {
-        Ok(processed) => *processed > 0,
+        Ok(outcome) => outcome.processed > 0,
         Err(error) => {
             error!(message = "Event delivery worker iteration failed", error = %error);
             false
@@ -236,14 +247,25 @@ fn delivery_worker_should_continue(result: &Result<usize, ApiError>) -> bool {
     }
 }
 
+fn event_delivery_wait_duration(
+    poll_interval: Duration,
+    next_wakeup_in: Option<Duration>,
+) -> Duration {
+    next_wakeup_in
+        .map(|retry_wait| retry_wait.min(poll_interval))
+        .unwrap_or(poll_interval)
+}
+
 async fn wait_for_event_delivery_wakeup(
     poll_interval: Duration,
+    next_wakeup_in: Option<Duration>,
     shutdown: &ShutdownSignal,
 ) -> bool {
+    let wait_duration = event_delivery_wait_duration(poll_interval, next_wakeup_in);
     tokio::select! {
         biased;
         _ = shutdown.requested() => false,
-        _ = sleep(poll_interval) => {
+        _ = sleep(wait_duration) => {
             EVENT_DELIVERY_POLL_WAKEUPS.fetch_add(1, Ordering::Relaxed);
             true
         }
@@ -267,13 +289,17 @@ async fn event_delivery_worker_loop(
             _ = shutdown.requested() => break,
             result = with_db_call_site(
                 DbCallSite::EventDelivery,
-                process_event_delivery_batch(&pool, settings, resolver),
+                process_event_delivery_batch_with_schedule(&pool, settings, resolver),
             ) => result,
         };
+        let next_wakeup_in = result
+            .as_ref()
+            .ok()
+            .and_then(|outcome| outcome.next_wakeup_in);
         if delivery_worker_should_continue(&result) {
             continue;
         }
-        if !wait_for_event_delivery_wakeup(poll_interval, &shutdown).await {
+        if !wait_for_event_delivery_wakeup(poll_interval, next_wakeup_in, &shutdown).await {
             break;
         }
     }
@@ -365,6 +391,7 @@ pub fn event_delivery_wakeup_stats() -> EventWorkerWakeupStats {
 #[cfg(test)]
 mod tests {
     use futures::FutureExt;
+    use rstest::rstest;
 
     use crate::events::sink::{EventEnvelope, NoopSinkResolver, Sink, SinkError};
     use crate::models::EventSinkKind;
@@ -397,11 +424,35 @@ mod tests {
 
     #[test]
     fn delivery_worker_stops_after_empty_or_error_iteration() {
-        assert!(!delivery_worker_should_continue(&Ok(0)));
-        assert!(delivery_worker_should_continue(&Ok(1)));
+        assert!(!delivery_worker_should_continue(&Ok(
+            EventDeliveryBatchOutcome {
+                processed: 0,
+                next_wakeup_in: None,
+            }
+        )));
+        assert!(delivery_worker_should_continue(&Ok(
+            EventDeliveryBatchOutcome {
+                processed: 1,
+                next_wakeup_in: None,
+            }
+        )));
         assert!(!delivery_worker_should_continue(&Err(
             ApiError::InternalServerError("boom".to_string())
         )));
+    }
+
+    #[rstest]
+    #[case::no_retry(None, Duration::from_secs(5))]
+    #[case::earlier_retry(Some(Duration::from_secs(1)), Duration::from_secs(1))]
+    #[case::later_retry(Some(Duration::from_secs(10)), Duration::from_secs(5))]
+    fn delivery_worker_waits_for_retry_or_safety_poll(
+        #[case] next_wakeup_in: Option<Duration>,
+        #[case] expected: Duration,
+    ) {
+        assert_eq!(
+            event_delivery_wait_duration(Duration::from_secs(5), next_wakeup_in),
+            expected
+        );
     }
 
     #[actix_rt::test]

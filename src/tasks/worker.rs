@@ -33,7 +33,7 @@ use crate::observability::metrics;
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
-use crate::restores::MaintenanceActivityGuard;
+use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
 
 use super::execution::execute_import_task;
 use super::helpers::sanitize_error_for_storage;
@@ -354,6 +354,11 @@ async fn process_one_task_with_settings(
     backup_settings: &BackupSettings,
 ) -> Result<bool, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
+    if !current_maintenance_state(context).await?.is_normal() {
+        metrics::task_worker_iteration("idle");
+        return Ok(false);
+    }
+
     maybe_recover_expired_task_leases(context).await?;
 
     if let Err(error) = maybe_cleanup_expired_task_outputs(context).await {
