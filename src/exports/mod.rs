@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::time::Instant;
+use std::time::Duration;
 
 use hubuum_task_core::IdempotencyKey;
 use hubuum_templates::SizeLimitedWriter;
@@ -85,10 +85,28 @@ struct ExportExecution {
 
 #[derive(Debug, Clone, Copy, Default)]
 struct ExportExecutionTimings {
-    total_duration_ms: i32,
-    query_duration_ms: i32,
-    hydration_duration_ms: i32,
-    render_duration_ms: i32,
+    total: Duration,
+    query: Duration,
+    hydration: Duration,
+    render: Duration,
+}
+
+impl ExportExecutionTimings {
+    fn total_millis(self) -> i32 {
+        duration_to_millis_i32(self.total)
+    }
+
+    fn query_millis(self) -> i32 {
+        duration_to_millis_i32(self.query)
+    }
+
+    fn hydration_millis(self) -> i32 {
+        duration_to_millis_i32(self.hydration)
+    }
+
+    fn render_millis(self) -> i32 {
+        duration_to_millis_i32(self.render)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1109,9 +1127,13 @@ where
     let runtime = prepare_export_runtime(pool, payload.export, template).await?;
     validate_export_submission(&runtime)?;
     let exporter = PermissionAwareExport::new(backend, subject, scopes).await?;
-    let metric_template_id = runtime.template.as_ref().map(|template| template.id);
-    let total_start = Instant::now();
-    let total_metric = metrics::export_phase_timer("total", metric_template_id);
+    let metric_template_id = runtime
+        .template
+        .as_ref()
+        .map(|template| ExportTemplateID::new(template.id))
+        .transpose()?;
+    let total_metric =
+        metrics::export_phase_timer(metrics::ExportMetricPhase::Total, metric_template_id);
     let mut timings = ExportExecutionTimings::default();
 
     NewTaskEventRecord {
@@ -1148,8 +1170,8 @@ where
     let statement_timeout = export_statement_timeout();
     let mut query_options = prepare_query_options(&runtime.export)?;
     let relation_hydration = resolve_relation_hydration_plan(&runtime, &mut query_options)?;
-    let query_start = Instant::now();
-    let query_metric = metrics::export_phase_timer("query", metric_template_id);
+    let query_metric =
+        metrics::export_phase_timer(metrics::ExportMetricPhase::Query, metric_template_id);
     let (items, mut warnings, truncated) = with_statement_timeout_scope(
         statement_timeout,
         execute_scope(&exporter, runtime.scope, query_options),
@@ -1161,12 +1183,12 @@ where
         apply_export_includes(&exporter, &runtime.export, &mut items),
     )
     .await?;
-    if let Err(error) = enforce_export_stage_timeout(query_start, "query execution") {
-        query_metric.finish("timeout");
+    if let Err(error) = enforce_export_stage_timeout(query_metric.elapsed(), "query execution") {
+        query_metric.finish(metrics::ExportMetricOutcome::Timeout);
         return Err(error);
     }
-    let query_elapsed = query_metric.finish("success");
-    timings.query_duration_ms = duration_to_millis_i32(query_elapsed);
+    let query_elapsed = query_metric.finish(metrics::ExportMetricOutcome::Success);
+    timings.query = query_elapsed;
 
     if relation_hydration
         .as_ref()
@@ -1187,19 +1209,21 @@ where
     }
 
     add_truncation_warning(&mut warnings, truncated);
-    let hydration_start = Instant::now();
-    let hydration_metric = metrics::export_phase_timer("hydration", metric_template_id);
+    let hydration_metric =
+        metrics::export_phase_timer(metrics::ExportMetricPhase::Hydration, metric_template_id);
     let (template_items, source) = with_statement_timeout_scope(
         statement_timeout,
         build_template_items(&exporter, &runtime, &items, relation_hydration),
     )
     .await?;
-    if let Err(error) = enforce_export_stage_timeout(hydration_start, "relation hydration") {
-        hydration_metric.finish("timeout");
+    if let Err(error) =
+        enforce_export_stage_timeout(hydration_metric.elapsed(), "relation hydration")
+    {
+        hydration_metric.finish(metrics::ExportMetricOutcome::Timeout);
         return Err(error);
     }
-    let hydration_elapsed = hydration_metric.finish("success");
-    timings.hydration_duration_ms = duration_to_millis_i32(hydration_elapsed);
+    let hydration_elapsed = hydration_metric.finish(metrics::ExportMetricOutcome::Success);
+    timings.hydration = hydration_elapsed;
     let template_export = runtime.template.is_some();
     let item_count = if template_export {
         template_items.len()
@@ -1234,18 +1258,19 @@ where
     .append(pool)
     .await?;
 
-    let render_start = Instant::now();
-    let render_metric = metrics::export_phase_timer("render", metric_template_id);
+    let render_metric =
+        metrics::export_phase_timer(metrics::ExportMetricPhase::Render, metric_template_id);
     let artifact = build_export_artifact(&runtime, execution, timings)?;
     let mut timings = artifact.timings;
-    if let Err(error) = enforce_export_stage_timeout(render_start, "template rendering") {
-        render_metric.finish("timeout");
+    if let Err(error) = enforce_export_stage_timeout(render_metric.elapsed(), "template rendering")
+    {
+        render_metric.finish(metrics::ExportMetricOutcome::Timeout);
         return Err(error);
     }
-    let render_elapsed = render_metric.finish("success");
-    let total_elapsed = total_metric.finish("success");
-    timings.render_duration_ms = duration_to_millis_i32(render_elapsed);
-    timings.total_duration_ms = duration_to_millis_i32(total_elapsed);
+    let render_elapsed = render_metric.finish(metrics::ExportMetricOutcome::Success);
+    let total_elapsed = total_metric.finish(metrics::ExportMetricOutcome::Success);
+    timings.render = render_elapsed;
+    timings.total = total_elapsed;
     log_export_stage_metrics(task.id, &runtime, timings);
     let artifact = ExportArtifact {
         timings,
@@ -1276,19 +1301,16 @@ where
         NewTaskEventRecord {
             task_id: task.id,
             event_type: TaskStatus::Succeeded.as_str().to_string(),
-            message: format!(
-                "Export completed successfully in {:?}",
-                total_start.elapsed()
-            ),
+            message: format!("Export completed successfully in {total_elapsed:?}"),
             data: Some(serde_json::json!({
                 "content_type": artifact.content_type.as_mime(),
                 "template_name": artifact.template_name.clone(),
                 "warning_count": artifact.warnings.len(),
                 "truncated": artifact.meta.truncated,
-                "total_duration_ms": artifact.timings.total_duration_ms,
-                "query_duration_ms": artifact.timings.query_duration_ms,
-                "hydration_duration_ms": artifact.timings.hydration_duration_ms,
-                "render_duration_ms": artifact.timings.render_duration_ms,
+                "total_duration_ms": artifact.timings.total_millis(),
+                "query_duration_ms": artifact.timings.query_millis(),
+                "hydration_duration_ms": artifact.timings.hydration_millis(),
+                "render_duration_ms": artifact.timings.render_millis(),
             })),
         },
         artifact_to_output_record(task.id, artifact)?,
@@ -1326,10 +1348,10 @@ fn artifact_to_output_record(
         warning_count: i32::try_from(artifact.warnings.len()).unwrap_or(i32::MAX),
         truncated: artifact.meta.truncated,
         output_expires_at,
-        total_duration_ms: artifact.timings.total_duration_ms,
-        query_duration_ms: artifact.timings.query_duration_ms,
-        hydration_duration_ms: artifact.timings.hydration_duration_ms,
-        render_duration_ms: artifact.timings.render_duration_ms,
+        total_duration_ms: artifact.timings.total_millis(),
+        query_duration_ms: artifact.timings.query_millis(),
+        hydration_duration_ms: artifact.timings.hydration_millis(),
+        render_duration_ms: artifact.timings.render_millis(),
     })
 }
 
@@ -1450,7 +1472,7 @@ fn required_template(
     })
 }
 
-fn duration_to_millis_i32(duration: std::time::Duration) -> i32 {
+fn duration_to_millis_i32(duration: Duration) -> i32 {
     i32::try_from(duration.as_millis()).unwrap_or(i32::MAX)
 }
 
@@ -1475,11 +1497,10 @@ fn export_statement_timeout() -> Option<StatementTimeoutMs> {
 /// budget, `export_template_max_objects`, the output byte caps, the pool-global
 /// `db_statement_timeout_ms`, and the export-scoped `export_db_statement_timeout_ms`
 /// (both of which cancel slow queries server-side).
-fn enforce_export_stage_timeout(stage_start: Instant, stage_name: &str) -> Result<(), ApiError> {
+fn enforce_export_stage_timeout(elapsed: Duration, stage_name: &str) -> Result<(), ApiError> {
     let stage_timeout_ms = get_config()
         .map(|config| config.export_stage_timeout_ms)
         .unwrap_or(DEFAULT_EXPORT_STAGE_TIMEOUT_MS);
-    let elapsed = stage_start.elapsed();
     if elapsed.as_millis() > u128::from(stage_timeout_ms) {
         return Err(ApiError::BadRequest(format!(
             "Export {stage_name} exceeded the configured time budget ({}ms > {}ms)",
@@ -1504,10 +1525,10 @@ fn log_export_stage_metrics(
             .template
             .as_ref()
             .map(|template| template.name.as_str()),
-        total_duration_ms = timings.total_duration_ms,
-        query_duration_ms = timings.query_duration_ms,
-        hydration_duration_ms = timings.hydration_duration_ms,
-        render_duration_ms = timings.render_duration_ms
+        total_duration_ms = timings.total_millis(),
+        query_duration_ms = timings.query_millis(),
+        hydration_duration_ms = timings.hydration_millis(),
+        render_duration_ms = timings.render_millis()
     );
 }
 

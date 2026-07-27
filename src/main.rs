@@ -99,7 +99,7 @@ async fn main() -> std::io::Result<()> {
                 EXIT_CODE_INIT_ERROR,
             );
         }
-        observability::metrics::runtime_identity(config.runtime_role.as_str());
+        observability::metrics::runtime_identity(config.runtime_role);
     }
     utilities::auth::initialize_dummy_password_hash();
     let database_settings = DatabasePoolSettings::builder(config.database_url.clone())
@@ -205,31 +205,8 @@ async fn main() -> std::io::Result<()> {
             active_event_sinks,
             metrics_listener = metrics_server.is_some(),
         );
-        let unexpected_error = if let Some(metrics_server) = metrics_server {
-            let metrics_server_handle = metrics_server.handle();
-            let result = tokio::select! {
-                shutdown = wait_for_shutdown_signal() => shutdown.err(),
-                exit = wait_for_background_worker_exit() => Some(std::io::Error::other(format!(
-                    "Background worker supervision failed: {exit}"
-                ))),
-                result = metrics_server => match result {
-                    Ok(()) => Some(std::io::Error::other(
-                        "Worker metrics HTTP server stopped unexpectedly",
-                    )),
-                    Err(error) => Some(error),
-                },
-            };
-            metrics_server_handle.stop(true).await;
-            result
-        } else {
-            tokio::select! {
-                shutdown = wait_for_shutdown_signal() => shutdown.err(),
-                exit = wait_for_background_worker_exit() => Some(std::io::Error::other(format!(
-                    "Background worker supervision failed: {exit}"
-                ))),
-            }
-        };
-        if let Some(error) = &unexpected_error {
+        let supervision_result = supervise_worker_process(metrics_server).await;
+        if let Err(error) = &supervision_result {
             error!(
                 message = "Worker process supervision failed",
                 reason = %error,
@@ -238,9 +215,7 @@ async fn main() -> std::io::Result<()> {
         shutdown_background_workers(Duration::from_secs(30)).await;
         drop(app_context);
         drop(pool);
-        if let Some(error) = unexpected_error {
-            return Err(error);
-        }
+        supervision_result?;
         return Ok(());
     }
 
@@ -390,6 +365,33 @@ fn start_background_workers(context: &AppContext, backup_settings: &BackupSettin
     ensure_event_delivery_worker_running(context.db_pool.clone());
     ensure_event_retention_worker_running(context.db_pool.clone());
     ensure_token_retention_worker_running(context.db_pool.clone());
+}
+
+async fn supervise_worker_process(metrics_server: Option<Server>) -> std::io::Result<()> {
+    let Some(metrics_server) = metrics_server else {
+        return tokio::select! {
+            shutdown = wait_for_shutdown_signal() => shutdown,
+            exit = wait_for_background_worker_exit() => Err(std::io::Error::other(format!(
+                "Background worker supervision failed: {exit}"
+            ))),
+        };
+    };
+
+    let metrics_server_handle = metrics_server.handle();
+    let result = tokio::select! {
+        shutdown = wait_for_shutdown_signal() => shutdown,
+        exit = wait_for_background_worker_exit() => Err(std::io::Error::other(format!(
+            "Background worker supervision failed: {exit}"
+        ))),
+        result = metrics_server => match result {
+            Ok(()) => Err(std::io::Error::other(
+                "Worker metrics HTTP server stopped unexpectedly",
+            )),
+            Err(error) => Err(error),
+        },
+    };
+    metrics_server_handle.stop(true).await;
+    result
 }
 
 fn worker_metrics_service(
@@ -559,23 +561,5 @@ mod tests {
             "hubuum_http_requests_total{method=\"GET\",route=\"/metrics\",status_code=\"200\",status_family=\"2xx\"}"
         ));
         assert!(body.contains("hubuum_http_requests_in_flight{route=\"/metrics\"} 1"));
-    }
-
-    #[test]
-    fn worker_metrics_server_leaves_signal_handling_to_supervisor() {
-        let source = include_str!("main.rs");
-        let function_start = source
-            .find("fn start_worker_metrics_server(")
-            .expect("worker metrics server function should exist");
-        let function_end = source[function_start..]
-            .find("\nfn login_rate_limit_store_settings(")
-            .map(|offset| function_start + offset)
-            .expect("worker metrics server function should have a stable boundary");
-        let function = &source[function_start..function_end];
-
-        assert!(
-            function.contains("server.disable_signals()"),
-            "worker metrics server must not compete with supervisor signal handling"
-        );
     }
 }

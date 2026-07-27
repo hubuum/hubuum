@@ -7,9 +7,10 @@ use diesel_async::pooled_connection::bb8::Pool;
 use rstest::rstest;
 use tokio::sync::Mutex;
 
+use crate::config::RuntimeRole;
 use crate::db::{DbConnection, DbPool};
 use crate::middlewares::TracingMiddleware;
-use crate::models::{TaskKind, TaskStatus};
+use crate::models::{ExportTemplateID, TaskKind, TaskStatus};
 use crate::observability::metrics;
 use crate::test_support::clear_metrics_scrape_cache;
 use crate::tests::{TestContext, test_context};
@@ -22,7 +23,7 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
     let _lock = METRICS_TEST_LOCK.lock().await;
     let context = test_context;
     metrics::init().unwrap();
-    metrics::runtime_identity("test");
+    metrics::runtime_identity(RuntimeRole::Worker);
     clear_metrics_scrape_cache();
     let _in_flight = metrics::http_request_started_for_route("/test");
     metrics::http_request_finished("GET", "/test", 200, std::time::Duration::from_millis(1));
@@ -54,7 +55,7 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
         "hubuum_db_operation_duration_seconds_bucket{caller=\"metrics_refresh\",operation=\"connection\",result=\"ok\""
     ));
     assert!(body.contains("hubuum_build_info{git_sha="));
-    assert!(body.contains("hubuum_runtime_info{role=\"test\"} 1"));
+    assert!(body.contains("hubuum_runtime_info{role=\"worker\"} 1"));
     assert!(body.contains("hubuum_process_start_time_seconds"));
     assert!(body.contains("hubuum_metrics_refresh_last_success_timestamp_seconds"));
 }
@@ -95,9 +96,15 @@ async fn metrics_endpoint_exports_representative_bounded_families() {
     metrics::export_completed("objects_in_class", "application/json");
     metrics::export_truncated("objects_in_class", "application/json");
     metrics::export_warnings("objects_in_class", "application/json", 2);
-    metrics::export_phase_timer("render", Some(42)).finish("success");
-    metrics::export_phase_timer("total", Some(42)).finish("success");
-    metrics::import_phase_duration("planning", Duration::from_millis(5));
+    let template_id = ExportTemplateID::new(42).unwrap();
+    metrics::export_phase_timer(metrics::ExportMetricPhase::Render, Some(template_id))
+        .finish(metrics::ExportMetricOutcome::Success);
+    metrics::export_phase_timer(metrics::ExportMetricPhase::Total, Some(template_id))
+        .finish(metrics::ExportMetricOutcome::Success);
+    metrics::import_phase_duration(
+        metrics::ImportMetricPhase::Planning,
+        Duration::from_millis(5),
+    );
     metrics::import_items(3, 2, 1);
     metrics::login_lockout("subnet");
     metrics::client_allowlist_rejected("disallowed_ip");

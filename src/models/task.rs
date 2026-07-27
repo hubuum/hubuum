@@ -19,7 +19,7 @@ use crate::traits::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskKind {
     Import,
@@ -62,7 +62,7 @@ impl TaskKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Queued,

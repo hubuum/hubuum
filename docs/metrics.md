@@ -204,6 +204,11 @@ The bounded database `caller` values are `event_delivery`, `event_fanout`,
 | `hubuum_remote_call_duration_seconds` | `method`, `status_family`, `outcome` | Remote HTTP execution duration |
 | `hubuum_remote_call_results_total` | `method`, `status_family`, `outcome` | Remote outcomes such as success, failure, timeout, or validation rejection |
 
+Export timer phases are limited to `total`, `query`, `hydration`, and `render`;
+their outcomes are `success`, `error`, or `timeout`. Import timer phases are
+limited to `total`, `planning`, and `execution`; their outcomes are `success`,
+`failed`, `partially_succeeded`, or `error`.
+
 ### Computed Fields, Security, Events, And Inventory
 
 | Metric | Labels | Description |

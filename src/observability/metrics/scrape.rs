@@ -10,6 +10,12 @@ use crate::errors::ApiError;
 use super::Metrics;
 use super::{db, event, get, inventory, login, task};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RefreshOutcome {
+    Succeeded,
+    Failed,
+}
+
 pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
     let metrics = get()?;
     with_db_call_site(
@@ -54,21 +60,22 @@ pub(super) fn record_refresh_attempt(
     metrics: &Metrics,
     source: &'static str,
     started_at: Instant,
-    succeeded: bool,
+    outcome: RefreshOutcome,
 ) {
     let attrs = [KeyValue::new("source", source)];
     metrics
         .refresh_duration
         .record(started_at.elapsed().as_secs_f64(), &attrs);
-    if succeeded {
-        metrics.refresh_last_success.record(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs_f64(),
-            &attrs,
-        );
-    } else {
-        metrics.refresh_failures.add(1, &attrs);
+    match outcome {
+        RefreshOutcome::Succeeded => {
+            metrics.refresh_last_success.record(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64(),
+                &attrs,
+            );
+        }
+        RefreshOutcome::Failed => metrics.refresh_failures.add(1, &attrs),
     }
 }

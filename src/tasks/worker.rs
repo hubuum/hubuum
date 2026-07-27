@@ -721,19 +721,23 @@ async fn maybe_cleanup_expired_task_outputs(pool: &DbPool) -> Result<(), ApiErro
         return Ok(());
     };
 
-    metrics::task_output_cleanup_run("export");
+    metrics::task_output_cleanup_run(metrics::TaskOutputKind::Export);
     match purge_expired_export_outputs(pool).await {
-        Ok(deleted) => metrics::task_output_cleanup_deleted("export", deleted.len()),
+        Ok(deleted) => {
+            metrics::task_output_cleanup_deleted(metrics::TaskOutputKind::Export, deleted.len())
+        }
         Err(error) => {
-            metrics::task_output_cleanup_failed("export");
+            metrics::task_output_cleanup_failed(metrics::TaskOutputKind::Export);
             return Err(error);
         }
     }
-    metrics::task_output_cleanup_run("backup");
+    metrics::task_output_cleanup_run(metrics::TaskOutputKind::Backup);
     match purge_expired_backup_outputs(pool).await {
-        Ok(deleted) => metrics::task_output_cleanup_deleted("backup", deleted.len()),
+        Ok(deleted) => {
+            metrics::task_output_cleanup_deleted(metrics::TaskOutputKind::Backup, deleted.len())
+        }
         Err(error) => {
-            metrics::task_output_cleanup_failed("backup");
+            metrics::task_output_cleanup_failed(metrics::TaskOutputKind::Backup);
             return Err(error);
         }
     }

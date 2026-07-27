@@ -7,7 +7,38 @@ use crate::db::DbPool;
 use crate::db::traits::metrics::{MetricsBackend, TaskMetricsSnapshot};
 use crate::models::{TaskKind, TaskStatus};
 
+use super::scrape::{RefreshOutcome, record_refresh_attempt};
 use super::{Metrics, current};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskOutputKind {
+    Export,
+    Backup,
+}
+
+impl TaskOutputKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Export => "export",
+            Self::Backup => "backup",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TaskAgeState {
+    Queued,
+    Active,
+}
+
+impl TaskAgeState {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Active => "active",
+        }
+    }
+}
 
 pub fn task_worker_iteration(outcome: &'static str) {
     if let Some(metrics) = current() {
@@ -63,27 +94,27 @@ pub fn task_worker_config(worker_count: usize, poll_interval: Duration) {
     }
 }
 
-pub fn task_output_cleanup_run(kind: &'static str) {
+pub fn task_output_cleanup_run(kind: TaskOutputKind) {
     if let Some(metrics) = current() {
         metrics
             .task_output_cleanup_runs
-            .add(1, &[KeyValue::new("kind", kind)]);
+            .add(1, &[KeyValue::new("kind", kind.as_str())]);
     }
 }
 
-pub fn task_output_cleanup_failed(kind: &'static str) {
+pub fn task_output_cleanup_failed(kind: TaskOutputKind) {
     if let Some(metrics) = current() {
         metrics
             .task_output_cleanup_failures
-            .add(1, &[KeyValue::new("kind", kind)]);
+            .add(1, &[KeyValue::new("kind", kind.as_str())]);
     }
 }
 
-pub fn task_output_cleanup_deleted(kind: &'static str, count: usize) {
+pub fn task_output_cleanup_deleted(kind: TaskOutputKind, count: usize) {
     if let Some(metrics) = current() {
         metrics.task_output_cleanup_deleted.add(
             u64::try_from(count).unwrap_or(u64::MAX),
-            &[KeyValue::new("kind", kind)],
+            &[KeyValue::new("kind", kind.as_str())],
         );
     }
 }
@@ -97,12 +128,17 @@ pub(super) async fn refresh_task_gauges(metrics: &Metrics, pool: &DbPool) {
     let refresh_started_at = Instant::now();
     match pool.metrics_task_snapshot().await {
         Ok(snapshot) => {
-            super::scrape::record_refresh_attempt(metrics, "tasks", refresh_started_at, true);
+            record_refresh_attempt(
+                metrics,
+                "tasks",
+                refresh_started_at,
+                RefreshOutcome::Succeeded,
+            );
             record_task_snapshot(metrics, &snapshot);
             store_task_snapshot(metrics, snapshot);
         }
         Err(_) => {
-            super::scrape::record_refresh_attempt(metrics, "tasks", refresh_started_at, false);
+            record_refresh_attempt(metrics, "tasks", refresh_started_at, RefreshOutcome::Failed);
             if let Some(snapshot) = stale_task_snapshot(metrics) {
                 record_task_snapshot(metrics, &snapshot);
             } else {
@@ -140,35 +176,28 @@ fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskMetricsSnapshot) {
     let mut counts = HashMap::new();
 
     for row in &snapshot.counts {
-        counts.insert((row.kind.as_str(), row.status.as_str()), row.count);
+        counts.insert((row.kind, row.status), row.count);
     }
 
     for kind in TaskKind::ALL {
         for status in TaskStatus::ALL {
-            let kind = kind.as_str();
-            let status = status.as_str();
             let count = counts.get(&(kind, status)).copied().unwrap_or(0);
-            metrics.task_counts.record(
-                count,
-                &[KeyValue::new("kind", kind), KeyValue::new("status", status)],
-            );
+            record_task_count(metrics, kind, status, count);
         }
     }
 
     for age in &snapshot.ages {
-        metrics.task_oldest_age.record(
+        record_task_age(
+            metrics,
+            age.kind,
+            TaskAgeState::Queued,
             age_seconds(age.oldest_queued_at, now).unwrap_or(0.0),
-            &[
-                KeyValue::new("kind", age.kind.clone()),
-                KeyValue::new("state", "queued"),
-            ],
         );
-        metrics.task_oldest_age.record(
+        record_task_age(
+            metrics,
+            age.kind,
+            TaskAgeState::Active,
             age_seconds(age.oldest_active_at, now).unwrap_or(0.0),
-            &[
-                KeyValue::new("kind", age.kind.clone()),
-                KeyValue::new("state", "active"),
-            ],
         );
     }
 }
@@ -176,32 +205,31 @@ fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskMetricsSnapshot) {
 fn record_empty_task_snapshot(metrics: &Metrics) {
     for kind in TaskKind::ALL {
         for status in TaskStatus::ALL {
-            metrics.task_counts.record(
-                0,
-                &[
-                    KeyValue::new("kind", kind.as_str()),
-                    KeyValue::new("status", status.as_str()),
-                ],
-            );
+            record_task_count(metrics, kind, status, 0);
         }
+        record_task_age(metrics, kind, TaskAgeState::Queued, 0.0);
+        record_task_age(metrics, kind, TaskAgeState::Active, 0.0);
     }
+}
 
-    for kind in TaskKind::ALL {
-        metrics.task_oldest_age.record(
-            0.0,
-            &[
-                KeyValue::new("kind", kind.as_str()),
-                KeyValue::new("state", "queued"),
-            ],
-        );
-        metrics.task_oldest_age.record(
-            0.0,
-            &[
-                KeyValue::new("kind", kind.as_str()),
-                KeyValue::new("state", "active"),
-            ],
-        );
-    }
+fn record_task_count(metrics: &Metrics, kind: TaskKind, status: TaskStatus, count: i64) {
+    metrics.task_counts.record(
+        count,
+        &[
+            KeyValue::new("kind", kind.as_str()),
+            KeyValue::new("status", status.as_str()),
+        ],
+    );
+}
+
+fn record_task_age(metrics: &Metrics, kind: TaskKind, state: TaskAgeState, age: f64) {
+    metrics.task_oldest_age.record(
+        age,
+        &[
+            KeyValue::new("kind", kind.as_str()),
+            KeyValue::new("state", state.as_str()),
+        ],
+    );
 }
 
 fn age_seconds(
@@ -209,4 +237,25 @@ fn age_seconds(
     now: chrono::NaiveDateTime,
 ) -> Option<f64> {
     timestamp.map(|timestamp| (now - timestamp).num_milliseconds().max(0) as f64 / 1000.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TaskAgeState, TaskOutputKind};
+
+    #[test]
+    fn task_output_kinds_have_stable_bounded_labels() {
+        assert_eq!(
+            [TaskOutputKind::Export, TaskOutputKind::Backup].map(TaskOutputKind::as_str),
+            ["export", "backup"]
+        );
+    }
+
+    #[test]
+    fn task_age_states_have_stable_bounded_labels() {
+        assert_eq!(
+            [TaskAgeState::Queued, TaskAgeState::Active].map(TaskAgeState::as_str),
+            ["queued", "active"]
+        );
+    }
 }

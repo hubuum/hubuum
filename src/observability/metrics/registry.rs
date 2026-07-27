@@ -6,6 +6,7 @@ use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry_sdk::metrics::{Aggregation, Instrument, SdkMeterProvider, Stream};
 use prometheus::{IntGaugeVec, Opts, Registry};
 
+use crate::config::RuntimeRole;
 use crate::errors::ApiError;
 use crate::logger;
 
@@ -388,11 +389,11 @@ pub fn init() -> Result<(), ApiError> {
         .map_err(|_| ApiError::InternalServerError("Metrics already initialized".to_string()))
 }
 
-pub fn runtime_identity(role: &'static str) {
+pub fn runtime_identity(role: RuntimeRole) {
     if let Some(metrics) = super::current() {
         metrics
             .runtime_info
-            .record(1, &[KeyValue::new("role", role)]);
+            .record(1, &[KeyValue::new("role", role.as_str())]);
     }
 }
 

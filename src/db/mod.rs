@@ -845,6 +845,42 @@ mod tests {
     }
 
     #[test]
+    fn database_call_sites_have_stable_bounded_labels() {
+        let call_sites = [
+            DbCallSite::EventDelivery,
+            DbCallSite::EventFanout,
+            DbCallSite::EventRetention,
+            DbCallSite::HttpRequest,
+            DbCallSite::MetricsRefresh,
+            DbCallSite::Readiness,
+            DbCallSite::RequestMaintenance,
+            DbCallSite::RestoreCoordinator,
+            DbCallSite::TaskLease,
+            DbCallSite::TaskWorker,
+            DbCallSite::TokenRetention,
+            DbCallSite::Unattributed,
+        ];
+
+        assert_eq!(
+            call_sites.map(DbCallSite::as_str),
+            [
+                "event_delivery",
+                "event_fanout",
+                "event_retention",
+                "http_request",
+                "metrics_refresh",
+                "readiness",
+                "request_maintenance",
+                "restore_coordinator",
+                "task_lease",
+                "task_worker",
+                "token_retention",
+                "unattributed",
+            ]
+        );
+    }
+
+    #[test]
     fn required_database_migration_matches_latest_migration_directory() {
         let migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
         let latest = std::fs::read_dir(migrations)

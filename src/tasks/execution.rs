@@ -158,7 +158,7 @@ pub(super) async fn execute_import_task<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let total_timer = metrics::import_phase_timer("total");
+    let total_timer = metrics::import_phase_timer(metrics::ImportMetricPhase::Total);
     let pool = backend.db_pool();
     let payload = task
         .request_payload
@@ -187,11 +187,11 @@ where
     );
 
     async {
-        let planning_timer = metrics::import_phase_timer("planning");
+        let planning_timer = metrics::import_phase_timer(metrics::ImportMetricPhase::Planning);
         let planning = plan_import(backend, user, scopes, &request)
             .instrument(info_span!("import_planning"))
             .await;
-        let planning_time = planning_timer.finish("success");
+        let planning_time = planning_timer.finish(metrics::ImportMetricOutcome::Success);
 
         info!(
             message = "Import planning finished",
@@ -237,7 +237,7 @@ where
             )
             .await?;
             metrics::import_items(failed_count, 0, failed_count);
-            total_timer.finish("failed");
+            total_timer.finish(metrics::ImportMetricOutcome::Failed);
             return Ok(());
         }
 
@@ -284,7 +284,7 @@ where
         )
         .await?;
 
-        let execution_timer = metrics::import_phase_timer("execution");
+        let execution_timer = metrics::import_phase_timer(metrics::ImportMetricPhase::Execution);
         if request.dry_run() {
             for failure in failures {
                 accumulator.push_failure(
@@ -338,7 +338,12 @@ where
         } else {
             TaskStatus::PartiallySucceeded
         };
-        let metric_outcome = status.as_str();
+        let metric_outcome = match status {
+            TaskStatus::Succeeded => metrics::ImportMetricOutcome::Success,
+            TaskStatus::Failed => metrics::ImportMetricOutcome::Failed,
+            TaskStatus::PartiallySucceeded => metrics::ImportMetricOutcome::PartiallySucceeded,
+            _ => unreachable!("import execution produced a non-terminal status"),
+        };
 
         let summary = format!(
             "Import finished with {} succeeded and {} failed items",

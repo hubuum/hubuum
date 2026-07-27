@@ -12,6 +12,7 @@ mod remote_call;
 mod scrape;
 mod security;
 mod task;
+mod timer;
 
 use std::sync::{Mutex, OnceLock};
 
@@ -32,15 +33,17 @@ pub(crate) use self::db::{
 };
 pub use self::event::event_worker_wakeup;
 pub use self::export::{
-    export_completed, export_output_cleanup_deleted, export_output_cleanup_failed,
-    export_output_cleanup_run, export_phase_duration, export_phase_timer, export_truncated,
-    export_warnings,
+    ExportMetricOutcome, ExportMetricPhase, export_completed, export_output_cleanup_deleted,
+    export_output_cleanup_failed, export_output_cleanup_run, export_phase_duration,
+    export_phase_timer, export_truncated, export_warnings,
 };
 pub use self::http::{
     api_error, extraction_failure, http_request_finished, http_request_started,
     http_request_started_for_route,
 };
-pub use self::import::{import_items, import_phase_duration, import_phase_timer};
+pub use self::import::{
+    ImportMetricOutcome, ImportMetricPhase, import_items, import_phase_duration, import_phase_timer,
+};
 #[cfg(feature = "login-rate-limit-valkey")]
 pub use self::login::login_limiter_backend_failure;
 pub use self::login::{login_attempt, login_lockout};
@@ -49,8 +52,9 @@ pub use self::remote_call::remote_call_finished;
 pub use self::scrape::scrape;
 pub use self::security::client_allowlist_rejected;
 pub use self::task::{
-    task_claimed, task_completed, task_lease_recovered, task_output_cleanup_deleted,
-    task_output_cleanup_failed, task_output_cleanup_run, task_worker_config, task_worker_iteration,
+    TaskOutputKind, task_claimed, task_completed, task_lease_recovered,
+    task_output_cleanup_deleted, task_output_cleanup_failed, task_output_cleanup_run,
+    task_worker_config, task_worker_iteration,
 };
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();

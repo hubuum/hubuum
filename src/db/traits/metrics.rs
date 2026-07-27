@@ -7,7 +7,9 @@ use diesel::sql_types::BigInt;
 use crate::db::prelude::*;
 use crate::db::with_connection;
 use crate::errors::ApiError;
-use crate::models::{EventDeliveryQueueHealth, EventFanoutHealth, TaskKind, TaskStatus};
+use crate::models::{
+    EventDeliveryQueueHealth, EventFanoutHealth, ExportTemplateID, TaskKind, TaskStatus,
+};
 use crate::schema::tasks;
 use crate::traits::BackendContext;
 
@@ -31,7 +33,7 @@ struct InventoryMetricsCountRow {
 
 #[derive(Debug, Clone)]
 pub struct ExportTemplateMetricIdentity {
-    pub id: i32,
+    pub id: ExportTemplateID,
     pub name: String,
 }
 
@@ -49,14 +51,14 @@ pub struct InventoryMetricsSnapshot {
 
 #[derive(Debug, Clone)]
 pub struct TaskMetricsCount {
-    pub kind: String,
-    pub status: String,
+    pub kind: TaskKind,
+    pub status: TaskStatus,
     pub count: i64,
 }
 
 #[derive(Debug, Clone)]
 pub struct TaskMetricsAge {
-    pub kind: String,
+    pub kind: TaskKind,
     pub oldest_queued_at: Option<NaiveDateTime>,
     pub oldest_active_at: Option<NaiveDateTime>,
 }
@@ -107,10 +109,15 @@ where
                 .load::<(i32, String)>(conn)
                 .await?
                 .into_iter()
-                .map(|(id, name)| ExportTemplateMetricIdentity { id, name })
-                .collect();
+                .map(|(id, name)| {
+                    Ok(ExportTemplateMetricIdentity {
+                        id: ExportTemplateID::new(id)?,
+                        name,
+                    })
+                })
+                .collect::<Result<Vec<_>, ApiError>>()?;
 
-            Ok::<_, diesel::result::Error>(InventoryMetricsSnapshot {
+            Ok::<_, ApiError>(InventoryMetricsSnapshot {
                 collections: counts.collections,
                 classes: counts.classes,
                 objects: counts.objects,
@@ -132,12 +139,14 @@ where
                 .load::<(String, String, i64)>(conn)
                 .await?
                 .into_iter()
-                .map(|(kind, status, count)| TaskMetricsCount {
-                    kind,
-                    status,
-                    count,
+                .map(|(kind, status, count)| {
+                    Ok(TaskMetricsCount {
+                        kind: TaskKind::from_db(&kind)?,
+                        status: TaskStatus::from_db(&status)?,
+                        count,
+                    })
                 })
-                .collect();
+                .collect::<Result<Vec<_>, ApiError>>()?;
 
             let oldest_queued = tasks::table
                 .filter(tasks::status.eq(TaskStatus::Queued.as_str()))
@@ -158,26 +167,31 @@ where
 
             let mut ages_by_kind = HashMap::new();
             for (kind, timestamp) in oldest_queued {
-                ages_by_kind.entry(kind).or_insert((None, None)).0 = timestamp;
+                ages_by_kind
+                    .entry(TaskKind::from_db(&kind)?)
+                    .or_insert((None, None))
+                    .0 = timestamp;
             }
             for (kind, timestamp) in oldest_active {
-                ages_by_kind.entry(kind).or_insert((None, None)).1 = timestamp;
+                ages_by_kind
+                    .entry(TaskKind::from_db(&kind)?)
+                    .or_insert((None, None))
+                    .1 = timestamp;
             }
             let ages = TaskKind::ALL
                 .into_iter()
                 .map(|kind| {
-                    let kind = kind.as_str();
                     let (oldest_queued_at, oldest_active_at) =
-                        ages_by_kind.remove(kind).unwrap_or((None, None));
+                        ages_by_kind.remove(&kind).unwrap_or((None, None));
                     TaskMetricsAge {
-                        kind: kind.to_string(),
+                        kind,
                         oldest_queued_at,
                         oldest_active_at,
                     }
                 })
                 .collect();
 
-            Ok::<_, diesel::result::Error>(TaskMetricsSnapshot { counts, ages })
+            Ok::<_, ApiError>(TaskMetricsSnapshot { counts, ages })
         })
         .await
     }

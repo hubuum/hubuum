@@ -6,6 +6,7 @@ use crate::db::DbPool;
 use crate::db::traits::metrics::{InventoryMetricsSnapshot, MetricsBackend};
 
 use super::Metrics;
+use super::scrape::{RefreshOutcome, record_refresh_attempt};
 
 pub(super) async fn refresh_inventory_gauges(metrics: &Metrics, pool: &DbPool) {
     if let Some(row) = cached_inventory_snapshot(metrics) {
@@ -16,12 +17,22 @@ pub(super) async fn refresh_inventory_gauges(metrics: &Metrics, pool: &DbPool) {
     let refresh_started_at = Instant::now();
     match pool.metrics_inventory_snapshot().await {
         Ok(row) => {
-            super::scrape::record_refresh_attempt(metrics, "inventory", refresh_started_at, true);
+            record_refresh_attempt(
+                metrics,
+                "inventory",
+                refresh_started_at,
+                RefreshOutcome::Succeeded,
+            );
             record_inventory_snapshot(metrics, &row);
             store_inventory_snapshot(metrics, row);
         }
         Err(_) => {
-            super::scrape::record_refresh_attempt(metrics, "inventory", refresh_started_at, false);
+            record_refresh_attempt(
+                metrics,
+                "inventory",
+                refresh_started_at,
+                RefreshOutcome::Failed,
+            );
             if let Some(row) = stale_inventory_snapshot(metrics) {
                 record_inventory_snapshot(metrics, &row);
             }
@@ -65,7 +76,7 @@ fn record_inventory_snapshot(metrics: &Metrics, row: &InventoryMetricsSnapshot) 
     for template in &row.export_templates {
         metrics
             .export_template_info
-            .with_label_values(&[&template.id.to_string(), &template.name])
+            .with_label_values(&[&template.id.id().to_string(), &template.name])
             .set(1);
     }
 }
