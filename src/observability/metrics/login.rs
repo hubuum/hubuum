@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use opentelemetry::KeyValue;
 
 use crate::middlewares::rate_limit;
@@ -34,8 +36,26 @@ pub fn login_limiter_backend_failure(operation: &'static str) {
 }
 
 pub(super) async fn refresh_login_limiter_gauges(metrics: &Metrics) {
-    let Ok(snapshots) = rate_limit::snapshot().await else {
-        return;
+    let refresh_started_at = Instant::now();
+    let snapshots = match rate_limit::snapshot().await {
+        Ok(snapshots) => {
+            super::scrape::record_refresh_attempt(
+                metrics,
+                "login_limiter",
+                refresh_started_at,
+                true,
+            );
+            snapshots
+        }
+        Err(_) => {
+            super::scrape::record_refresh_attempt(
+                metrics,
+                "login_limiter",
+                refresh_started_at,
+                false,
+            );
+            return;
+        }
     };
     let locked = snapshots.iter().filter(|entry| entry.locked).count();
     metrics.login_limiter_entries.record(

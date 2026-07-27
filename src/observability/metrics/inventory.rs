@@ -13,15 +13,15 @@ pub(super) async fn refresh_inventory_gauges(metrics: &Metrics, pool: &DbPool) {
         return;
     }
 
+    let refresh_started_at = Instant::now();
     match pool.metrics_inventory_snapshot().await {
         Ok(row) => {
-            store_inventory_snapshot(metrics, row);
+            super::scrape::record_refresh_attempt(metrics, "inventory", refresh_started_at, true);
             record_inventory_snapshot(metrics, &row);
+            store_inventory_snapshot(metrics, row);
         }
         Err(_) => {
-            metrics
-                .refresh_failures
-                .add(1, &[KeyValue::new("source", "inventory")]);
+            super::scrape::record_refresh_attempt(metrics, "inventory", refresh_started_at, false);
             if let Some(row) = stale_inventory_snapshot(metrics) {
                 record_inventory_snapshot(metrics, &row);
             }
@@ -60,6 +60,14 @@ fn record_inventory_snapshot(metrics: &Metrics, row: &InventoryMetricsSnapshot) 
     record_inventory(metrics, "groups", row.groups);
     record_inventory(metrics, "service_accounts", row.service_accounts);
     record_inventory(metrics, "remote_targets", row.remote_targets);
+
+    metrics.export_template_info.reset();
+    for template in &row.export_templates {
+        metrics
+            .export_template_info
+            .with_label_values(&[&template.id.to_string(), &template.name])
+            .set(1);
+    }
 }
 
 fn record_inventory(metrics: &Metrics, entity_type: &'static str, count: i64) {

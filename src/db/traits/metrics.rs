@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::NaiveDateTime;
 use diesel::dsl::{count_star, min};
 use diesel::sql_types::BigInt;
@@ -5,26 +7,44 @@ use diesel::sql_types::BigInt;
 use crate::db::prelude::*;
 use crate::db::with_connection;
 use crate::errors::ApiError;
-use crate::models::{EventDeliveryQueueHealth, EventFanoutHealth, TaskStatus};
+use crate::models::{EventDeliveryQueueHealth, EventFanoutHealth, TaskKind, TaskStatus};
 use crate::schema::tasks;
 use crate::traits::BackendContext;
 
 #[derive(Debug, Clone, Copy, QueryableByName)]
+struct InventoryMetricsCountRow {
+    #[diesel(sql_type = BigInt)]
+    collections: i64,
+    #[diesel(sql_type = BigInt)]
+    classes: i64,
+    #[diesel(sql_type = BigInt)]
+    objects: i64,
+    #[diesel(sql_type = BigInt)]
+    users: i64,
+    #[diesel(sql_type = BigInt)]
+    groups: i64,
+    #[diesel(sql_type = BigInt)]
+    service_accounts: i64,
+    #[diesel(sql_type = BigInt)]
+    remote_targets: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExportTemplateMetricIdentity {
+    pub id: i32,
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct InventoryMetricsSnapshot {
-    #[diesel(sql_type = BigInt)]
     pub collections: i64,
-    #[diesel(sql_type = BigInt)]
     pub classes: i64,
-    #[diesel(sql_type = BigInt)]
     pub objects: i64,
-    #[diesel(sql_type = BigInt)]
     pub users: i64,
-    #[diesel(sql_type = BigInt)]
     pub groups: i64,
-    #[diesel(sql_type = BigInt)]
     pub service_accounts: i64,
-    #[diesel(sql_type = BigInt)]
     pub remote_targets: i64,
+    pub export_templates: Vec<ExportTemplateMetricIdentity>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,10 +55,16 @@ pub struct TaskMetricsCount {
 }
 
 #[derive(Debug, Clone)]
-pub struct TaskMetricsSnapshot {
-    pub counts: Vec<TaskMetricsCount>,
+pub struct TaskMetricsAge {
+    pub kind: String,
     pub oldest_queued_at: Option<NaiveDateTime>,
     pub oldest_active_at: Option<NaiveDateTime>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskMetricsSnapshot {
+    pub counts: Vec<TaskMetricsCount>,
+    pub ages: Vec<TaskMetricsAge>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +84,7 @@ where
 {
     async fn metrics_inventory_snapshot(&self) -> Result<InventoryMetricsSnapshot, ApiError> {
         with_connection(self.db_pool(), async |conn| {
-            diesel::sql_query(
+            let counts = diesel::sql_query(
                 r#"
                 SELECT
                     (SELECT COUNT(*) FROM collections) AS collections,
@@ -70,8 +96,30 @@ where
                     (SELECT COUNT(*) FROM remote_targets) AS remote_targets
                 "#,
             )
-            .get_result::<InventoryMetricsSnapshot>(conn)
-            .await
+            .get_result::<InventoryMetricsCountRow>(conn)
+            .await?;
+            let export_templates = crate::schema::export_templates::table
+                .select((
+                    crate::schema::export_templates::id,
+                    crate::schema::export_templates::name,
+                ))
+                .order(crate::schema::export_templates::id)
+                .load::<(i32, String)>(conn)
+                .await?
+                .into_iter()
+                .map(|(id, name)| ExportTemplateMetricIdentity { id, name })
+                .collect();
+
+            Ok::<_, diesel::result::Error>(InventoryMetricsSnapshot {
+                collections: counts.collections,
+                classes: counts.classes,
+                objects: counts.objects,
+                users: counts.users,
+                groups: counts.groups,
+                service_accounts: counts.service_accounts,
+                remote_targets: counts.remote_targets,
+                export_templates,
+            })
         })
         .await
     }
@@ -91,26 +139,45 @@ where
                 })
                 .collect();
 
-            let oldest_queued_at = tasks::table
+            let oldest_queued = tasks::table
                 .filter(tasks::status.eq(TaskStatus::Queued.as_str()))
-                .select(min(tasks::created_at))
-                .get_result::<Option<NaiveDateTime>>(conn)
+                .group_by(tasks::kind)
+                .select((tasks::kind, min(tasks::created_at)))
+                .load::<(String, Option<NaiveDateTime>)>(conn)
                 .await?;
 
-            let oldest_active_at = tasks::table
+            let oldest_active = tasks::table
                 .filter(tasks::status.eq_any([
                     TaskStatus::Validating.as_str(),
                     TaskStatus::Running.as_str(),
                 ]))
-                .select(min(tasks::started_at))
-                .get_result::<Option<NaiveDateTime>>(conn)
+                .group_by(tasks::kind)
+                .select((tasks::kind, min(tasks::started_at)))
+                .load::<(String, Option<NaiveDateTime>)>(conn)
                 .await?;
 
-            Ok::<_, diesel::result::Error>(TaskMetricsSnapshot {
-                counts,
-                oldest_queued_at,
-                oldest_active_at,
-            })
+            let mut ages_by_kind = HashMap::new();
+            for (kind, timestamp) in oldest_queued {
+                ages_by_kind.entry(kind).or_insert((None, None)).0 = timestamp;
+            }
+            for (kind, timestamp) in oldest_active {
+                ages_by_kind.entry(kind).or_insert((None, None)).1 = timestamp;
+            }
+            let ages = TaskKind::ALL
+                .into_iter()
+                .map(|kind| {
+                    let kind = kind.as_str();
+                    let (oldest_queued_at, oldest_active_at) =
+                        ages_by_kind.remove(kind).unwrap_or((None, None));
+                    TaskMetricsAge {
+                        kind: kind.to_string(),
+                        oldest_queued_at,
+                        oldest_active_at,
+                    }
+                })
+                .collect();
+
+            Ok::<_, diesel::result::Error>(TaskMetricsSnapshot { counts, ages })
         })
         .await
     }

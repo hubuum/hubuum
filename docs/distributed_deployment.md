@@ -22,11 +22,16 @@ Set `HUBUUM_RUNTIME_ROLE` on each long-running process:
 | `api` | Yes | No | Horizontally scaled stateless API replicas |
 | `worker` | No | Yes | Independently scaled task and event workers |
 
-An `api` process cannot start workers through a later queue notification. A
-`worker` process does not bind an HTTP port. Use process/container liveness for
+An `api` process cannot start workers through a later queue notification. When
+metrics are enabled, a `worker` process binds the configured address and port
+with only `HUBUUM_METRICS_PATH`; it does not expose the application API or
+health probes. Scrape every worker directly so worker counters and histograms
+are not hidden behind an API load balancer. Use process/container liveness for
 worker replicas rather than `/healthz`; the image's built-in Docker health check
 accounts for the worker role. API replicas expose `/healthz` and `/readyz` as
-documented in [Quick Start](quick_start.md#health-probes).
+documented in [Quick Start](quick_start.md#health-probes). See
+[Runtime Metrics](metrics.md#scrape-each-process-directly) for aggregation
+semantics.
 
 Worker-only processes require at least one configured background worker and
 supervise every worker thread they start. If any worker stops unexpectedly, the

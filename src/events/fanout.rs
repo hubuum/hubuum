@@ -15,6 +15,7 @@ use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::EventWorkerWakeupStats;
+use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 
 static EVENT_FANOUT_WORKER: Once = Once::new();
@@ -77,10 +78,12 @@ async fn wait_for_event_fanout_wakeup(poll_interval: Duration, shutdown: &Shutdo
         _ = shutdown.requested() => false,
         _ = sleep(poll_interval) => {
             EVENT_FANOUT_POLL_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+            metrics::event_worker_wakeup("fanout", "poll");
             true
         }
         _ = get_event_fanout_notify().notified() => {
             EVENT_FANOUT_NOTIFICATION_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+            metrics::event_worker_wakeup("fanout", "notification");
             true
         }
     }
@@ -173,6 +176,7 @@ pub fn ensure_event_fanout_worker_running(pool: DbPool) {
 pub fn kick_event_fanout_worker(pool: DbPool) {
     ensure_event_fanout_worker_running(pool);
     EVENT_FANOUT_NOTIFICATIONS_SENT.fetch_add(1, Ordering::Relaxed);
+    metrics::event_worker_wakeup("fanout", "notifications_sent");
     get_event_fanout_notify().notify_one();
 }
 

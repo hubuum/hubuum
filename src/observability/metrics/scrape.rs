@@ -1,4 +1,7 @@
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
 use actix_web::{HttpResponse, Responder, http::header, web};
+use opentelemetry::KeyValue;
 use prometheus::{Encoder, TextEncoder};
 
 use crate::db::{DbCallSite, DbPool, with_db_call_site};
@@ -36,5 +39,36 @@ async fn refresh_scrape_gauges(metrics: &Metrics, pool: &DbPool) {
         inventory::refresh_inventory_gauges(metrics, pool).await;
         task::refresh_task_gauges(metrics, pool).await;
         event::refresh_event_gauges(metrics, pool).await;
+    } else {
+        metrics.refresh_skipped.add(
+            1,
+            &[
+                KeyValue::new("source", "database"),
+                KeyValue::new("reason", "concurrent"),
+            ],
+        );
+    }
+}
+
+pub(super) fn record_refresh_attempt(
+    metrics: &Metrics,
+    source: &'static str,
+    started_at: Instant,
+    succeeded: bool,
+) {
+    let attrs = [KeyValue::new("source", source)];
+    metrics
+        .refresh_duration
+        .record(started_at.elapsed().as_secs_f64(), &attrs);
+    if succeeded {
+        metrics.refresh_last_success.record(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64(),
+            &attrs,
+        );
+    } else {
+        metrics.refresh_failures.add(1, &attrs);
     }
 }

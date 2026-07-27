@@ -1,10 +1,13 @@
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry_sdk::metrics::{Aggregation, Instrument, SdkMeterProvider, Stream};
-use prometheus::Registry;
+use prometheus::{IntGaugeVec, Opts, Registry};
 
 use crate::errors::ApiError;
+use crate::logger;
 
 use super::cache::ScrapeCache;
 use super::{METRICS, Metrics};
@@ -30,6 +33,7 @@ fn duration_histogram_view(instrument: &Instrument) -> Option<Stream> {
         | "hubuum_task_execution_duration"
         | "hubuum_computed_field_rebuild_duration"
         | "hubuum_export_phase_duration"
+        | "hubuum_export_duration"
         | "hubuum_import_phase_duration" => BACKGROUND_BUCKETS_SECONDS,
         _ => return None,
     };
@@ -69,10 +73,42 @@ pub fn init() -> Result<(), ApiError> {
     let registry = Registry::new();
     let provider = build_provider(&registry)?;
     let meter = provider.meter("hubuum");
+    let export_template_info = IntGaugeVec::new(
+        Opts::new(
+            "hubuum_export_template_info",
+            "Current stored export template identities from the shared database",
+        ),
+        &["template_id", "template_name"],
+    )
+    .map_err(|error| {
+        ApiError::InternalServerError(format!(
+            "Failed to create export template info metric: {error}"
+        ))
+    })?;
+    registry
+        .register(Box::new(export_template_info.clone()))
+        .map_err(|error| {
+            ApiError::InternalServerError(format!(
+                "Failed to register export template info metric: {error}"
+            ))
+        })?;
 
     let metrics = Metrics {
         registry,
         _provider: provider,
+        build_info: meter
+            .u64_gauge("hubuum_build_info")
+            .with_description("Hubuum build identity")
+            .build(),
+        runtime_info: meter
+            .u64_gauge("hubuum_runtime_info")
+            .with_description("Hubuum process runtime role")
+            .build(),
+        process_start_time: meter
+            .f64_gauge("hubuum_process_start_time")
+            .with_description("Unix timestamp when this Hubuum process initialized metrics")
+            .with_unit("s")
+            .build(),
         http_requests: meter
             .u64_counter("hubuum_http_requests")
             .with_description("HTTP requests handled")
@@ -142,9 +178,14 @@ pub fn init() -> Result<(), ApiError> {
             .with_description("Task execution duration")
             .with_unit("s")
             .build(),
-        task_config: meter
-            .u64_gauge("hubuum_task_worker_config")
-            .with_description("Configured task worker settings")
+        task_workers_configured: meter
+            .u64_gauge("hubuum_task_workers_configured")
+            .with_description("Configured task workers in this process")
+            .build(),
+        task_poll_interval: meter
+            .f64_gauge("hubuum_task_poll_interval")
+            .with_description("Configured task worker poll interval")
+            .with_unit("s")
             .build(),
         task_counts: meter
             .i64_gauge("hubuum_tasks")
@@ -184,25 +225,27 @@ pub fn init() -> Result<(), ApiError> {
             .with_description("Computed-field rebuild duration")
             .with_unit("s")
             .build(),
-        export_output_cleanup_runs: meter
-            .u64_counter("hubuum_export_output_cleanup_runs")
-            .with_description("Stored export and backup output cleanup runs")
+        task_output_cleanup_runs: meter
+            .u64_counter("hubuum_task_output_cleanup_runs")
+            .with_description("Stored task output cleanup runs")
             .build(),
-        export_output_cleanup_failures: meter
-            .u64_counter("hubuum_export_output_cleanup_failures")
-            .with_description("Stored export and backup output cleanup failures")
+        task_output_cleanup_failures: meter
+            .u64_counter("hubuum_task_output_cleanup_failures")
+            .with_description("Stored task output cleanup failures")
             .build(),
-        export_output_cleanup_deleted: meter
-            .u64_counter("hubuum_export_output_cleanup_deleted")
-            .with_description("Stored export and backup outputs deleted by cleanup")
+        task_output_cleanup_deleted: meter
+            .u64_counter("hubuum_task_output_cleanup_deleted")
+            .with_description("Stored task outputs deleted by cleanup")
             .build(),
-        export_template_info: meter
-            .u64_gauge("hubuum_export_template_info")
-            .with_description("Stored export templates observed by this process")
-            .build(),
-        export_duration: meter
+        export_template_info,
+        export_phase_duration: meter
             .f64_histogram("hubuum_export_phase_duration")
             .with_description("Export phase duration")
+            .with_unit("s")
+            .build(),
+        export_template_duration: meter
+            .f64_histogram("hubuum_export_duration")
+            .with_description("Overall export duration by stored template identity")
             .with_unit("s")
             .build(),
         export_completions: meter
@@ -277,13 +320,27 @@ pub fn init() -> Result<(), ApiError> {
             .with_description("Oldest actionable event item age by queue")
             .with_unit("s")
             .build(),
-        event_worker_config: meter
-            .u64_gauge("hubuum_event_worker_config")
-            .with_description("Configured event worker settings")
+        event_workers_configured: meter
+            .u64_gauge("hubuum_event_workers_configured")
+            .with_description("Configured event workers in this process")
+            .build(),
+        event_worker_batch_size: meter
+            .u64_gauge("hubuum_event_worker_batch_size")
+            .with_description("Configured event worker batch size")
+            .build(),
+        event_worker_poll_interval: meter
+            .f64_gauge("hubuum_event_worker_poll_interval")
+            .with_description("Configured event worker poll interval")
+            .with_unit("s")
+            .build(),
+        event_worker_lock_timeout: meter
+            .f64_gauge("hubuum_event_worker_lock_timeout")
+            .with_description("Configured event worker claim lock timeout")
+            .with_unit("s")
             .build(),
         event_worker_wakeups: meter
-            .u64_gauge("hubuum_event_worker_wakeups")
-            .with_description("Event worker wakeup counters")
+            .u64_counter("hubuum_event_worker_wakeups")
+            .with_description("Event worker wakeups")
             .build(),
         inventory_entities: meter
             .i64_gauge("hubuum_inventory_entities")
@@ -293,13 +350,50 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_metrics_refresh_failures")
             .with_description("Metrics scrape refresh failures by source")
             .build(),
+        refresh_duration: meter
+            .f64_gauge("hubuum_metrics_refresh_duration")
+            .with_description("Duration of the latest metrics source refresh attempt")
+            .with_unit("s")
+            .build(),
+        refresh_last_success: meter
+            .f64_gauge("hubuum_metrics_refresh_last_success_timestamp")
+            .with_description("Unix timestamp of the latest successful metrics source refresh")
+            .with_unit("s")
+            .build(),
+        refresh_skipped: meter
+            .u64_counter("hubuum_metrics_refresh_skipped")
+            .with_description("Metrics source refreshes skipped by reason")
+            .build(),
         scrape_cache: Mutex::new(ScrapeCache::default()),
         db_refresh_lock: tokio::sync::Mutex::new(()),
     };
 
+    metrics.build_info.record(
+        1,
+        &[
+            KeyValue::new("version", env!("CARGO_PKG_VERSION")),
+            KeyValue::new("git_sha", logger::build_git_sha()),
+        ],
+    );
+    metrics.process_start_time.record(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64(),
+        &[],
+    );
+
     METRICS
         .set(metrics)
         .map_err(|_| ApiError::InternalServerError("Metrics already initialized".to_string()))
+}
+
+pub fn runtime_identity(role: &'static str) {
+    if let Some(metrics) = super::current() {
+        metrics
+            .runtime_info
+            .record(1, &[KeyValue::new("role", role)]);
+    }
 }
 
 #[cfg(test)]

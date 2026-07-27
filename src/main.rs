@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod container_build;
 
-use actix_web::{App, HttpServer, middleware::from_fn, web, web::Data, web::JsonConfig};
+use actix_web::{
+    App, HttpServer, dev::Server, middleware::from_fn, web, web::Data, web::JsonConfig,
+};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
@@ -85,13 +87,14 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
-    if config.metrics_enabled
-        && let Err(e) = observability::metrics::init()
-    {
-        fatal_error(
-            &format!("Failed to initialize metrics: {}", e),
-            EXIT_CODE_INIT_ERROR,
-        );
+    if config.metrics_enabled {
+        if let Err(e) = observability::metrics::init() {
+            fatal_error(
+                &format!("Failed to initialize metrics: {}", e),
+                EXIT_CODE_INIT_ERROR,
+            );
+        }
+        observability::metrics::runtime_identity(config.runtime_role.as_str());
     }
     utilities::auth::initialize_dummy_password_hash();
     let database_settings = DatabasePoolSettings::builder(config.database_url.clone())
@@ -138,6 +141,10 @@ async fn main() -> std::io::Result<()> {
     .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
     initialize_task_worker_settings(task_worker_settings)
         .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_INIT_ERROR));
+    observability::metrics::task_worker_config(
+        task_worker_count,
+        Duration::from_millis(config.task_poll_interval_ms),
+    );
 
     let initialization_settings =
         utilities::init::InitializationSettings::new(config.admin_groupname.clone())
@@ -178,6 +185,7 @@ async fn main() -> std::io::Result<()> {
         };
 
     if !config.runtime_role.serves_http() {
+        let metrics_server = start_worker_metrics_server(&config, pool.clone())?;
         start_background_workers(&app_context, &backup_settings);
         info!(
             message = "worker startup",
@@ -190,27 +198,43 @@ async fn main() -> std::io::Result<()> {
             db_backend = "postgresql",
             authorization_backend,
             active_event_sinks,
+            metrics_listener = metrics_server.is_some(),
         );
-        let worker_exit = tokio::select! {
-            shutdown = wait_for_shutdown_signal() => {
-                shutdown?;
-                None
+        let unexpected_error = if let Some(metrics_server) = metrics_server {
+            let metrics_server_handle = metrics_server.handle();
+            let result = tokio::select! {
+                shutdown = wait_for_shutdown_signal() => shutdown.err(),
+                exit = wait_for_background_worker_exit() => Some(std::io::Error::other(format!(
+                    "Background worker supervision failed: {exit}"
+                ))),
+                result = metrics_server => match result {
+                    Ok(()) => Some(std::io::Error::other(
+                        "Worker metrics HTTP server stopped unexpectedly",
+                    )),
+                    Err(error) => Some(error),
+                },
+            };
+            metrics_server_handle.stop(true).await;
+            result
+        } else {
+            tokio::select! {
+                shutdown = wait_for_shutdown_signal() => shutdown.err(),
+                exit = wait_for_background_worker_exit() => Some(std::io::Error::other(format!(
+                    "Background worker supervision failed: {exit}"
+                ))),
             }
-            exit = wait_for_background_worker_exit() => Some(exit),
         };
-        if let Some(exit) = &worker_exit {
+        if let Some(error) = &unexpected_error {
             error!(
-                message = "Background worker supervision failed",
-                reason = %exit,
+                message = "Worker process supervision failed",
+                reason = %error,
             );
         }
         shutdown_background_workers(Duration::from_secs(30)).await;
         drop(app_context);
         drop(pool);
-        if let Some(exit) = worker_exit {
-            return Err(std::io::Error::other(format!(
-                "Background worker supervision failed: {exit}"
-            )));
+        if let Some(error) = unexpected_error {
+            return Err(error);
         }
         return Ok(());
     }
@@ -361,6 +385,61 @@ fn start_background_workers(context: &AppContext, backup_settings: &BackupSettin
     ensure_event_delivery_worker_running(context.db_pool.clone());
     ensure_event_retention_worker_running(context.db_pool.clone());
     ensure_token_retention_worker_running(context.db_pool.clone());
+}
+
+fn start_worker_metrics_server(
+    config: &AppConfig,
+    pool: db::DbPool,
+) -> std::io::Result<Option<Server>> {
+    if !config.metrics_enabled {
+        return Ok(None);
+    }
+
+    let client_allowlist = config.client_allowlist.clone();
+    let proxy_trust = middlewares::ProxyTrust::new(
+        config.trust_ip_headers,
+        config.trusted_proxies.nets().to_vec(),
+        config.trusted_proxy_hops,
+    );
+    let metrics_path = config.metrics_path.clone();
+    let server = HttpServer::new(move || {
+        App::new()
+            .wrap(middlewares::ClientAllowlistMiddleware::new_with_trust(
+                client_allowlist.clone(),
+                proxy_trust.clone(),
+            ))
+            .app_data(Data::new(pool.clone()))
+            .route(
+                metrics_path.as_str(),
+                web::get().to(observability::metrics::scrape),
+            )
+    });
+    let bind_address = format!("{}:{}", config.bind_ip, config.port);
+    let server = match (&config.tls_cert_path, &config.tls_key_path) {
+        (Some(cert), Some(key)) => tls::configure_server(
+            server,
+            &bind_address,
+            cert,
+            key,
+            config.tls_key_passphrase.as_deref(),
+            config.tls_backend,
+        )?,
+        (Some(_), None) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "TLS certificate specified but key is missing",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "TLS key specified but certificate is missing",
+            ));
+        }
+        _ => server.bind(&bind_address)?,
+    };
+
+    Ok(Some(server.workers(1).run()))
 }
 
 fn login_rate_limit_store_settings(

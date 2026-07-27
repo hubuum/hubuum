@@ -1,13 +1,14 @@
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use actix_web::{App, http::StatusCode, test, web};
+use actix_web::{App, HttpResponse, http::StatusCode, test, web};
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::bb8::Pool;
 use rstest::rstest;
 use tokio::sync::Mutex;
 
 use crate::db::{DbConnection, DbPool};
+use crate::middlewares::TracingMiddleware;
 use crate::models::{TaskKind, TaskStatus};
 use crate::observability::metrics;
 use crate::test_support::clear_metrics_scrape_cache;
@@ -21,8 +22,9 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
     let _lock = METRICS_TEST_LOCK.lock().await;
     let context = test_context;
     metrics::init().unwrap();
+    metrics::runtime_identity("test");
     clear_metrics_scrape_cache();
-    metrics::http_request_started();
+    let _in_flight = metrics::http_request_started_for_route("/test");
     metrics::http_request_finished("GET", "/test", 200, std::time::Duration::from_millis(1));
 
     let app = test::init_service(
@@ -51,6 +53,10 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
     assert!(body.contains(
         "hubuum_db_operation_duration_seconds_bucket{caller=\"metrics_refresh\",operation=\"connection\",result=\"ok\""
     ));
+    assert!(body.contains("hubuum_build_info{git_sha="));
+    assert!(body.contains("hubuum_runtime_info{role=\"test\"} 1"));
+    assert!(body.contains("hubuum_process_start_time_seconds"));
+    assert!(body.contains("hubuum_metrics_refresh_last_success_timestamp_seconds"));
 }
 
 #[actix_web::test]
@@ -89,13 +95,15 @@ async fn metrics_endpoint_exports_representative_bounded_families() {
     metrics::export_completed("objects_in_class", "application/json");
     metrics::export_truncated("objects_in_class", "application/json");
     metrics::export_warnings("objects_in_class", "application/json", 2);
-    metrics::export_template_observed(42, "inventory");
-    metrics::export_phase_duration("render", Duration::from_millis(12), Some(42));
+    metrics::export_phase_timer("render", Some(42)).finish("success");
+    metrics::export_phase_timer("total", Some(42)).finish("success");
     metrics::import_phase_duration("planning", Duration::from_millis(5));
     metrics::import_items(3, 2, 1);
     metrics::login_lockout("subnet");
     metrics::client_allowlist_rejected("disallowed_ip");
     metrics::remote_call_finished("GET", "none", "timeout", Duration::from_millis(10));
+    metrics::event_worker_wakeup("fanout", "poll");
+    metrics::task_worker_config(0, Duration::from_millis(200));
 
     let app = test::init_service(
         App::new()
@@ -110,8 +118,8 @@ async fn metrics_endpoint_exports_representative_bounded_families() {
 
     for metric_name in [
         "hubuum_export_completions_total",
+        "hubuum_export_duration_seconds",
         "hubuum_export_phase_duration_seconds",
-        "hubuum_export_template_info",
         "hubuum_export_truncations_total",
         "hubuum_export_warnings_total",
         "hubuum_import_phase_duration_seconds",
@@ -121,12 +129,19 @@ async fn metrics_endpoint_exports_representative_bounded_families() {
         "hubuum_login_lockouts_total",
         "hubuum_client_allowlist_rejections_total",
         "hubuum_remote_call_results_total",
+        "hubuum_event_worker_wakeups_total",
+        "hubuum_task_workers_configured",
+        "hubuum_task_poll_interval_seconds",
     ] {
         assert!(body.contains(metric_name), "missing metric: {metric_name}");
     }
     assert!(body.contains("template_id=\"42\""));
-    assert!(body.contains("template_name=\"inventory\""));
+    assert!(body.contains("phase=\"render\""));
+    assert!(body.contains("outcome=\"success\""));
     assert!(body.contains("outcome=\"timeout\""));
+    assert!(body.contains("hubuum_event_worker_wakeups_total{kind=\"poll\",worker=\"fanout\"}"));
+    assert!(body.contains("hubuum_task_workers_configured 0"));
+    assert!(body.contains("hubuum_task_poll_interval_seconds 0.2"));
 }
 
 #[actix_web::test]
@@ -186,7 +201,56 @@ async fn task_gauges_export_zero_for_bounded_kind_status_pairs(
             );
             assert!(body.contains(&line), "missing metrics line: {line}");
         }
+        for state in ["queued", "active"] {
+            let line = format!(
+                "hubuum_task_oldest_age_seconds{{kind=\"{}\",state=\"{state}\"}}",
+                kind.as_str(),
+            );
+            assert!(body.contains(&line), "missing metrics line: {line}");
+        }
     }
+}
+
+#[actix_web::test]
+async fn tracing_metrics_keep_stable_route_templates() {
+    let _lock = METRICS_TEST_LOCK.lock().await;
+    metrics::init().unwrap();
+    clear_metrics_scrape_cache();
+
+    async fn ok() -> HttpResponse {
+        HttpResponse::Ok().finish()
+    }
+
+    let app = test::init_service(
+        App::new()
+            .wrap(TracingMiddleware::new())
+            .app_data(web::Data::new(unreachable_pool()))
+            .route(
+                "/api/v1/classes/{class_id}/objects/{object_id}",
+                web::get().to(ok),
+            )
+            .route("/metrics", web::get().to(metrics::scrape)),
+    )
+    .await;
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/v1/classes/42/objects/99")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response =
+        test::call_service(&app, test::TestRequest::get().uri("/metrics").to_request()).await;
+    let body = test::read_body(response).await;
+    let body = std::str::from_utf8(&body).unwrap();
+
+    assert!(body.contains(
+        "hubuum_http_requests_total{method=\"GET\",route=\"/api/v1/classes/{class_id}/objects/{object_id}\",status_code=\"200\",status_family=\"2xx\"}"
+    ));
+    assert!(!body.contains("route=\"/api/v1/classes/42/objects/99\""));
+    assert!(body.contains("hubuum_http_requests_in_flight{route=\"/metrics\"} 1"));
 }
 
 fn unreachable_pool() -> DbPool {

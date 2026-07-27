@@ -54,13 +54,36 @@ pub fn task_completed(kind: &str, final_status: &str, execution: Option<Duration
 
 pub fn task_worker_config(worker_count: usize, poll_interval: Duration) {
     if let Some(metrics) = current() {
-        metrics.task_config.record(
-            u64::try_from(worker_count).unwrap_or(u64::MAX),
-            &[KeyValue::new("setting", "workers")],
-        );
-        metrics.task_config.record(
-            u64::try_from(poll_interval.as_millis()).unwrap_or(u64::MAX),
-            &[KeyValue::new("setting", "poll_interval_ms")],
+        metrics
+            .task_workers_configured
+            .record(u64::try_from(worker_count).unwrap_or(u64::MAX), &[]);
+        metrics
+            .task_poll_interval
+            .record(poll_interval.as_secs_f64(), &[]);
+    }
+}
+
+pub fn task_output_cleanup_run(kind: &'static str) {
+    if let Some(metrics) = current() {
+        metrics
+            .task_output_cleanup_runs
+            .add(1, &[KeyValue::new("kind", kind)]);
+    }
+}
+
+pub fn task_output_cleanup_failed(kind: &'static str) {
+    if let Some(metrics) = current() {
+        metrics
+            .task_output_cleanup_failures
+            .add(1, &[KeyValue::new("kind", kind)]);
+    }
+}
+
+pub fn task_output_cleanup_deleted(kind: &'static str, count: usize) {
+    if let Some(metrics) = current() {
+        metrics.task_output_cleanup_deleted.add(
+            u64::try_from(count).unwrap_or(u64::MAX),
+            &[KeyValue::new("kind", kind)],
         );
     }
 }
@@ -71,15 +94,15 @@ pub(super) async fn refresh_task_gauges(metrics: &Metrics, pool: &DbPool) {
         return;
     }
 
+    let refresh_started_at = Instant::now();
     match pool.metrics_task_snapshot().await {
         Ok(snapshot) => {
+            super::scrape::record_refresh_attempt(metrics, "tasks", refresh_started_at, true);
             record_task_snapshot(metrics, &snapshot);
             store_task_snapshot(metrics, snapshot);
         }
         Err(_) => {
-            metrics
-                .refresh_failures
-                .add(1, &[KeyValue::new("source", "tasks")]);
+            super::scrape::record_refresh_attempt(metrics, "tasks", refresh_started_at, false);
             if let Some(snapshot) = stale_task_snapshot(metrics) {
                 record_task_snapshot(metrics, &snapshot);
             } else {
@@ -132,14 +155,22 @@ fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskMetricsSnapshot) {
         }
     }
 
-    metrics.task_oldest_age.record(
-        age_seconds(snapshot.oldest_queued_at, now).unwrap_or(0.0),
-        &[KeyValue::new("state", "queued")],
-    );
-    metrics.task_oldest_age.record(
-        age_seconds(snapshot.oldest_active_at, now).unwrap_or(0.0),
-        &[KeyValue::new("state", "active")],
-    );
+    for age in &snapshot.ages {
+        metrics.task_oldest_age.record(
+            age_seconds(age.oldest_queued_at, now).unwrap_or(0.0),
+            &[
+                KeyValue::new("kind", age.kind.clone()),
+                KeyValue::new("state", "queued"),
+            ],
+        );
+        metrics.task_oldest_age.record(
+            age_seconds(age.oldest_active_at, now).unwrap_or(0.0),
+            &[
+                KeyValue::new("kind", age.kind.clone()),
+                KeyValue::new("state", "active"),
+            ],
+        );
+    }
 }
 
 fn record_empty_task_snapshot(metrics: &Metrics) {
@@ -155,12 +186,22 @@ fn record_empty_task_snapshot(metrics: &Metrics) {
         }
     }
 
-    metrics
-        .task_oldest_age
-        .record(0.0, &[KeyValue::new("state", "queued")]);
-    metrics
-        .task_oldest_age
-        .record(0.0, &[KeyValue::new("state", "active")]);
+    for kind in TaskKind::ALL {
+        metrics.task_oldest_age.record(
+            0.0,
+            &[
+                KeyValue::new("kind", kind.as_str()),
+                KeyValue::new("state", "queued"),
+            ],
+        );
+        metrics.task_oldest_age.record(
+            0.0,
+            &[
+                KeyValue::new("kind", kind.as_str()),
+                KeyValue::new("state", "active"),
+            ],
+        );
+    }
 }
 
 fn age_seconds(

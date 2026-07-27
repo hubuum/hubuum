@@ -5,10 +5,17 @@ use opentelemetry::{KeyValue, Value};
 use super::{HttpInFlightGuard, current};
 
 pub fn http_request_started() -> HttpInFlightGuard {
+    http_request_started_for_route("unknown")
+}
+
+pub fn http_request_started_for_route(route: &str) -> HttpInFlightGuard {
     if let Some(metrics) = current() {
-        metrics.http_in_flight.add(1, &[]);
+        metrics
+            .http_in_flight
+            .add(1, &[KeyValue::new("route", Value::from(route.to_owned()))]);
+        return HttpInFlightGuard::new(Some(route.to_owned()));
     }
-    HttpInFlightGuard::new(current().is_some())
+    HttpInFlightGuard::new(None)
 }
 
 pub fn http_request_finished(method: &str, route: &str, status_code: u16, duration: Duration) {
