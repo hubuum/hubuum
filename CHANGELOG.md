@@ -41,6 +41,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   group.
 - API-only processes now report zero effective event workers instead of the
   worker count configured for worker-enabled roles.
+- Restore coordinators now sample guarded local activity only after observing
+  the draining generation, preventing stale idle heartbeats from crossing the
+  restore drain barrier.
+- Task notification listeners now use a dedicated connection so task-only
+  workers with a one-connection execution pool can still claim queued tasks.
 
 ## [0.0.5] - 2026-07-26
 

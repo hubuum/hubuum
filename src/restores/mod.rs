@@ -723,7 +723,7 @@ async fn heartbeat_instance(
     restore_coordinator_tick_db(
         pool,
         instance_id,
-        active_maintenance_work() == 0,
+        || active_maintenance_work() == 0,
         expire_validated_jobs,
     )
     .await

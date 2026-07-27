@@ -58,6 +58,7 @@ static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| 
 });
 
 const TASK_LEASE_POOL_SIZE: u32 = 1;
+const TASK_NOTIFICATION_LISTENER_POOL_SIZE: u32 = 1;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TaskWorkerSettings {
@@ -163,6 +164,17 @@ fn new_task_lease_pool() -> DbPool {
         .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
         .build()
         .expect("task lease pool settings must be valid");
+    init_pool_with_settings(&settings)
+}
+
+fn new_task_notification_listener_pool() -> DbPool {
+    let config = get_config().expect("task notification listener requires database configuration");
+    let settings = DatabasePoolSettings::builder(config.database_url.clone())
+        .max_size(TASK_NOTIFICATION_LISTENER_POOL_SIZE)
+        .statement_timeout_ms(config.db_statement_timeout_ms)
+        .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+        .build()
+        .expect("task notification listener pool settings must be valid");
     init_pool_with_settings(&settings)
 }
 
@@ -300,16 +312,13 @@ pub fn ensure_task_worker_running_with_settings(
         return;
     }
     let poll_interval = configured_task_poll_interval();
-    TASK_WORKER_LISTENER.call_once({
-        let pool = context.db_pool.clone();
-        move || {
-            spawn_postgres_notification_listener(
-                pool,
-                TASK_QUEUE_CHANNEL,
-                "task-worker-pg-listener",
-                wake_task_worker_from_postgres,
-            );
-        }
+    TASK_WORKER_LISTENER.call_once(|| {
+        spawn_postgres_notification_listener(
+            new_task_notification_listener_pool(),
+            TASK_QUEUE_CHANNEL,
+            "task-worker-pg-listener",
+            wake_task_worker_from_postgres,
+        );
     });
     TASK_WORKER.call_once(move || {
         info!(
@@ -1041,6 +1050,26 @@ mod lease_heartbeat_tests {
             .await
             .expect("lease checkout must not wait for the execution pool")
             .expect("lease pool should connect to the test database");
+    }
+
+    #[tokio::test]
+    async fn notification_listener_does_not_consume_the_execution_pool() {
+        let listener_pool = new_task_notification_listener_pool();
+        let _listener_connection = listener_pool.get().await.unwrap();
+
+        let config = get_config().expect("test requires database configuration");
+        let execution_settings = DatabasePoolSettings::builder(config.database_url.clone())
+            .max_size(1)
+            .statement_timeout_ms(config.db_statement_timeout_ms)
+            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+            .build()
+            .unwrap();
+        let execution_pool = init_pool_with_settings(&execution_settings);
+
+        timeout(Duration::from_secs(5), execution_pool.get())
+            .await
+            .expect("task checkout must not wait for the notification listener")
+            .expect("the one-connection execution pool should remain available");
     }
 
     #[tokio::test]

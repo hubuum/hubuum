@@ -1,9 +1,11 @@
 # Database Pool Tuning and Load Testing
 
-Hubuum uses one asynchronous bb8 PostgreSQL pool per server process. The pool
-is shared by HTTP handlers, task workers, event workers, retention work, and
-PostgreSQL notification listeners. Tune it as a database concurrency limit,
-not as a mirror of the Actix worker count.
+Hubuum's primary asynchronous bb8 PostgreSQL pool is shared by HTTP handlers,
+task workers, event workers, retention work, and event notification listeners.
+Task-enabled processes also use dedicated one-connection pools for task queue
+notifications and task lease renewal. Tune the primary pool as a database
+concurrency limit, not as a mirror of the Actix worker count, and include the
+auxiliary connections in the instance's total PostgreSQL connection budget.
 
 ## Connection Budget
 
@@ -26,8 +28,14 @@ lifetime of the process: one for event fanout and one for event delivery. The
 remaining pool capacity serves requests and workers. For example, a pool size
 of `10` normally leaves up to `8` connections for concurrent query work.
 
-Avoid configuring a pool that can be fully consumed by listeners. A practical
-starting point is:
+The task notification listener uses a separate one-connection pool, so a
+task-only worker can still execute with `HUBUUM_DB_POOL_SIZE=1`. Task lease
+renewal uses another dedicated one-connection pool while tasks are active.
+These auxiliary pools do not reduce primary-pool capacity, but they do count
+toward PostgreSQL's total connection budget.
+
+For processes with event workers, avoid configuring a primary pool that can be
+fully consumed by event listeners. A practical starting point is:
 
 ```text
 pool_size >= long_lived_listener_connections + desired_concurrent_db_work
@@ -39,8 +47,9 @@ pool is busy.
 
 ## Relevant Settings
 
-- `HUBUUM_DB_POOL_SIZE` controls the maximum number of managed connections.
-  The default is `10`.
+- `HUBUUM_DB_POOL_SIZE` controls the maximum number of connections in the
+  primary pool. The default is `10`; dedicated task listener and lease pools
+  are additional to this limit.
 - `HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS` bounds how long work waits for a
   connection. The default is `2000` ms. Keep it below the external request or
   proxy timeout so overload fails predictably inside Hubuum.

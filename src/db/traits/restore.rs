@@ -493,13 +493,16 @@ pub(crate) async fn resume_terminal_restore_db(pool: &DbPool, job_id: i64) -> Re
     .await
 }
 
-pub(crate) async fn restore_coordinator_tick_db(
+pub(crate) async fn restore_coordinator_tick_db<F>(
     pool: &DbPool,
     instance_id_value: Uuid,
-    local_work_is_idle: bool,
+    local_work_is_idle: F,
     expire_validated_jobs: bool,
-) -> Result<(String, Option<i64>, NaiveDateTime), ApiError> {
-    with_transaction(pool, async |conn| -> Result<_, ApiError> {
+) -> Result<(String, Option<i64>, NaiveDateTime), ApiError>
+where
+    F: FnOnce() -> bool + Send,
+{
+    with_transaction(pool, async move |conn| -> Result<_, ApiError> {
         if expire_validated_jobs {
             diesel::sql_query(
                 "UPDATE restore_jobs \
@@ -525,10 +528,14 @@ pub(crate) async fn restore_coordinator_tick_db(
                 .first::<(i64, String, Option<i64>, NaiveDateTime)>(conn)
                 .await?;
 
+        // Do not sample local activity until this transaction has observed
+        // the maintenance generation. Work that began while the state was
+        // still normal has already installed its guard by this point.
+        let drained_value = state_value != "normal" && local_work_is_idle();
         let record = ServerInstanceRecord {
             instance_id: instance_id_value,
             maintenance_generation: generation_value,
-            drained: state_value != "normal" && local_work_is_idle,
+            drained: drained_value,
             last_heartbeat_at: database_now,
             started_at: database_now,
         };
@@ -627,6 +634,9 @@ pub(crate) async fn identity_scope_name_db(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use diesel::prelude::*;
     use rstest::rstest;
     use uuid::Uuid;
@@ -644,11 +654,40 @@ mod tests {
         let pool = get_test_pool();
         let instance_id = Uuid::new_v4();
 
-        let (snapshot, queries) =
-            capture_queries(restore_coordinator_tick_db(&pool, instance_id, true, false)).await;
+        let (snapshot, queries) = capture_queries(restore_coordinator_tick_db(
+            &pool,
+            instance_id,
+            || true,
+            false,
+        ))
+        .await;
 
         assert!(snapshot.is_ok());
         assert_eq!(queries.connection_checkouts(), 1);
+        delete_server_instance_db(&pool, instance_id).await.unwrap();
+    }
+
+    #[actix_rt::test]
+    async fn restore_coordinator_does_not_sample_activity_before_observing_draining() {
+        let pool = get_test_pool();
+        let instance_id = Uuid::new_v4();
+        let sampled = Arc::new(AtomicBool::new(false));
+        let sampled_by_tick = sampled.clone();
+
+        let (state, _, _) = restore_coordinator_tick_db(
+            &pool,
+            instance_id,
+            move || {
+                sampled_by_tick.store(true, Ordering::Release);
+                true
+            },
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(state, "normal");
+        assert!(!sampled.load(Ordering::Acquire));
         delete_server_instance_db(&pool, instance_id).await.unwrap();
     }
 
