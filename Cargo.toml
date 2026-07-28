@@ -243,5 +243,6 @@ required-features = ["postgres-bench"]
 
 [[bench]]
 name = "runtime_behavior"
+path = "benches/runtime/runtime_behavior.rs"
 harness = false
 required-features = ["runtime-behavior-bench"]

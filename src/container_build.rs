@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::process::{Command, Output};
 #[cfg(unix)]
@@ -278,6 +278,57 @@ fn container_dependency_images_are_pinned() {
     assert!(workflow.contains("postgres:18.4@sha256:"));
     assert!(benchmark_workflow.contains("postgres:18.4-alpine3.24@sha256:"));
     assert!(installer.contains("postgres:18.4-alpine3.24@sha256:"));
+}
+
+#[test]
+fn self_contained_benchmark_autodiscovery_excludes_feature_gated_targets() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workflow = fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
+        .expect("benchmark workflow should be readable");
+    let self_contained_job = workflow
+        .split_once("  benchmarks:\n")
+        .and_then(|(_, remainder)| remainder.split_once("\n  postgres-storage:"))
+        .map(|(job, _)| job)
+        .expect("benchmark workflow should contain a bounded self-contained job");
+    assert!(self_contained_job.contains("auto_discover: true"));
+    assert!(!self_contained_job.contains("benchmarks_json:"));
+
+    let manifest = read_repository_text("Cargo.toml");
+    let manifest: toml::Value =
+        toml::from_str(&manifest).expect("root Cargo manifest should be valid TOML");
+    let feature_gated_benchmarks = manifest
+        .get("bench")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|benchmark| benchmark.get("required-features").is_some())
+        .collect::<Vec<_>>();
+    assert!(!feature_gated_benchmarks.is_empty());
+
+    for benchmark in feature_gated_benchmarks {
+        let name = benchmark
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .expect("feature-gated benchmark should have a name");
+        let path = benchmark
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| {
+                panic!(
+                    "feature-gated benchmark '{name}' needs an explicit path outside benches/*.rs"
+                )
+            });
+        let path = Path::new(path);
+        assert!(
+            path.starts_with("benches") && path.parent() != Some(Path::new("benches")),
+            "feature-gated benchmark '{name}' must stay below a nested benches directory"
+        );
+        assert!(
+            repository.join(path).is_file(),
+            "feature-gated benchmark '{name}' path '{}' should exist",
+            path.display()
+        );
+    }
 }
 
 #[test]

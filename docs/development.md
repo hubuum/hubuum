@@ -120,6 +120,11 @@ cargo bench --bench database_url_parsing_criterion -- --noplot
 cargo bench --bench password_hashing_criterion -- --noplot
 ```
 
+The self-contained CI job auto-discovers `benches/*.rs`. Feature-gated
+database benchmarks live in nested benchmark directories with explicit Cargo
+paths so they remain in their dedicated jobs without disabling autodiscovery.
+The container-build tests enforce this separation.
+
 `iai-callgrind` requires `valgrind` to be installed locally.
 
 The PostgreSQL storage benchmark is opt-in and requires an empty, migrated,
