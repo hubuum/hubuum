@@ -39,6 +39,7 @@ impl RefreshSource {
 
 pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
     let metrics = get()?;
+    metrics.process_metrics.refresh();
     with_db_call_site(
         DbCallSite::MetricsRefresh,
         refresh_scrape_gauges(metrics, &pool),

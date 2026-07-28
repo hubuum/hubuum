@@ -7,6 +7,7 @@ mod http;
 mod import;
 mod inventory;
 mod login;
+mod process;
 mod registry;
 mod remote_call;
 mod scrape;
@@ -23,6 +24,7 @@ use prometheus::{IntGaugeVec, Registry};
 use crate::errors::ApiError;
 
 use self::cache::ScrapeCache;
+use self::process::ProcessMetrics;
 
 pub use self::computed_field::{
     computed_evaluation, computed_live_fallback, computed_read_repair, computed_rebuild_batch,
@@ -85,6 +87,7 @@ struct Metrics {
     build_info: Gauge<u64>,
     runtime_info: Gauge<u64>,
     process_start_time: Gauge<f64>,
+    process_metrics: ProcessMetrics,
     http_requests: Counter<u64>,
     http_request_duration: Histogram<f64>,
     http_in_flight: UpDownCounter<i64>,
@@ -105,6 +108,7 @@ struct Metrics {
     task_poll_interval: Gauge<f64>,
     task_counts: Gauge<i64>,
     task_oldest_age: Gauge<f64>,
+    task_last_terminal_timestamp: Gauge<f64>,
     computed_evaluations: Counter<u64>,
     computed_evaluator_errors: Counter<u64>,
     computed_live_fallbacks: Counter<u64>,

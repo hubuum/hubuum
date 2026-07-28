@@ -34,6 +34,19 @@ Use these metrics to identify a target:
 - `hubuum_runtime_info{role}`
 - `hubuum_process_start_time_seconds`
 
+Check the target mix before interpreting process-local worker metrics:
+
+```promql
+count by (role) (hubuum_runtime_info)
+```
+
+An API-only target reports `hubuum_runtime_info{role="api"}` and zero configured
+task and event workers. It can still expose database-wide task and template
+gauges, but export, import, remote-call, task-execution, and worker-loop
+counters and histograms are produced by worker-enabled targets. If those
+families are absent from an API scrape, verify that Prometheus has a separate
+worker target before treating the absence as no activity.
+
 Inventory, task backlog, export-template identity, and event-queue gauges are
 database-wide snapshots. Every replica connected to the same database reports
 the same logical values. Aggregate those series with `max` or `avg`, not `sum`,
@@ -121,6 +134,20 @@ Classic Prometheus histograms do not expose exact minimum or maximum
 observations. `histogram_quantile` estimates percentiles from bucket boundaries
 and remains aggregatable across processes.
 
+Readiness probes commonly dominate request counts. Exclude probes and the
+scrape endpoint when calculating application traffic or an overall application
+latency:
+
+```promql
+sum by (route) (
+  rate(
+    hubuum_http_requests_total{
+      route!~"/(healthz|readyz|metrics)"
+    }[5m]
+  )
+)
+```
+
 Counter and histogram series appear only after a process observes a matching
 event. Seeing only `/readyz` means that target handled readiness probes but not
 application requests; it does not mean other routes are filtered out.
@@ -154,6 +181,12 @@ max by (template_id, template_name) (
 | `hubuum_build_info` | `version`, `git_sha` | Build identity for the scraped process |
 | `hubuum_runtime_info` | `role` | Runtime role for the scraped process |
 | `hubuum_process_start_time_seconds` | none | Unix timestamp when the process initialized metrics |
+| `process_cpu_seconds_total` | none | Process user and system CPU time |
+| `process_open_fds` | none | Process open file descriptors or handles |
+| `process_max_fds` | none | Process file-descriptor or handle limit |
+| `process_resident_memory_bytes` | none | Process resident memory |
+| `process_virtual_memory_bytes` | none | Process virtual memory |
+| `process_start_time_seconds` | none | Operating-system process start time |
 | `hubuum_http_requests_total` | `method`, `route`, `status_code`, `status_family` | HTTP requests by stable route template or coarse route group |
 | `hubuum_http_request_duration_seconds` | `method`, `route`, `status_family` | HTTP request duration histogram |
 | `hubuum_http_requests_in_flight` | `route` | Requests currently being handled by stable route |
@@ -174,6 +207,29 @@ The bounded database `caller` values are `event_delivery`, `event_fanout`,
 `request_maintenance`, `restore_coordinator`, `task_lease`, `task_worker`,
 `token_retention`, and `unattributed`.
 
+The standard unprefixed `process_*` families are available on Linux, macOS, and
+Windows. The names intentionally match the Prometheus ecosystem so existing
+process dashboards and alerts can be reused. File-descriptor or handle gauges
+remain zero if the operating system cannot return that information. Prefer
+resident memory for cross-platform pressure alerts: virtual address-space size
+is especially large and not directly comparable on macOS.
+`process_start_time_seconds` is the operating system's process start, while
+`hubuum_process_start_time_seconds` records when Hubuum initialized metrics.
+
+Useful starting queries include:
+
+```promql
+rate(process_cpu_seconds_total[5m])
+```
+
+```promql
+process_resident_memory_bytes
+```
+
+```promql
+process_open_fds / process_max_fds
+```
+
 ### Tasks, Exports, Imports, And Remote Calls
 
 | Metric | Labels | Description |
@@ -188,6 +244,7 @@ The bounded database `caller` values are `event_delivery`, `event_fanout`,
 | `hubuum_task_poll_interval_seconds` | none | Configured task-worker poll interval |
 | `hubuum_tasks` | `kind`, `status` | Current database-wide task counts |
 | `hubuum_task_oldest_age_seconds` | `kind`, `state` | Oldest queued and active task age per task kind |
+| `hubuum_task_last_terminal_timestamp_seconds` | `kind`, `status` | Most recent finish time for each task kind and terminal status; zero means none is retained |
 | `hubuum_task_output_cleanup_runs_total` | `kind` | Stored output cleanup runs for export or backup artifacts |
 | `hubuum_task_output_cleanup_failures_total` | `kind` | Stored output cleanup failures |
 | `hubuum_task_output_cleanup_deleted_total` | `kind` | Stored outputs deleted by cleanup |
@@ -242,12 +299,15 @@ These thresholds are deployment starting points, not universal defaults:
 | Signal | Suggested alert |
 | --- | --- |
 | Missing target | `up == 0`, grouped by expected API and worker target |
+| Missing worker telemetry | Queued tasks with `sum(hubuum_task_workers_configured) == 0`, or no expected `worker`/`all` role target |
 | Counter reset | Unexpected `resets(hubuum_http_requests_total[15m])`, correlated with process start time |
+| Process resource pressure | CPU, resident memory, or open-FD/handle ratio above the target's established baseline |
 | Stale snapshots | Current time minus `hubuum_metrics_refresh_last_success_timestamp_seconds` exceeds the cache and scrape tolerance |
 | DB acquisition failures | Any sustained non-zero `hubuum_db_connection_acquire_failures_total` rate |
 | DB pool pressure | Checked-out divided by configured connections above `0.8` for several minutes |
 | HTTP 5xx rate | `5xx` status family above the normal route-specific baseline |
 | Task queue age | Oldest queued task age above the expected latency for that task kind |
+| Recent task failure | `time() - max by (kind) (hubuum_task_last_terminal_timestamp_seconds{status="failed"})` below the alert window |
 | Task worker errors | Sustained non-zero worker iteration `outcome="error"` rate |
 | Task lease recovery | Any unexpected `hubuum_task_lease_recoveries_total` increase |
 | Export or import failures | Failure or timeout outcomes above the task-kind baseline |

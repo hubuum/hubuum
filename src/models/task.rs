@@ -85,6 +85,13 @@ impl TaskStatus {
         Self::Cancelled,
     ];
 
+    pub const TERMINAL: [Self; 4] = [
+        Self::Succeeded,
+        Self::Failed,
+        Self::PartiallySucceeded,
+        Self::Cancelled,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             TaskStatus::Queued => "queued",
@@ -977,6 +984,14 @@ mod tests {
     #[test]
     fn task_result_counts_reject_processed_overflow() {
         assert!(TaskResultCounts::from_outcomes(i32::MAX, 1).is_err());
+    }
+
+    #[test]
+    fn terminal_task_statuses_are_stable() {
+        assert_eq!(
+            TaskStatus::TERMINAL.map(TaskStatus::as_str),
+            ["succeeded", "failed", "partially_succeeded", "cancelled"]
+        );
     }
 
     #[test]

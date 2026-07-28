@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::NaiveDateTime;
-use diesel::dsl::{count_star, min};
+use diesel::dsl::{count_star, max, min};
 use diesel::sql_types::BigInt;
 
 use crate::db::prelude::*;
@@ -72,9 +72,17 @@ pub(crate) struct TaskGaugeAge {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct TaskGaugeLastFinished {
+    pub(crate) kind: TaskKind,
+    pub(crate) status: TaskStatus,
+    pub(crate) timestamp: Option<NaiveDateTime>,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct TaskGaugeSnapshot {
     pub(crate) counts: Vec<TaskGaugeCount>,
     pub(crate) ages: Vec<TaskGaugeAge>,
+    pub(crate) last_finished: Vec<TaskGaugeLastFinished>,
 }
 
 #[derive(Debug, Clone)]
@@ -194,6 +202,21 @@ where
                 .select((tasks::kind, min(tasks::started_at)))
                 .load::<(String, Option<NaiveDateTime>)>(conn)
                 .await?;
+            let last_finished = tasks::table
+                .filter(tasks::status.eq_any(TaskStatus::TERMINAL.map(TaskStatus::as_str)))
+                .group_by((tasks::kind, tasks::status))
+                .select((tasks::kind, tasks::status, max(tasks::finished_at)))
+                .load::<(String, String, Option<NaiveDateTime>)>(conn)
+                .await?
+                .into_iter()
+                .map(|(kind, status, timestamp)| {
+                    Ok(TaskGaugeLastFinished {
+                        kind: TaskKind::from_db(&kind)?,
+                        status: TaskStatus::from_db(&status)?,
+                        timestamp,
+                    })
+                })
+                .collect::<Result<Vec<_>, ApiError>>()?;
 
             let mut ages_by_kind = HashMap::new();
             for (kind, timestamp) in oldest_queued {
@@ -221,7 +244,11 @@ where
                 })
                 .collect();
 
-            Ok::<_, ApiError>(TaskGaugeSnapshot { counts, ages })
+            Ok::<_, ApiError>(TaskGaugeSnapshot {
+                counts,
+                ages,
+                last_finished,
+            })
         })
         .await
     }

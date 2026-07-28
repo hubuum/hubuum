@@ -101,6 +101,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 percent-encoding = "2"
 rustls = { version = "0.23", features = ["aws-lc-rs", "ring"] }
 prometheus = "0.14"
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 openssl = { version = "0.10.80", optional = true }
 lru = "0.18.0"
 # treetop-client is currently consumed from git at version 0.0.1. Cargo.lock

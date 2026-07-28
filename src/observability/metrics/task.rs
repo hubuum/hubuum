@@ -179,15 +179,32 @@ fn store_task_snapshot(metrics: &Metrics, snapshot: TaskGaugeSnapshot) {
 fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskGaugeSnapshot) {
     let now = chrono::Utc::now().naive_utc();
     let mut counts = HashMap::new();
+    let mut last_finished = HashMap::new();
 
     for row in &snapshot.counts {
         counts.insert((row.kind, row.status), row.count);
+    }
+    for row in &snapshot.last_finished {
+        last_finished.insert((row.kind, row.status), row.timestamp);
     }
 
     for kind in TaskKind::ALL {
         for status in TaskStatus::ALL {
             let count = counts.get(&(kind, status)).copied().unwrap_or(0);
             record_task_count(metrics, kind, status, count);
+        }
+        for status in TaskStatus::TERMINAL {
+            record_last_terminal_timestamp(
+                metrics,
+                kind,
+                status,
+                last_finished
+                    .get(&(kind, status))
+                    .copied()
+                    .flatten()
+                    .map(timestamp_seconds)
+                    .unwrap_or(0.0),
+            );
         }
     }
 
@@ -211,6 +228,9 @@ fn record_empty_task_snapshot(metrics: &Metrics) {
     for kind in TaskKind::ALL {
         for status in TaskStatus::ALL {
             record_task_count(metrics, kind, status, 0);
+        }
+        for status in TaskStatus::TERMINAL {
+            record_last_terminal_timestamp(metrics, kind, status, 0.0);
         }
         record_task_age(metrics, kind, TaskAgeState::Queued, 0.0);
         record_task_age(metrics, kind, TaskAgeState::Active, 0.0);
@@ -237,6 +257,25 @@ fn record_task_age(metrics: &Metrics, kind: TaskKind, state: TaskAgeState, age: 
     );
 }
 
+fn record_last_terminal_timestamp(
+    metrics: &Metrics,
+    kind: TaskKind,
+    status: TaskStatus,
+    timestamp: f64,
+) {
+    metrics.task_last_terminal_timestamp.record(
+        timestamp,
+        &[
+            KeyValue::new("kind", kind.as_str()),
+            KeyValue::new("status", status.as_str()),
+        ],
+    );
+}
+
+fn timestamp_seconds(timestamp: chrono::NaiveDateTime) -> f64 {
+    timestamp.and_utc().timestamp_millis() as f64 / 1000.0
+}
+
 fn age_seconds(
     timestamp: Option<chrono::NaiveDateTime>,
     now: chrono::NaiveDateTime,
@@ -246,7 +285,9 @@ fn age_seconds(
 
 #[cfg(test)]
 mod tests {
-    use super::{TaskAgeState, TaskOutputKind};
+    use chrono::NaiveDate;
+
+    use super::{TaskAgeState, TaskOutputKind, timestamp_seconds};
 
     #[test]
     fn task_output_kinds_have_stable_bounded_labels() {
@@ -262,5 +303,15 @@ mod tests {
             [TaskAgeState::Queued, TaskAgeState::Active].map(TaskAgeState::as_str),
             ["queued", "active"]
         );
+    }
+
+    #[test]
+    fn terminal_timestamp_preserves_millisecond_precision_in_seconds() {
+        let timestamp = NaiveDate::from_ymd_opt(2026, 7, 28)
+            .unwrap()
+            .and_hms_milli_opt(12, 34, 56, 789)
+            .unwrap();
+
+        assert!((timestamp_seconds(timestamp) - 1_785_242_096.789).abs() < f64::EPSILON);
     }
 }

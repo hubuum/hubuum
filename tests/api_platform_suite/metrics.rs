@@ -58,6 +58,23 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
     assert!(body.contains("hubuum_runtime_info{role=\"worker\"} 1"));
     assert!(body.contains("hubuum_process_start_time_seconds"));
     assert!(body.contains("hubuum_metrics_refresh_last_success_timestamp_seconds"));
+    assert!(body.contains(
+        "hubuum_task_last_terminal_timestamp_seconds{kind=\"export\",status=\"failed\"}"
+    ));
+
+    for metric_name in [
+        "process_cpu_seconds_total",
+        "process_max_fds",
+        "process_open_fds",
+        "process_resident_memory_bytes",
+        "process_start_time_seconds",
+        "process_virtual_memory_bytes",
+    ] {
+        assert!(
+            body.contains(metric_name),
+            "missing process metric: {metric_name}"
+        );
+    }
 }
 
 #[actix_web::test]
