@@ -298,8 +298,9 @@ Use `--service-name NAME` to install the unit under a different name. Without `-
 
 The installer copies `install-single-host.sh`, `update-single-host.sh`,
 `single-host-rollout.sh`, `stop-single-host.sh`, and
-`uninstall-single-host.sh` into the install directory. A curl-based installer
-rerun refreshes all five management scripts before updating the deployment:
+`uninstall-single-host.sh` into the install directory. Before pulling or
+building application images, the updater refreshes those management scripts
+and regenerates `compose.yml` and `Caddyfile` from the current installer:
 
 ```bash
 cd /opt/hubuum
@@ -308,8 +309,10 @@ sudo ./update-single-host.sh
 
 For image-based installs, the update command pulls the latest configured
 images. For source-build installs, it fetches the source checkouts and rebuilds
-the local app images. On an established rolling installation, it then performs
-a rolling application update:
+the local app images. Existing `.env` values, including operator-added
+settings, are preserved; defaults introduced by a newer installer are appended
+only when their keys are missing. On an established rolling installation, it
+then performs a rolling application update:
 
 1. Stop the all-role primary gracefully while the API-only standby continues
    serving HTTP. This drains old-version workers before schema migration.
@@ -330,7 +333,8 @@ Valkey service without recreating an existing infrastructure container.
 Caddy, PostgreSQL, and Valkey remain running throughout this sequence. Newly
 pulled images for those infrastructure services are not activated by the
 rolling application update; schedule a maintenance window when those services
-themselves need replacement.
+themselves need replacement. A changed generated Caddyfile is applied by the
+normal Caddy reload in the rolling sequence.
 
 Pass `--auth-config /absolute/host/path.toml` to change the read-only external
 authentication file as part of the same update and rolling replacement.
@@ -345,6 +349,11 @@ readiness-aware Caddy configuration. The installer brings up the standby before
 replacing the existing primary. A subsequent `update-single-host.sh` refuses to
 fall back to a destructive restart when the installed Compose file lacks the
 rolling-update services.
+
+Installations whose updater predates automatic generated-configuration refresh
+must likewise re-run the current `install-single-host.sh` once. That one-time
+rerun installs the self-refreshing updater; later `update-single-host.sh` runs
+pick up Caddy, Compose, and management-script changes automatically.
 
 The live container contract test covers adoption from the published v0.0.1
 image: the old API remains online while the candidate applies all newer
