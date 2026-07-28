@@ -12,12 +12,13 @@ mod remote_call;
 mod scrape;
 mod security;
 mod task;
+mod timer;
 
 use std::sync::{Mutex, OnceLock};
 
 use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
 use opentelemetry_sdk::metrics::SdkMeterProvider;
-use prometheus::Registry;
+use prometheus::{IntGaugeVec, Registry};
 
 use crate::errors::ApiError;
 
@@ -30,41 +31,50 @@ pub use self::computed_field::{
 pub(crate) use self::db::{
     ResultKind, db_connection_acquire_failed, db_connection_acquired, db_operation_finished,
 };
+pub use self::event::event_worker_wakeup;
 pub use self::export::{
-    export_completed, export_output_cleanup_deleted, export_output_cleanup_failed,
-    export_output_cleanup_run, export_phase_duration, export_truncated, export_warnings,
+    ExportMetricOutcome, ExportMetricPhase, export_completed, export_output_cleanup_deleted,
+    export_output_cleanup_failed, export_output_cleanup_run, export_phase_duration,
+    export_phase_timer, export_truncated, export_warnings,
 };
-pub use self::http::{api_error, extraction_failure, http_request_finished, http_request_started};
-pub use self::import::{import_items, import_phase_duration};
+pub use self::http::{
+    api_error, extraction_failure, http_request_finished, http_request_started,
+    http_request_started_for_route,
+};
+pub use self::import::{
+    ImportMetricOutcome, ImportMetricPhase, import_items, import_phase_duration, import_phase_timer,
+};
 #[cfg(feature = "login-rate-limit-valkey")]
 pub use self::login::login_limiter_backend_failure;
 pub use self::login::{login_attempt, login_lockout};
-pub use self::registry::init;
+pub use self::registry::{init, runtime_identity};
 pub use self::remote_call::remote_call_finished;
 pub use self::scrape::scrape;
 pub use self::security::client_allowlist_rejected;
 pub use self::task::{
-    task_claimed, task_completed, task_lease_recovered, task_worker_config, task_worker_iteration,
+    TaskOutputKind, task_claimed, task_completed, task_lease_recovered,
+    task_output_cleanup_deleted, task_output_cleanup_failed, task_output_cleanup_run,
+    task_worker_config, task_worker_iteration,
 };
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
 
 pub struct HttpInFlightGuard {
-    active: bool,
+    route: Option<String>,
 }
 
 impl HttpInFlightGuard {
-    pub(super) fn new(active: bool) -> Self {
-        Self { active }
+    pub(super) fn new(route: Option<String>) -> Self {
+        Self { route }
     }
 }
 
 impl Drop for HttpInFlightGuard {
     fn drop(&mut self) {
-        if self.active
-            && let Some(metrics) = current()
-        {
-            metrics.http_in_flight.add(-1, &[]);
+        if let (Some(metrics), Some(route)) = (current(), self.route.as_ref()) {
+            metrics
+                .http_in_flight
+                .add(-1, &[opentelemetry::KeyValue::new("route", route.clone())]);
         }
     }
 }
@@ -72,6 +82,9 @@ impl Drop for HttpInFlightGuard {
 struct Metrics {
     registry: Registry,
     _provider: SdkMeterProvider,
+    build_info: Gauge<u64>,
+    runtime_info: Gauge<u64>,
+    process_start_time: Gauge<f64>,
     http_requests: Counter<u64>,
     http_request_duration: Histogram<f64>,
     http_in_flight: UpDownCounter<i64>,
@@ -88,7 +101,8 @@ struct Metrics {
     task_completions: Counter<u64>,
     task_queue_wait_duration: Histogram<f64>,
     task_execution_duration: Histogram<f64>,
-    task_config: Gauge<u64>,
+    task_workers_configured: Gauge<u64>,
+    task_poll_interval: Gauge<f64>,
     task_counts: Gauge<i64>,
     task_oldest_age: Gauge<f64>,
     computed_evaluations: Counter<u64>,
@@ -98,14 +112,16 @@ struct Metrics {
     computed_rebuild_batches: Counter<u64>,
     computed_rebuild_completions: Counter<u64>,
     computed_rebuild_duration: Histogram<f64>,
-    export_output_cleanup_runs: Counter<u64>,
-    export_output_cleanup_failures: Counter<u64>,
-    export_output_cleanup_deleted: Counter<u64>,
-    export_duration: Histogram<f64>,
+    task_output_cleanup_runs: Counter<u64>,
+    task_output_cleanup_failures: Counter<u64>,
+    task_output_cleanup_deleted: Counter<u64>,
+    export_template_info: IntGaugeVec,
+    export_phase_duration: Histogram<f64>,
+    export_template_duration: Histogram<f64>,
     export_completions: Counter<u64>,
     export_truncations: Counter<u64>,
     export_warnings: Counter<u64>,
-    import_duration: Histogram<f64>,
+    import_phase_duration: Histogram<f64>,
     import_processed_items: Counter<u64>,
     import_succeeded_items: Counter<u64>,
     import_failed_items: Counter<u64>,
@@ -120,10 +136,16 @@ struct Metrics {
     event_queue_items: Gauge<i64>,
     event_stale_claims: Gauge<i64>,
     event_oldest_age: Gauge<f64>,
-    event_worker_config: Gauge<u64>,
-    event_worker_wakeups: Gauge<u64>,
+    event_workers_configured: Gauge<u64>,
+    event_worker_batch_size: Gauge<u64>,
+    event_worker_poll_interval: Gauge<f64>,
+    event_worker_lock_timeout: Gauge<f64>,
+    event_worker_wakeups: Counter<u64>,
     inventory_entities: Gauge<i64>,
     refresh_failures: Counter<u64>,
+    refresh_duration: Gauge<f64>,
+    refresh_last_success: Gauge<f64>,
+    refresh_skipped: Counter<u64>,
     scrape_cache: Mutex<ScrapeCache>,
     db_refresh_lock: tokio::sync::Mutex<()>,
 }

@@ -14,18 +14,40 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   retention, restore-coordinator, lease, and metrics-refresh work.
 - Queued task transactions now wake task workers across processes with
   transactional PostgreSQL notifications.
+- Added build, runtime-role, and process-start metrics so every scrape target
+  can be identified and counter resets can be correlated with restarts.
+- Worker-only processes now expose their own metrics-only HTTP listener at the
+  configured bind address, port, and path, allowing Prometheus to scrape task
+  and event workers directly.
+- Added scrape-refresh duration and freshness metrics, route-labelled in-flight
+  requests, and per-task-kind oldest queued and active ages.
+- Export metrics now expose aggregate phase outcomes and a per-template total
+  duration histogram. A resettable database snapshot maps template IDs to
+  current names, while export task details persist total, query, hydration, and
+  render timings.
 
 ### Changed
 
 - **Breaking (metrics):** database metric series now include the `caller`
   label. Update recording rules or exact label-set matches that assume the old
   unlabeled acquisition series.
+- Duration histograms now use workload-specific fractional-second buckets for
+  useful HTTP, database, remote-call, and background-task percentiles instead
+  of OpenTelemetry's unit-agnostic defaults.
 - Task, event fan-out, and event delivery safety polling now default to five
   seconds. Transactional notifications preserve prompt normal wakeups, and
   delivery workers still wake at scheduled retry deadlines below that interval.
 - Single-host `/metrics` now targets the worker-enabled primary deterministically,
   and `/metrics/standby` exposes the HTTP-only standby. Prefixed routing exposes
   the equivalent `/hubuum-api/metrics` and `/hubuum-api/metrics/standby` paths.
+- **Breaking (Prometheus metric contract):** configuration and cleanup metrics
+  now use dimensionally typed names, event wakeups are a counter, and the HTTP
+  in-flight, task-age, export-phase, and import-phase families have
+  new bounded labels. Dashboard and alert owners must migrate from
+  `hubuum_task_worker_config`, `hubuum_event_worker_config`,
+  `hubuum_event_worker_wakeups`, and `hubuum_export_output_cleanup_*` to the
+  replacement families documented in `docs/metrics.md`, and update queries for
+  the changed label sets before deploying this version.
 
 ### Fixed
 
@@ -46,6 +68,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   restore drain barrier.
 - Worker notification listeners now use dedicated connections so task-only or
   event-only workers with a one-connection execution pool can still claim work.
+- Database-backed template identity no longer retains deleted or renamed
+  templates in a process, and import and export phase timings record error
+  outcomes.
 
 ## [0.0.5] - 2026-07-26
 

@@ -165,7 +165,7 @@ where
             ));
 
         let start_time = Instant::now();
-        let in_flight_guard = metrics::http_request_started();
+        let in_flight_guard = metrics::http_request_started_for_route(&route);
         let fut = span.in_scope(|| self.service.call(req));
 
         Box::pin(

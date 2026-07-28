@@ -1,7 +1,14 @@
 #[cfg(test)]
 mod container_build;
 
-use actix_web::{App, HttpServer, middleware::from_fn, web, web::Data, web::JsonConfig};
+use actix_web::{
+    App, HttpServer,
+    dev::{HttpServiceFactory, Server},
+    middleware::from_fn,
+    web,
+    web::Data,
+    web::JsonConfig,
+};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
@@ -18,7 +25,7 @@ use hubuum::config::get_config;
 use hubuum::config::initialize_config;
 use hubuum::config::running::RunningConfig;
 use hubuum::config::token_hash_key_is_ephemeral;
-use hubuum::config::{AppConfig, LoginRateLimitBackendKind};
+use hubuum::config::{AppConfig, ClientAllowlist, LoginRateLimitBackendKind, MetricsPath};
 use hubuum::db::{DatabasePoolSettings, init_pool_with_settings};
 use hubuum::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, EXIT_CODE_INIT_ERROR,
@@ -85,13 +92,14 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
-    if config.metrics_enabled
-        && let Err(e) = observability::metrics::init()
-    {
-        fatal_error(
-            &format!("Failed to initialize metrics: {}", e),
-            EXIT_CODE_INIT_ERROR,
-        );
+    if config.metrics_enabled {
+        if let Err(e) = observability::metrics::init() {
+            fatal_error(
+                &format!("Failed to initialize metrics: {}", e),
+                EXIT_CODE_INIT_ERROR,
+            );
+        }
+        observability::metrics::runtime_identity(config.runtime_role);
     }
     utilities::auth::initialize_dummy_password_hash();
     let database_settings = DatabasePoolSettings::builder(config.database_url.clone())
@@ -138,6 +146,10 @@ async fn main() -> std::io::Result<()> {
     .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
     initialize_task_worker_settings(task_worker_settings)
         .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_INIT_ERROR));
+    observability::metrics::task_worker_config(
+        task_worker_count,
+        Duration::from_millis(config.task_poll_interval_ms),
+    );
 
     let initialization_settings =
         utilities::init::InitializationSettings::new(config.admin_groupname.clone())
@@ -178,6 +190,7 @@ async fn main() -> std::io::Result<()> {
         };
 
     if !config.runtime_role.serves_http() {
+        let metrics_server = start_worker_metrics_server(&config, pool.clone())?;
         start_background_workers(&app_context, &backup_settings);
         info!(
             message = "worker startup",
@@ -190,28 +203,19 @@ async fn main() -> std::io::Result<()> {
             db_backend = "postgresql",
             authorization_backend,
             active_event_sinks,
+            metrics_listener = metrics_server.is_some(),
         );
-        let worker_exit = tokio::select! {
-            shutdown = wait_for_shutdown_signal() => {
-                shutdown?;
-                None
-            }
-            exit = wait_for_background_worker_exit() => Some(exit),
-        };
-        if let Some(exit) = &worker_exit {
+        let supervision_result = supervise_worker_process(metrics_server).await;
+        if let Err(error) = &supervision_result {
             error!(
-                message = "Background worker supervision failed",
-                reason = %exit,
+                message = "Worker process supervision failed",
+                reason = %error,
             );
         }
         shutdown_background_workers(Duration::from_secs(30)).await;
         drop(app_context);
         drop(pool);
-        if let Some(exit) = worker_exit {
-            return Err(std::io::Error::other(format!(
-                "Background worker supervision failed: {exit}"
-            )));
-        }
+        supervision_result?;
         return Ok(());
     }
 
@@ -336,14 +340,12 @@ async fn main() -> std::io::Result<()> {
     let result = if background_worker_count() > 0 {
         tokio::select! {
             result = server => result,
-            exit = wait_for_background_worker_exit() => {
+            error = wait_for_background_worker_failure() => {
                 error!(
                     message = "Background worker supervision failed",
-                    reason = %exit,
+                    reason = %error,
                 );
-                Err(std::io::Error::other(format!(
-                    "Background worker supervision failed: {exit}"
-                )))
+                Err(error)
             }
         }
     } else {
@@ -361,6 +363,108 @@ fn start_background_workers(context: &AppContext, backup_settings: &BackupSettin
     ensure_event_delivery_worker_running(context.db_pool.clone());
     ensure_event_retention_worker_running(context.db_pool.clone());
     ensure_token_retention_worker_running(context.db_pool.clone());
+}
+
+async fn wait_for_background_worker_failure() -> std::io::Error {
+    let exit = wait_for_background_worker_exit().await;
+    std::io::Error::other(format!("Background worker supervision failed: {exit}"))
+}
+
+async fn supervise_worker_process(metrics_server: Option<Server>) -> std::io::Result<()> {
+    let Some(metrics_server) = metrics_server else {
+        return tokio::select! {
+            shutdown = wait_for_shutdown_signal() => shutdown,
+            error = wait_for_background_worker_failure() => Err(error),
+        };
+    };
+
+    let metrics_server_handle = metrics_server.handle();
+    let result = tokio::select! {
+        shutdown = wait_for_shutdown_signal() => shutdown,
+        error = wait_for_background_worker_failure() => Err(error),
+        result = metrics_server => match result {
+            Ok(()) => Err(std::io::Error::other(
+                "Worker metrics HTTP server stopped unexpectedly",
+            )),
+            Err(error) => Err(error),
+        },
+    };
+    metrics_server_handle.stop(true).await;
+    result
+}
+
+fn worker_metrics_service(
+    client_allowlist: ClientAllowlist,
+    proxy_trust: middlewares::ProxyTrust,
+    metrics_path: MetricsPath,
+    pool: db::DbPool,
+) -> impl HttpServiceFactory {
+    web::scope("")
+        .wrap(middlewares::ClientAllowlistMiddleware::new_with_trust(
+            client_allowlist,
+            proxy_trust.clone(),
+        ))
+        .wrap(middlewares::TracingMiddleware::new_with_trust(proxy_trust))
+        .app_data(Data::new(pool))
+        .route(
+            metrics_path.as_str(),
+            web::get().to(observability::metrics::scrape),
+        )
+}
+
+fn start_worker_metrics_server(
+    config: &AppConfig,
+    pool: db::DbPool,
+) -> std::io::Result<Option<Server>> {
+    if !config.metrics_enabled {
+        return Ok(None);
+    }
+
+    let client_allowlist = config.client_allowlist.clone();
+    let proxy_trust = middlewares::ProxyTrust::new(
+        config.trust_ip_headers,
+        config.trusted_proxies.nets().to_vec(),
+        config.trusted_proxy_hops,
+    );
+    let metrics_path = config.metrics_path.clone();
+    let server = HttpServer::new(move || {
+        App::new().service(worker_metrics_service(
+            client_allowlist.clone(),
+            proxy_trust.clone(),
+            metrics_path.clone(),
+            pool.clone(),
+        ))
+    });
+    let bind_address = format!("{}:{}", config.bind_ip, config.port);
+    let server = match (&config.tls_cert_path, &config.tls_key_path) {
+        (Some(cert), Some(key)) => tls::configure_server(
+            server,
+            &bind_address,
+            cert,
+            key,
+            config.tls_key_passphrase.as_deref(),
+            config.tls_backend,
+        )?,
+        (Some(_), None) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "TLS certificate specified but key is missing",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "TLS key specified but certificate is missing",
+            ));
+        }
+        _ => server.bind(&bind_address)?,
+    };
+
+    // The worker supervisor owns SIGINT/SIGTERM handling and initiates a
+    // graceful stop through the server handle. Letting Actix install a second
+    // signal handler creates a race that can misclassify normal shutdown as an
+    // unexpected metrics-server exit.
+    Ok(Some(server.disable_signals().workers(1).run()))
 }
 
 fn login_rate_limit_store_settings(
@@ -400,4 +504,61 @@ async fn wait_for_shutdown_signal() -> std::io::Result<()> {
 #[cfg(not(unix))]
 async fn wait_for_shutdown_signal() -> std::io::Result<()> {
     tokio::signal::ctrl_c().await
+}
+
+#[cfg(test)]
+mod tests {
+    use actix_web::{http::StatusCode, test as actix_test};
+
+    use super::*;
+
+    fn unreachable_pool() -> db::DbPool {
+        let settings = DatabasePoolSettings::builder(
+            "postgres://hubuum:hubuum@127.0.0.1:1/hubuum_worker_metrics_unreachable",
+        )
+        .max_size(1)
+        .statement_timeout_ms(0)
+        .acquire_timeout_ms(5)
+        .build()
+        .expect("unreachable test pool settings should be valid");
+        init_pool_with_settings(&settings)
+    }
+
+    #[actix_web::test]
+    async fn worker_metrics_service_instruments_scrape_requests() {
+        observability::metrics::init().expect("metrics should initialize");
+        let app = actix_test::init_service(App::new().service(worker_metrics_service(
+            ClientAllowlist::Any,
+            middlewares::ProxyTrust::peer_only(),
+            MetricsPath::new("/metrics").expect("metrics path should be valid"),
+            unreachable_pool(),
+        )))
+        .await;
+        let metrics_request = || {
+            actix_test::TestRequest::get()
+                .uri("/metrics")
+                .peer_addr(
+                    "127.0.0.1:4242"
+                        .parse()
+                        .expect("test peer address should parse"),
+                )
+                .to_request()
+        };
+
+        let response = actix_test::call_service(&app, metrics_request()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key("x-request-id"));
+        actix_test::read_body(response).await;
+
+        let response = actix_test::call_service(&app, metrics_request()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key("x-request-id"));
+        let body = actix_test::read_body(response).await;
+        let body = std::str::from_utf8(&body).expect("metrics body should be UTF-8");
+
+        assert!(body.contains(
+            "hubuum_http_requests_total{method=\"GET\",route=\"/metrics\",status_code=\"200\",status_family=\"2xx\"}"
+        ));
+        assert!(body.contains("hubuum_http_requests_in_flight{route=\"/metrics\"} 1"));
+    }
 }

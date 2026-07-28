@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use tracing::{Instrument, error, info, info_span, warn};
 
 use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
@@ -160,6 +158,7 @@ pub(super) async fn execute_import_task<C>(
 where
     C: BackendContext + ?Sized,
 {
+    let total_timer = metrics::import_phase_timer(metrics::ImportMetricPhase::Total);
     let pool = backend.db_pool();
     let payload = task
         .request_payload
@@ -188,13 +187,11 @@ where
     );
 
     async {
-        let total_start = Instant::now();
-        let planning_start = Instant::now();
+        let planning_timer = metrics::import_phase_timer(metrics::ImportMetricPhase::Planning);
         let planning = plan_import(backend, user, scopes, &request)
             .instrument(info_span!("import_planning"))
             .await;
-        let planning_time = planning_start.elapsed();
-        metrics::import_phase_duration("planning", planning_time);
+        let planning_time = planning_timer.finish(metrics::ImportMetricOutcome::Success);
 
         info!(
             message = "Import planning finished",
@@ -224,7 +221,7 @@ where
                 validation_failures = failed_count,
                 atomicity = ?atomicity,
                 planning_time = ?planning_time,
-                total_time = ?total_start.elapsed()
+                total_time = ?total_timer.elapsed()
             );
             crate::db::traits::task::insert_import_results(pool, &results).await?;
             let summary = format!("Import validation failed for {failed_count} item(s)");
@@ -240,7 +237,7 @@ where
             )
             .await?;
             metrics::import_items(failed_count, 0, failed_count);
-            metrics::import_phase_duration("total", total_start.elapsed());
+            total_timer.finish(metrics::ImportMetricOutcome::Failed);
             return Ok(());
         }
 
@@ -287,7 +284,7 @@ where
         )
         .await?;
 
-        let execution_start = Instant::now();
+        let execution_timer = metrics::import_phase_timer(metrics::ImportMetricPhase::Execution);
         if request.dry_run() {
             for failure in failures {
                 accumulator.push_failure(
@@ -341,14 +338,19 @@ where
         } else {
             TaskStatus::PartiallySucceeded
         };
+        let metric_outcome = match status {
+            TaskStatus::Succeeded => metrics::ImportMetricOutcome::Success,
+            TaskStatus::Failed => metrics::ImportMetricOutcome::Failed,
+            TaskStatus::PartiallySucceeded => metrics::ImportMetricOutcome::PartiallySucceeded,
+            _ => unreachable!("import execution produced a non-terminal status"),
+        };
 
         let summary = format!(
             "Import finished with {} succeeded and {} failed items",
             accumulator.success, accumulator.failed
         );
 
-        let execution_time = execution_start.elapsed();
-        metrics::import_phase_duration("execution", execution_time);
+        let execution_time = execution_timer.finish(metric_outcome);
         info!(
             message = "Import execution finished",
             task_id = task.id,
@@ -356,7 +358,7 @@ where
             success_items = accumulator.success,
             failed_items = accumulator.failed,
             execution_time = ?execution_time,
-            total_time = ?total_start.elapsed()
+            total_time = ?total_timer.elapsed()
         );
 
         finalize_task(
@@ -379,7 +381,7 @@ where
             accumulator.success,
             accumulator.failed,
         );
-        metrics::import_phase_duration("total", total_start.elapsed());
+        total_timer.finish(metric_outcome);
 
         Ok(())
     }

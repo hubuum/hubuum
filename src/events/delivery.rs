@@ -27,6 +27,7 @@ use crate::events::sink::{
 use crate::events::{EntityType, PrincipalNames};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
+use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();
@@ -267,10 +268,12 @@ async fn wait_for_event_delivery_wakeup(
         _ = shutdown.requested() => false,
         _ = sleep(wait_duration) => {
             EVENT_DELIVERY_POLL_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+            metrics::event_worker_wakeup("delivery", "poll");
             true
         }
         _ = get_event_delivery_notify().notified() => {
             EVENT_DELIVERY_NOTIFICATION_WAKEUPS.fetch_add(1, Ordering::Relaxed);
+            metrics::event_worker_wakeup("delivery", "notification");
             true
         }
     }
@@ -377,6 +380,7 @@ pub fn ensure_event_delivery_worker_running(pool: DbPool) {
 pub fn kick_event_delivery_worker(pool: DbPool) {
     ensure_event_delivery_worker_running(pool);
     EVENT_DELIVERY_NOTIFICATIONS_SENT.fetch_add(1, Ordering::Relaxed);
+    metrics::event_worker_wakeup("delivery", "notifications_sent");
     get_event_delivery_notify().notify_one();
 }
 

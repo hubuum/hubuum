@@ -1,20 +1,81 @@
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use opentelemetry::metrics::MeterProvider as _;
-use opentelemetry_sdk::metrics::SdkMeterProvider;
-use prometheus::Registry;
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Histogram, Meter, MeterProvider as _};
+use opentelemetry_sdk::metrics::{Aggregation, Instrument, SdkMeterProvider, Stream};
+use prometheus::{IntGaugeVec, Opts, Registry};
 
+use crate::config::RuntimeRole;
 use crate::errors::ApiError;
+use crate::logger;
 
 use super::cache::ScrapeCache;
 use super::{METRICS, Metrics};
 
-pub fn init() -> Result<(), ApiError> {
-    if METRICS.get().is_some() {
-        return Ok(());
-    }
+const LATENCY_BUCKETS_SECONDS: &[f64] = &[
+    0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+];
+const OUTBOUND_BUCKETS_SECONDS: &[f64] = &[
+    0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0,
+];
+const BACKGROUND_BUCKETS_SECONDS: &[f64] = &[
+    0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0,
+    1800.0, 3600.0,
+];
 
-    let registry = Registry::new();
+const HTTP_REQUEST_DURATION: &str = "hubuum_http_request_duration";
+const DB_CONNECTION_ACQUIRE_DURATION: &str = "hubuum_db_connection_acquire_duration";
+const DB_OPERATION_DURATION: &str = "hubuum_db_operation_duration";
+const REMOTE_CALL_DURATION: &str = "hubuum_remote_call_duration";
+const TASK_QUEUE_WAIT_DURATION: &str = "hubuum_task_queue_wait_duration";
+const TASK_EXECUTION_DURATION: &str = "hubuum_task_execution_duration";
+const COMPUTED_REBUILD_DURATION: &str = "hubuum_computed_field_rebuild_duration";
+const EXPORT_PHASE_DURATION: &str = "hubuum_export_phase_duration";
+const EXPORT_DURATION: &str = "hubuum_export_duration";
+const IMPORT_PHASE_DURATION: &str = "hubuum_import_phase_duration";
+
+fn duration_histogram_view(instrument: &Instrument) -> Option<Stream> {
+    let boundaries = match instrument.name() {
+        HTTP_REQUEST_DURATION | DB_CONNECTION_ACQUIRE_DURATION | DB_OPERATION_DURATION => {
+            LATENCY_BUCKETS_SECONDS
+        }
+        REMOTE_CALL_DURATION => OUTBOUND_BUCKETS_SECONDS,
+        TASK_QUEUE_WAIT_DURATION
+        | TASK_EXECUTION_DURATION
+        | COMPUTED_REBUILD_DURATION
+        | EXPORT_PHASE_DURATION
+        | EXPORT_DURATION
+        | IMPORT_PHASE_DURATION => BACKGROUND_BUCKETS_SECONDS,
+        _ => return None,
+    };
+
+    Some(
+        Stream::builder()
+            .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                boundaries: boundaries.to_vec(),
+                // The Prometheus classic-histogram format exports buckets,
+                // count, and sum, but not exact minima or maxima.
+                record_min_max: false,
+            })
+            .build()
+            .expect("hard-coded duration histogram boundaries should be valid"),
+    )
+}
+
+fn duration_histogram(
+    meter: &Meter,
+    name: &'static str,
+    description: &'static str,
+) -> Histogram<f64> {
+    meter
+        .f64_histogram(name)
+        .with_description(description)
+        .with_unit("s")
+        .build()
+}
+
+fn build_provider(registry: &Registry) -> Result<SdkMeterProvider, ApiError> {
     let exporter = opentelemetry_prometheus::exporter()
         .with_registry(registry.clone())
         .without_scope_info()
@@ -23,21 +84,66 @@ pub fn init() -> Result<(), ApiError> {
         .map_err(|error| {
             ApiError::InternalServerError(format!("Failed to initialize metrics exporter: {error}"))
         })?;
-    let provider = SdkMeterProvider::builder().with_reader(exporter).build();
+
+    Ok(SdkMeterProvider::builder()
+        .with_reader(exporter)
+        .with_view(duration_histogram_view)
+        .build())
+}
+
+pub fn init() -> Result<(), ApiError> {
+    if METRICS.get().is_some() {
+        return Ok(());
+    }
+
+    let registry = Registry::new();
+    let provider = build_provider(&registry)?;
     let meter = provider.meter("hubuum");
+    let export_template_info = IntGaugeVec::new(
+        Opts::new(
+            "hubuum_export_template_info",
+            "Current stored export template identities from the shared database",
+        ),
+        &["template_id", "template_name"],
+    )
+    .map_err(|error| {
+        ApiError::InternalServerError(format!(
+            "Failed to create export template info metric: {error}"
+        ))
+    })?;
+    registry
+        .register(Box::new(export_template_info.clone()))
+        .map_err(|error| {
+            ApiError::InternalServerError(format!(
+                "Failed to register export template info metric: {error}"
+            ))
+        })?;
 
     let metrics = Metrics {
         registry,
         _provider: provider,
+        build_info: meter
+            .u64_gauge("hubuum_build_info")
+            .with_description("Hubuum build identity")
+            .build(),
+        runtime_info: meter
+            .u64_gauge("hubuum_runtime_info")
+            .with_description("Hubuum process runtime role")
+            .build(),
+        process_start_time: meter
+            .f64_gauge("hubuum_process_start_time")
+            .with_description("Unix timestamp when this Hubuum process initialized metrics")
+            .with_unit("s")
+            .build(),
         http_requests: meter
             .u64_counter("hubuum_http_requests")
             .with_description("HTTP requests handled")
             .build(),
-        http_request_duration: meter
-            .f64_histogram("hubuum_http_request_duration")
-            .with_description("HTTP request duration")
-            .with_unit("s")
-            .build(),
+        http_request_duration: duration_histogram(
+            &meter,
+            HTTP_REQUEST_DURATION,
+            "HTTP request duration",
+        ),
         http_in_flight: meter
             .i64_up_down_counter("hubuum_http_requests_in_flight")
             .with_description("HTTP requests currently in flight")
@@ -54,20 +160,20 @@ pub fn init() -> Result<(), ApiError> {
             .u64_gauge("hubuum_db_pool_connections")
             .with_description("Database pool connections by state")
             .build(),
-        db_connection_acquire_duration: meter
-            .f64_histogram("hubuum_db_connection_acquire_duration")
-            .with_description("Database connection acquisition duration")
-            .with_unit("s")
-            .build(),
+        db_connection_acquire_duration: duration_histogram(
+            &meter,
+            DB_CONNECTION_ACQUIRE_DURATION,
+            "Database connection acquisition duration",
+        ),
         db_connection_acquire_failures: meter
             .u64_counter("hubuum_db_connection_acquire_failures")
             .with_description("Database connection acquisition failures")
             .build(),
-        db_operation_duration: meter
-            .f64_histogram("hubuum_db_operation_duration")
-            .with_description("Database helper operation duration")
-            .with_unit("s")
-            .build(),
+        db_operation_duration: duration_histogram(
+            &meter,
+            DB_OPERATION_DURATION,
+            "Database helper operation duration",
+        ),
         db_operation_errors: meter
             .u64_counter("hubuum_db_operation_errors")
             .with_description("Database helper operation failures")
@@ -88,19 +194,24 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_task_completions")
             .with_description("Tasks completed by terminal status")
             .build(),
-        task_queue_wait_duration: meter
-            .f64_histogram("hubuum_task_queue_wait_duration")
-            .with_description("Task queue wait duration")
-            .with_unit("s")
+        task_queue_wait_duration: duration_histogram(
+            &meter,
+            TASK_QUEUE_WAIT_DURATION,
+            "Task queue wait duration",
+        ),
+        task_execution_duration: duration_histogram(
+            &meter,
+            TASK_EXECUTION_DURATION,
+            "Task execution duration",
+        ),
+        task_workers_configured: meter
+            .u64_gauge("hubuum_task_workers_configured")
+            .with_description("Configured task workers in this process")
             .build(),
-        task_execution_duration: meter
-            .f64_histogram("hubuum_task_execution_duration")
-            .with_description("Task execution duration")
+        task_poll_interval: meter
+            .f64_gauge("hubuum_task_poll_interval")
+            .with_description("Configured task worker poll interval")
             .with_unit("s")
-            .build(),
-        task_config: meter
-            .u64_gauge("hubuum_task_worker_config")
-            .with_description("Configured task worker settings")
             .build(),
         task_counts: meter
             .i64_gauge("hubuum_tasks")
@@ -135,28 +246,34 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_computed_field_rebuild_completions")
             .with_description("Computed-field rebuild terminal outcomes")
             .build(),
-        computed_rebuild_duration: meter
-            .f64_histogram("hubuum_computed_field_rebuild_duration")
-            .with_description("Computed-field rebuild duration")
-            .with_unit("s")
+        computed_rebuild_duration: duration_histogram(
+            &meter,
+            COMPUTED_REBUILD_DURATION,
+            "Computed-field rebuild duration",
+        ),
+        task_output_cleanup_runs: meter
+            .u64_counter("hubuum_task_output_cleanup_runs")
+            .with_description("Stored task output cleanup runs")
             .build(),
-        export_output_cleanup_runs: meter
-            .u64_counter("hubuum_export_output_cleanup_runs")
-            .with_description("Stored export and backup output cleanup runs")
+        task_output_cleanup_failures: meter
+            .u64_counter("hubuum_task_output_cleanup_failures")
+            .with_description("Stored task output cleanup failures")
             .build(),
-        export_output_cleanup_failures: meter
-            .u64_counter("hubuum_export_output_cleanup_failures")
-            .with_description("Stored export and backup output cleanup failures")
+        task_output_cleanup_deleted: meter
+            .u64_counter("hubuum_task_output_cleanup_deleted")
+            .with_description("Stored task outputs deleted by cleanup")
             .build(),
-        export_output_cleanup_deleted: meter
-            .u64_counter("hubuum_export_output_cleanup_deleted")
-            .with_description("Stored export and backup outputs deleted by cleanup")
-            .build(),
-        export_duration: meter
-            .f64_histogram("hubuum_export_phase_duration")
-            .with_description("Export phase duration")
-            .with_unit("s")
-            .build(),
+        export_template_info,
+        export_phase_duration: duration_histogram(
+            &meter,
+            EXPORT_PHASE_DURATION,
+            "Export phase duration",
+        ),
+        export_template_duration: duration_histogram(
+            &meter,
+            EXPORT_DURATION,
+            "Overall export duration by stored template identity",
+        ),
         export_completions: meter
             .u64_counter("hubuum_export_completions")
             .with_description("Successfully persisted export outputs")
@@ -169,11 +286,11 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_export_warnings")
             .with_description("Warnings on successfully persisted exports")
             .build(),
-        import_duration: meter
-            .f64_histogram("hubuum_import_phase_duration")
-            .with_description("Import phase duration")
-            .with_unit("s")
-            .build(),
+        import_phase_duration: duration_histogram(
+            &meter,
+            IMPORT_PHASE_DURATION,
+            "Import phase duration",
+        ),
         import_processed_items: meter
             .u64_counter("hubuum_import_processed_items")
             .with_description("Import items processed by terminal tasks")
@@ -186,11 +303,11 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_import_failed_items")
             .with_description("Import items completed with failure")
             .build(),
-        remote_call_duration: meter
-            .f64_histogram("hubuum_remote_call_duration")
-            .with_description("Remote call duration")
-            .with_unit("s")
-            .build(),
+        remote_call_duration: duration_histogram(
+            &meter,
+            REMOTE_CALL_DURATION,
+            "Remote call duration",
+        ),
         remote_call_results: meter
             .u64_counter("hubuum_remote_call_results")
             .with_description("Remote call outcomes")
@@ -229,13 +346,27 @@ pub fn init() -> Result<(), ApiError> {
             .with_description("Oldest actionable event item age by queue")
             .with_unit("s")
             .build(),
-        event_worker_config: meter
-            .u64_gauge("hubuum_event_worker_config")
-            .with_description("Configured event worker settings")
+        event_workers_configured: meter
+            .u64_gauge("hubuum_event_workers_configured")
+            .with_description("Configured event workers in this process")
+            .build(),
+        event_worker_batch_size: meter
+            .u64_gauge("hubuum_event_worker_batch_size")
+            .with_description("Configured event worker batch size")
+            .build(),
+        event_worker_poll_interval: meter
+            .f64_gauge("hubuum_event_worker_poll_interval")
+            .with_description("Configured event worker poll interval")
+            .with_unit("s")
+            .build(),
+        event_worker_lock_timeout: meter
+            .f64_gauge("hubuum_event_worker_lock_timeout")
+            .with_description("Configured event worker claim lock timeout")
+            .with_unit("s")
             .build(),
         event_worker_wakeups: meter
-            .u64_gauge("hubuum_event_worker_wakeups")
-            .with_description("Event worker wakeup counters")
+            .u64_counter("hubuum_event_worker_wakeups")
+            .with_description("Event worker wakeups")
             .build(),
         inventory_entities: meter
             .i64_gauge("hubuum_inventory_entities")
@@ -245,11 +376,109 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_metrics_refresh_failures")
             .with_description("Metrics scrape refresh failures by source")
             .build(),
+        refresh_duration: meter
+            .f64_gauge("hubuum_metrics_refresh_duration")
+            .with_description("Duration of the latest metrics source refresh attempt")
+            .with_unit("s")
+            .build(),
+        refresh_last_success: meter
+            .f64_gauge("hubuum_metrics_refresh_last_success_timestamp")
+            .with_description("Unix timestamp of the latest successful metrics source refresh")
+            .with_unit("s")
+            .build(),
+        refresh_skipped: meter
+            .u64_counter("hubuum_metrics_refresh_skipped")
+            .with_description("Metrics source refreshes skipped by reason")
+            .build(),
         scrape_cache: Mutex::new(ScrapeCache::default()),
         db_refresh_lock: tokio::sync::Mutex::new(()),
     };
 
+    metrics.build_info.record(
+        1,
+        &[
+            KeyValue::new("version", env!("CARGO_PKG_VERSION")),
+            KeyValue::new("git_sha", logger::build_git_sha()),
+        ],
+    );
+    metrics.process_start_time.record(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64(),
+        &[],
+    );
+
     METRICS
         .set(metrics)
         .map_err(|_| ApiError::InternalServerError("Metrics already initialized".to_string()))
+}
+
+pub fn runtime_identity(role: RuntimeRole) {
+    if let Some(metrics) = super::current() {
+        metrics
+            .runtime_info
+            .record(1, &[KeyValue::new("role", role.as_str())]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use opentelemetry::metrics::MeterProvider as _;
+    use prometheus::{Encoder, TextEncoder};
+
+    use super::*;
+
+    fn histogram_bucket_bounds(instrument_name: &'static str, value: f64) -> Vec<String> {
+        let registry = Registry::new();
+        let provider = build_provider(&registry).unwrap();
+        let meter = provider.meter("hubuum-test");
+        meter
+            .f64_histogram(instrument_name)
+            .with_unit("s")
+            .build()
+            .record(value, &[]);
+
+        let mut encoded = Vec::new();
+        TextEncoder::new()
+            .encode(&registry.gather(), &mut encoded)
+            .unwrap();
+        let body = String::from_utf8(encoded).unwrap();
+        let exported_name = format!("{instrument_name}_seconds_bucket");
+
+        body.lines()
+            .filter(|line| line.starts_with(&exported_name))
+            .filter_map(|line| {
+                line.split_once("le=\"")
+                    .and_then(|(_, suffix)| suffix.split_once('"'))
+                    .map(|(bound, _)| bound.to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn request_histograms_use_subsecond_latency_buckets() {
+        let bounds = histogram_bucket_bounds(HTTP_REQUEST_DURATION, 0.004);
+
+        assert_eq!(
+            bounds,
+            [
+                "0.0005", "0.001", "0.0025", "0.005", "0.01", "0.025", "0.05", "0.1", "0.25",
+                "0.5", "1", "2.5", "5", "10", "30", "+Inf",
+            ]
+        );
+    }
+
+    #[test]
+    fn task_histograms_cover_long_running_background_work() {
+        let bounds = histogram_bucket_bounds(TASK_EXECUTION_DURATION, 75.0);
+
+        assert_eq!(
+            bounds,
+            [
+                "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "2.5", "5", "10", "30", "60",
+                "120", "300", "600", "1800", "3600", "+Inf",
+            ]
+        );
+    }
 }

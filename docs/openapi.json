@@ -19592,6 +19592,13 @@
           "output_expired"
         ],
         "properties": {
+          "hydration_duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "output_available": {
             "type": "boolean"
           },
@@ -19615,11 +19622,32 @@
           "output_url": {
             "type": "string"
           },
+          "query_duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "render_duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "template_name": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "total_duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           },
           "truncated": {
             "type": [
