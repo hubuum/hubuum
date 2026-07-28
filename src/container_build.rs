@@ -6,7 +6,6 @@ use std::process::{Command, Output};
 #[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(unix)]
 use rstest::rstest;
 
 #[cfg(unix)]
@@ -17,6 +16,39 @@ fn read_repository_text(relative_path: &str) -> String {
     fs::read_to_string(repository.join(relative_path))
         .unwrap_or_else(|error| panic!("{relative_path} should be readable: {error}"))
         .replace("\r\n", "\n")
+}
+
+fn lines_between<'a>(text: &'a str, start: &str, end: &str) -> Option<Vec<&'a str>> {
+    let mut lines = text.lines();
+    lines.find(|line| *line == start)?;
+
+    let mut section = Vec::new();
+    for line in lines {
+        if line == end {
+            return Some(section);
+        }
+        section.push(line);
+    }
+    None
+}
+
+#[rstest]
+#[case("\n")]
+#[case("\r\n")]
+fn lines_between_handles_platform_line_endings(#[case] line_ending: &str) {
+    let workflow = [
+        "jobs:",
+        "  benchmarks:",
+        "    with:",
+        "      auto_discover: true",
+        "  postgres-storage:",
+    ]
+    .join(line_ending);
+
+    assert_eq!(
+        lines_between(&workflow, "  benchmarks:", "  postgres-storage:"),
+        Some(vec!["    with:", "      auto_discover: true"])
+    );
 }
 
 #[cfg(unix)]
@@ -285,13 +317,18 @@ fn self_contained_benchmark_autodiscovery_excludes_feature_gated_targets() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workflow = fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
         .expect("benchmark workflow should be readable");
-    let self_contained_job = workflow
-        .split_once("  benchmarks:\n")
-        .and_then(|(_, remainder)| remainder.split_once("\n  postgres-storage:"))
-        .map(|(job, _)| job)
+    let self_contained_job = lines_between(&workflow, "  benchmarks:", "  postgres-storage:")
         .expect("benchmark workflow should contain a bounded self-contained job");
-    assert!(self_contained_job.contains("auto_discover: true"));
-    assert!(!self_contained_job.contains("benchmarks_json:"));
+    assert!(
+        self_contained_job
+            .iter()
+            .any(|line| line.contains("auto_discover: true"))
+    );
+    assert!(
+        !self_contained_job
+            .iter()
+            .any(|line| line.contains("benchmarks_json:"))
+    );
 
     let manifest = read_repository_text("Cargo.toml");
     let manifest: toml::Value =
