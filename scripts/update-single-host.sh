@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="/opt/hubuum"
 ENGINE="auto"
 SERVICE_NAME=""
 USE_SYSTEMD="true"
 AUTH_CONFIG_HOST_PATH=""
+DEFAULT_MANAGEMENT_SCRIPT_BASE_URL="https://raw.githubusercontent.com/hubuum/hubuum/main/scripts"
 
 usage() {
   cat <<'EOF'
@@ -104,24 +104,17 @@ fi
 ENV_FILE="$INSTALL_DIR/.env"
 [[ -f "$ENV_FILE" ]] || die "missing $ENV_FILE; run install-single-host.sh first"
 [[ -f "$INSTALL_DIR/compose.yml" ]] || die "missing $INSTALL_DIR/compose.yml; run install-single-host.sh first"
-[[ -f "$SCRIPT_DIR/single-host-rollout.sh" ]] || die "missing $SCRIPT_DIR/single-host-rollout.sh; re-run install-single-host.sh first"
-grep -q '^  hubuum-api-standby:' "$INSTALL_DIR/compose.yml" || die "installed compose.yml does not support rolling updates; re-run install-single-host.sh first"
-
 if [[ -n "$AUTH_CONFIG_HOST_PATH" ]]; then
-  grep -q 'HUBUUM_AUTH_CONFIG_PATH' "$INSTALL_DIR/compose.yml" || die "installed compose.yml does not support auth configuration; re-run install-single-host.sh first"
   AUTH_CONFIG_HOST_PATH="$(absolute_config_path "$AUTH_CONFIG_HOST_PATH")"
   set_env_value HUBUUM_AUTH_CONFIG_HOST_PATH "$AUTH_CONFIG_HOST_PATH"
-fi
-
-if grep -q 'HUBUUM_AUTH_CONFIG_PATH' "$INSTALL_DIR/compose.yml"; then
-  AUTH_CONFIG_HOST_PATH="$(read_env_value HUBUUM_AUTH_CONFIG_HOST_PATH || true)"
-  [[ -n "$AUTH_CONFIG_HOST_PATH" ]] || die "HUBUUM_AUTH_CONFIG_HOST_PATH is missing from $ENV_FILE"
-  absolute_config_path "$AUTH_CONFIG_HOST_PATH" >/dev/null
 fi
 
 BUILD_FROM_SOURCE="$(read_env_value BUILD_FROM_SOURCE || printf 'false')"
 INSTALL_MODE="$(read_env_value INSTALL_MODE || printf 'all')"
 DATABASE_MANAGED="$(read_env_value DATABASE_MANAGED || printf 'true')"
+MANAGEMENT_SCRIPT_BASE_URL="$(
+  read_env_value MANAGEMENT_SCRIPT_BASE_URL || printf '%s' "$DEFAULT_MANAGEMENT_SCRIPT_BASE_URL"
+)"
 if [[ -z "$SERVICE_NAME" ]]; then
   SERVICE_NAME="$(read_env_value SYSTEMD_SERVICE_NAME || printf 'hubuum')"
 fi
@@ -160,6 +153,39 @@ update_source_checkout() {
   git -C "$dest" pull --ff-only || true
 }
 
+refresh_deployment_files() {
+  local installer
+  local installer_temp=""
+
+  if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
+    installer="$INSTALL_DIR/src/hubuum/scripts/install-single-host.sh"
+    [[ -f "$installer" ]] || die "updated source checkout does not contain scripts/install-single-host.sh"
+  else
+    command -v curl >/dev/null 2>&1 || die "curl is required to refresh generated deployment files"
+    installer_temp="$(mktemp "$INSTALL_DIR/.install-single-host.XXXXXX")"
+    if ! curl -fsSL "${MANAGEMENT_SCRIPT_BASE_URL}/install-single-host.sh" -o "$installer_temp"; then
+      rm -f "$installer_temp"
+      die "could not refresh install-single-host.sh from $MANAGEMENT_SCRIPT_BASE_URL"
+    fi
+    installer="$installer_temp"
+  fi
+
+  if ! bash -n "$installer"; then
+    [[ -z "$installer_temp" ]] || rm -f "$installer_temp"
+    die "refreshed install-single-host.sh failed shell syntax validation"
+  fi
+
+  if ! bash "$installer" \
+    --refresh-config \
+    --dir "$INSTALL_DIR" \
+    --engine "$ENGINE_BIN" \
+    --script-base-url "$MANAGEMENT_SCRIPT_BASE_URL"; then
+    [[ -z "$installer_temp" ]] || rm -f "$installer_temp"
+    die "could not refresh generated deployment files"
+  fi
+  [[ -z "$installer_temp" ]] || rm -f "$installer_temp"
+}
+
 detect_engine
 ENGINE_PATH="$(command -v "$ENGINE_BIN")"
 if [[ "$ENGINE_BIN" == "podman" ]]; then
@@ -175,7 +201,19 @@ if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
   if [[ "$INSTALL_MODE" == "all" ]]; then
     update_source_checkout "$INSTALL_DIR/src/hubuum-frontend"
   fi
+fi
 
+refresh_deployment_files
+
+[[ -f "$INSTALL_DIR/single-host-rollout.sh" ]] || die "configuration refresh did not install single-host-rollout.sh"
+grep -q '^  hubuum-api-standby:' "$INSTALL_DIR/compose.yml" || die "refreshed compose.yml does not support rolling updates"
+if grep -q 'HUBUUM_AUTH_CONFIG_PATH' "$INSTALL_DIR/compose.yml"; then
+  AUTH_CONFIG_HOST_PATH="$(read_env_value HUBUUM_AUTH_CONFIG_HOST_PATH || true)"
+  [[ -n "$AUTH_CONFIG_HOST_PATH" ]] || die "HUBUUM_AUTH_CONFIG_HOST_PATH is missing from $ENV_FILE"
+  absolute_config_path "$AUTH_CONFIG_HOST_PATH" >/dev/null
+fi
+
+if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
   PULL_SERVICES=(caddy)
   [[ "$DATABASE_MANAGED" == "true" ]] && PULL_SERVICES+=(postgres)
   [[ "$INSTALL_MODE" == "all" ]] && PULL_SERVICES+=(valkey)
@@ -186,7 +224,7 @@ else
 fi
 
 # shellcheck source=scripts/single-host-rollout.sh
-source "$SCRIPT_DIR/single-host-rollout.sh"
+source "$INSTALL_DIR/single-host-rollout.sh"
 hubuum_rollout
 
 if [[ "$USE_SYSTEMD" == "true" && -d /run/systemd/system && "$(command -v systemctl || true)" ]] && systemctl cat "${SERVICE_NAME}.service" >/dev/null 2>&1; then

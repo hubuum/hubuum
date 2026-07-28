@@ -51,6 +51,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Single-host updates now refresh generated Compose and Caddy configuration
+  before rolling application containers, while preserving existing `.env`
+  values and adding only newly introduced defaults.
 - Shared-host installations using direct routing now proxy `/metrics` to the
   backend instead of letting the request fall through to the frontend.
 - Reduced idle database pool checkouts by combining maintenance and claim

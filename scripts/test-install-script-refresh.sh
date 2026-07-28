@@ -70,4 +70,62 @@ for script_name in "${management_scripts[@]}"; do
   [[ -x "$INSTALL_DIR/$script_name" ]]
 done
 
+merge_function_source="$(
+  sed -n '/^merge_missing_env_values() {$/,/^}$/p' \
+    "$REPOSITORY_ROOT/scripts/install-single-host.sh"
+)"
+[[ -n "$merge_function_source" ]]
+eval "$merge_function_source"
+
+ENV_FILE="$INSTALL_DIR/.env"
+GENERATED_ENV="$TEST_ROOT/generated.env"
+cat > "$ENV_FILE" <<'EOF'
+INSTALL_MODE=all
+HUBUUM_LOG_LEVEL=debug
+OPERATOR_CUSTOM_SETTING=preserved
+EOF
+cat > "$GENERATED_ENV" <<'EOF'
+INSTALL_MODE=backend
+HUBUUM_LOG_LEVEL=info
+MANAGEMENT_SCRIPT_BASE_URL=https://example.invalid/scripts
+NEW_GENERATED_DEFAULT=present
+EOF
+
+merge_missing_env_values "$GENERATED_ENV"
+
+[[ "$(grep -c '^INSTALL_MODE=' "$ENV_FILE")" -eq 1 ]]
+[[ "$(grep -c '^HUBUUM_LOG_LEVEL=' "$ENV_FILE")" -eq 1 ]]
+grep -qx 'INSTALL_MODE=all' "$ENV_FILE"
+grep -qx 'HUBUUM_LOG_LEVEL=debug' "$ENV_FILE"
+grep -qx 'OPERATOR_CUSTOM_SETTING=preserved' "$ENV_FILE"
+grep -qx 'MANAGEMENT_SCRIPT_BASE_URL=https://example.invalid/scripts' "$ENV_FILE"
+grep -qx 'NEW_GENERATED_DEFAULT=present' "$ENV_FILE"
+
+refresh_function_source="$(
+  sed -n '/^refresh_deployment_files() {$/,/^}$/p' \
+    "$REPOSITORY_ROOT/scripts/update-single-host.sh"
+)"
+[[ -n "$refresh_function_source" ]]
+eval "$refresh_function_source"
+
+BASH_LOG="$TEST_ROOT/bash.log"
+BUILD_FROM_SOURCE="false"
+ENGINE_BIN="docker"
+MANAGEMENT_SCRIPT_BASE_URL="$SCRIPT_BASE_URL"
+bash() {
+  if [[ "${1:-}" == "-n" ]]; then
+    return 0
+  fi
+  printf '%s\n' "$*" >> "$BASH_LOG"
+}
+
+refresh_deployment_files
+
+grep -q -- "--refresh-config --dir $INSTALL_DIR --engine docker" "$BASH_LOG"
+grep -q -- "--script-base-url $SCRIPT_BASE_URL" "$BASH_LOG"
+if find "$INSTALL_DIR" -maxdepth 1 -name '.install-single-host.*' | grep -q .; then
+  echo "temporary refreshed installer was not removed" >&2
+  exit 1
+fi
+
 echo "Management script refresh test passed"

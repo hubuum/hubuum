@@ -54,6 +54,7 @@ Options:
   --stop                  Stop the installed stack and exit
   --uninstall             Stop the stack, remove systemd unit if present, and exit
   --purge                 With --uninstall, also remove compose volumes and install directory
+  --refresh-config        Refresh generated deployment files and management scripts without rolling
   --mode MODE             Install mode: all or backend. Default: all
   --dir PATH              Install directory. Default: /opt/hubuum
   --web FQDN              Public frontend hostname. Required in all mode
@@ -135,6 +136,7 @@ while [[ $# -gt 0 ]]; do
     --mode) MODE="$2"; ARG_SET+=" MODE"; shift 2 ;;
     --stop) ACTION="stop"; shift ;;
     --uninstall) ACTION="uninstall"; shift ;;
+    --refresh-config) ACTION="refresh-config"; shift ;;
     --purge) PURGE="true"; shift ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --web) WEB_FQDN="$2"; ARG_SET+=" WEB_FQDN"; shift 2 ;;
@@ -158,8 +160,8 @@ while [[ $# -gt 0 ]]; do
     --systemd) INSTALL_SYSTEMD="true"; shift ;;
     --service-name) SERVICE_NAME="$2"; SERVICE_NAME_SET="true"; shift 2 ;;
     --no-systemd) INSTALL_SYSTEMD="false"; shift ;;
-    --script-base-url) SCRIPT_BASE_URL="${2%/}"; shift 2 ;;
-    --script-ref) SCRIPT_REF="$2"; shift 2 ;;
+    --script-base-url) SCRIPT_BASE_URL="${2%/}"; ARG_SET+=" SCRIPT_BASE_URL"; shift 2 ;;
+    --script-ref) SCRIPT_REF="$2"; ARG_SET+=" SCRIPT_BASE_URL"; shift 2 ;;
     --build-from-source) BUILD_FROM_SOURCE="true"; ARG_SET+=" BUILD_FROM_SOURCE"; shift ;;
     --no-pull) PULL="false"; shift ;;
     --recreate) RECREATE="true"; shift ;;
@@ -169,6 +171,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 ENV_FILE="$INSTALL_DIR/.env"
+
+generates_deployment_files() {
+  [[ "$ACTION" == "install" || "$ACTION" == "refresh-config" ]]
+}
+
+if [[ "$ACTION" == "refresh-config" && ! -f "$ENV_FILE" ]]; then
+  die "missing $ENV_FILE; run install-single-host.sh first"
+fi
 
 arg_was_set() {
   [[ " $ARG_SET " == *" $1 "* ]]
@@ -187,7 +197,7 @@ reuse_from_env() {
   printf -v "$var" '%s' "$val"
 }
 
-if [[ "$ACTION" == "install" && -f "$ENV_FILE" ]]; then
+if generates_deployment_files && [[ -f "$ENV_FILE" ]]; then
   reuse_from_env MODE INSTALL_MODE
   reuse_from_env WEB_FQDN WEB_FQDN
   reuse_from_env API_FQDN API_FQDN
@@ -206,6 +216,7 @@ if [[ "$ACTION" == "install" && -f "$ENV_FILE" ]]; then
   reuse_from_env BUILD_FROM_SOURCE BUILD_FROM_SOURCE
   reuse_from_env NETWORK_SUBNET HUBUUM_CLIENT_ALLOWLIST
   reuse_from_env AUTH_CONFIG_HOST_PATH HUBUUM_AUTH_CONFIG_HOST_PATH
+  reuse_from_env SCRIPT_BASE_URL MANAGEMENT_SCRIPT_BASE_URL
 fi
 
 [[ "$MODE" == "all" || "$MODE" == "backend" ]] || die "--mode must be all or backend"
@@ -221,25 +232,25 @@ fi
 if [[ -n "$SCRIPT_REF" ]]; then
   SCRIPT_BASE_URL="https://raw.githubusercontent.com/hubuum/hubuum/${SCRIPT_REF}/scripts"
 fi
-if [[ "$ACTION" == "install" && -z "$API_FQDN" ]]; then
+if generates_deployment_files && [[ -z "$API_FQDN" ]]; then
   usage
   exit 2
 fi
-if [[ "$ACTION" == "install" && -z "$LETSENCRYPT_EMAIL" ]]; then
+if generates_deployment_files && [[ -z "$LETSENCRYPT_EMAIL" ]]; then
   usage
   exit 2
 fi
-if [[ "$ACTION" == "install" && "$MODE" == "all" && -z "$WEB_FQDN" ]]; then
+if generates_deployment_files && [[ "$MODE" == "all" && -z "$WEB_FQDN" ]]; then
   usage
   exit 2
 fi
-if [[ "$ACTION" == "install" && "$MODE" == "all" && "$WEB_FQDN" == "$API_FQDN" && -z "$SHARED_HOST_ROUTING" ]]; then
+if generates_deployment_files && [[ "$MODE" == "all" && "$WEB_FQDN" == "$API_FQDN" && -z "$SHARED_HOST_ROUTING" ]]; then
   die "--shared-host-routing is required when --web and --api use the same hostname"
 fi
-if [[ "$ACTION" == "install" && "$MODE" == "all" && "$WEB_FQDN" != "$API_FQDN" && -n "$SHARED_HOST_ROUTING" ]]; then
+if generates_deployment_files && [[ "$MODE" == "all" && "$WEB_FQDN" != "$API_FQDN" && -n "$SHARED_HOST_ROUTING" ]]; then
   die "--shared-host-routing only applies when --web and --api use the same hostname"
 fi
-if [[ "$ACTION" == "install" && "$MODE" == "backend" && -n "$SHARED_HOST_ROUTING" ]]; then
+if generates_deployment_files && [[ "$MODE" == "backend" && -n "$SHARED_HOST_ROUTING" ]]; then
   die "--shared-host-routing only applies in all mode"
 fi
 if [[ "$EUID" -ne 0 ]]; then
@@ -352,7 +363,7 @@ if [[ "$ACTION" == "uninstall" ]]; then
 fi
 
 need_cmd openssl
-if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
+if [[ "$BUILD_FROM_SOURCE" == "true" && "$ACTION" != "refresh-config" ]]; then
   need_cmd git
 fi
 
@@ -431,7 +442,7 @@ clone_or_update() {
   fi
 }
 
-if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
+if [[ "$BUILD_FROM_SOURCE" == "true" && "$ACTION" != "refresh-config" ]]; then
   clone_or_update "$BACKEND_REPO" "$INSTALL_DIR/src/hubuum" "$BACKEND_REF"
   if [[ "$MODE" == "all" ]]; then
     clone_or_update "$FRONTEND_REPO" "$INSTALL_DIR/src/hubuum-frontend" "$FRONTEND_REF"
@@ -475,7 +486,7 @@ if [[ "$MODE" == "all" ]]; then
   LOGIN_RATE_LIMIT_BACKEND="valkey"
 fi
 
-{
+write_deployment_env() {
   printf 'INSTALL_MODE=%s\n' "$MODE"
   printf 'WEB_FQDN=%s\n' "$WEB_FQDN"
   printf 'API_FQDN=%s\n' "$API_FQDN"
@@ -484,6 +495,7 @@ fi
   printf 'BUILD_FROM_SOURCE=%s\n' "$BUILD_FROM_SOURCE"
   printf 'CONTAINER_ENGINE=%s\n' "$ENGINE_BIN"
   printf 'SYSTEMD_SERVICE_NAME=%s\n' "$SERVICE_NAME"
+  printf 'MANAGEMENT_SCRIPT_BASE_URL=%s\n' "$SCRIPT_BASE_URL"
   printf '\n'
   printf 'BACKEND_IMAGE=%s\n' "$BACKEND_IMAGE"
   printf 'FRONTEND_IMAGE=%s\n' "$FRONTEND_IMAGE"
@@ -526,7 +538,35 @@ fi
   printf 'SESSION_TTL_SECONDS=28800\n'
   printf 'SESSION_PREFIX=hubuum:sess:\n'
   printf 'NEXT_PUBLIC_APP_NAME=%s\n' "$(quote_env "Hubuum Console")"
-} > "$ENV_FILE"
+}
+
+merge_missing_env_values() {
+  local generated_env="$1"
+  local key
+  local line
+  local wrote_header="false"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == [A-Z0-9_]*=* ]] || continue
+    key="${line%%=*}"
+    if ! grep -q "^${key}=" "$ENV_FILE"; then
+      if [[ "$wrote_header" == "false" ]]; then
+        printf '\n# Defaults added by deployment configuration refresh\n' >> "$ENV_FILE"
+        wrote_header="true"
+      fi
+      printf '%s\n' "$line" >> "$ENV_FILE"
+    fi
+  done < "$generated_env"
+}
+
+if [[ "$ACTION" == "refresh-config" ]]; then
+  GENERATED_ENV_TEMP="$(mktemp "$INSTALL_DIR/.env.generated.XXXXXX")"
+  write_deployment_env > "$GENERATED_ENV_TEMP"
+  merge_missing_env_values "$GENERATED_ENV_TEMP"
+  rm -f "$GENERATED_ENV_TEMP"
+else
+  write_deployment_env > "$ENV_FILE"
+fi
 
 chmod 0600 "$ENV_FILE"
 
@@ -912,6 +952,11 @@ networks:
 EOF
 
 cd "$INSTALL_DIR"
+
+if [[ "$ACTION" == "refresh-config" ]]; then
+  echo "Refreshed Hubuum deployment files and management scripts."
+  exit 0
+fi
 
 if [[ "$PULL" == "true" ]]; then
   PULL_SERVICES=(caddy)

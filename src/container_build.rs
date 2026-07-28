@@ -572,16 +572,29 @@ fn single_host_installer_preserves_the_bind_mounted_caddyfile_inode() {
 #[test]
 fn single_host_updater_never_tears_down_the_stack() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let updater = fs::read_to_string(repository.join("scripts/update-single-host.sh"))
-        .expect("single-host updater should be readable");
-    let rollout = fs::read_to_string(repository.join("scripts/single-host-rollout.sh"))
+    let updater = read_repository_text("scripts/update-single-host.sh");
+    let rollout_helper = fs::read_to_string(repository.join("scripts/single-host-rollout.sh"))
         .expect("single-host rollout helper should be readable");
+    let refresh = updater
+        .find("refresh_deployment_files\n")
+        .expect("single-host updater should refresh generated deployment files");
+    let pull = updater[refresh..]
+        .find("\"${COMPOSE_CMD[@]}\" pull")
+        .map(|offset| refresh + offset)
+        .expect("single-host updater should pull images after refreshing configuration");
+    let rollout = updater[pull..]
+        .find("hubuum_rollout")
+        .map(|offset| pull + offset)
+        .expect("single-host updater should roll services after refreshing configuration");
 
-    assert!(updater.contains("hubuum_rollout"));
+    assert!(refresh < pull);
+    assert!(pull < rollout);
+    assert!(updater.contains("--refresh-config"));
+    assert!(updater.contains("source \"$INSTALL_DIR/single-host-rollout.sh\""));
     assert!(updater.contains("export PODMAN_COMPOSE_WARNING_LOGS=false"));
     assert!(!updater.contains("systemctl restart"));
     assert!(!updater.contains("down --remove-orphans"));
-    assert!(!rollout.contains("down --remove-orphans"));
+    assert!(!rollout_helper.contains("down --remove-orphans"));
 }
 
 #[test]
