@@ -2,6 +2,7 @@ use crate::db::prelude::*;
 use chrono::{NaiveDateTime, Utc};
 use diesel::sql_types::{BigInt, Bool, Timestamp};
 
+use crate::db::traits::maintenance::maintenance_state_conn;
 use crate::db::{DbConnection, DbPool, with_transaction};
 use crate::errors::ApiError;
 use crate::models::TokenRetentionSettings;
@@ -49,6 +50,9 @@ async fn purge_expired_token_batch_at(
     let batch_size = settings.batch_size().as_i64();
 
     with_transaction(pool, async |conn| -> Result<usize, ApiError> {
+        if !maintenance_state_conn(conn).await?.is_normal() {
+            return Ok(0);
+        }
         if !try_acquire_token_retention_lock(conn).await? {
             return Ok(0);
         }

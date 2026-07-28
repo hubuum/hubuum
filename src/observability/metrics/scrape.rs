@@ -1,7 +1,7 @@
 use actix_web::{HttpResponse, Responder, http::header, web};
 use prometheus::{Encoder, TextEncoder};
 
-use crate::db::DbPool;
+use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 
 use super::Metrics;
@@ -9,7 +9,11 @@ use super::{db, event, get, inventory, login, task};
 
 pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
     let metrics = get()?;
-    refresh_scrape_gauges(metrics, &pool).await;
+    with_db_call_site(
+        DbCallSite::MetricsRefresh,
+        refresh_scrape_gauges(metrics, &pool),
+    )
+    .await;
 
     let encoder = TextEncoder::new();
     let metric_families = metrics.registry.gather();

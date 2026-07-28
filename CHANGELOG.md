@@ -7,10 +7,45 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Database acquisition, failure, operation-duration, and operation-error metrics
+  now include a bounded `caller` label for readiness, maintenance, task, event,
+  retention, restore-coordinator, lease, and metrics-refresh work.
+- Queued task transactions now wake task workers across processes with
+  transactional PostgreSQL notifications.
+
+### Changed
+
+- **Breaking (metrics):** database metric series now include the `caller`
+  label. Update recording rules or exact label-set matches that assume the old
+  unlabeled acquisition series.
+- Task, event fan-out, and event delivery safety polling now default to five
+  seconds. Transactional notifications preserve prompt normal wakeups, and
+  delivery workers still wake at scheduled retry deadlines below that interval.
+- Single-host `/metrics` now targets the worker-enabled primary deterministically,
+  and `/metrics/standby` exposes the HTTP-only standby. Prefixed routing exposes
+  the equivalent `/hubuum-api/metrics` and `/hubuum-api/metrics/standby` paths.
+
 ### Fixed
 
 - Shared-host installations using direct routing now proxy `/metrics` to the
   backend instead of letting the request fall through to the frontend.
+- Reduced idle database pool checkouts by combining maintenance and claim
+  queries on one transaction, combining readiness queries on one checkout,
+  collapsing task-kind claims to one query, coalescing restore-coordinator
+  heartbeats, and preventing metrics scrapes from running request-maintenance
+  checks.
+- Direct shared-host routing now uses one health-checked public backend proxy
+  instead of creating an independent active checker for every backend path
+  group.
+- API-only processes now report zero effective event workers instead of the
+  worker count configured for worker-enabled roles.
+- Restore coordinators now sample guarded local activity only after observing
+  the draining generation, preventing stale idle heartbeats from crossing the
+  restore drain barrier.
+- Worker notification listeners now use dedicated connections so task-only or
+  event-only workers with a one-connection execution pool can still claim work.
 
 ## [0.0.5] - 2026-07-26
 

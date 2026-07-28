@@ -548,6 +548,14 @@ cat > "$CADDYFILE_TEMP" <<EOF
 		stream_close_delay 5m
 	}
 }
+
+(metrics_primary_proxy) {
+	reverse_proxy hubuum-api:${API_PORT}
+}
+
+(metrics_standby_proxy) {
+	reverse_proxy hubuum-api-standby:${API_PORT}
+}
 EOF
 
 if [[ "$MODE" == "all" ]]; then
@@ -582,7 +590,19 @@ ${WEB_FQDN} {
 
 ${API_FQDN} {
 	encode zstd gzip
-	import api_proxy
+
+	handle /metrics {
+		import metrics_primary_proxy
+	}
+
+	handle /metrics/standby {
+		rewrite * /metrics
+		import metrics_standby_proxy
+	}
+
+	handle {
+		import api_proxy
+	}
 }
 EOF
 elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "bff" ]]; then
@@ -597,24 +617,18 @@ elif [[ "$MODE" == "all" && "$SHARED_HOST_ROUTING" == "direct" ]]; then
 ${WEB_FQDN} {
 	encode zstd gzip
 
-	handle /api/v0* {
-		import api_proxy
-	}
-
-	handle /api/v1* {
-		import api_proxy
-	}
-
-	handle /api-doc* {
-		import api_proxy
-	}
-
-	handle /swagger-ui* {
+	@backend path /api/v0* /api/v1* /api-doc* /swagger-ui*
+	handle @backend {
 		import api_proxy
 	}
 
 	handle /metrics {
-		import api_proxy
+		import metrics_primary_proxy
+	}
+
+	handle /metrics/standby {
+		rewrite * /metrics
+		import metrics_standby_proxy
 	}
 
 	handle {
@@ -631,6 +645,16 @@ ${WEB_FQDN} {
 		redir * /hubuum-api/
 	}
 
+	handle /hubuum-api/metrics {
+		rewrite * /metrics
+		import metrics_primary_proxy
+	}
+
+	handle /hubuum-api/metrics/standby {
+		rewrite * /metrics
+		import metrics_standby_proxy
+	}
+
 	handle_path /hubuum-api/* {
 		import api_proxy
 	}
@@ -644,7 +668,19 @@ else
   cat >> "$CADDYFILE_TEMP" <<EOF
 ${API_FQDN} {
 	encode zstd gzip
-	import api_proxy
+
+	handle /metrics {
+		import metrics_primary_proxy
+	}
+
+	handle /metrics/standby {
+		rewrite * /metrics
+		import metrics_standby_proxy
+	}
+
+	handle {
+		import api_proxy
+	}
 }
 EOF
 fi

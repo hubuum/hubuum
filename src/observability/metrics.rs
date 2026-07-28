@@ -27,7 +27,7 @@ pub use self::computed_field::{
     computed_evaluation, computed_live_fallback, computed_read_repair, computed_rebuild_batch,
     computed_rebuild_finished,
 };
-pub use self::db::{
+pub(crate) use self::db::{
     ResultKind, db_connection_acquire_failed, db_connection_acquired, db_operation_finished,
 };
 pub use self::export::{

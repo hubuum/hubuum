@@ -15,7 +15,17 @@ Database-backed gauges are refreshed on a short in-process cache and are best-ef
 
 The metrics endpoint uses the main HTTP listener and is subject to `HUBUUM_CLIENT_ALLOWLIST`. Put it behind network-level access controls appropriate for operational data.
 
-For single-host deployments using shared-host `direct` routing, Caddy sends `/metrics` to the backend. With shared-host `prefixed` routing, scrape `/hubuum-api/metrics` instead. Shared-host `bff` routing does not expose the backend metrics endpoint publicly.
+Process-local counters must be scraped from stable per-process targets rather
+than through the load-balanced API upstream. Single-host deployments therefore
+route `/metrics` to the worker-enabled primary and `/metrics/standby` to the
+HTTP-only standby. With shared-host `prefixed` routing, use
+`/hubuum-api/metrics` and `/hubuum-api/metrics/standby`. Shared-host `bff`
+routing does not expose either backend metrics endpoint publicly.
+
+The bounded `caller` database label uses one of `event_delivery`,
+`event_fanout`, `event_retention`, `http_request`, `metrics_refresh`, `readiness`,
+`request_maintenance`, `restore_coordinator`, `task_lease`, `task_worker`,
+`token_retention`, or `unattributed`.
 
 ## Cardinality Rules
 
@@ -33,10 +43,10 @@ Use admin JSON/API endpoints for detailed high-cardinality views.
 | `hubuum_api_errors_total` | `class` | API errors by public error class |
 | `hubuum_extraction_failures_total` | `kind` | JSON and path extraction failures |
 | `hubuum_db_pool_connections` | `state` | Database pool connections by configured, open, idle, and checked-out state |
-| `hubuum_db_connection_acquire_duration_seconds` | none | Pool connection acquisition duration |
-| `hubuum_db_connection_acquire_failures_total` | none | Pool connection acquisition failures |
-| `hubuum_db_operation_duration_seconds` | `operation`, `result` | `with_connection` and `with_transaction` helper duration |
-| `hubuum_db_operation_errors_total` | `operation`, `result` | Database helper failures by broad public error class |
+| `hubuum_db_connection_acquire_duration_seconds` | `caller` | Pool connection acquisition duration |
+| `hubuum_db_connection_acquire_failures_total` | `caller` | Pool connection acquisition failures |
+| `hubuum_db_operation_duration_seconds` | `caller`, `operation`, `result` | `with_connection` and `with_transaction` helper duration |
+| `hubuum_db_operation_errors_total` | `caller`, `operation`, `result` | Database helper failures by broad public error class |
 | `hubuum_metrics_refresh_failures_total` | `source` | Best-effort scrape refresh failures by inventory, tasks, or events source |
 | `hubuum_task_worker_iterations_total` | `outcome` | Worker iterations by claimed, idle, or error |
 | `hubuum_task_claims_total` | `kind` | Tasks claimed by workers |

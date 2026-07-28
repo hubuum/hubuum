@@ -45,6 +45,12 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
     assert!(body.contains("entity_type=\"collections\""));
     assert!(body.contains("hubuum_event_queue_items"));
     assert!(body.contains("queue=\"fanout\""));
+    assert!(body.contains(
+        "hubuum_db_connection_acquire_duration_seconds_bucket{caller=\"metrics_refresh\""
+    ));
+    assert!(body.contains(
+        "hubuum_db_operation_duration_seconds_bucket{caller=\"metrics_refresh\",operation=\"connection\",result=\"ok\""
+    ));
 }
 
 #[actix_web::test]

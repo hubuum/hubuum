@@ -1,7 +1,10 @@
 use std::collections::HashMap;
+use std::time::Duration as StdDuration;
 
 use crate::db::prelude::*;
-use chrono::{Duration, Utc};
+use crate::db::traits::maintenance::maintenance_state_conn;
+use chrono::{Duration, NaiveDateTime, Utc};
+use diesel::sql_types::{Nullable, Timestamp};
 use uuid::Uuid;
 
 use crate::db::{DbPool, with_connection, with_transaction};
@@ -29,21 +32,94 @@ pub(crate) struct ClaimedEventDelivery {
     pub sink: EventSinkRow,
 }
 
-pub(crate) async fn claim_event_deliveries(
+pub(crate) struct EventDeliveryClaimBatch {
+    deliveries: Vec<ClaimedEventDelivery>,
+    next_wakeup_in: Option<StdDuration>,
+}
+
+impl EventDeliveryClaimBatch {
+    pub(crate) fn into_parts(self) -> (Vec<ClaimedEventDelivery>, Option<StdDuration>) {
+        (self.deliveries, self.next_wakeup_in)
+    }
+}
+
+#[derive(QueryableByName)]
+struct ScheduledDeliveryWakeup {
+    #[diesel(sql_type = Nullable<Timestamp>)]
+    wakeup_at: Option<NaiveDateTime>,
+}
+
+async fn next_event_delivery_wakeup_in(
+    conn: &mut crate::db::DbConnection,
+    now: NaiveDateTime,
+) -> Result<Option<StdDuration>, diesel::result::Error> {
+    let schedule = diesel::sql_query(
+        "WITH scheduled AS ( \
+             (SELECT next_attempt_at AS wakeup_at \
+              FROM event_deliveries \
+              WHERE status = 'failed' \
+                AND next_attempt_at > $1 \
+              ORDER BY next_attempt_at \
+              LIMIT 1) \
+             UNION ALL \
+             (SELECT locked_until AS wakeup_at \
+              FROM event_deliveries \
+              WHERE status = 'in_flight' \
+                AND locked_until > $1 \
+              ORDER BY locked_until \
+              LIMIT 1) \
+         ) \
+         SELECT MIN(scheduled.wakeup_at) AS wakeup_at \
+         FROM scheduled",
+    )
+    .bind::<Timestamp, _>(now)
+    .get_result::<ScheduledDeliveryWakeup>(conn)
+    .await?;
+
+    Ok(schedule.wakeup_at.map(|wakeup_at| {
+        wakeup_at
+            .signed_duration_since(now)
+            .to_std()
+            .unwrap_or_default()
+    }))
+}
+
+#[cfg(test)]
+pub(crate) async fn next_event_delivery_wakeup_in_db(
+    pool: &DbPool,
+) -> Result<Option<StdDuration>, ApiError> {
+    let now = Utc::now().naive_utc();
+    with_connection(pool, async |conn| {
+        next_event_delivery_wakeup_in(conn, now).await
+    })
+    .await
+}
+
+pub(crate) async fn claim_event_delivery_batch(
     pool: &DbPool,
     settings: EventDeliverySettings,
-) -> Result<Vec<ClaimedEventDelivery>, ApiError> {
+) -> Result<EventDeliveryClaimBatch, ApiError> {
     use crate::schema::event_deliveries::dsl::{
         claim_token, event_deliveries, id, locked_until, next_attempt_at, status,
     };
 
     if settings.batch_size == 0 {
-        return Ok(Vec::new());
+        return Ok(EventDeliveryClaimBatch {
+            deliveries: Vec::new(),
+            next_wakeup_in: None,
+        });
     }
 
     with_transaction(
         pool,
-        async |conn| -> Result<Vec<ClaimedEventDelivery>, ApiError> {
+        async |conn| -> Result<EventDeliveryClaimBatch, ApiError> {
+            if !maintenance_state_conn(conn).await?.is_normal() {
+                return Ok(EventDeliveryClaimBatch {
+                    deliveries: Vec::new(),
+                    next_wakeup_in: None,
+                });
+            }
+
             let now = Utc::now().naive_utc();
             let delivery_ids = event_deliveries
                 .filter(
@@ -65,7 +141,10 @@ pub(crate) async fn claim_event_deliveries(
                 .await?;
 
             if delivery_ids.is_empty() {
-                return Ok(Vec::new());
+                return Ok(EventDeliveryClaimBatch {
+                    deliveries: Vec::new(),
+                    next_wakeup_in: next_event_delivery_wakeup_in(conn, now).await?,
+                });
             }
 
             let now = Utc::now().naive_utc();
@@ -82,10 +161,24 @@ pub(crate) async fn claim_event_deliveries(
                     .get_results::<EventDelivery>(conn)
                     .await?;
 
-            load_claimed_delivery_contexts(conn, claimed_deliveries).await
+            Ok(EventDeliveryClaimBatch {
+                deliveries: load_claimed_delivery_contexts(conn, claimed_deliveries).await?,
+                next_wakeup_in: None,
+            })
         },
     )
     .await
+}
+
+#[cfg(test)]
+pub(crate) async fn claim_event_deliveries(
+    pool: &DbPool,
+    settings: EventDeliverySettings,
+) -> Result<Vec<ClaimedEventDelivery>, ApiError> {
+    let (deliveries, _) = claim_event_delivery_batch(pool, settings)
+        .await?
+        .into_parts();
+    Ok(deliveries)
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::db::prelude::*;
+use crate::db::traits::maintenance::maintenance_state_conn;
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
@@ -39,6 +40,10 @@ pub async fn claim_events_for_fanout(
     }
 
     with_transaction(pool, async |conn| -> Result<Vec<Event>, ApiError> {
+        if !maintenance_state_conn(conn).await?.is_normal() {
+            return Ok(Vec::new());
+        }
+
         let now = Utc::now().naive_utc();
         let event_ids = events
             .filter(dispatched_at.is_null())

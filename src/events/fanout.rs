@@ -10,12 +10,12 @@ use crate::config::{
     DEFAULT_EVENT_FANOUT_BATCH_SIZE, DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
     DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS, DEFAULT_EVENT_FANOUT_WORKERS, get_config,
 };
-use crate::db::DbPool;
 use crate::db::traits::event_fanout::{EventFanoutSettings, process_event_fanout_batch};
+use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::EventWorkerWakeupStats;
-use crate::restores::{MaintenanceActivityGuard, maintenance_state};
+use crate::restores::MaintenanceActivityGuard;
 
 static EVENT_FANOUT_WORKER: Once = Once::new();
 static EVENT_FANOUT_LISTENER: Once = Once::new();
@@ -35,11 +35,9 @@ fn wake_event_fanout_worker_from_postgres() {
 fn configured_event_fanout_worker_count() -> usize {
     get_config()
         .map(|config| {
-            if config.runtime_role.runs_background_workers() {
-                config.event_fanout_workers
-            } else {
-                0
-            }
+            config
+                .runtime_role
+                .effective_worker_count(config.event_fanout_workers)
         })
         .unwrap_or(DEFAULT_EVENT_FANOUT_WORKERS)
 }
@@ -99,12 +97,10 @@ async fn event_fanout_worker_loop(
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = async {
-                if maintenance_state(&pool).await? != "normal" {
-                    return Ok(0);
-                }
-                process_event_fanout_batch(&pool, settings).await
-            } => result,
+            result = with_db_call_site(
+                DbCallSite::EventFanout,
+                process_event_fanout_batch(&pool, settings),
+            ) => result,
         };
         drop(activity);
         if fanout_worker_should_continue(&result) {
@@ -152,16 +148,12 @@ pub fn ensure_event_fanout_worker_running(pool: DbPool) {
     let poll_interval = configured_event_fanout_poll_interval();
     let settings = configured_event_fanout_settings();
 
-    EVENT_FANOUT_LISTENER.call_once({
-        let pool = pool.clone();
-        move || {
-            super::pg_notify::spawn_postgres_notification_listener(
-                pool,
-                super::pg_notify::EVENT_FANOUT_CHANNEL,
-                "event-fanout-pg-listener",
-                wake_event_fanout_worker_from_postgres,
-            );
-        }
+    EVENT_FANOUT_LISTENER.call_once(|| {
+        super::pg_notify::spawn_postgres_notification_listener(
+            super::pg_notify::EVENT_FANOUT_CHANNEL,
+            "event-fanout-pg-listener",
+            wake_event_fanout_worker_from_postgres,
+        );
     });
 
     EVENT_FANOUT_WORKER.call_once(move || {

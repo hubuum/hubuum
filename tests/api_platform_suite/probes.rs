@@ -2,6 +2,7 @@ use actix_web::{App, http::StatusCode, test};
 use serde_json::Value;
 
 use crate::api as prod_api;
+use crate::db::capture_queries;
 use crate::tests::get_test_pool;
 
 #[actix_web::test]
@@ -27,9 +28,11 @@ async fn test_readyz_checks_database_connectivity() {
     .await;
 
     let req = test::TestRequest::get().uri("/readyz").to_request();
-    let response = test::call_service(&app, req).await;
+    let (response, queries) = capture_queries(test::call_service(&app, req)).await;
 
     assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(queries.domain_queries(), 2);
 
     let body: Value = test::read_body_json(response).await;
     assert_eq!(body["status"], "ready");

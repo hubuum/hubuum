@@ -84,7 +84,7 @@ budgeting, pool observability, and a repeatable k6 scenario.
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `HUBUUM_TASK_WORKERS` | About half the detected CPU count, minimum `1` | Number of background task workers |
-| `HUBUUM_TASK_POLL_INTERVAL_MS` | `200` | Idle polling interval for background task workers |
+| `HUBUUM_TASK_POLL_INTERVAL_MS` | `5000` | Safety-net idle polling interval for background task workers; committed task inserts normally wake workers through PostgreSQL notifications |
 | `HUBUUM_TASK_LEASE_SECONDS` | `60` | Durable task lease duration |
 | `HUBUUM_TASK_HEARTBEAT_SECONDS` | `20` | Lease renewal interval; must be shorter than the lease |
 | `HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS` | `30` | Minimum interval between abandoned-task recovery scans |
@@ -101,11 +101,11 @@ for startup ownership, cancellation, task interruption, and pool-drop ordering.
 | -------- | ------- | ----------- |
 | `HUBUUM_EVENT_FANOUT_WORKERS` | `1` | Number of background workers that fan matching audit events out to delivery rows |
 | `HUBUUM_EVENT_FANOUT_BATCH_SIZE` | `100` | Number of events a fan-out worker claims per batch |
-| `HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS` | `250` | Idle polling interval for fan-out workers |
+| `HUBUUM_EVENT_FANOUT_POLL_INTERVAL_MS` | `5000` | Safety-net idle polling interval for fan-out workers |
 | `HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS` | `30000` | Fan-out claim lock timeout before another worker may retry |
 | `HUBUUM_EVENT_DELIVERY_WORKERS` | `0` | Number of background workers that deliver rows to external sinks; `0` disables transport delivery |
 | `HUBUUM_EVENT_DELIVERY_BATCH_SIZE` | `100` | Number of delivery rows a delivery worker claims per batch |
-| `HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS` | `500` | Idle polling interval for delivery workers |
+| `HUBUUM_EVENT_DELIVERY_POLL_INTERVAL_MS` | `5000` | Safety-net idle polling interval for delivery workers |
 | `HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS` | `30000` | Delivery claim lock timeout before another worker may retry |
 | `HUBUUM_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS` | `25000` | Wall-clock timeout for one external transport attempt; must be less than the delivery lock timeout |
 | `HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS` | `1000` | Initial delivery retry backoff |

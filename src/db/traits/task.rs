@@ -3,7 +3,7 @@ use crate::models::token_scope::TokenScope;
 use chrono::{NaiveDateTime, Utc};
 use diesel::dsl::sql;
 use diesel::expression::AsExpression;
-use diesel::sql_types::{BigInt, Bool, Nullable, Timestamp};
+use diesel::sql_types::{Array, BigInt, Bool, Integer, Nullable, Text, Timestamp};
 use hubuum_task_core::IdempotencyKey;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -13,9 +13,12 @@ use uuid::Uuid;
 use crate::apply_query_options;
 use crate::config::get_config;
 use crate::db::traits::history::resolve_principal_names;
+use crate::db::traits::maintenance::maintenance_state_conn;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
-use crate::events::{Action, EntityType, Event, MutationProvenance, NewEvent, emit_event};
+use crate::events::{
+    Action, EntityType, Event, MutationProvenance, NewEvent, emit_event, notify_task_queue,
+};
 use crate::models::search::QueryOptions;
 use crate::models::{
     BackupOutputLookup, BackupTaskOutputRecord, BackupTaskOutputSummaryRecord, ExportOutputLookup,
@@ -1209,19 +1212,34 @@ pub async fn insert_import_results(
     .await
 }
 
-pub(crate) fn executable_task_kind_values() -> [&'static str; 5] {
-    [
-        TaskKind::Import.as_str(),
-        TaskKind::Export.as_str(),
-        TaskKind::Backup.as_str(),
-        TaskKind::Reindex.as_str(),
-        TaskKind::RemoteCall.as_str(),
-    ]
+pub(crate) fn executable_task_kind_values() -> [&'static str; TaskKind::ALL.len()] {
+    TaskKind::ALL.map(TaskKind::as_str)
 }
 
 static NEXT_TASK_KIND: AtomicUsize = AtomicUsize::new(0);
 
-fn task_kind_claim_order(start: usize) -> [&'static str; 5] {
+const CLAIM_NEXT_QUEUED_TASK_SQL: &str = "\
+    SELECT candidate.id \
+    FROM unnest($2::text[]) WITH ORDINALITY AS claim_order(kind, priority) \
+    CROSS JOIN LATERAL ( \
+        SELECT id \
+        FROM tasks \
+        WHERE status = $1 \
+          AND tasks.kind = claim_order.kind \
+        ORDER BY created_at ASC \
+        FOR UPDATE SKIP LOCKED \
+        LIMIT 1 \
+    ) AS candidate \
+    ORDER BY claim_order.priority \
+    LIMIT 1";
+
+#[derive(QueryableByName)]
+struct ClaimableTaskId {
+    #[diesel(sql_type = Integer)]
+    id: i32,
+}
+
+fn task_kind_claim_order(start: usize) -> [&'static str; TaskKind::ALL.len()] {
     let kinds = executable_task_kind_values();
     std::array::from_fn(|offset| kinds[(start + offset) % kinds.len()])
 }
@@ -1231,30 +1249,24 @@ pub async fn claim_next_queued_task(
     lease_duration: std::time::Duration,
 ) -> Result<Option<TaskRecord>, ApiError> {
     use crate::schema::tasks::dsl::{
-        attempt_count, created_at, id, kind, lease_expires_at, lease_token, started_at, status,
-        tasks, updated_at,
+        attempt_count, id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
     };
 
     let record = with_transaction(pool, async |conn| -> Result<Option<TaskRecord>, ApiError> {
+        if !maintenance_state_conn(conn).await?.is_normal() {
+            return Ok(None);
+        }
+
         let task_kinds = executable_task_kind_values();
         let first_kind = NEXT_TASK_KIND.fetch_add(1, Ordering::Relaxed) % task_kinds.len();
         let claim_order = task_kind_claim_order(first_kind);
-        let mut selected_task_id = None;
-        for selected_kind in claim_order {
-            selected_task_id = tasks
-                .filter(status.eq(TaskStatus::Queued.as_str()))
-                .filter(kind.eq(selected_kind))
-                .order(created_at.asc())
-                .for_update()
-                .skip_locked()
-                .select(id)
-                .first::<i32>(conn)
-                .await
-                .optional()?;
-            if selected_task_id.is_some() {
-                break;
-            }
-        }
+        let selected_task_id = diesel::sql_query(CLAIM_NEXT_QUEUED_TASK_SQL)
+            .bind::<Text, _>(TaskStatus::Queued.as_str())
+            .bind::<Array<Text>, _>(claim_order.to_vec())
+            .get_result::<ClaimableTaskId>(conn)
+            .await
+            .optional()?
+            .map(|row| row.id);
         let Some(task_id_value) = selected_task_id else {
             return Ok(None);
         };
@@ -1638,6 +1650,7 @@ async fn insert_queued_task_with_event(
         &task.user_provenance(submitter),
     )
     .await?;
+    notify_task_queue(conn, task.id).await?;
 
     Ok(task)
 }
@@ -1698,6 +1711,7 @@ pub(crate) async fn insert_internal_queued_task(
         &provenance,
     )
     .await?;
+    notify_task_queue(conn, task.id).await?;
 
     Ok(task)
 }
@@ -1780,10 +1794,10 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate, claim_next_queued_task,
-        database_now, insert_import_results, insert_internal_queued_task,
-        recover_expired_task_lease, renew_task_lease, task_capacity_lock_key, task_event_responses,
-        task_kind_claim_order,
+        CLAIM_NEXT_QUEUED_TASK_SQL, TaskBackend, TaskCreateRequest, TaskScopeSnapshot,
+        TaskStateUpdate, claim_next_queued_task, database_now, insert_import_results,
+        insert_internal_queued_task, recover_expired_task_lease, renew_task_lease,
+        task_capacity_lock_key, task_event_responses, task_kind_claim_order,
     };
     use crate::db::traits::user::DeleteUserRecord;
     use crate::db::{capture_queries, with_connection, with_transaction};
@@ -2140,6 +2154,13 @@ mod tests {
         assert_eq!(task_kind_claim_order(4)[0], TaskKind::RemoteCall.as_str());
     }
 
+    #[test]
+    fn task_claim_query_limits_each_kind_before_priority_ordering() {
+        assert!(CLAIM_NEXT_QUEUED_TASK_SQL.contains("CROSS JOIN LATERAL"));
+        assert!(CLAIM_NEXT_QUEUED_TASK_SQL.contains("FOR UPDATE SKIP LOCKED"));
+        assert!(!CLAIM_NEXT_QUEUED_TASK_SQL.contains("array_position"));
+    }
+
     #[tokio::test]
     async fn test_claim_next_queued_task_is_safe_under_concurrency() {
         let context = TestContext::new().await;
@@ -2200,13 +2221,20 @@ mod tests {
         });
 
         let locked_id = locked_rx.await.unwrap();
-        let claimed = claim_next_queued_task(&context.pool, std::time::Duration::from_secs(60))
-            .await
-            .unwrap()
-            .map(|task| task.id);
+        let (claimed, queries) = capture_queries(claim_next_queued_task(
+            &context.pool,
+            std::time::Duration::from_secs(60),
+        ))
+        .await;
+        let claimed = claimed.unwrap().map(|task| task.id);
         release_tx.send(()).unwrap();
         locker.await.unwrap();
 
+        assert_eq!(queries.connection_checkouts(), 1);
+        assert_eq!(
+            queries.queries_matching("SELECT candidate.id FROM unnest($2::text[])"),
+            1
+        );
         assert!(claimed.is_some());
         assert_ne!(claimed.unwrap(), locked_id);
         assert!(created_ids.contains(&locked_id));

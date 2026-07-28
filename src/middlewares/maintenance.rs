@@ -4,12 +4,16 @@ use actix_web::middleware::Next;
 use actix_web::web::Data;
 use actix_web::{Error, ResponseError};
 
-use crate::db::DbPool;
+use crate::config::DEFAULT_METRICS_PATH;
+use crate::config::running::RunningConfig;
+use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
-use crate::restores::{MaintenanceActivityGuard, maintenance_state};
+use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
 
-fn allowed_during_maintenance(path: &str) -> bool {
+fn allowed_during_maintenance(path: &str, metrics_path: Option<&str>) -> bool {
     matches!(path, "/healthz" | "/readyz")
+        || path == DEFAULT_METRICS_PATH
+        || metrics_path == Some(path)
         || (path.starts_with("/api/v1/restores/") && path.ends_with("/status"))
 }
 
@@ -21,27 +25,37 @@ pub async fn reject_during_maintenance(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
 ) -> Result<ServiceResponse<BoxBody>, Error> {
-    if !allowed_during_maintenance(req.path()) {
-        // Begin before reading maintenance state. If draining wins the race,
-        // this request is rejected; if the request saw normal first, the
-        // coordinator must wait for this guard to drop.
-        // The confirmation request owns the drain operation and therefore
-        // cannot wait on itself. Its transactional state transition and
-        // advisory lock serialize concurrent confirmations.
-        let _activity = (!initiates_restore(req.path())).then(MaintenanceActivityGuard::begin);
-        let pool = req.app_data::<Data<DbPool>>().cloned().ok_or_else(|| {
-            ApiError::InternalServerError("Database pool is unavailable".to_string())
-        })?;
-        let state = maintenance_state(&pool).await?;
-        if state != "normal" {
-            let response = ApiError::ServiceUnavailable(format!(
-                "Hubuum is in '{state}' maintenance for a destructive restore"
-            ))
-            .error_response();
-            return Ok(req.into_response(response).map_into_boxed_body());
+    with_db_call_site(DbCallSite::HttpRequest, async move {
+        let metrics_path = req
+            .app_data::<Data<RunningConfig>>()
+            .map(|config| config.server.metrics_path.as_str());
+        if !allowed_during_maintenance(req.path(), metrics_path) {
+            // Begin before reading maintenance state. If draining wins the race,
+            // this request is rejected; if the request saw normal first, the
+            // coordinator must wait for this guard to drop.
+            // The confirmation request owns the drain operation and therefore
+            // cannot wait on itself. Its transactional state transition and
+            // advisory lock serialize concurrent confirmations.
+            let _activity = (!initiates_restore(req.path())).then(MaintenanceActivityGuard::begin);
+            let pool = req.app_data::<Data<DbPool>>().cloned().ok_or_else(|| {
+                ApiError::InternalServerError("Database pool is unavailable".to_string())
+            })?;
+            let state = with_db_call_site(
+                DbCallSite::RequestMaintenance,
+                current_maintenance_state(&pool),
+            )
+            .await?;
+            if !state.is_normal() {
+                let response = ApiError::ServiceUnavailable(format!(
+                    "Hubuum is in '{state}' maintenance for a destructive restore"
+                ))
+                .error_response();
+                return Ok(req.into_response(response).map_into_boxed_body());
+            }
         }
-    }
-    Ok(next.call(req).await?.map_into_boxed_body())
+        Ok(next.call(req).await?.map_into_boxed_body())
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -51,13 +65,19 @@ mod tests {
     use super::{allowed_during_maintenance, initiates_restore};
 
     #[rstest]
-    #[case::health("/healthz", true)]
-    #[case::readiness("/readyz", true)]
-    #[case::restore_status("/api/v1/restores/12/status", true)]
-    #[case::restore_confirmation("/api/v1/restores/12/confirm", false)]
-    #[case::ordinary_api("/api/v1/classes", false)]
-    fn maintenance_path_availability(#[case] path: &str, #[case] expected: bool) {
-        assert_eq!(allowed_during_maintenance(path), expected);
+    #[case::health("/healthz", None, true)]
+    #[case::readiness("/readyz", None, true)]
+    #[case::default_metrics("/metrics", None, true)]
+    #[case::custom_metrics("/internal/metrics", Some("/internal/metrics"), true)]
+    #[case::restore_status("/api/v1/restores/12/status", None, true)]
+    #[case::restore_confirmation("/api/v1/restores/12/confirm", None, false)]
+    #[case::ordinary_api("/api/v1/classes", None, false)]
+    fn maintenance_path_availability(
+        #[case] path: &str,
+        #[case] metrics_path: Option<&str>,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(allowed_during_maintenance(path, metrics_path), expected);
     }
 
     #[rstest]

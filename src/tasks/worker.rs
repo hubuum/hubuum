@@ -20,9 +20,11 @@ use crate::db::traits::task::{
     purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
 };
 use crate::db::{
-    DatabasePoolSettings, DbPool, init_pool_with_settings, with_mutation_provenance_scope,
+    DatabasePoolSettings, DbCallSite, DbPool, init_pool_with_settings, with_db_call_site,
+    with_mutation_provenance_scope,
 };
 use crate::errors::ApiError;
+use crate::events::{TASK_QUEUE_CHANNEL, spawn_postgres_notification_listener};
 use crate::exports::execute_export_task;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::principal::load_principal_by_id;
@@ -31,7 +33,7 @@ use crate::observability::metrics;
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
-use crate::restores::{MaintenanceActivityGuard, maintenance_state};
+use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
 
 use super::execution::execute_import_task;
 use super::helpers::sanitize_error_for_storage;
@@ -39,6 +41,7 @@ use super::remote_call::execute_remote_call_task;
 use super::types::WorkerLoopAction;
 
 static TASK_WORKER: Once = Once::new();
+static TASK_WORKER_LISTENER: Once = Once::new();
 static TASK_WORKER_NOTIFY: OnceLock<Notify> = OnceLock::new();
 static TASK_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<CleanupSchedule>> = OnceLock::new();
 static TASK_RECOVERY_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
@@ -107,11 +110,17 @@ impl TaskWorkerSettings {
 pub fn initialize_task_worker_settings(settings: TaskWorkerSettings) -> Result<(), String> {
     TASK_WORKER_SETTINGS
         .set(settings)
-        .map_err(|_| "task worker settings were already initialized".to_string())
+        .map_err(|_| "task worker settings were already initialized".to_string())?;
+    metrics::task_worker_config(settings.worker_count, settings.poll_interval);
+    Ok(())
 }
 
 fn get_task_worker_notify() -> &'static Notify {
     TASK_WORKER_NOTIFY.get_or_init(Notify::new)
+}
+
+fn wake_task_worker_from_postgres() {
+    get_task_worker_notify().notify_one();
 }
 
 fn cleanup_state() -> &'static Mutex<CleanupSchedule> {
@@ -199,8 +208,15 @@ async fn task_worker_loop(
         if shutdown.is_requested() {
             break;
         }
-        let result =
-            process_one_task_with_settings(&context, Some(&shutdown), &backup_settings).await;
+        // Task execution dispatches several large async implementations. Keep
+        // that future behind a pointer so the task-local attribution wrapper
+        // does not push the worker thread's stack frame over its default size.
+        let iteration = Box::pin(process_one_task_with_settings(
+            &context,
+            Some(&shutdown),
+            &backup_settings,
+        ));
+        let result = with_db_call_site(DbCallSite::TaskWorker, iteration).await;
         if shutdown.is_requested() {
             break;
         }
@@ -284,13 +300,19 @@ pub fn ensure_task_worker_running_with_settings(
         return;
     }
     let poll_interval = configured_task_poll_interval();
+    TASK_WORKER_LISTENER.call_once(|| {
+        spawn_postgres_notification_listener(
+            TASK_QUEUE_CHANNEL,
+            "task-worker-pg-listener",
+            wake_task_worker_from_postgres,
+        );
+    });
     TASK_WORKER.call_once(move || {
         info!(
             message = "Initializing task workers",
             worker_count = worker_count,
             poll_interval = ?poll_interval
         );
-        metrics::task_worker_config(worker_count, poll_interval);
         for worker_index in 0..worker_count {
             spawn_task_worker_loop(
                 context.clone(),
@@ -332,10 +354,11 @@ async fn process_one_task_with_settings(
     backup_settings: &BackupSettings,
 ) -> Result<bool, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
-    if maintenance_state(context).await? != "normal" {
+    if !current_maintenance_state(context).await?.is_normal() {
         metrics::task_worker_iteration("idle");
         return Ok(false);
     }
+
     maybe_recover_expired_task_leases(context).await?;
 
     if let Err(error) = maybe_cleanup_expired_task_outputs(context).await {
@@ -508,7 +531,13 @@ fn start_task_lease_heartbeat(
         initial_confirmed_expiry,
         move || {
             let pool = pool.clone();
-            async move { renew_task_lease(&pool, task_id, claim_token, settings.lease_duration).await }
+            async move {
+                with_db_call_site(
+                    DbCallSite::TaskLease,
+                    renew_task_lease(&pool, task_id, claim_token, settings.lease_duration),
+                )
+                .await
+            }
         },
     ))
 }
@@ -896,6 +925,17 @@ mod lease_heartbeat_tests {
 
     use super::*;
 
+    fn new_single_connection_execution_pool() -> DbPool {
+        let config = get_config().expect("test requires database configuration");
+        let settings = DatabasePoolSettings::builder(config.database_url.clone())
+            .max_size(1)
+            .statement_timeout_ms(config.db_statement_timeout_ms)
+            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+            .build()
+            .unwrap();
+        init_pool_with_settings(&settings)
+    }
+
     #[test]
     fn heartbeat_progresses_while_task_runtime_thread_is_blocked() {
         let renewal_attempts = Arc::new(AtomicUsize::new(0));
@@ -998,14 +1038,7 @@ mod lease_heartbeat_tests {
 
     #[tokio::test]
     async fn lease_pool_remains_available_when_execution_pool_is_exhausted() {
-        let config = get_config().expect("test requires database configuration");
-        let execution_settings = DatabasePoolSettings::builder(config.database_url.clone())
-            .max_size(1)
-            .statement_timeout_ms(config.db_statement_timeout_ms)
-            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
-            .build()
-            .unwrap();
-        let execution_pool = init_pool_with_settings(&execution_settings);
+        let execution_pool = new_single_connection_execution_pool();
         let _execution_connection = execution_pool.get().await.unwrap();
 
         let lease_pool = new_task_lease_pool();

@@ -14,7 +14,7 @@ use uuid::Uuid;
 use super::delivery::process_claimed_event_delivery;
 use crate::db::traits::event_delivery::{
     EventDeliverySettings, claim_event_deliveries, claim_event_delivery_by_id,
-    mark_event_delivery_dead, mark_event_delivery_failed,
+    mark_event_delivery_dead, mark_event_delivery_failed, next_event_delivery_wakeup_in_db,
 };
 use crate::db::traits::event_fanout::{
     EventFanoutSettings, claim_events_for_fanout, count_event_deliveries_for_event, fanout_event,
@@ -1032,6 +1032,12 @@ async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
     assert_eq!(first_failure.attempts, 1);
     assert_eq!(first_failure.last_error.as_deref(), Some("delivery failed"));
     assert!(first_failure.next_attempt_at > chrono::Utc::now().naive_utc());
+    assert!(
+        next_event_delivery_wakeup_in_db(&scope.pool)
+            .await
+            .unwrap()
+            .is_some_and(|wait| wait <= std::time::Duration::from_millis(1_000))
+    );
 
     with_connection(&scope.pool, async |conn| {
         use crate::schema::event_deliveries::dsl::{event_deliveries, id, next_attempt_at};

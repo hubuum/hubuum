@@ -189,9 +189,13 @@ There are two entry points:
 
 It starts a fixed number of background worker loops once per process.
 
-### Kick-on-submit
+### Notification-on-submit
 
-`kick_task_worker` is called from the import submission path so a newly queued import does not wait for the next idle poll cycle.
+Queued task transactions send a PostgreSQL notification on commit. Worker
+processes listen for those notifications, while same-process submission paths
+also call `kick_task_worker` for an immediate local wakeup. The configured poll
+interval is a safety net for listener reconnects and work inserted by an older
+server version.
 
 ### Worker count and polling
 
@@ -212,7 +216,7 @@ Defaults:
 
 - `HUBUUM_ACTIX_WORKERS`: detected CPU count
 - `HUBUUM_TASK_WORKERS`: about half the detected CPU count, minimum `1`
-- `HUBUUM_TASK_POLL_INTERVAL_MS`: `200`
+- `HUBUUM_TASK_POLL_INTERVAL_MS`: `5000`
 - `HUBUUM_TASK_LEASE_SECONDS`: `60`
 - `HUBUUM_TASK_HEARTBEAT_SECONDS`: `20`
 - `HUBUUM_TASK_RECOVERY_INTERVAL_SECONDS`: `30`

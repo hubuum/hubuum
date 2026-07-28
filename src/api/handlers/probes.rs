@@ -4,9 +4,9 @@ use utoipa::ToSchema;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::{DbPool, ensure_database_schema_ready};
+use crate::db::traits::probe::ProbeBackend;
+use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
-use crate::restores::maintenance_state;
 
 #[derive(Serialize, ToSchema)]
 pub struct ProbeResponse {
@@ -45,14 +45,18 @@ pub async fn healthz() -> impl Responder {
 )]
 #[get("/readyz")]
 pub async fn readyz(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
-    ensure_database_schema_ready(pool.get_ref())
+    let snapshot = with_db_call_site(DbCallSite::Readiness, pool.readiness_snapshot())
         .await
-        .map_err(|_| ApiError::ServiceUnavailable("Database schema is not ready".to_string()))?;
-
-    let maintenance = maintenance_state(&pool).await?;
-    if maintenance != "normal" {
+        .map_err(|_| ApiError::ServiceUnavailable("Database is not ready".to_string()))?;
+    if !snapshot.schema_is_ready() {
+        return Err(ApiError::ServiceUnavailable(
+            "Database schema is not ready".to_string(),
+        ));
+    }
+    if !snapshot.maintenance_state().is_normal() {
         return Err(ApiError::ServiceUnavailable(format!(
-            "Service is in '{maintenance}' maintenance"
+            "Service is in '{}' maintenance",
+            snapshot.maintenance_state()
         )));
     }
 
