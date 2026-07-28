@@ -492,13 +492,25 @@ fn single_host_installer_generates_redundant_http_upstreams() {
     assert!(installer.contains("reverse_proxy hubuum-api:${API_PORT}"));
     assert!(installer.contains("redir * /hubuum-api/"));
     assert!(!installer.contains("{$HUBUUM_BIND_PORT}"));
-    assert!(installer.contains("health_uri /readyz"));
     assert!(installer.contains("BACKEND_BASE_URL=http://caddy:8081"));
     assert!(
         installer.contains("HUBUUM_LOGIN_RATE_LIMIT_BACKEND: ${HUBUUM_LOGIN_RATE_LIMIT_BACKEND}")
     );
     assert!(installer.contains("export PODMAN_COMPOSE_WARNING_LOGS=false"));
     assert!(installer.contains("Environment=PODMAN_COMPOSE_WARNING_LOGS=false"));
+}
+
+#[test]
+fn single_host_api_health_checks_use_five_second_interval() {
+    let installer = read_repository_text("scripts/install-single-host.sh");
+    let api_proxy = installer
+        .split_once("(api_proxy) {")
+        .and_then(|(_, remainder)| remainder.split_once("(metrics_primary_proxy)"))
+        .map(|(api_proxy, _)| api_proxy)
+        .expect("installer should contain a bounded API proxy block");
+
+    assert!(api_proxy.contains("health_uri /readyz"));
+    assert!(api_proxy.contains("health_interval 5s"));
 }
 
 #[test]
