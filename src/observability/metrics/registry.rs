@@ -11,6 +11,7 @@ use crate::errors::ApiError;
 use crate::logger;
 
 use super::cache::ScrapeCache;
+use super::process::ProcessMetrics;
 use super::{METRICS, Metrics};
 
 const LATENCY_BUCKETS_SECONDS: &[f64] = &[
@@ -97,6 +98,7 @@ pub fn init() -> Result<(), ApiError> {
     }
 
     let registry = Registry::new();
+    let process_metrics = ProcessMetrics::new(&registry)?;
     let provider = build_provider(&registry)?;
     let meter = provider.meter("hubuum");
     let export_template_info = IntGaugeVec::new(
@@ -135,6 +137,7 @@ pub fn init() -> Result<(), ApiError> {
             .with_description("Unix timestamp when this Hubuum process initialized metrics")
             .with_unit("s")
             .build(),
+        process_metrics,
         http_requests: meter
             .u64_counter("hubuum_http_requests")
             .with_description("HTTP requests handled")
@@ -220,6 +223,11 @@ pub fn init() -> Result<(), ApiError> {
         task_oldest_age: meter
             .f64_gauge("hubuum_task_oldest_age")
             .with_description("Oldest queued or active task age")
+            .with_unit("s")
+            .build(),
+        task_last_terminal_timestamp: meter
+            .f64_gauge("hubuum_task_last_terminal_timestamp")
+            .with_description("Unix timestamp of the most recently finished task")
             .with_unit("s")
             .build(),
         computed_evaluations: meter

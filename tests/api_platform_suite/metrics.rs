@@ -2,16 +2,20 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use actix_web::{App, HttpResponse, http::StatusCode, test, web};
+use chrono::{NaiveDate, NaiveDateTime};
+use diesel::{ExpressionMethods, QueryDsl};
+use diesel_async::RunQueryDsl;
 use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::bb8::Pool;
 use rstest::rstest;
 use tokio::sync::Mutex;
 
 use crate::config::RuntimeRole;
-use crate::db::{DbConnection, DbPool};
+use crate::db::{DbConnection, DbPool, with_connection};
 use crate::middlewares::TracingMiddleware;
-use crate::models::{ExportTemplateID, TaskKind, TaskStatus};
+use crate::models::{ExportTemplateID, NewTaskRecord, TaskKind, TaskStatus};
 use crate::observability::metrics;
+use crate::schema::tasks;
 use crate::test_support::clear_metrics_scrape_cache;
 use crate::tests::{TestContext, test_context};
 
@@ -58,6 +62,26 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
     assert!(body.contains("hubuum_runtime_info{role=\"worker\"} 1"));
     assert!(body.contains("hubuum_process_start_time_seconds"));
     assert!(body.contains("hubuum_metrics_refresh_last_success_timestamp_seconds"));
+    assert!(
+        body.contains("hubuum_metrics_refresh_last_success_timestamp_seconds{source=\"process\"}")
+    );
+    assert!(body.contains(
+        "hubuum_task_last_terminal_timestamp_seconds{kind=\"export\",status=\"failed\"}"
+    ));
+
+    for metric_name in [
+        "process_cpu_seconds_total",
+        "process_max_fds",
+        "process_open_fds",
+        "process_resident_memory_bytes",
+        "process_start_time_seconds",
+        "process_virtual_memory_bytes",
+    ] {
+        assert!(
+            body.contains(metric_name),
+            "missing process metric: {metric_name}"
+        );
+    }
 }
 
 #[actix_web::test]
@@ -234,6 +258,75 @@ async fn task_gauges_export_zero_for_bounded_kind_status_pairs(
     }
 }
 
+#[rstest]
+#[actix_web::test]
+async fn task_terminal_gauge_exports_latest_finished_timestamp(
+    #[future(awt)] test_context: TestContext,
+) {
+    let _lock = METRICS_TEST_LOCK.lock().await;
+    let context = test_context;
+    metrics::init().unwrap();
+    clear_metrics_scrape_cache();
+
+    let older = NaiveDate::from_ymd_opt(9998, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let latest = NaiveDate::from_ymd_opt(9998, 1, 2)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let records = [
+        terminal_task_record(&context, "older", older),
+        terminal_task_record(&context, "latest", latest),
+    ];
+    let task_ids = with_connection(&context.pool, async |conn| {
+        diesel::insert_into(tasks::table)
+            .values(&records)
+            .returning(tasks::id)
+            .get_results::<i32>(conn)
+            .await
+    })
+    .await
+    .unwrap();
+
+    let app = test::init_service(
+        App::new()
+            .app_data(context.pool.clone())
+            .route("/metrics", web::get().to(metrics::scrape)),
+    )
+    .await;
+    let response =
+        test::call_service(&app, test::TestRequest::get().uri("/metrics").to_request()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = String::from_utf8(test::read_body(response).await.to_vec()).unwrap();
+
+    with_connection(&context.pool, async |conn| {
+        diesel::delete(tasks::table.filter(tasks::id.eq_any(task_ids)))
+            .execute(conn)
+            .await
+    })
+    .await
+    .unwrap();
+    clear_metrics_scrape_cache();
+
+    let metric = body
+        .lines()
+        .find(|line| {
+            line.starts_with(
+                "hubuum_task_last_terminal_timestamp_seconds{kind=\"backup\",status=\"failed\"}",
+            )
+        })
+        .expect("missing backup/failed terminal timestamp metric");
+    let exported = metric
+        .split_whitespace()
+        .nth(1)
+        .expect("metric value")
+        .parse::<f64>()
+        .expect("numeric metric value");
+    assert_eq!(exported, latest.and_utc().timestamp() as f64);
+}
+
 #[actix_web::test]
 async fn tracing_metrics_keep_stable_route_templates() {
     let _lock = METRICS_TEST_LOCK.lock().await;
@@ -274,6 +367,32 @@ async fn tracing_metrics_keep_stable_route_templates() {
     ));
     assert!(!body.contains("route=\"/api/v1/classes/42/objects/99\""));
     assert!(body.contains("hubuum_http_requests_in_flight{route=\"/metrics\"} 1"));
+}
+
+fn terminal_task_record(
+    context: &TestContext,
+    label: &str,
+    finished_at: NaiveDateTime,
+) -> NewTaskRecord {
+    NewTaskRecord {
+        kind: TaskKind::Backup.as_str().to_string(),
+        status: TaskStatus::Failed.as_str().to_string(),
+        submitted_by: Some(context.admin_user.id),
+        idempotency_key: Some(context.scoped_name(&format!("terminal-metric-{label}"))),
+        request_hash: None,
+        request_payload: None,
+        summary: Some("terminal metric fixture".to_string()),
+        total_items: 1,
+        processed_items: 1,
+        success_items: 0,
+        failed_items: 1,
+        submitted_token_id: None,
+        submitted_token_scoped: false,
+        submitted_token_scopes: serde_json::json!([]),
+        request_redacted_at: Some(finished_at),
+        started_at: Some(finished_at),
+        finished_at: Some(finished_at),
+    }
 }
 
 fn unreachable_pool() -> DbPool {

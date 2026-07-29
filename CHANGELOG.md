@@ -16,11 +16,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   transactional PostgreSQL notifications.
 - Added build, runtime-role, and process-start metrics so every scrape target
   can be identified and counter resets can be correlated with restarts.
+- Linux, macOS, and Windows scrape targets now expose standard Prometheus
+  process metrics for CPU, resident and virtual memory, file descriptors or
+  handles, and process start time, with process refresh health included in the
+  existing scrape-refresh diagnostics.
 - Worker-only processes now expose their own metrics-only HTTP listener at the
   configured bind address, port, and path, allowing Prometheus to scrape task
   and event workers directly.
 - Added scrape-refresh duration and freshness metrics, route-labelled in-flight
   requests, and per-task-kind oldest queued and active ages.
+- Added database-wide last-terminal task timestamps by kind and status so
+  retained task outcome counts can be distinguished from recent failures.
 - Export metrics now expose aggregate phase outcomes and a per-template total
   duration histogram. A resettable database snapshot maps template IDs to
   current names, while export task details persist total, query, hydration, and
@@ -74,6 +80,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Database-backed template identity no longer retains deleted or renamed
   templates in a process, and import and export phase timings record error
   outcomes.
+- Process descriptor-pressure metrics now use the live macOS soft limit and
+  report the incomparable Windows handle limit as unavailable. Principal
+  cleanup cancellations now persist their terminal timestamps.
 
 ## [0.0.5] - 2026-07-26
 

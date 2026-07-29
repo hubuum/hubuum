@@ -6,9 +6,8 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
 use crate::db::traits::service_account::{
-    DisableServiceAccount, SaveServiceAccount, cancel_pending_tasks_for_principal,
-    count_manageable_service_accounts, is_human_owner_group_member,
-    revoke_all_tokens_for_principal, search_manageable_service_accounts,
+    DisableServiceAccount, SaveServiceAccount, count_manageable_service_accounts,
+    is_human_owner_group_member, search_manageable_service_accounts,
 };
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, ManagementAccess};
@@ -256,9 +255,6 @@ pub async fn disable_service_account(
 
     let event_context = requestor.event_context(&req);
     let disabled = id.disable(&pool, &event_context).await?;
-    // Immediately soft-revoke its tokens and cancel its pending work.
-    revoke_all_tokens_for_principal(&pool, id.id()).await?;
-    cancel_pending_tasks_for_principal(&pool, id.id()).await?;
 
     debug!(
         message = "Service account disabled",

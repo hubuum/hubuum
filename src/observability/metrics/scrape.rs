@@ -22,6 +22,7 @@ pub(super) enum RefreshSource {
     Events,
     Inventory,
     LoginLimiter,
+    Process,
     Tasks,
 }
 
@@ -32,6 +33,7 @@ impl RefreshSource {
             Self::Events => "events",
             Self::Inventory => "inventory",
             Self::LoginLimiter => "login_limiter",
+            Self::Process => "process",
             Self::Tasks => "tasks",
         }
     }
@@ -39,6 +41,18 @@ impl RefreshSource {
 
 pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
     let metrics = get()?;
+    let process_refresh_started_at = Instant::now();
+    let process_refresh_outcome = if metrics.process_metrics.refresh() {
+        RefreshOutcome::Succeeded
+    } else {
+        RefreshOutcome::Failed
+    };
+    record_refresh_attempt(
+        metrics,
+        RefreshSource::Process,
+        process_refresh_started_at,
+        process_refresh_outcome,
+    );
     with_db_call_site(
         DbCallSite::MetricsRefresh,
         refresh_scrape_gauges(metrics, &pool),
@@ -113,10 +127,18 @@ mod tests {
                 RefreshSource::Events,
                 RefreshSource::Inventory,
                 RefreshSource::LoginLimiter,
+                RefreshSource::Process,
                 RefreshSource::Tasks,
             ]
             .map(RefreshSource::as_str),
-            ["database", "events", "inventory", "login_limiter", "tasks",]
+            [
+                "database",
+                "events",
+                "inventory",
+                "login_limiter",
+                "process",
+                "tasks",
+            ]
         );
     }
 }
