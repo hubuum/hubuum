@@ -224,7 +224,7 @@ mod tests {
         }))
         .unwrap();
         let restored: RestoreTimestamps = serde_json::from_value(serde_json::json!({
-            "created_at": "2019-04-05T06:07:08",
+            "created_at": "2020-01-02T03:04:05",
             "updated_at": "2021-06-07T08:09:10"
         }))
         .unwrap();

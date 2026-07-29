@@ -31,15 +31,17 @@ use crate::db::{capture_queries, with_connection};
 use crate::errors::ApiError;
 use crate::models::{
     CURRENT_IMPORT_VERSION, ClassKey, CollectionID, CollectionKey, ExportContentType,
-    ExportScopeKind, ExportTemplateKind, ImportAtomicity, ImportClassInput, ImportCollectionInput,
-    ImportCollisionPolicy, ImportExportTemplateInput, ImportGraph, ImportGroupMembershipInput,
-    ImportIdentityScopeInput, ImportMembershipSourceInput, ImportMode, ImportObjectInput,
+    ExportScopeKind, ExportTemplateKind, ImportAtomicity, ImportClassInput,
+    ImportClassRelationInput, ImportCollectionInput, ImportCollisionPolicy,
+    ImportExportTemplateInput, ImportGraph, ImportGroupMembershipInput, ImportIdentityScopeInput,
+    ImportMembershipSourceInput, ImportMode, ImportObjectInput, ImportObjectRelationInput,
     ImportPermissionPolicy, ImportRemoteTargetInput, ImportRequest, NewCollectionWithAssignee,
-    NewHubuumClass, NewHubuumObject, NewImportTaskResultRecord, NewTaskRecord, ObjectKey,
-    RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType, RestoreTimestamps, TaskKind,
-    TaskStatus,
+    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
+    NewImportTaskResultRecord, NewTaskRecord, ObjectKey, Permissions, RemoteAuthConfig,
+    RemoteHttpMethod, RemoteTargetSubjectType, RestoreTimestamps, TaskKind, TaskStatus,
 };
-use crate::permissions::test_support::MockTreetopBackend;
+use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
+use crate::permissions::types::{ResourceAttrs, ResourceKind};
 use crate::permissions::{AppContext, PermissionBackend};
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
@@ -213,6 +215,186 @@ async fn import_planning_uses_the_task_execution_permission_backend() {
     assert!(planning.aborted);
     assert_eq!(planning.failures.len(), 1);
     assert!(matches!(planning.failures[0].kind, FailureKind::Permission));
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TimestampRelationKind {
+    Class,
+    Object,
+}
+
+#[rstest]
+#[case::class_update(TimestampRelationKind::Class, Permissions::UpdateClassRelation, true)]
+#[case::class_create(TimestampRelationKind::Class, Permissions::CreateClassRelation, false)]
+#[case::object_update(TimestampRelationKind::Object, Permissions::UpdateObjectRelation, true)]
+#[case::object_create(
+    TimestampRelationKind::Object,
+    Permissions::CreateObjectRelation,
+    false
+)]
+#[tokio::test]
+async fn relation_timestamp_overwrite_requires_update_permission(
+    #[case] kind: TimestampRelationKind,
+    #[case] granted_permission: Permissions,
+    #[case] expected_allowed: bool,
+) {
+    let context = TestContext::new().await;
+    let fixtures = context
+        .collection_fixtures("relation_timestamp_permission", 2)
+        .await;
+    let mut classes = Vec::new();
+    let mut objects = Vec::new();
+    for (index, fixture) in fixtures.iter().enumerate() {
+        let class = NewHubuumClass {
+            collection_id: fixture.collection.id,
+            name: context.scoped_name(&format!("relation_timestamp_class_{index}")),
+            description: "Relation timestamp permission class".to_string(),
+            json_schema: None,
+            validate_schema: Some(false),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let object = NewHubuumObject {
+            collection_id: fixture.collection.id,
+            hubuum_class_id: class.id,
+            name: context.scoped_name(&format!("relation_timestamp_object_{index}")),
+            description: "Relation timestamp permission object".to_string(),
+            data: serde_json::json!({"index": index}),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        classes.push(class);
+        objects.push(object);
+    }
+    let class_relation = NewHubuumClassRelation {
+        from_hubuum_class_id: classes[0].id,
+        to_hubuum_class_id: classes[1].id,
+        forward_template_alias: None,
+        reverse_template_alias: None,
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    NewHubuumObjectRelation {
+        from_hubuum_object_id: objects[0].id,
+        to_hubuum_object_id: objects[1].id,
+        class_relation_id: class_relation.id,
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+
+    let policy_group = create_test_group(&context.pool).await;
+    policy_group
+        .add_member_without_events(&context.pool, &context.normal_user)
+        .await
+        .unwrap();
+    let permission_backend = MockTreetopBackend::new();
+    let resource_kind = match kind {
+        TimestampRelationKind::Class => ResourceKind::ClassRelation,
+        TimestampRelationKind::Object => ResourceKind::ObjectRelation,
+    };
+    for fixture in &fixtures {
+        permission_backend.add_rule(MockAllowRule {
+            group_id: policy_group.id,
+            action: granted_permission,
+            resource_kind: resource_kind.clone(),
+            resource_id: Some(0),
+            attrs: ResourceAttrs {
+                collection_id: Some(fixture.collection.id),
+                from_collection_id: Some(fixture.collection.id),
+                to_collection_id: Some(fixture.collection.id),
+                ..ResourceAttrs::default()
+            },
+        });
+    }
+    let backend = AppContext::new(context.pool.get_ref().clone(), Arc::new(permission_backend));
+
+    let collection_key = |index: usize| CollectionKey {
+        name: fixtures[index].collection.name.clone(),
+        path: None,
+    };
+    let class_key = |index: usize| ClassKey {
+        name: classes[index].name.clone(),
+        collection_ref: None,
+        collection_key: Some(collection_key(index)),
+    };
+    let object_key = |index: usize| ObjectKey {
+        name: objects[index].name.clone(),
+        class_ref: None,
+        class_key: Some(class_key(index)),
+    };
+    let timestamps = RestoreTimestamps {
+        created_at: NaiveDate::from_ymd_opt(2020, 1, 2)
+            .unwrap()
+            .and_hms_opt(3, 4, 5)
+            .unwrap(),
+        updated_at: NaiveDate::from_ymd_opt(2021, 2, 3)
+            .unwrap()
+            .and_hms_opt(4, 5, 6)
+            .unwrap(),
+    };
+    let mut graph = ImportGraph::default();
+    match kind {
+        TimestampRelationKind::Class => {
+            graph.class_relations.push(ImportClassRelationInput {
+                ref_: Some("class-relation:timestamp-permission".to_string()),
+                from_class_ref: None,
+                from_class_key: Some(class_key(0)),
+                to_class_ref: None,
+                to_class_key: Some(class_key(1)),
+                forward_template_alias: None,
+                reverse_template_alias: None,
+                timestamps: Some(timestamps),
+            });
+        }
+        TimestampRelationKind::Object => {
+            graph.object_relations.push(ImportObjectRelationInput {
+                ref_: Some("object-relation:timestamp-permission".to_string()),
+                from_object_ref: None,
+                from_object_key: Some(object_key(0)),
+                to_object_ref: None,
+                to_object_key: Some(object_key(1)),
+                timestamps: Some(timestamps),
+            });
+        }
+    }
+    let request = ImportRequest {
+        version: CURRENT_IMPORT_VERSION,
+        dry_run: Some(false),
+        mode: Some(ImportMode {
+            collision_policy: Some(ImportCollisionPolicy::Overwrite),
+            ..ImportMode::default()
+        }),
+        graph,
+    };
+
+    let planning = plan_import(&backend, &context.normal_user, None, &request).await;
+
+    assert_eq!(planning.aborted, !expected_allowed);
+    if expected_allowed {
+        assert!(planning.failures.is_empty());
+        assert!(matches!(
+            planning.planned_items.as_slice(),
+            [PlannedItem {
+                execution: Some(
+                    PlannedExecution::UpdateClassRelationTimestamps(_)
+                        | PlannedExecution::UpdateObjectRelationTimestamps(_)
+                ),
+                ..
+            }]
+        ));
+    } else {
+        assert!(matches!(
+            planning.failures.as_slice(),
+            [PlanningFailure {
+                kind: FailureKind::Permission,
+                ..
+            }]
+        ));
+    }
 }
 
 fn extended_import_request(name: String) -> ImportRequest {

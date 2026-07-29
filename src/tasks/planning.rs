@@ -1506,20 +1506,42 @@ where
             message,
         })?;
 
+    let relation_exists = class_relation_exists_cached(pool, state, pair.0, pair.1)
+        .await
+        .map_err(|message| PlanningFailure {
+            kind: FailureKind::Runtime,
+            item: planned_result(
+                "class_relation",
+                "lookup",
+                input.ref_.clone(),
+                identifier.clone(),
+            ),
+            message,
+        })?;
+    let will_update = relation_exists
+        && input.timestamps.is_some()
+        && !matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort));
+    let permission = if will_update {
+        Permissions::UpdateClassRelation
+    } else {
+        Permissions::CreateClassRelation
+    };
+    let action = if will_update { "update" } else { "create" };
+
     ensure_collection_permission_cached(
         backend,
         user,
         state,
         from_collection.id,
         from_collection.exists_in_db,
-        Permissions::CreateClassRelation,
+        permission,
     )
     .await
     .map_err(|message| PlanningFailure {
         kind: FailureKind::Permission,
         item: planned_result(
             "class_relation",
-            "create",
+            action,
             input.ref_.clone(),
             identifier.clone(),
         ),
@@ -1531,33 +1553,21 @@ where
         state,
         to_collection.id,
         to_collection.exists_in_db,
-        Permissions::CreateClassRelation,
+        permission,
     )
     .await
     .map_err(|message| PlanningFailure {
         kind: FailureKind::Permission,
         item: planned_result(
             "class_relation",
-            "create",
+            action,
             input.ref_.clone(),
             identifier.clone(),
         ),
         message,
     })?;
 
-    if class_relation_exists_cached(pool, state, pair.0, pair.1)
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Runtime,
-            item: planned_result(
-                "class_relation",
-                "lookup",
-                input.ref_.clone(),
-                identifier.clone(),
-            ),
-            message,
-        })?
-    {
+    if relation_exists {
         if matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort)) {
             return Err(PlanningFailure {
                 kind: FailureKind::Collision,
@@ -1646,35 +1656,6 @@ where
             message,
         })?;
 
-    ensure_collection_permission_cached(
-        backend,
-        user,
-        state,
-        from_collection.id,
-        from_collection.exists_in_db,
-        Permissions::CreateObjectRelation,
-    )
-    .await
-    .map_err(|message| PlanningFailure {
-        kind: FailureKind::Permission,
-        item: planned_result("object_relation", "create", input.ref_.clone(), None),
-        message,
-    })?;
-    ensure_collection_permission_cached(
-        backend,
-        user,
-        state,
-        to_collection.id,
-        to_collection.exists_in_db,
-        Permissions::CreateObjectRelation,
-    )
-    .await
-    .map_err(|message| PlanningFailure {
-        kind: FailureKind::Permission,
-        item: planned_result("object_relation", "create", input.ref_.clone(), None),
-        message,
-    })?;
-
     let class_pair = normalize_pair(from_object.class_id, to_object.class_id);
     let class_relation_exists =
         class_relation_exists_cached(pool, state, class_pair.0, class_pair.1)
@@ -1694,14 +1675,64 @@ where
         });
     }
 
-    if object_relation_exists_cached(pool, state, pair.0, pair.1)
+    let relation_exists = object_relation_exists_cached(pool, state, pair.0, pair.1)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Runtime,
             item: planned_result("object_relation", "lookup", input.ref_.clone(), None),
             message,
-        })?
-    {
+        })?;
+    let will_update = relation_exists
+        && input.timestamps.is_some()
+        && !matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort));
+    let permission = if will_update {
+        Permissions::UpdateObjectRelation
+    } else {
+        Permissions::CreateObjectRelation
+    };
+    let action = if will_update { "update" } else { "create" };
+    let identifier = Some(format!("{}<->{}", from_object.name, to_object.name));
+
+    ensure_collection_permission_cached(
+        backend,
+        user,
+        state,
+        from_collection.id,
+        from_collection.exists_in_db,
+        permission,
+    )
+    .await
+    .map_err(|message| PlanningFailure {
+        kind: FailureKind::Permission,
+        item: planned_result(
+            "object_relation",
+            action,
+            input.ref_.clone(),
+            identifier.clone(),
+        ),
+        message,
+    })?;
+    ensure_collection_permission_cached(
+        backend,
+        user,
+        state,
+        to_collection.id,
+        to_collection.exists_in_db,
+        permission,
+    )
+    .await
+    .map_err(|message| PlanningFailure {
+        kind: FailureKind::Permission,
+        item: planned_result(
+            "object_relation",
+            action,
+            input.ref_.clone(),
+            identifier.clone(),
+        ),
+        message,
+    })?;
+
+    if relation_exists {
         if matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort)) {
             return Err(PlanningFailure {
                 kind: FailureKind::Collision,
@@ -1712,12 +1743,7 @@ where
 
         if input.timestamps.is_some() {
             return Ok(PlannedItem {
-                result: planned_result(
-                    "object_relation",
-                    "update",
-                    input.ref_.clone(),
-                    Some(format!("{}<->{}", from_object.name, to_object.name)),
-                ),
+                result: planned_result("object_relation", "update", input.ref_.clone(), identifier),
                 execution: Some(PlannedExecution::UpdateObjectRelationTimestamps(
                     input.clone(),
                 )),
