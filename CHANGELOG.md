@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-07-29
+
 ### Added
 
 - Database acquisition, failure, operation-duration, and operation-error metrics
