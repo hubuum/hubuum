@@ -1,12 +1,11 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::process::{Command, Output};
 #[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(unix)]
 use rstest::rstest;
 
 #[cfg(unix)]
@@ -17,6 +16,39 @@ fn read_repository_text(relative_path: &str) -> String {
     fs::read_to_string(repository.join(relative_path))
         .unwrap_or_else(|error| panic!("{relative_path} should be readable: {error}"))
         .replace("\r\n", "\n")
+}
+
+fn lines_between<'a>(text: &'a str, start: &str, end: &str) -> Option<Vec<&'a str>> {
+    let mut lines = text.lines();
+    lines.find(|line| *line == start)?;
+
+    let mut section = Vec::new();
+    for line in lines {
+        if line == end {
+            return Some(section);
+        }
+        section.push(line);
+    }
+    None
+}
+
+#[rstest]
+#[case("\n")]
+#[case("\r\n")]
+fn lines_between_handles_platform_line_endings(#[case] line_ending: &str) {
+    let workflow = [
+        "jobs:",
+        "  benchmarks:",
+        "    with:",
+        "      auto_discover: true",
+        "  postgres-storage:",
+    ]
+    .join(line_ending);
+
+    assert_eq!(
+        lines_between(&workflow, "  benchmarks:", "  postgres-storage:"),
+        Some(vec!["    with:", "      auto_discover: true"])
+    );
 }
 
 #[cfg(unix)]
@@ -281,6 +313,62 @@ fn container_dependency_images_are_pinned() {
 }
 
 #[test]
+fn self_contained_benchmark_autodiscovery_excludes_feature_gated_targets() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workflow = fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
+        .expect("benchmark workflow should be readable");
+    let self_contained_job = lines_between(&workflow, "  benchmarks:", "  postgres-storage:")
+        .expect("benchmark workflow should contain a bounded self-contained job");
+    assert!(
+        self_contained_job
+            .iter()
+            .any(|line| line.contains("auto_discover: true"))
+    );
+    assert!(
+        !self_contained_job
+            .iter()
+            .any(|line| line.contains("benchmarks_json:"))
+    );
+
+    let manifest = read_repository_text("Cargo.toml");
+    let manifest: toml::Value =
+        toml::from_str(&manifest).expect("root Cargo manifest should be valid TOML");
+    let feature_gated_benchmarks = manifest
+        .get("bench")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|benchmark| benchmark.get("required-features").is_some())
+        .collect::<Vec<_>>();
+    assert!(!feature_gated_benchmarks.is_empty());
+
+    for benchmark in feature_gated_benchmarks {
+        let name = benchmark
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .expect("feature-gated benchmark should have a name");
+        let path = benchmark
+            .get("path")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| {
+                panic!(
+                    "feature-gated benchmark '{name}' needs an explicit path outside benches/*.rs"
+                )
+            });
+        let path = Path::new(path);
+        assert!(
+            path.starts_with("benches") && path.parent() != Some(Path::new("benches")),
+            "feature-gated benchmark '{name}' must stay below a nested benches directory"
+        );
+        assert!(
+            repository.join(path).is_file(),
+            "feature-gated benchmark '{name}' path '{}' should exist",
+            path.display()
+        );
+    }
+}
+
+#[test]
 fn postgres_benchmark_workflow_confirms_regressions_on_stable_base_runs() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workflow = fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
@@ -492,13 +580,25 @@ fn single_host_installer_generates_redundant_http_upstreams() {
     assert!(installer.contains("reverse_proxy hubuum-api:${API_PORT}"));
     assert!(installer.contains("redir * /hubuum-api/"));
     assert!(!installer.contains("{$HUBUUM_BIND_PORT}"));
-    assert!(installer.contains("health_uri /readyz"));
     assert!(installer.contains("BACKEND_BASE_URL=http://caddy:8081"));
     assert!(
         installer.contains("HUBUUM_LOGIN_RATE_LIMIT_BACKEND: ${HUBUUM_LOGIN_RATE_LIMIT_BACKEND}")
     );
     assert!(installer.contains("export PODMAN_COMPOSE_WARNING_LOGS=false"));
     assert!(installer.contains("Environment=PODMAN_COMPOSE_WARNING_LOGS=false"));
+}
+
+#[test]
+fn single_host_api_health_checks_use_five_second_interval() {
+    let installer = read_repository_text("scripts/install-single-host.sh");
+    let api_proxy = installer
+        .split_once("(api_proxy) {")
+        .and_then(|(_, remainder)| remainder.split_once("(metrics_primary_proxy)"))
+        .map(|(api_proxy, _)| api_proxy)
+        .expect("installer should contain a bounded API proxy block");
+
+    assert!(api_proxy.contains("health_uri /readyz"));
+    assert!(api_proxy.contains("health_interval 5s"));
 }
 
 #[test]

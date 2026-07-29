@@ -120,6 +120,11 @@ cargo bench --bench database_url_parsing_criterion -- --noplot
 cargo bench --bench password_hashing_criterion -- --noplot
 ```
 
+The self-contained CI job auto-discovers `benches/*.rs`. Feature-gated
+database benchmarks live in nested benchmark directories with explicit Cargo
+paths so they remain in their dedicated jobs without disabling autodiscovery.
+The container-build tests enforce this separation.
+
 `iai-callgrind` requires `valgrind` to be installed locally.
 
 The PostgreSQL storage benchmark is opt-in and requires an empty, migrated,
@@ -134,6 +139,36 @@ cargo run --features embedded-migrations --bin hubuum-admin -- \
 cargo bench --features postgres-bench \
   --bench storage_postgres_criterion -- --noplot
 ```
+
+The runtime behavior benchmark is also opt-in and requires a migrated,
+disposable database. It starts an all-role primary and an API-only standby,
+measures idle Prometheus counter deltas, sends fixed readiness traffic, and
+inserts one intentionally invalid export task to measure PostgreSQL
+notification-to-claim latency. Build the server before running the benchmark;
+the development profile avoids irrelevant release-link overhead:
+
+```bash
+export HUBUUM_BENCH_DATABASE_URL=postgres://postgres:postgres@localhost/hubuum_runtime
+cargo run --features embedded-migrations --bin hubuum-admin -- \
+  --migrate --database-url "$HUBUUM_BENCH_DATABASE_URL"
+cargo build --features runtime-behavior-bench --bin hubuum-server
+cargo bench --profile dev --features runtime-behavior-bench \
+  --bench runtime_behavior -- measure \
+  --server-binary target/debug/hubuum-server \
+  --database-url "$HUBUUM_BENCH_DATABASE_URL" \
+  --sample-seconds 60 \
+  --label local \
+  --output target/runtime-behavior/local.json
+cargo bench --profile dev --features runtime-behavior-bench \
+  --bench runtime_behavior -- assess \
+  --head target/runtime-behavior/local.json
+```
+
+The JSON report separates connection-pool acquisitions by caller, records
+task/fan-out timer rates and per-iteration checkout ratios, verifies one
+readiness checkout per request, and records notification wake-up and task-claim
+latency. Connection acquisitions are pooled checkouts, not new PostgreSQL
+network connections.
 
 The deterministic PostgreSQL query budgets use the normal isolated test
 database runner. The central storage suite covers point reads, hierarchy and
@@ -161,10 +196,15 @@ query nondeterministically to the next operation.
   `backend: all` job, so PRs get a single consolidated benchmark export.
 - `iai-callgrind` remains the practical gating signal with a low regression threshold.
 - Criterion still runs in the same combined job, but uses a very high regression threshold so it exports timing changes without acting as a meaningful gate.
-- A separate PostgreSQL 17 job runs storage Criterion benchmarks against
+- A separate PostgreSQL job runs storage Criterion benchmarks against
   isolated base and pull-request databases. It warns above a 10% median change
   and fails above 20% only when the 95% confidence interval also indicates a
   regression.
+- A two-process runtime behavior job records base/head Prometheus counter
+  deltas and publishes both JSON reports plus a Markdown comparison. Absolute
+  budgets guard idle polling, database checkout ratios, readiness behavior, and
+  notification-driven task claims; a 25% base/head threshold catches larger
+  behavioral regressions while tolerating timer-boundary jitter.
 - The PostgreSQL query-budget tests are the stricter gate: fixed operation
   totals, control/domain splits, query fingerprints, connection checkouts, and
   declared scaling slopes must remain stable.

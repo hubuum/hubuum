@@ -262,3 +262,142 @@ jobs:
             "$POSTGRES_BENCH_FAILURE_PCT" \
             "$POSTGRES_BENCH_FAILURE_ABSOLUTE_NS" \
             reverse error "" "$CONFIRMED_FAILURES" pr-head-confirmation
+
+  runtime-behavior:
+    name: Runtime behavior benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BASE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_runtime_base
+      HEAD_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hubuum_runtime_head
+      CARGO_TARGET_DIR: target
+      RUNTIME_BEHAVIOR_REPORT_DIR: target/runtime-behavior
+      RUNTIME_BEHAVIOR_SAMPLE_SECONDS: 60
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Detect runtime behavior inputs
+        id: runtime_changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
+            .github/workflows/benchmarks.yml Cargo.toml Cargo.lock \
+            benches/runtime_behavior.rs migrations src \
+            ':(exclude)src/tests/**'; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No runtime behavior benchmark inputs changed."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Cache Cargo and target directories
+        if: steps.runtime_changes.outputs.changed == 'true'
+        uses: Swatinem/rust-cache@v2
+      - name: Install PostgreSQL build tools
+        if: steps.runtime_changes.outputs.changed == 'true'
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libpq-dev
+      - name: Create isolated runtime benchmark databases
+        if: steps.runtime_changes.outputs.changed == 'true'
+        env:
+          PGPASSWORD: postgres
+        run: |
+          createdb --host localhost --username postgres hubuum_runtime_base
+          createdb --host localhost --username postgres hubuum_runtime_head
+          mkdir -p "$RUNTIME_BEHAVIOR_REPORT_DIR"
+      - name: Detect an existing base runtime benchmark
+        if: steps.runtime_changes.outputs.changed == 'true'
+        id: base_runtime
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git cat-file -e "$BASE_SHA:benches/runtime_behavior.rs" 2>/dev/null; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Measure base runtime behavior
+        if: >-
+          steps.runtime_changes.outputs.changed == 'true' &&
+          steps.base_runtime.outputs.available == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git checkout --detach "$BASE_SHA"
+          cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
+            --migrate --database-url "$BASE_DATABASE_URL"
+          cargo build --locked --features runtime-behavior-bench --bin hubuum-server
+          cargo bench --profile dev --locked --features runtime-behavior-bench \
+            --bench runtime_behavior -- measure \
+            --server-binary target/debug/hubuum-server \
+            --database-url "$BASE_DATABASE_URL" \
+            --sample-seconds "$RUNTIME_BEHAVIOR_SAMPLE_SECONDS" \
+            --primary-port 18080 \
+            --standby-port 18081 \
+            --label "$BASE_SHA" \
+            --output "$RUNTIME_BEHAVIOR_REPORT_DIR/base.json"
+      - name: Measure pull-request runtime behavior
+        if: steps.runtime_changes.outputs.changed == 'true'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git checkout --detach "$HEAD_SHA"
+          cargo run --locked --features embedded-migrations --bin hubuum-admin -- \
+            --migrate --database-url "$HEAD_DATABASE_URL"
+          cargo build --locked --features runtime-behavior-bench --bin hubuum-server
+          cargo bench --profile dev --locked --features runtime-behavior-bench \
+            --bench runtime_behavior -- measure \
+            --server-binary target/debug/hubuum-server \
+            --database-url "$HEAD_DATABASE_URL" \
+            --sample-seconds "$RUNTIME_BEHAVIOR_SAMPLE_SECONDS" \
+            --primary-port 18080 \
+            --standby-port 18081 \
+            --label "$HEAD_SHA" \
+            --output "$RUNTIME_BEHAVIOR_REPORT_DIR/head.json"
+      - name: Assess runtime behavior
+        if: steps.runtime_changes.outputs.changed == 'true'
+        env:
+          BASE_AVAILABLE: ${{ steps.base_runtime.outputs.available }}
+        run: |
+          base_args=()
+          if [[ "$BASE_AVAILABLE" == "true" ]]; then
+            base_args=(--base "$RUNTIME_BEHAVIOR_REPORT_DIR/base.json")
+          fi
+          cargo bench --profile dev --locked --features runtime-behavior-bench \
+            --bench runtime_behavior -- assess \
+            --head "$RUNTIME_BEHAVIOR_REPORT_DIR/head.json" \
+            "${base_args[@]}" \
+            --markdown-output "$GITHUB_STEP_SUMMARY" \
+            --max-primary-background-db-per-second 1.9 \
+            --max-standby-background-db-per-second 1.2 \
+            --max-aggregate-background-db-per-second 3.0 \
+            --max-task-idle-per-second 0.25 \
+            --max-fanout-poll-per-second 0.25 \
+            --max-restore-db-per-second 1.1 \
+            --max-task-worker-db-per-idle-iteration 2.25 \
+            --max-fanout-db-per-poll-wakeup 1.1 \
+            --max-notification-latency-ms 1000 \
+            --max-task-claim-latency-ms 1000 \
+            --max-relative-regression-percent 25
+      - name: Upload runtime behavior reports
+        if: always() && steps.runtime_changes.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-behavior
+          path: target/runtime-behavior

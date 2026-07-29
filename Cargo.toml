@@ -134,6 +134,10 @@ query-capture = []
 # Enables the opt-in PostgreSQL Criterion target. It remains separate from the
 # self-contained benchmark fan-out because it needs a migrated database.
 postgres-bench = []
+# Enables the opt-in end-to-end runtime behavior benchmark. The target starts
+# real server processes and therefore remains separate from self-contained
+# benchmark auto-discovery.
+runtime-behavior-bench = []
 production-all = [
     "amqp",
     "email",
@@ -236,3 +240,9 @@ name = "storage_postgres_criterion"
 path = "benches/postgres/storage_postgres_criterion.rs"
 harness = false
 required-features = ["postgres-bench"]
+
+[[bench]]
+name = "runtime_behavior"
+path = "benches/runtime/runtime_behavior.rs"
+harness = false
+required-features = ["runtime-behavior-bench"]
