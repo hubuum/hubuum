@@ -12,12 +12,13 @@ mod tests {
     use crate::db::with_connection;
     use crate::models::{
         CURRENT_IMPORT_VERSION, CollectionKey, GroupKey, IdentityScopeKey, ImportAtomicity,
-        ImportClassInput, ImportCollectionInput, ImportCollectionPermissionInput,
-        ImportCollisionPolicy, ImportEventSubscriptionInput, ImportGraph, ImportGroupInput,
-        ImportGroupMembershipInput, ImportIdentityScopeInput, ImportMode, ImportObjectInput,
-        ImportPermissionPolicy, ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest,
-        ImportTaskResultResponse, NewTaskRecord, Permissions, TaskEventResponse, TaskKind,
-        TaskResponse, TaskStatus,
+        ImportClassInput, ImportClassRelationInput, ImportCollectionInput,
+        ImportCollectionPermissionInput, ImportCollisionPolicy, ImportEventSubscriptionInput,
+        ImportGraph, ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput,
+        ImportMode, ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy,
+        ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest, ImportTaskResultResponse,
+        NewTaskRecord, Permissions, RestoreTimestamps, TaskEventResponse, TaskKind, TaskResponse,
+        TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::schema::collections::dsl::{
@@ -26,6 +27,9 @@ mod tests {
     use crate::schema::hubuumclass::dsl::{
         collection_id as class_collection_id, hubuumclass, name as class_name,
     };
+    use crate::schema::hubuumclass_relation::dsl as class_relation;
+    use crate::schema::hubuumobject::dsl as object;
+    use crate::schema::hubuumobject_relation::dsl as object_relation;
     use crate::schema::tasks::dsl::{
         id as task_id_field, request_payload, request_redacted_at, tasks,
     };
@@ -85,6 +89,7 @@ mod tests {
                     ref_: Some("collection:primary".to_string()),
                     name,
                     description: description.to_string(),
+                    timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
                 }],
@@ -164,6 +169,7 @@ mod tests {
                     ref_: Some("collection:benchmark".to_string()),
                     name: collection_name,
                     description: "Benchmark collection".to_string(),
+                    timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
                 }],
@@ -195,6 +201,180 @@ mod tests {
         let completed = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
         assert_eq!(completed.progress.success_items, 6);
         assert_eq!(completed.progress.failed_items, 0);
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn core_graph_import_overwrite_restores_timestamps(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let collection_name = context.scoped_name("timestamp_collection");
+        let class_names = [
+            context.scoped_name("timestamp_class_one"),
+            context.scoped_name("timestamp_class_two"),
+        ];
+        let object_names = [
+            context.scoped_name("timestamp_object_one"),
+            context.scoped_name("timestamp_object_two"),
+        ];
+        let initial: RestoreTimestamps = serde_json::from_value(serde_json::json!({
+            "created_at": "2020-01-02T03:04:05",
+            "updated_at": "2020-02-03T04:05:06"
+        }))
+        .unwrap();
+        let restored: RestoreTimestamps = serde_json::from_value(serde_json::json!({
+            "created_at": "2019-04-05T06:07:08",
+            "updated_at": "2021-06-07T08:09:10"
+        }))
+        .unwrap();
+        let request = |timestamps: RestoreTimestamps, collision_policy| ImportRequest {
+            version: CURRENT_IMPORT_VERSION,
+            dry_run: Some(false),
+            mode: Some(ImportMode {
+                atomicity: Some(ImportAtomicity::Strict),
+                collision_policy: Some(collision_policy),
+                permission_policy: Some(ImportPermissionPolicy::Abort),
+            }),
+            graph: ImportGraph {
+                collections: vec![ImportCollectionInput {
+                    ref_: Some("collection:timestamps".to_string()),
+                    name: collection_name.clone(),
+                    description: "Timestamp import collection".to_string(),
+                    parent_collection_ref: None,
+                    parent_collection_key: None,
+                    timestamps: Some(timestamps.clone()),
+                }],
+                classes: class_names
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| ImportClassInput {
+                        ref_: Some(format!("class:timestamps:{index}")),
+                        name: name.clone(),
+                        description: format!("Timestamp import class {index}"),
+                        json_schema: None,
+                        validate_schema: Some(false),
+                        collection_ref: Some("collection:timestamps".to_string()),
+                        collection_key: None,
+                        timestamps: Some(timestamps.clone()),
+                    })
+                    .collect(),
+                objects: object_names
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| ImportObjectInput {
+                        ref_: Some(format!("object:timestamps:{index}")),
+                        name: name.clone(),
+                        description: format!("Timestamp import object {index}"),
+                        data: serde_json::json!({"index": index}),
+                        class_ref: Some(format!("class:timestamps:{index}")),
+                        class_key: None,
+                        timestamps: Some(timestamps.clone()),
+                    })
+                    .collect(),
+                class_relations: vec![ImportClassRelationInput {
+                    ref_: Some("class-relation:timestamps".to_string()),
+                    from_class_ref: Some("class:timestamps:0".to_string()),
+                    from_class_key: None,
+                    to_class_ref: Some("class:timestamps:1".to_string()),
+                    to_class_key: None,
+                    forward_template_alias: None,
+                    reverse_template_alias: None,
+                    timestamps: Some(timestamps.clone()),
+                }],
+                object_relations: vec![ImportObjectRelationInput {
+                    ref_: Some("object-relation:timestamps".to_string()),
+                    from_object_ref: Some("object:timestamps:0".to_string()),
+                    from_object_key: None,
+                    to_object_ref: Some("object:timestamps:1".to_string()),
+                    to_object_key: None,
+                    timestamps: Some(timestamps),
+                }],
+                ..ImportGraph::default()
+            },
+        };
+
+        for (body, expected) in [
+            (
+                request(initial.clone(), ImportCollisionPolicy::Abort),
+                initial,
+            ),
+            (
+                request(restored.clone(), ImportCollisionPolicy::Overwrite),
+                restored,
+            ),
+        ] {
+            let response = post_request_with_headers(
+                &context.pool,
+                &context.admin_token,
+                IMPORTS_ENDPOINT,
+                &body,
+                Vec::new(),
+            )
+            .await;
+            let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+            let task: TaskResponse = test::read_body_json(response).await;
+            wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+            let timestamps = with_connection(&context.pool, async |conn| {
+                let collection_timestamps = collections
+                    .filter(crate::schema::collections::name.eq(&collection_name))
+                    .select((
+                        crate::schema::collections::created_at,
+                        crate::schema::collections::updated_at,
+                    ))
+                    .first(conn)
+                    .await?;
+                let classes = hubuumclass
+                    .filter(class_name.eq_any(&class_names))
+                    .select((
+                        crate::schema::hubuumclass::id,
+                        crate::schema::hubuumclass::created_at,
+                        crate::schema::hubuumclass::updated_at,
+                    ))
+                    .load::<(i32, _, _)>(conn)
+                    .await?;
+                let objects = object::hubuumobject
+                    .filter(object::name.eq_any(&object_names))
+                    .select((object::id, object::created_at, object::updated_at))
+                    .load::<(i32, _, _)>(conn)
+                    .await?;
+                let class_ids = (
+                    classes.iter().map(|row| row.0).min().unwrap(),
+                    classes.iter().map(|row| row.0).max().unwrap(),
+                );
+                let object_ids = (
+                    objects.iter().map(|row| row.0).min().unwrap(),
+                    objects.iter().map(|row| row.0).max().unwrap(),
+                );
+                let class_relation_timestamps = class_relation::hubuumclass_relation
+                    .filter(class_relation::from_hubuum_class_id.eq(class_ids.0))
+                    .filter(class_relation::to_hubuum_class_id.eq(class_ids.1))
+                    .select((class_relation::created_at, class_relation::updated_at))
+                    .first(conn)
+                    .await?;
+                let object_relation_timestamps = object_relation::hubuumobject_relation
+                    .filter(object_relation::from_hubuum_object_id.eq(object_ids.0))
+                    .filter(object_relation::to_hubuum_object_id.eq(object_ids.1))
+                    .select((object_relation::created_at, object_relation::updated_at))
+                    .first(conn)
+                    .await?;
+
+                let mut timestamps = vec![collection_timestamps];
+                timestamps.extend(classes.into_iter().map(|row| (row.1, row.2)));
+                timestamps.extend(objects.into_iter().map(|row| (row.1, row.2)));
+                timestamps.push(class_relation_timestamps);
+                timestamps.push(object_relation_timestamps);
+                Ok::<_, diesel::result::Error>(timestamps)
+            })
+            .await
+            .unwrap();
+
+            assert_eq!(
+                timestamps,
+                vec![(expected.created_at, expected.updated_at); 7]
+            );
+        }
     }
 
     #[rstest]
@@ -382,6 +562,7 @@ mod tests {
                     ref_: Some("collection:primary".to_string()),
                     name: import_collection_name.clone(),
                     description: "Imported collection".to_string(),
+                    timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
                 }],
@@ -389,6 +570,7 @@ mod tests {
                     ref_: Some("class:primary".to_string()),
                     name: import_class_name.clone(),
                     description: "Imported class".to_string(),
+                    timestamps: None,
                     json_schema: None,
                     validate_schema: Some(false),
                     collection_ref: Some("collection:primary".to_string()),
@@ -398,6 +580,7 @@ mod tests {
                     ref_: Some("object:primary".to_string()),
                     name: object_name.clone(),
                     description: "Imported object".to_string(),
+                    timestamps: None,
                     data: serde_json::json!({"hostname": object_name}),
                     class_ref: Some("class:primary".to_string()),
                     class_key: None,
@@ -583,6 +766,7 @@ mod tests {
                     ref_: Some("collection:dry".to_string()),
                     name: import_collection_name,
                     description: "Dry run collection".to_string(),
+                    timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
                 }],
@@ -641,6 +825,7 @@ mod tests {
                             "idempotent_import_collection_concurrent_{iteration}"
                         )),
                         description: "Dry run collection".to_string(),
+                        timestamps: None,
                         parent_collection_ref: None,
                         parent_collection_key: None,
                     }],
@@ -718,6 +903,7 @@ mod tests {
                     ref_: Some("collection:conflict".to_string()),
                     name: context.scoped_name("idempotency_conflict_collection"),
                     description: "Dry run collection".to_string(),
+                    timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
                 }],
@@ -777,6 +963,7 @@ mod tests {
                     ref_: Some("collection:conflict".to_string()),
                     name: context.scoped_name("idempotency_conflict_collection_changed"),
                     description: "Changed dry run collection".to_string(),
+                    timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
                 }],
@@ -814,6 +1001,7 @@ mod tests {
                     ref_: Some("collection:unsupported".to_string()),
                     name: context.scoped_name("unsupported_import_version"),
                     description: "unsupported".to_string(),
+                    timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
                 }],
@@ -859,6 +1047,7 @@ mod tests {
                     ref_: Some("collection:page".to_string()),
                     name: context.scoped_name("paged_import_collection"),
                     description: "Imported collection".to_string(),
+                    timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
                 }],
@@ -866,6 +1055,7 @@ mod tests {
                     ref_: Some("class:page".to_string()),
                     name: context.scoped_name("paged_import_class"),
                     description: "Imported class".to_string(),
+                    timestamps: None,
                     json_schema: None,
                     validate_schema: Some(false),
                     collection_ref: Some("collection:page".to_string()),
@@ -875,6 +1065,7 @@ mod tests {
                     ref_: Some("object:page".to_string()),
                     name: context.scoped_name("paged_import_object"),
                     description: "Imported object".to_string(),
+                    timestamps: None,
                     data: serde_json::json!({"hostname": "paged"}),
                     class_ref: Some("class:page".to_string()),
                     class_key: None,
@@ -1094,6 +1285,7 @@ mod tests {
                         ref_: Some("class:allowed".to_string()),
                         name: allowed_class.clone(),
                         description: "allowed".to_string(),
+                        timestamps: None,
                         json_schema: None,
                         validate_schema: Some(false),
                         collection_ref: None,
@@ -1106,6 +1298,7 @@ mod tests {
                         ref_: Some("class:forbidden".to_string()),
                         name: forbidden_class.clone(),
                         description: "forbidden".to_string(),
+                        timestamps: None,
                         json_schema: None,
                         validate_schema: Some(false),
                         collection_ref: None,
@@ -1298,6 +1491,7 @@ mod tests {
                     ref_: Some("collection:private".to_string()),
                     name: context.scoped_name("private_task_collection"),
                     description: "private".to_string(),
+                    timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
                 }],

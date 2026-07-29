@@ -256,6 +256,7 @@ pub struct ImportCollectionInput {
     pub description: String,
     pub parent_collection_ref: Option<String>,
     pub parent_collection_key: Option<CollectionKey>,
+    pub timestamps: Option<RestoreTimestamps>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -268,6 +269,7 @@ pub struct ImportClassInput {
     pub validate_schema: Option<bool>,
     pub collection_ref: Option<String>,
     pub collection_key: Option<CollectionKey>,
+    pub timestamps: Option<RestoreTimestamps>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -279,6 +281,7 @@ pub struct ImportObjectInput {
     pub data: serde_json::Value,
     pub class_ref: Option<String>,
     pub class_key: Option<ClassKey>,
+    pub timestamps: Option<RestoreTimestamps>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -291,6 +294,7 @@ pub struct ImportClassRelationInput {
     pub to_class_key: Option<ClassKey>,
     pub forward_template_alias: Option<String>,
     pub reverse_template_alias: Option<String>,
+    pub timestamps: Option<RestoreTimestamps>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -301,6 +305,7 @@ pub struct ImportObjectRelationInput {
     pub from_object_key: Option<ObjectKey>,
     pub to_object_ref: Option<String>,
     pub to_object_key: Option<ObjectKey>,
+    pub timestamps: Option<RestoreTimestamps>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -610,11 +615,36 @@ impl ImportGraph {
         Ok(())
     }
 
-    fn validate_extended_timestamps(&self) -> Result<(), ApiError> {
+    fn validate_timestamps(&self) -> Result<(), ApiError> {
         let timestamps = self
-            .identity_scopes
+            .collections
             .iter()
             .filter_map(|item| item.timestamps.as_ref())
+            .chain(
+                self.classes
+                    .iter()
+                    .filter_map(|item| item.timestamps.as_ref()),
+            )
+            .chain(
+                self.objects
+                    .iter()
+                    .filter_map(|item| item.timestamps.as_ref()),
+            )
+            .chain(
+                self.class_relations
+                    .iter()
+                    .filter_map(|item| item.timestamps.as_ref()),
+            )
+            .chain(
+                self.object_relations
+                    .iter()
+                    .filter_map(|item| item.timestamps.as_ref()),
+            )
+            .chain(
+                self.identity_scopes
+                    .iter()
+                    .filter_map(|item| item.timestamps.as_ref()),
+            )
             .chain(
                 self.groups
                     .iter()
@@ -674,7 +704,7 @@ impl ImportRequest {
             )));
         }
         self.graph.validate_extended_selectors()?;
-        self.graph.validate_extended_timestamps()?;
+        self.graph.validate_timestamps()?;
         for principal in &self.graph.principals {
             principal.validate_credentials()?;
         }
@@ -882,6 +912,47 @@ mod tests {
         };
 
         assert_eq!(timestamps.validate().is_ok(), expected_valid);
+    }
+
+    #[rstest]
+    #[case::collection("collections")]
+    #[case::class("classes")]
+    #[case::object("objects")]
+    #[case::class_relation("class_relations")]
+    #[case::object_relation("object_relations")]
+    fn core_import_timestamps_are_validated(#[case] section: &str) {
+        let timestamps = serde_json::json!({
+            "created_at": "2026-07-14T10:00:00",
+            "updated_at": "2026-07-14T09:00:00"
+        });
+        let item = match section {
+            "collections" => serde_json::json!({
+                "name": "collection",
+                "description": "collection",
+                "timestamps": timestamps
+            }),
+            "classes" => serde_json::json!({
+                "name": "class",
+                "description": "class",
+                "timestamps": timestamps
+            }),
+            "objects" => serde_json::json!({
+                "name": "object",
+                "description": "object",
+                "data": {},
+                "timestamps": timestamps
+            }),
+            "class_relations" | "object_relations" => serde_json::json!({
+                "timestamps": timestamps
+            }),
+            _ => unreachable!("rstest supplies a supported core import section"),
+        };
+        let mut graph = serde_json::Map::new();
+        graph.insert(section.to_string(), serde_json::json!([item]));
+        let graph: ImportGraph =
+            serde_json::from_value(serde_json::Value::Object(graph)).expect("valid import graph");
+
+        assert!(graph.validate_timestamps().is_err());
     }
 
     fn request_with_graph(graph: ImportGraph) -> ImportRequest {

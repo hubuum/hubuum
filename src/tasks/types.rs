@@ -157,7 +157,9 @@ pub(super) enum PlannedExecution {
         input: ImportObjectInput,
     },
     CreateClassRelation(ImportClassRelationInput),
+    UpdateClassRelationTimestamps(ImportClassRelationInput),
     CreateObjectRelation(ImportObjectRelationInput),
+    UpdateObjectRelationTimestamps(ImportObjectRelationInput),
     ApplyCollectionPermissions(ImportCollectionPermissionInput),
     UpsertExportTemplate {
         input: ImportExportTemplateInput,

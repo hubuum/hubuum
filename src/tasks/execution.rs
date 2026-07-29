@@ -28,7 +28,8 @@ use crate::db::traits::task_import::{
     apply_permissions_db, create_class_db, create_class_relation_db, create_collection_db,
     create_object_db, create_object_relation_db, load_export_template_sources_db,
     lookup_event_sink_id_by_name_db, lookup_group_by_name_db, lookup_identity_scope_id_by_name_db,
-    lookup_principal_id_by_name_db, update_class_db, update_collection_db, update_object_db,
+    lookup_principal_id_by_name_db, update_class_db, update_class_relation_timestamps_db,
+    update_collection_db, update_object_db, update_object_relation_timestamps_db,
     upsert_event_sink_db, upsert_event_subscription_db, upsert_export_template_db, upsert_group_db,
     upsert_group_membership_db, upsert_identity_scope_db, upsert_principal_db,
     upsert_remote_target_db,
@@ -700,8 +701,32 @@ pub(super) async fn execute_planned_item(
                 to_class.id,
                 input.forward_template_alias.clone(),
                 input.reverse_template_alias.clone(),
+                input.timestamps.as_ref(),
             )
             .await?;
+        }
+        PlannedExecution::UpdateClassRelationTimestamps(input) => {
+            let from_class = resolve_class_runtime(
+                conn,
+                runtime,
+                input.from_class_ref.as_deref(),
+                input.from_class_key.as_ref(),
+            )
+            .await?;
+            let to_class = resolve_class_runtime(
+                conn,
+                runtime,
+                input.to_class_ref.as_deref(),
+                input.to_class_key.as_ref(),
+            )
+            .await?;
+            let timestamps = input.timestamps.as_ref().ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Class-relation timestamp update requires imported timestamps".to_string(),
+                )
+            })?;
+            update_class_relation_timestamps_db(conn, from_class.id, to_class.id, timestamps)
+                .await?;
         }
         PlannedExecution::CreateObjectRelation(input) => {
             let from_object = resolve_object_runtime(
@@ -718,7 +743,31 @@ pub(super) async fn execute_planned_item(
                 input.to_object_key.as_ref(),
             )
             .await?;
-            create_object_relation_db(conn, &from_object, &to_object).await?;
+            create_object_relation_db(conn, &from_object, &to_object, input.timestamps.as_ref())
+                .await?;
+        }
+        PlannedExecution::UpdateObjectRelationTimestamps(input) => {
+            let from_object = resolve_object_runtime(
+                conn,
+                runtime,
+                input.from_object_ref.as_deref(),
+                input.from_object_key.as_ref(),
+            )
+            .await?;
+            let to_object = resolve_object_runtime(
+                conn,
+                runtime,
+                input.to_object_ref.as_deref(),
+                input.to_object_key.as_ref(),
+            )
+            .await?;
+            let timestamps = input.timestamps.as_ref().ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Object-relation timestamp update requires imported timestamps".to_string(),
+                )
+            })?;
+            update_object_relation_timestamps_db(conn, &from_object, &to_object, timestamps)
+                .await?;
         }
         PlannedExecution::ApplyCollectionPermissions(input) => {
             let collection = resolve_collection_runtime(

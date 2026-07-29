@@ -1566,6 +1566,15 @@ where
             });
         }
 
+        if input.timestamps.is_some() {
+            return Ok(PlannedItem {
+                result: planned_result("class_relation", "update", input.ref_.clone(), identifier),
+                execution: Some(PlannedExecution::UpdateClassRelationTimestamps(
+                    input.clone(),
+                )),
+            });
+        }
+
         return Ok(PlannedItem {
             result: planned_result("class_relation", "noop", input.ref_.clone(), identifier),
             execution: None,
@@ -1698,6 +1707,20 @@ where
                 kind: FailureKind::Collision,
                 item: planned_result("object_relation", "create", input.ref_.clone(), None),
                 message: "Object relation already exists".to_string(),
+            });
+        }
+
+        if input.timestamps.is_some() {
+            return Ok(PlannedItem {
+                result: planned_result(
+                    "object_relation",
+                    "update",
+                    input.ref_.clone(),
+                    Some(format!("{}<->{}", from_object.name, to_object.name)),
+                ),
+                execution: Some(PlannedExecution::UpdateObjectRelationTimestamps(
+                    input.clone(),
+                )),
             });
         }
 

@@ -256,6 +256,7 @@ Section shapes:
 | `description` | string | yes | Collection description. |
 | `parent_collection_ref` | string | no | Parent collection created earlier in the same request. |
 | `parent_collection_key` | object | no | Existing parent collection selector. |
+| `timestamps` | object | no | Import-only `created_at` and `updated_at` values. |
 
 If both parent selectors are omitted, the collection is created or matched under
 `root`. At most one parent selector may be set. Existing collection lookup uses
@@ -273,6 +274,7 @@ name under different parents in one request.
 | `validate_schema` | boolean | no | Defaults to `false` when creating a new class. When overwriting an existing class, omitting it preserves the current value. |
 | `collection_ref` | string | conditional | Use when the collection is created in the same request. |
 | `collection_key` | object | conditional | Use when the collection already exists. |
+| `timestamps` | object | no | Import-only `created_at` and `updated_at` values. |
 
 Exactly one of `collection_ref` or `collection_key` must be set.
 
@@ -292,6 +294,7 @@ evaluation from accessing external resources.
 | `data` | JSON value | yes | Object payload. Validated against the class schema when enabled. |
 | `class_ref` | string | conditional | Use when the class is created in the same request. |
 | `class_key` | object | conditional | Use when the class already exists. |
+| `timestamps` | object | no | Import-only `created_at` and `updated_at` values. |
 
 Exactly one of `class_ref` or `class_key` must be set.
 
@@ -304,6 +307,7 @@ Exactly one of `class_ref` or `class_key` must be set.
 | `from_class_key` | object | conditional | Use when the source class already exists. |
 | `to_class_ref` | string | conditional | Use when the target class is created in the same request. |
 | `to_class_key` | object | conditional | Use when the target class already exists. |
+| `timestamps` | object | no | Import-only `created_at` and `updated_at` values. |
 
 Exactly one of `from_class_ref` or `from_class_key` must be set, and exactly one of `to_class_ref` or `to_class_key` must be set.
 
@@ -335,6 +339,7 @@ Example:
 | `from_object_key` | object | conditional | Use when the source object already exists. |
 | `to_object_ref` | string | conditional | Use when the target object is created in the same request. |
 | `to_object_key` | object | conditional | Use when the target object already exists. |
+| `timestamps` | object | no | Import-only `created_at` and `updated_at` values. |
 
 Exactly one of `from_object_ref` or `from_object_key` must be set, and exactly one of `to_object_ref` or `to_object_key` must be set.
 
@@ -422,11 +427,18 @@ Selector pairs follow the same exactly-one rule as the core graph. For example,
 send `principal_ref` or `principal_key`, `group_ref` or `group_key`, and
 `sink_ref` or `sink_key`, but never both members of a pair.
 
-Extended records can carry a `timestamps` object with `created_at` and
-`updated_at`. It is intended for trusted migration data. On overwrite, supplied
-timestamps replace the stored values; when timestamps are omitted, existing
-values are preserved. `updated_at` cannot be earlier than `created_at`.
-Membership sources can carry their own timestamps.
+Core collections, classes, objects, and relations, along with extended records,
+can carry a `timestamps` object with `created_at` and `updated_at`. Timestamps
+are accepted only through the import API and are intended for trusted migration
+data. Standard resource create and update endpoints continue to manage
+timestamps automatically. Supplied import timestamps replace stored values on
+overwrite, and `updated_at` cannot be earlier than `created_at`.
+
+When timestamps are omitted, new core records use the current time. Core
+collection, class, and object overwrites preserve `created_at` and refresh
+`updated_at`; existing relation collisions remain no-ops. Extended-record
+overwrites preserve both existing timestamps when they are omitted. Membership
+sources can carry their own timestamps.
 
 ## Execution options
 
