@@ -136,7 +136,11 @@ and remains aggregatable across processes.
 
 Readiness probes commonly dominate request counts. Exclude probes and the
 scrape endpoint when calculating application traffic or an overall application
-latency:
+latency. The example uses the default scrape route, `/metrics`. If
+`HUBUUM_METRICS_PATH` is customized, replace `/metrics` in the matcher with the
+exact configured path; for example, use
+`route!~"/(healthz|readyz)|/internal/metrics"` for `/internal/metrics`.
+Prometheus regex matchers are fully anchored:
 
 ```promql
 sum by (route) (
@@ -183,7 +187,7 @@ max by (template_id, template_name) (
 | `hubuum_process_start_time_seconds` | none | Unix timestamp when the process initialized metrics |
 | `process_cpu_seconds_total` | none | Process user and system CPU time |
 | `process_open_fds` | none | Process open file descriptors or handles |
-| `process_max_fds` | none | Process file-descriptor or handle limit |
+| `process_max_fds` | none | Comparable process file-descriptor limit; zero when unavailable |
 | `process_resident_memory_bytes` | none | Process resident memory |
 | `process_virtual_memory_bytes` | none | Process virtual memory |
 | `process_start_time_seconds` | none | Operating-system process start time |
@@ -210,9 +214,11 @@ The bounded database `caller` values are `event_delivery`, `event_fanout`,
 The standard unprefixed `process_*` families are available on Linux, macOS, and
 Windows. The names intentionally match the Prometheus ecosystem so existing
 process dashboards and alerts can be reused. File-descriptor or handle gauges
-remain zero if the operating system cannot return that information. Prefer
-resident memory for cross-platform pressure alerts: virtual address-space size
-is especially large and not directly comparable on macOS.
+remain zero if the operating system cannot return that information. On Windows,
+`process_open_fds` counts kernel handles and `process_max_fds` is zero because
+Windows has no comparable fixed per-process handle limit. Prefer resident memory
+for cross-platform pressure alerts: virtual address-space size is especially
+large and not directly comparable on macOS.
 `process_start_time_seconds` is the operating system's process start, while
 `hubuum_process_start_time_seconds` records when Hubuum initialized metrics.
 
@@ -227,7 +233,9 @@ process_resident_memory_bytes
 ```
 
 ```promql
-process_open_fds / process_max_fds
+(process_open_fds / process_max_fds)
+and
+(process_max_fds > 0)
 ```
 
 ### Tasks, Exports, Imports, And Remote Calls

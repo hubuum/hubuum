@@ -439,18 +439,8 @@ pub async fn cancel_pending_tasks_for_principal(
     pool: &DbPool,
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
-    use crate::schema::tasks::dsl::{kind, status, submitted_by, tasks};
     let cancelled_kinds = with_connection(pool, async |conn| {
-        diesel::update(
-            tasks
-                .filter(submitted_by.eq(principal_id_value))
-                .filter(status.eq(TaskStatus::Queued.as_str()))
-                .filter(kind.ne(TaskKind::Reindex.as_str())),
-        )
-        .set(status.eq(TaskStatus::Cancelled.as_str()))
-        .returning(kind)
-        .get_results::<String>(conn)
-        .await
+        cancel_pending_tasks_for_principal_conn(conn, principal_id_value).await
     })
     .await?;
 
@@ -463,6 +453,32 @@ pub async fn cancel_pending_tasks_for_principal(
     }
 
     Ok(cancelled_kinds.len())
+}
+
+async fn cancel_pending_tasks_for_principal_conn(
+    conn: &mut DbConnection,
+    principal_id_value: i32,
+) -> Result<Vec<String>, ApiError> {
+    use crate::schema::tasks::dsl::{finished_at, kind, status, submitted_by, tasks, updated_at};
+    use diesel::dsl::sql;
+    use diesel::sql_types::{Nullable, Timestamp};
+
+    const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
+
+    Ok(diesel::update(
+        tasks
+            .filter(submitted_by.eq(principal_id_value))
+            .filter(status.eq(TaskStatus::Queued.as_str()))
+            .filter(kind.ne(TaskKind::Reindex.as_str())),
+    )
+    .set((
+        status.eq(TaskStatus::Cancelled.as_str()),
+        finished_at.eq(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)),
+        updated_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL)),
+    ))
+    .returning(kind)
+    .get_results::<String>(conn)
+    .await?)
 }
 
 pub async fn service_accounts_owned_by_group(
@@ -614,4 +630,57 @@ where
         base_query.count().get_result::<i64>(conn).await
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{NewTaskRecord, TaskRecord};
+    use crate::schema::tasks;
+    use crate::tests::{TestContext, create_test_user};
+
+    #[tokio::test]
+    async fn cancelling_pending_tasks_records_a_terminal_timestamp() {
+        let context = TestContext::new().await;
+        let submitter_id = create_test_user(&context.pool).await.id;
+
+        let cancelled_task = with_transaction(
+            &context.pool,
+            async |conn| -> Result<TaskRecord, ApiError> {
+                let task = diesel::insert_into(tasks::table)
+                    .values(NewTaskRecord {
+                        kind: TaskKind::Export.as_str().to_string(),
+                        status: TaskStatus::Queued.as_str().to_string(),
+                        submitted_by: Some(submitter_id),
+                        idempotency_key: Some(context.scoped_name("cancel-terminal-timestamp")),
+                        request_hash: None,
+                        request_payload: None,
+                        summary: None,
+                        total_items: 0,
+                        processed_items: 0,
+                        success_items: 0,
+                        failed_items: 0,
+                        submitted_token_id: None,
+                        submitted_token_scoped: false,
+                        submitted_token_scopes: serde_json::json!([]),
+                        request_redacted_at: None,
+                        started_at: None,
+                        finished_at: None,
+                    })
+                    .get_result::<TaskRecord>(conn)
+                    .await?;
+
+                let cancelled = cancel_pending_tasks_for_principal_conn(conn, submitter_id).await?;
+                assert_eq!(cancelled, vec![TaskKind::Export.as_str().to_string()]);
+
+                Ok(tasks::table.find(task.id).first::<TaskRecord>(conn).await?)
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(cancelled_task.status, TaskStatus::Cancelled.as_str());
+        assert!(cancelled_task.finished_at.is_some());
+        assert!(cancelled_task.updated_at >= cancelled_task.created_at);
+    }
 }

@@ -152,12 +152,39 @@ impl From<&sysinfo::Process> for ProcessSnapshot {
         Self {
             cpu_millis: process.accumulated_cpu_time(),
             open_files: process.open_files(),
-            open_files_limit: process.open_files_limit(),
+            open_files_limit: process_open_files_limit(process),
             resident_memory_bytes: process.memory(),
             virtual_memory_bytes: process.virtual_memory(),
             start_time_seconds: process.start_time(),
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn process_open_files_limit(_process: &sysinfo::Process) -> Option<usize> {
+    let mut limits = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    // SAFETY: `limits` points to writable storage for the `rlimit` value that
+    // `getrlimit` initializes on success.
+    let result = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limits.as_mut_ptr()) };
+    if result != 0 {
+        return None;
+    }
+
+    // SAFETY: A successful `getrlimit` call initialized `limits`.
+    let soft_limit = unsafe { limits.assume_init() }.rlim_cur;
+    soft_limit.try_into().ok()
+}
+
+#[cfg(target_os = "windows")]
+fn process_open_files_limit(_process: &sysinfo::Process) -> Option<usize> {
+    // `open_files` is the process's kernel handle count on Windows. Windows has
+    // no fixed per-process handle limit comparable to that count.
+    None
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn process_open_files_limit(process: &sysinfo::Process) -> Option<usize> {
+    process.open_files_limit()
 }
 
 fn create_and_register_counter(
@@ -232,7 +259,10 @@ mod tests {
             );
         }
         assert!(metrics.open_fds.get() > 0);
-        assert!(metrics.max_fds.get() >= metrics.open_fds.get());
+        #[cfg(target_os = "windows")]
+        assert_eq!(metrics.max_fds.get(), 0);
+        #[cfg(not(target_os = "windows"))]
+        assert!(metrics.max_fds.get() > 0);
         assert!(metrics.resident_memory_bytes.get() > 0);
         assert!(metrics.virtual_memory_bytes.get() > 0);
         assert!(metrics.start_time_seconds.get() > 0);

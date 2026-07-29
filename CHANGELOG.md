@@ -79,6 +79,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Database-backed template identity no longer retains deleted or renamed
   templates in a process, and import and export phase timings record error
   outcomes.
+- Process descriptor-pressure metrics now use the live macOS soft limit and
+  report the incomparable Windows handle limit as unavailable. Principal
+  cleanup cancellations now persist their terminal timestamps.
 
 ## [0.0.5] - 2026-07-26
 
