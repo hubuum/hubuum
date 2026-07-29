@@ -18,7 +18,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   can be identified and counter resets can be correlated with restarts.
 - Linux, macOS, and Windows scrape targets now expose standard Prometheus
   process metrics for CPU, resident and virtual memory, file descriptors or
-  handles, and process start time.
+  handles, and process start time, with process refresh health included in the
+  existing scrape-refresh diagnostics.
 - Worker-only processes now expose their own metrics-only HTTP listener at the
   configured bind address, port, and path, allowing Prometheus to scrape task
   and event workers directly.

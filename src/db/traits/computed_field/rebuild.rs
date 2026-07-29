@@ -15,11 +15,7 @@ pub async fn request_class_rebuild(
             use crate::schema::tasks::dsl::{id, request_payload, status, tasks};
             let active = tasks
                 .filter(id.eq(task_id_value))
-                .filter(status.eq_any([
-                    TaskStatus::Queued.as_str(),
-                    TaskStatus::Validating.as_str(),
-                    TaskStatus::Running.as_str(),
-                ]))
+                .filter(status.eq_any(TaskStatus::NON_TERMINAL.map(TaskStatus::as_str)))
                 .select(request_payload)
                 .first::<Option<serde_json::Value>>(conn)
                 .await

@@ -206,6 +206,9 @@ max by (template_id, template_name) (
 | `hubuum_metrics_refresh_failures_total` | `source` | Best-effort refresh failures |
 | `hubuum_metrics_refresh_skipped_total` | `source`, `reason` | Refreshes skipped because another scrape was already refreshing |
 
+The bounded refresh `source` values are `database`, `events`, `inventory`,
+`login_limiter`, `process`, and `tasks`.
+
 The bounded database `caller` values are `event_delivery`, `event_fanout`,
 `event_retention`, `http_request`, `metrics_refresh`, `readiness`,
 `request_maintenance`, `restore_coordinator`, `task_lease`, `task_worker`,

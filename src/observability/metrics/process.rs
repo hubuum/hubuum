@@ -93,10 +93,10 @@ impl ProcessMetrics {
         Ok(metrics)
     }
 
-    pub(super) fn refresh(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            self.refresh_state(&mut state);
-        }
+    pub(super) fn refresh(&self) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|mut state| self.refresh_state(&mut state))
     }
 
     fn refresh_required(&self) -> Result<(), ApiError> {
@@ -237,7 +237,7 @@ mod tests {
     fn supported_platform_exports_process_metrics() {
         let registry = Registry::new();
         let metrics = ProcessMetrics::new(&registry).unwrap();
-        metrics.refresh();
+        assert!(metrics.refresh());
 
         let mut encoded = Vec::new();
         TextEncoder::new()

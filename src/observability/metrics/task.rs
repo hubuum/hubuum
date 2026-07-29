@@ -179,13 +179,13 @@ fn store_task_snapshot(metrics: &Metrics, snapshot: TaskGaugeSnapshot) {
 fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskGaugeSnapshot) {
     let now = chrono::Utc::now().naive_utc();
     let mut counts = HashMap::new();
-    let mut last_finished = HashMap::new();
+    let mut last_terminal = HashMap::new();
 
     for row in &snapshot.counts {
         counts.insert((row.kind, row.status), row.count);
     }
-    for row in &snapshot.last_finished {
-        last_finished.insert((row.kind, row.status), row.timestamp);
+    for row in &snapshot.last_terminal {
+        last_terminal.insert((row.kind, row.status), row.finished_at);
     }
 
     for kind in TaskKind::ALL {
@@ -198,12 +198,7 @@ fn record_task_snapshot(metrics: &Metrics, snapshot: &TaskGaugeSnapshot) {
                 metrics,
                 kind,
                 status,
-                last_finished
-                    .get(&(kind, status))
-                    .copied()
-                    .flatten()
-                    .map(timestamp_seconds)
-                    .unwrap_or(0.0),
+                terminal_timestamp_seconds(last_terminal.get(&(kind, status)).copied().flatten()),
             );
         }
     }
@@ -272,8 +267,10 @@ fn record_last_terminal_timestamp(
     );
 }
 
-fn timestamp_seconds(timestamp: chrono::NaiveDateTime) -> f64 {
-    timestamp.and_utc().timestamp_millis() as f64 / 1000.0
+fn terminal_timestamp_seconds(timestamp: Option<chrono::NaiveDateTime>) -> f64 {
+    timestamp
+        .map(|timestamp| timestamp.and_utc().timestamp_millis() as f64 / 1000.0)
+        .unwrap_or(0.0)
 }
 
 fn age_seconds(
@@ -287,7 +284,7 @@ fn age_seconds(
 mod tests {
     use chrono::NaiveDate;
 
-    use super::{TaskAgeState, TaskOutputKind, timestamp_seconds};
+    use super::{TaskAgeState, TaskOutputKind, terminal_timestamp_seconds};
 
     #[test]
     fn task_output_kinds_have_stable_bounded_labels() {
@@ -312,6 +309,13 @@ mod tests {
             .and_hms_milli_opt(12, 34, 56, 789)
             .unwrap();
 
-        assert!((timestamp_seconds(timestamp) - 1_785_242_096.789).abs() < f64::EPSILON);
+        assert!(
+            (terminal_timestamp_seconds(Some(timestamp)) - 1_785_242_096.789).abs() < f64::EPSILON
+        );
+    }
+
+    #[test]
+    fn missing_terminal_timestamp_exports_zero() {
+        assert_eq!(terminal_timestamp_seconds(None), 0.0);
     }
 }

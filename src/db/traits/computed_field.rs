@@ -12,7 +12,8 @@ use tracing::{info, warn};
 use crate::db::prelude::*;
 use crate::db::traits::search::{JsonSqlPredicate, dynamic_sql_predicate};
 use crate::db::traits::task::{
-    TaskBackend, TaskStateUpdate, emit_internal_task_event, insert_internal_queued_task,
+    QueuedTaskCancellation, TaskBackend, TaskStateUpdate, cancel_queued_tasks_conn,
+    insert_internal_queued_task,
 };
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -27,7 +28,7 @@ use crate::models::{
     ComputedFieldErrorResponse, ComputedFieldMutationResponse, ComputedObjectScopesResponse,
     ComputedResultType, ComputedScopeResponse, HubuumClass, HubuumObject,
     HubuumObjectComputedResponse, NewObjectComputedData, NewTaskEventRecord, ObjectComputedData,
-    SharedComputedScopeResponse, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
+    PrincipalID, SharedComputedScopeResponse, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
     ValidatedComputedFieldPatch,
 };
 use crate::pagination::{CursorSqlField, CursorSqlMapping, CursorSqlType};
@@ -329,34 +330,21 @@ async fn cancel_queued_reindex_tasks(
     target_class_id: i32,
     actor_id: Option<i32>,
 ) -> Result<(), ApiError> {
-    let cancelled = diesel::sql_query(
-        "UPDATE tasks SET status='cancelled', summary='Superseded by a newer computed-field rebuild', \
-         finished_at=(clock_timestamp() AT TIME ZONE 'UTC'), request_payload=NULL, \
-         request_redacted_at=(clock_timestamp() AT TIME ZONE 'UTC'), \
-         updated_at=(clock_timestamp() AT TIME ZONE 'UTC') \
+    let queued = diesel::sql_query(
+        "SELECT id FROM tasks \
          WHERE kind='reindex' AND status='queued' \
            AND request_payload->>'type'='computed_fields' \
-           AND request_payload->>'class_id'=$1 \
-         RETURNING id",
+           AND request_payload->>'class_id'=$1",
     )
     .bind::<Text, _>(target_class_id.to_string())
     .load::<ReturnedTaskId>(conn)
     .await?;
-
-    for task in cancelled {
-        emit_internal_task_event(
-            conn,
-            &NewTaskEventRecord {
-                task_id: task.id,
-                event_type: TaskStatus::Cancelled.as_str().to_string(),
-                message: "Computed-field rebuild superseded".to_string(),
-                data: None,
-            },
-            actor_id,
-            TaskKind::Reindex,
-        )
-        .await?;
-    }
+    let task_ids = queued.into_iter().map(|task| task.id).collect::<Vec<_>>();
+    let actor = actor_id.map(PrincipalID::new).transpose()?;
+    let cancellation = QueuedTaskCancellation::new("Superseded by a newer computed-field rebuild")
+        .with_event_message("Computed-field rebuild superseded")
+        .with_actor(actor);
+    cancel_queued_tasks_conn(conn, &task_ids, &cancellation).await?;
     Ok(())
 }
 

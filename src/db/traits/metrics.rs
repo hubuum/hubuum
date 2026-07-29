@@ -72,17 +72,17 @@ pub(crate) struct TaskGaugeAge {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct TaskGaugeLastFinished {
+pub(crate) struct TaskGaugeLastTerminal {
     pub(crate) kind: TaskKind,
     pub(crate) status: TaskStatus,
-    pub(crate) timestamp: Option<NaiveDateTime>,
+    pub(crate) finished_at: Option<NaiveDateTime>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct TaskGaugeSnapshot {
     pub(crate) counts: Vec<TaskGaugeCount>,
     pub(crate) ages: Vec<TaskGaugeAge>,
-    pub(crate) last_finished: Vec<TaskGaugeLastFinished>,
+    pub(crate) last_terminal: Vec<TaskGaugeLastTerminal>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,10 +126,7 @@ where
                 .get_result::<Option<NaiveDateTime>>(conn)
                 .await?;
             let oldest_active_at = tasks::table
-                .filter(tasks::status.eq_any([
-                    TaskStatus::Validating.as_str(),
-                    TaskStatus::Running.as_str(),
-                ]))
+                .filter(tasks::status.eq_any(TaskStatus::ACTIVE.map(TaskStatus::as_str)))
                 .select(min(tasks::started_at))
                 .get_result::<Option<NaiveDateTime>>(conn)
                 .await?;
@@ -194,26 +191,23 @@ where
                 .load::<(String, Option<NaiveDateTime>)>(conn)
                 .await?;
             let oldest_active = tasks::table
-                .filter(tasks::status.eq_any([
-                    TaskStatus::Validating.as_str(),
-                    TaskStatus::Running.as_str(),
-                ]))
+                .filter(tasks::status.eq_any(TaskStatus::ACTIVE.map(TaskStatus::as_str)))
                 .group_by(tasks::kind)
                 .select((tasks::kind, min(tasks::started_at)))
                 .load::<(String, Option<NaiveDateTime>)>(conn)
                 .await?;
-            let last_finished = tasks::table
+            let last_terminal = tasks::table
                 .filter(tasks::status.eq_any(TaskStatus::TERMINAL.map(TaskStatus::as_str)))
                 .group_by((tasks::kind, tasks::status))
                 .select((tasks::kind, tasks::status, max(tasks::finished_at)))
                 .load::<(String, String, Option<NaiveDateTime>)>(conn)
                 .await?
                 .into_iter()
-                .map(|(kind, status, timestamp)| {
-                    Ok(TaskGaugeLastFinished {
+                .map(|(kind, status, finished_at)| {
+                    Ok(TaskGaugeLastTerminal {
                         kind: TaskKind::from_db(&kind)?,
                         status: TaskStatus::from_db(&status)?,
-                        timestamp,
+                        finished_at,
                     })
                 })
                 .collect::<Result<Vec<_>, ApiError>>()?;
@@ -247,7 +241,7 @@ where
             Ok::<_, ApiError>(TaskGaugeSnapshot {
                 counts,
                 ages,
-                last_finished,
+                last_terminal,
             })
         })
         .await

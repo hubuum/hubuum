@@ -85,12 +85,22 @@ impl TaskStatus {
         Self::Cancelled,
     ];
 
+    pub const ACTIVE: [Self; 2] = [Self::Validating, Self::Running];
+    pub const NON_TERMINAL: [Self; 3] = [Self::Queued, Self::Validating, Self::Running];
+
     pub const TERMINAL: [Self; 4] = [
         Self::Succeeded,
         Self::Failed,
         Self::PartiallySucceeded,
         Self::Cancelled,
     ];
+
+    pub const fn is_terminal(self) -> bool {
+        match self {
+            Self::Queued | Self::Validating | Self::Running => false,
+            Self::Succeeded | Self::Failed | Self::PartiallySucceeded | Self::Cancelled => true,
+        }
+    }
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -991,6 +1001,22 @@ mod tests {
         assert_eq!(
             TaskStatus::TERMINAL.map(TaskStatus::as_str),
             ["succeeded", "failed", "partially_succeeded", "cancelled"]
+        );
+        assert_eq!(
+            TaskStatus::ALL.map(TaskStatus::is_terminal),
+            [false, false, false, true, true, true, true]
+        );
+    }
+
+    #[test]
+    fn active_task_statuses_are_stable() {
+        assert_eq!(
+            TaskStatus::ACTIVE.map(TaskStatus::as_str),
+            ["validating", "running"]
+        );
+        assert_eq!(
+            TaskStatus::NON_TERMINAL.map(TaskStatus::as_str),
+            ["queued", "validating", "running"]
         );
     }
 

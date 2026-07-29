@@ -3,15 +3,16 @@ use serde_json::json;
 use crate::db::prelude::*;
 use crate::db::traits::identity::identity_scope_by_name;
 use crate::db::traits::principal::InsertPrincipalRecord;
+use crate::db::traits::task::{QueuedTaskCancellation, cancel_queued_tasks_conn};
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
-use crate::models::principal::{NewPrincipal, Principal, PrincipalKind};
+use crate::models::principal::{NewPrincipal, Principal, PrincipalID, PrincipalKind};
 use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{
     NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountWithName, TaskKind,
-    TaskStatus, UpdateServiceAccount,
+    TaskRecord, TaskStatus, UpdateServiceAccount,
 };
 use crate::schema::service_accounts;
 use crate::traits::accessors::InstanceAdapter;
@@ -264,45 +265,70 @@ async fn disable_service_account<C>(
 where
     C: BackendContext + ?Sized,
 {
-    use crate::schema::service_accounts::dsl::{disabled_at, id, service_accounts as sa_table};
     let sa_id = account_id.id();
-    with_transaction(
-        backend.db_pool(),
-        async |conn| -> Result<ServiceAccount, ApiError> {
-            let before = sa_table
-                .filter(id.eq(sa_id))
-                .for_update()
-                .first::<ServiceAccount>(conn)
-                .await?;
-            if before.disabled_at.is_some() {
-                return Ok(before);
-            }
-            let disabled = diesel::update(sa_table.filter(id.eq(sa_id)))
-                .set(disabled_at.eq(diesel::dsl::now))
-                .get_result::<ServiceAccount>(conn)
-                .await?;
-            if let Some(event_context) = event_context {
-                let name = load_principal_name_by_id(conn, disabled.id).await?;
-                let event = NewEvent::new(
-                    EntityType::ServiceAccount,
-                    Action::Disabled,
-                    event_context.actor_kind(),
-                    format!("Service account '{name}' disabled"),
-                )?
-                .with_context(event_context)
-                .with_entity_id(disabled.id)
-                .with_entity_name(&name)
-                .with_before(service_account_snapshot(&before, &name))
-                .with_after(service_account_snapshot(&disabled, &name))
-                .with_metadata(json!({
-                    "owner_group_id": disabled.owner_group_id,
-                }));
-                emit_event(conn, &event).await?;
-            }
-            Ok(disabled)
-        },
+    let (disabled, cancelled_tasks) = with_transaction(backend.db_pool(), async |conn| {
+        disable_service_account_conn(conn, sa_id, event_context).await
+    })
+    .await?;
+
+    record_cancelled_task_metrics(&cancelled_tasks);
+    Ok(disabled)
+}
+
+async fn disable_service_account_conn(
+    conn: &mut DbConnection,
+    service_account_id: i32,
+    event_context: Option<&EventContext>,
+) -> Result<(ServiceAccount, Vec<TaskRecord>), ApiError> {
+    use crate::schema::service_accounts::dsl::{disabled_at, id, service_accounts as sa_table};
+
+    let before = sa_table
+        .filter(id.eq(service_account_id))
+        .for_update()
+        .first::<ServiceAccount>(conn)
+        .await?;
+    let disabled = if before.disabled_at.is_some() {
+        before
+    } else {
+        let disabled = diesel::update(sa_table.filter(id.eq(service_account_id)))
+            .set(disabled_at.eq(diesel::dsl::now))
+            .get_result::<ServiceAccount>(conn)
+            .await?;
+        if let Some(event_context) = event_context {
+            let name = load_principal_name_by_id(conn, disabled.id).await?;
+            let event = NewEvent::new(
+                EntityType::ServiceAccount,
+                Action::Disabled,
+                event_context.actor_kind(),
+                format!("Service account '{name}' disabled"),
+            )?
+            .with_context(event_context)
+            .with_entity_id(disabled.id)
+            .with_entity_name(&name)
+            .with_before(service_account_snapshot(&before, &name))
+            .with_after(service_account_snapshot(&disabled, &name))
+            .with_metadata(json!({
+                "owner_group_id": disabled.owner_group_id,
+            }));
+            emit_event(conn, &event).await?;
+        }
+        disabled
+    };
+
+    revoke_all_tokens_for_principal_conn(conn, service_account_id).await?;
+    let actor = event_context
+        .and_then(EventContext::actor_user_id)
+        .map(PrincipalID::new)
+        .transpose()?;
+    let cancelled_tasks = cancel_pending_tasks_for_principal_conn(
+        conn,
+        service_account_id,
+        actor,
+        event_context.is_some(),
     )
-    .await
+    .await?;
+
+    Ok((disabled, cancelled_tasks))
 }
 
 async fn delete_service_account(
@@ -421,64 +447,70 @@ pub async fn revoke_all_tokens_for_principal(
     pool: &DbPool,
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
-    use crate::schema::tokens::dsl::{principal_id, revoked_at, tokens};
     with_connection(pool, async |conn| {
-        diesel::update(
-            tokens
-                .filter(principal_id.eq(principal_id_value))
-                .filter(revoked_at.is_null()),
-        )
-        .set(revoked_at.eq(diesel::dsl::now))
-        .execute(conn)
-        .await
+        revoke_all_tokens_for_principal_conn(conn, principal_id_value).await
     })
     .await
+}
+
+async fn revoke_all_tokens_for_principal_conn(
+    conn: &mut DbConnection,
+    principal_id_value: i32,
+) -> Result<usize, ApiError> {
+    use crate::schema::tokens::dsl::{principal_id, revoked_at, tokens};
+    Ok(diesel::update(
+        tokens
+            .filter(principal_id.eq(principal_id_value))
+            .filter(revoked_at.is_null()),
+    )
+    .set(revoked_at.eq(diesel::dsl::now))
+    .execute(conn)
+    .await?)
 }
 
 pub async fn cancel_pending_tasks_for_principal(
     pool: &DbPool,
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
-    let cancelled_kinds = with_connection(pool, async |conn| {
-        cancel_pending_tasks_for_principal_conn(conn, principal_id_value).await
+    let cancelled_tasks = with_transaction(pool, async |conn| {
+        cancel_pending_tasks_for_principal_conn(conn, principal_id_value, None, true).await
     })
     .await?;
 
-    for task_kind in &cancelled_kinds {
-        crate::observability::metrics::task_completed(
-            task_kind,
-            TaskStatus::Cancelled.as_str(),
-            None,
-        );
-    }
-
-    Ok(cancelled_kinds.len())
+    record_cancelled_task_metrics(&cancelled_tasks);
+    Ok(cancelled_tasks.len())
 }
 
 async fn cancel_pending_tasks_for_principal_conn(
     conn: &mut DbConnection,
     principal_id_value: i32,
-) -> Result<Vec<String>, ApiError> {
-    use crate::schema::tasks::dsl::{finished_at, kind, status, submitted_by, tasks, updated_at};
-    use diesel::dsl::sql;
-    use diesel::sql_types::{Nullable, Timestamp};
+    actor: Option<PrincipalID>,
+    emit_events: bool,
+) -> Result<Vec<TaskRecord>, ApiError> {
+    use crate::schema::tasks::dsl::{id, kind, status, submitted_by, tasks};
 
-    const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
+    let task_ids = tasks
+        .filter(submitted_by.eq(principal_id_value))
+        .filter(status.eq(TaskStatus::Queued.as_str()))
+        .filter(kind.ne(TaskKind::Reindex.as_str()))
+        .select(id)
+        .load::<i32>(conn)
+        .await?;
+    let cancellation =
+        QueuedTaskCancellation::new("Task cancelled because its submitting principal was disabled")
+            .with_actor(actor)
+            .with_event_emission(emit_events);
+    cancel_queued_tasks_conn(conn, &task_ids, &cancellation).await
+}
 
-    Ok(diesel::update(
-        tasks
-            .filter(submitted_by.eq(principal_id_value))
-            .filter(status.eq(TaskStatus::Queued.as_str()))
-            .filter(kind.ne(TaskKind::Reindex.as_str())),
-    )
-    .set((
-        status.eq(TaskStatus::Cancelled.as_str()),
-        finished_at.eq(sql::<Nullable<Timestamp>>(DATABASE_UTC_NOW_SQL)),
-        updated_at.eq(sql::<Timestamp>(DATABASE_UTC_NOW_SQL)),
-    ))
-    .returning(kind)
-    .get_results::<String>(conn)
-    .await?)
+fn record_cancelled_task_metrics(cancelled_tasks: &[TaskRecord]) {
+    for task in cancelled_tasks {
+        crate::observability::metrics::task_completed(
+            &task.kind,
+            TaskStatus::Cancelled.as_str(),
+            None,
+        );
+    }
 }
 
 pub async fn service_accounts_owned_by_group(
@@ -636,8 +668,33 @@ where
 mod tests {
     use super::*;
     use crate::models::{NewTaskRecord, TaskRecord};
-    use crate::schema::tasks;
-    use crate::tests::{TestContext, create_test_user};
+    use crate::schema::{tasks, tokens};
+    use crate::tests::{
+        TestContext, create_test_group, create_test_service_account, create_test_user,
+        service_account_token,
+    };
+
+    fn queued_export_task(submitter_id: i32, idempotency_key: String) -> NewTaskRecord {
+        NewTaskRecord {
+            kind: TaskKind::Export.as_str().to_string(),
+            status: TaskStatus::Queued.as_str().to_string(),
+            submitted_by: Some(submitter_id),
+            idempotency_key: Some(idempotency_key),
+            request_hash: None,
+            request_payload: Some(serde_json::json!({"secret": "redact-me"})),
+            summary: None,
+            total_items: 0,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            submitted_token_id: None,
+            submitted_token_scoped: false,
+            submitted_token_scopes: serde_json::json!([]),
+            request_redacted_at: None,
+            started_at: None,
+            finished_at: None,
+        }
+    }
 
     #[tokio::test]
     async fn cancelling_pending_tasks_records_a_terminal_timestamp() {
@@ -648,30 +705,17 @@ mod tests {
             &context.pool,
             async |conn| -> Result<TaskRecord, ApiError> {
                 let task = diesel::insert_into(tasks::table)
-                    .values(NewTaskRecord {
-                        kind: TaskKind::Export.as_str().to_string(),
-                        status: TaskStatus::Queued.as_str().to_string(),
-                        submitted_by: Some(submitter_id),
-                        idempotency_key: Some(context.scoped_name("cancel-terminal-timestamp")),
-                        request_hash: None,
-                        request_payload: None,
-                        summary: None,
-                        total_items: 0,
-                        processed_items: 0,
-                        success_items: 0,
-                        failed_items: 0,
-                        submitted_token_id: None,
-                        submitted_token_scoped: false,
-                        submitted_token_scopes: serde_json::json!([]),
-                        request_redacted_at: None,
-                        started_at: None,
-                        finished_at: None,
-                    })
+                    .values(queued_export_task(
+                        submitter_id,
+                        context.scoped_name("cancel-terminal-timestamp"),
+                    ))
                     .get_result::<TaskRecord>(conn)
                     .await?;
 
-                let cancelled = cancel_pending_tasks_for_principal_conn(conn, submitter_id).await?;
-                assert_eq!(cancelled, vec![TaskKind::Export.as_str().to_string()]);
+                let cancelled =
+                    cancel_pending_tasks_for_principal_conn(conn, submitter_id, None, true).await?;
+                assert_eq!(cancelled.len(), 1);
+                assert_eq!(cancelled[0].kind, TaskKind::Export.as_str());
 
                 Ok(tasks::table.find(task.id).first::<TaskRecord>(conn).await?)
             },
@@ -681,6 +725,51 @@ mod tests {
 
         assert_eq!(cancelled_task.status, TaskStatus::Cancelled.as_str());
         assert!(cancelled_task.finished_at.is_some());
+        assert!(cancelled_task.request_payload.is_none());
+        assert!(cancelled_task.request_redacted_at.is_some());
         assert!(cancelled_task.updated_at >= cancelled_task.created_at);
+    }
+
+    #[tokio::test]
+    async fn disabling_service_account_atomically_revokes_tokens_and_cancels_tasks() {
+        let context = TestContext::new().await;
+        let owner_group = create_test_group(&context.pool).await;
+        let service_account = create_test_service_account(&context.pool, &owner_group, None).await;
+        let _token = service_account_token(&context.pool, &service_account, None, None).await;
+
+        let cancelled_task = with_transaction(
+            &context.pool,
+            async |conn| -> Result<TaskRecord, ApiError> {
+                let task = diesel::insert_into(tasks::table)
+                    .values(queued_export_task(
+                        service_account.id,
+                        context.scoped_name("atomic-disable"),
+                    ))
+                    .get_result::<TaskRecord>(conn)
+                    .await?;
+
+                let (disabled, cancelled) =
+                    disable_service_account_conn(conn, service_account.id, None).await?;
+                assert!(disabled.disabled_at.is_some());
+                assert_eq!(cancelled.len(), 1);
+                assert_eq!(cancelled[0].id, task.id);
+
+                let revoked_at = tokens::table
+                    .filter(tokens::principal_id.eq(service_account.id))
+                    .select(tokens::revoked_at)
+                    .first::<Option<chrono::NaiveDateTime>>(conn)
+                    .await?;
+                assert!(revoked_at.is_some());
+
+                Ok(tasks::table.find(task.id).first::<TaskRecord>(conn).await?)
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(cancelled_task.status, TaskStatus::Cancelled.as_str());
+        assert!(cancelled_task.finished_at.is_some());
+        assert!(cancelled_task.request_payload.is_none());
+        assert!(cancelled_task.request_redacted_at.is_some());
     }
 }

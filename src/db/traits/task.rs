@@ -202,6 +202,105 @@ async fn database_now(
         .map_err(ApiError::from)
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct QueuedTaskCancellation {
+    summary: String,
+    event_message: String,
+    actor: Option<PrincipalID>,
+    emit_event: bool,
+}
+
+impl QueuedTaskCancellation {
+    pub(crate) fn new(summary: impl Into<String>) -> Self {
+        let summary = summary.into();
+        Self {
+            event_message: summary.clone(),
+            summary,
+            actor: None,
+            emit_event: true,
+        }
+    }
+
+    pub(crate) fn with_event_message(mut self, message: impl Into<String>) -> Self {
+        self.event_message = message.into();
+        self
+    }
+
+    pub(crate) fn with_actor(mut self, actor: Option<PrincipalID>) -> Self {
+        self.actor = actor;
+        self
+    }
+
+    pub(crate) fn with_event_emission(mut self, emit_event: bool) -> Self {
+        self.emit_event = emit_event;
+        self
+    }
+}
+
+/// Apply the complete queued-to-cancelled persistence transition.
+///
+/// Callers must invoke this inside a transaction when cancellation is part of a
+/// larger mutation. The status predicate protects tasks claimed after their ids
+/// were selected, while the shared transition keeps terminal timestamps,
+/// request redaction, leases, and lifecycle events consistent.
+pub(crate) async fn cancel_queued_tasks_conn(
+    conn: &mut crate::db::DbConnection,
+    task_ids: &[i32],
+    cancellation: &QueuedTaskCancellation,
+) -> Result<Vec<TaskRecord>, ApiError> {
+    use crate::schema::tasks::dsl::{
+        finished_at, id, lease_expires_at, lease_token, request_payload, request_redacted_at,
+        status, summary, tasks, updated_at,
+    };
+
+    if task_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let terminal_at = database_now(conn).await?;
+    let cancelled = diesel::update(
+        tasks
+            .filter(id.eq_any(task_ids))
+            .filter(status.eq(TaskStatus::Queued.as_str())),
+    )
+    .set((
+        status.eq(TaskStatus::Cancelled.as_str()),
+        summary.eq(Some(cancellation.summary.clone())),
+        finished_at.eq(Some(terminal_at)),
+        request_payload.eq::<Option<serde_json::Value>>(None),
+        request_redacted_at.eq(Some(terminal_at)),
+        lease_token.eq::<Option<Uuid>>(None),
+        lease_expires_at.eq::<Option<NaiveDateTime>>(None),
+        updated_at.eq(terminal_at),
+    ))
+    .get_results::<TaskRecord>(conn)
+    .await?;
+
+    if cancellation.emit_event {
+        for task in &cancelled {
+            let provenance = if let Some(actor) = cancellation.actor {
+                task.user_provenance(actor)
+            } else {
+                task.system_provenance()
+            };
+            emit_task_lifecycle_event(
+                conn,
+                task,
+                &NewTaskEventRecord {
+                    task_id: task.id,
+                    event_type: TaskStatus::Cancelled.as_str().to_string(),
+                    message: cancellation.event_message.clone(),
+                    data: None,
+                },
+                &provenance,
+            )
+            .await?;
+        }
+    }
+
+    Ok(cancelled)
+}
+
 /// Anything that can name a task for a backend query: a [`TaskID`] from a request path or an
 /// already-loaded [`TaskRecord`] (and references to either). The required `task_id` resolves the
 /// raw id at the persistence boundary so it never leaks into the domain.
@@ -1155,27 +1254,6 @@ async fn emit_task_lifecycle_event(
         .map_err(ApiError::from)
 }
 
-pub(crate) async fn emit_internal_task_event(
-    conn: &mut crate::db::DbConnection,
-    event: &NewTaskEventRecord,
-    actor_user_id: Option<i32>,
-    task_kind: TaskKind,
-) -> Result<Event, ApiError> {
-    use crate::schema::tasks::dsl::{id, tasks};
-
-    let task = tasks
-        .filter(id.eq(event.task_id))
-        .first::<TaskRecord>(conn)
-        .await?;
-    let provenance = if let Some(actor_user_id) = actor_user_id {
-        task.user_provenance(PrincipalID::new(actor_user_id)?)
-    } else {
-        task.system_provenance()
-    };
-    debug_assert_eq!(task.kind, task_kind.as_str());
-    emit_task_lifecycle_event(conn, &task, event, &provenance).await
-}
-
 impl NewTaskEventRecord {
     /// Append this event to its task's history and return the persisted event.
     pub async fn append(self, pool: &DbPool) -> Result<TaskEventRecord, ApiError> {
@@ -1334,10 +1412,7 @@ pub async fn renew_task_lease(
 ) -> Result<bool, ApiError> {
     use crate::schema::tasks::dsl::{id, lease_expires_at, lease_token, status, tasks, updated_at};
 
-    let active_statuses = [
-        TaskStatus::Validating.as_str(),
-        TaskStatus::Running.as_str(),
-    ];
+    let active_statuses = TaskStatus::ACTIVE.map(TaskStatus::as_str);
     let updated = with_connection(pool, async |conn| -> Result<usize, ApiError> {
         let lease_milliseconds = lease_duration_milliseconds(lease_duration);
         diesel::update(
@@ -1420,10 +1495,7 @@ async fn recover_expired_task_leases_matching(
         request_payload, request_redacted_at, status, success_items, summary, tasks, updated_at,
     };
 
-    let active_statuses = [
-        TaskStatus::Validating.as_str(),
-        TaskStatus::Running.as_str(),
-    ];
+    let active_statuses = TaskStatus::ACTIVE.map(TaskStatus::as_str);
     let recovered = with_transaction(pool, async |conn| -> Result<Vec<TaskRecord>, ApiError> {
         let now = database_now(conn).await?;
         let stale_tasks = if let Some(task_id_filter) = task_id_filter {
@@ -1755,11 +1827,7 @@ async fn count_active_tasks_for_user_in_transaction(
 ) -> Result<i64, ApiError> {
     use crate::schema::tasks::dsl::{deleted_at, kind, status, submitted_by, tasks};
 
-    let active_statuses = [
-        TaskStatus::Queued.as_str(),
-        TaskStatus::Validating.as_str(),
-        TaskStatus::Running.as_str(),
-    ];
+    let active_statuses = TaskStatus::NON_TERMINAL.map(TaskStatus::as_str);
 
     tasks
         .filter(kind.eq(task_kind.as_str()))
