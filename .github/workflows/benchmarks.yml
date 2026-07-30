@@ -10,7 +10,7 @@ permissions:
 jobs:
   benchmarks:
     name: Self-contained benchmarks
-    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@v2
+    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@v2.3
     secrets: inherit
     with:
       backend: all
@@ -18,7 +18,7 @@ jobs:
       auto_detect_moved_benchmarks: true
       criterion_statistic: median
       criterion_cli_args: "--noplot --sample-size 40 --measurement-time 4"
-      regression_threshold_pct_iai_callgrind: 3
+      regression_threshold_pct_gungraun: 3
       regression_threshold_pct_criterion: 50
       fail_on_regression: true
       feature_sets_json: >-

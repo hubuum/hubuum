@@ -1,5 +1,5 @@
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use hubuum::models::Permissions;
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 
 // Permission strings span the full match arm and exercise both early- and

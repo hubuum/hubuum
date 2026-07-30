@@ -1,5 +1,5 @@
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use hubuum::models::search::{ParsedQueryParam, ParsedQueryParamExt, SearchOperator};
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 
 fn json_filter_fixtures() -> [ParsedQueryParam; 4] {

@@ -125,7 +125,12 @@ database benchmarks live in nested benchmark directories with explicit Cargo
 paths so they remain in their dedicated jobs without disabling autodiscovery.
 The container-build tests enforce this separation.
 
-`iai-callgrind` requires `valgrind` to be installed locally.
+Gungraun requires `valgrind` and the matching benchmark runner to be installed
+locally:
+
+```bash
+cargo install --locked --version 0.19.4 gungraun-runner
+```
 
 The PostgreSQL storage benchmark is opt-in and requires an empty, migrated,
 disposable benchmark database. Fixture creation, cleanup, and warmup happen
@@ -194,7 +199,8 @@ query nondeterministically to the next operation.
 
 - The self-contained benchmark job runs both backends in one combined
   `backend: all` job, so PRs get a single consolidated benchmark export.
-- `iai-callgrind` remains the practical gating signal with a low regression threshold.
+- Gungraun's Callgrind measurements remain the practical gating signal with a
+  low regression threshold.
 - Criterion still runs in the same combined job, but uses a very high regression threshold so it exports timing changes without acting as a meaningful gate.
 - A separate PostgreSQL job runs storage Criterion benchmarks against
   isolated base and pull-request databases. It warns above a 10% median change

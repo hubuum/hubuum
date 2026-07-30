@@ -1,5 +1,5 @@
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use hubuum::tasks::request_hash;
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 use std::sync::LazyLock;
 
