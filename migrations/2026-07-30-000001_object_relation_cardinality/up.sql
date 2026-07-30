@@ -65,8 +65,8 @@ BEGIN
         RAISE EXCEPTION 'Invalid object relation: objects cannot be related to the same classes';
     END IF;
 
-    -- The row lock serializes relation creation for this class relation. Without
-    -- it, two concurrent inserts could both observe a count below the limit.
+    -- Keep the class relation definition stable while this trigger runs without
+    -- serializing concurrent object relation inserts.
     SELECT
         from_hubuum_class_id,
         to_hubuum_class_id,
@@ -79,7 +79,7 @@ BEGIN
         relation_to_max_relations
     FROM hubuumclass_relation
     WHERE id = NEW.class_relation_id
-    FOR UPDATE;
+    FOR SHARE;
 
     IF (from_class_id != relation_from_class_id OR to_class_id != relation_to_class_id) AND
        (from_class_id != relation_to_class_id OR to_class_id != relation_from_class_id) THEN
@@ -92,6 +92,23 @@ BEGIN
     ELSE
         relation_from_object_id := NEW.to_hubuum_object_id;
         relation_to_object_id := NEW.from_hubuum_object_id;
+    END IF;
+
+    -- Serialize only inserts that compete for the same bounded object. Locking
+    -- in object-ID order prevents deadlocks when both sides are bounded.
+    IF relation_from_max_relations IS NOT NULL OR
+       relation_to_max_relations IS NOT NULL THEN
+        PERFORM id
+        FROM hubuumobject
+        WHERE (
+            relation_from_max_relations IS NOT NULL
+            AND id = relation_from_object_id
+        ) OR (
+            relation_to_max_relations IS NOT NULL
+            AND id = relation_to_object_id
+        )
+        ORDER BY id
+        FOR UPDATE;
     END IF;
 
     IF relation_from_max_relations IS NOT NULL THEN
