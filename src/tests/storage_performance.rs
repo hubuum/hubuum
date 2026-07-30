@@ -556,6 +556,8 @@ async fn object_relation_create_has_a_fixed_query_and_checkout_budget() {
         to_hubuum_class_id: class_two.id,
         forward_template_alias: Some("seconds".to_string()),
         reverse_template_alias: Some("firsts".to_string()),
+        from_max_relations: None,
+        to_max_relations: None,
     }
     .save_without_events(&scope.pool)
     .await

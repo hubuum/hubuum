@@ -4,11 +4,12 @@ mod tests {
     use rstest::rstest;
 
     use crate::db::DbPool;
+    use crate::errors::ApiError;
     use crate::models::{
         CollectionID, HubuumClass, HubuumClassRelation, HubuumClassWithPath, HubuumObject,
         HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass, NewHubuumClassRelation,
-        NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation, Permissions,
-        RelatedClassGraph, RelatedObjectGraph,
+        NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
+        ObjectRelationLimit, Permissions, RelatedClassGraph, RelatedObjectGraph,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
@@ -65,6 +66,8 @@ mod tests {
             to_hubuum_class_id: to_class.id,
             forward_template_alias: None,
             reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
         };
 
         relation.save_without_events(pool).await.unwrap()
@@ -704,6 +707,8 @@ mod tests {
             to_hubuum_class_id: classes[1].id,
             forward_template_alias: None,
             reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
         };
 
         let endpoint = format!("/api/v1/classes/{}/relations/", classes[0].id);
@@ -740,11 +745,15 @@ mod tests {
             to_hubuum_class_id: classes[1].id,
             forward_template_alias: None,
             reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
         };
         let reverse_content = NewHubuumClassRelationFromClass {
             to_hubuum_class_id: classes[0].id,
             forward_template_alias: None,
             reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
         };
 
         let forward_endpoint = format!("/api/v1/classes/{}/relations/", classes[0].id);
@@ -778,6 +787,199 @@ mod tests {
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let relation_response_from_global: HubuumClassRelation = test::read_body_json(resp).await;
         assert_eq!(relation_response, relation_response_from_global);
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_class_relation_limits_follow_classes_when_relation_order_is_normalized(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "class_relation_limits_normalized_order").await;
+        let content = NewHubuumClassRelation {
+            from_hubuum_class_id: classes[1].id,
+            to_hubuum_class_id: classes[0].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+            from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
+            to_max_relations: Some(ObjectRelationLimit::new(2).unwrap()),
+        };
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            CLASS_RELATIONS_ENDPOINT,
+            &content,
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let relation: HubuumClassRelation = test::read_body_json(resp).await;
+
+        assert_eq!(relation.from_hubuum_class_id, classes[0].id);
+        assert_eq!(relation.to_hubuum_class_id, classes[1].id);
+        assert_eq!(
+            relation.from_max_relations,
+            Some(ObjectRelationLimit::new(2).unwrap())
+        );
+        assert_eq!(
+            relation.to_max_relations,
+            Some(ObjectRelationLimit::new(1).unwrap())
+        );
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_object_relation_limit_rejects_an_extra_relation_for_the_same_object(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "object_relation_limit").await;
+        let relation = NewHubuumClassRelation {
+            from_hubuum_class_id: classes[0].id,
+            to_hubuum_class_id: classes[1].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+            from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
+            to_max_relations: None,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
+        let second_target = NewHubuumObject {
+            hubuum_class_id: classes[1].id,
+            collection_id: classes[1].collection_id,
+            name: format!("second_object_in_{}", classes[1].name),
+            description: "Second relation target".to_string(),
+            data: serde_json::json!({}),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let first_relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: objects[0].id,
+            to_hubuum_object_id: objects[1].id,
+            class_relation_id: relation.id,
+        };
+        let extra_relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: objects[0].id,
+            to_hubuum_object_id: second_target.id,
+            class_relation_id: relation.id,
+        };
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            OBJECT_RELATIONS_ENDPOINT,
+            &first_relation,
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::CREATED).await;
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            OBJECT_RELATIONS_ENDPOINT,
+            &extra_relation,
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::CONFLICT).await;
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|message| message.starts_with(
+                    "Object relation cardinality exceeded:"
+                ))
+        );
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_object_relation_limit_serializes_concurrent_creates(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "object_relation_limit_concurrent").await;
+        let relation = NewHubuumClassRelation {
+            from_hubuum_class_id: classes[0].id,
+            to_hubuum_class_id: classes[1].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let objects = create_objects_in_classes(&context.pool, &classes).await;
+        let second_source = NewHubuumObject {
+            hubuum_class_id: classes[0].id,
+            collection_id: classes[0].collection_id,
+            name: format!("second_object_in_{}", classes[0].name),
+            description: "Second relation source".to_string(),
+            data: serde_json::json!({}),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let first_relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: objects[0].id,
+            to_hubuum_object_id: objects[1].id,
+            class_relation_id: relation.id,
+        };
+        let competing_relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: second_source.id,
+            to_hubuum_object_id: objects[1].id,
+            class_relation_id: relation.id,
+        };
+
+        let (first_result, competing_result) = tokio::join!(
+            first_relation.save_without_events(&context.pool),
+            competing_relation.save_without_events(&context.pool)
+        );
+        let results = [first_result, competing_result];
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert!(results.iter().any(|result| {
+            matches!(
+                result,
+                Err(ApiError::Conflict(message))
+                    if message.starts_with("Object relation cardinality exceeded:")
+            )
+        }));
+
+        cleanup(&classes).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_class_relation_limit_must_be_positive(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let classes = create_test_classes(&context, "class_relation_limit_positive").await;
+        let content = serde_json::json!({
+            "from_hubuum_class_id": classes[0].id,
+            "to_hubuum_class_id": classes[1].id,
+            "forward_template_alias": null,
+            "reverse_template_alias": null,
+            "from_max_relations": 0,
+            "to_max_relations": null
+        });
+
+        let resp = post_request(
+            &context.pool,
+            &context.admin_token,
+            CLASS_RELATIONS_ENDPOINT,
+            &content,
+        )
+        .await;
+        let _ = assert_response_status(resp, StatusCode::BAD_REQUEST).await;
 
         cleanup(&classes).await;
     }

@@ -189,6 +189,8 @@ mod tests {
             to_hubuum_class_id: classes[1].id,
             forward_template_alias: None,
             reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
         }
         .save_without_events(&context.pool)
         .await
@@ -198,6 +200,8 @@ mod tests {
             to_hubuum_class_id: classes[2].id,
             forward_template_alias: None,
             reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
         }
         .save_without_events(&context.pool)
         .await

@@ -307,6 +307,10 @@ Exactly one of `class_ref` or `class_key` must be set.
 | `from_class_key` | object | conditional | Use when the source class already exists. |
 | `to_class_ref` | string | conditional | Use when the target class is created in the same request. |
 | `to_class_key` | object | conditional | Use when the target class already exists. |
+| `forward_template_alias` | string | no | Template alias when traversing from the source class to the target class. |
+| `reverse_template_alias` | string | no | Template alias when traversing from the target class to the source class. |
+| `from_max_relations` | positive integer or null | no | Maximum relations allowed for each source-class object. Omit or use `null` for unlimited. |
+| `to_max_relations` | positive integer or null | no | Maximum relations allowed for each target-class object. Omit or use `null` for unlimited. |
 | `timestamps` | object | no | Import-only `created_at` and `updated_at` values. |
 
 Exactly one of `from_class_ref` or `from_class_key` must be set, and exactly one of `to_class_ref` or `to_class_key` must be set.
@@ -319,6 +323,7 @@ Example:
     {
       "ref": "rel:server-runs-on-rack",
       "from_class_ref": "class:server",
+      "from_max_relations": 1,
       "to_class_key": {
         "name": "rack",
         "collection_key": {

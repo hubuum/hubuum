@@ -185,6 +185,8 @@ fn class_relation_snapshot(relation: &HubuumClassRelation) -> serde_json::Value 
         "to_hubuum_class_id": relation.to_hubuum_class_id,
         "forward_template_alias": relation.forward_template_alias,
         "reverse_template_alias": relation.reverse_template_alias,
+        "from_max_relations": relation.from_max_relations,
+        "to_max_relations": relation.to_max_relations,
         "created_at": relation.created_at,
         "updated_at": relation.updated_at,
     })
@@ -1082,6 +1084,10 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
                 &mut normalized.forward_template_alias,
                 &mut normalized.reverse_template_alias,
             );
+            std::mem::swap(
+                &mut normalized.from_max_relations,
+                &mut normalized.to_max_relations,
+            );
         }
 
         with_connection(pool, async |conn| {
@@ -1125,6 +1131,10 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
             std::mem::swap(
                 &mut normalized.forward_template_alias,
                 &mut normalized.reverse_template_alias,
+            );
+            std::mem::swap(
+                &mut normalized.from_max_relations,
+                &mut normalized.to_max_relations,
             );
         }
 

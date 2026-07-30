@@ -152,6 +152,8 @@ async fn class_relation_cross_collection_populates_from_to_collections() {
         to_hubuum_class_id: class_b.id,
         forward_template_alias: None,
         reverse_template_alias: None,
+        from_max_relations: None,
+        to_max_relations: None,
     }
     .save_without_events(&pool)
     .await
@@ -218,6 +220,8 @@ async fn class_relation_same_collection_populates_collection_id() {
         to_hubuum_class_id: class_b.id,
         forward_template_alias: None,
         reverse_template_alias: None,
+        from_max_relations: None,
+        to_max_relations: None,
     }
     .save_without_events(&pool)
     .await
@@ -277,6 +281,8 @@ async fn object_relation_cross_collection_populates_all_fields() {
         to_hubuum_class_id: class_b.id,
         forward_template_alias: None,
         reverse_template_alias: None,
+        from_max_relations: None,
+        to_max_relations: None,
     }
     .save_without_events(&pool)
     .await
@@ -394,6 +400,8 @@ async fn local_backend_relation_and_check_denies_partial_permission() {
         to_hubuum_class_id: class_b.id,
         forward_template_alias: None,
         reverse_template_alias: None,
+        from_max_relations: None,
+        to_max_relations: None,
     }
     .save_without_events(&pool)
     .await

@@ -129,6 +129,8 @@ async fn create_class_relation(
         to_hubuum_class_id: partial_relation.to_hubuum_class_id,
         forward_template_alias: partial_relation.forward_template_alias.clone(),
         reverse_template_alias: partial_relation.reverse_template_alias.clone(),
+        from_max_relations: partial_relation.from_max_relations,
+        to_max_relations: partial_relation.to_max_relations,
     };
 
     let resource = relation.to_resource_ref(&pool).await?;

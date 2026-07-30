@@ -327,6 +327,10 @@ impl From<DieselError> for ApiError {
                     debug!(message = message, error = ?e);
                     return ApiError::BadRequest(message.to_string());
                 }
+                if message.starts_with("Object relation cardinality exceeded:") {
+                    debug!(message = message, error = ?e);
+                    return ApiError::Conflict(message.to_string());
+                }
                 error!(message = "Database error", error = ?e);
                 ApiError::DatabaseError(e.to_string())
             }

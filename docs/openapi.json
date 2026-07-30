@@ -20988,6 +20988,17 @@
             "type": "integer",
             "format": "int32"
           },
+          "from_max_relations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectRelationLimit",
+                "description": "Maximum relations allowed for each object in `from_hubuum_class_id`.\n`None` means unlimited."
+              }
+            ]
+          },
           "id": {
             "type": "integer",
             "format": "int32"
@@ -21001,6 +21012,17 @@
           "to_hubuum_class_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "to_max_relations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectRelationLimit",
+                "description": "Maximum relations allowed for each object in `to_hubuum_class_id`.\n`None` means unlimited."
+              }
+            ]
           },
           "updated_at": {
             "type": "string",
@@ -21416,6 +21438,16 @@
               "null"
             ]
           },
+          "from_max_relations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectRelationLimit"
+              }
+            ]
+          },
           "ref": {
             "type": [
               "string",
@@ -21452,6 +21484,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "to_max_relations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectRelationLimit"
+              }
             ]
           }
         }
@@ -23268,6 +23310,17 @@
             "type": "integer",
             "format": "int32"
           },
+          "from_max_relations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectRelationLimit",
+                "description": "Maximum relations allowed for each object in `from_hubuum_class_id`.\nOmit or set to `null` for unlimited."
+              }
+            ]
+          },
           "reverse_template_alias": {
             "type": [
               "string",
@@ -23277,13 +23330,26 @@
           "to_hubuum_class_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "to_max_relations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectRelationLimit",
+                "description": "Maximum relations allowed for each object in `to_hubuum_class_id`.\nOmit or set to `null` for unlimited."
+              }
+            ]
           }
         },
         "example": {
           "forward_template_alias": "rooms",
           "from_hubuum_class_id": 1,
+          "from_max_relations": 1,
           "reverse_template_alias": "hosts",
-          "to_hubuum_class_id": 2
+          "to_hubuum_class_id": 2,
+          "to_max_relations": null
         }
       },
       "NewHubuumClassRelationFromClass": {
@@ -23299,6 +23365,17 @@
               "null"
             ]
           },
+          "from_max_relations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectRelationLimit",
+                "description": "Maximum relations allowed for each object in the class from the URL.\nOmit or set to `null` for unlimited."
+              }
+            ]
+          },
           "reverse_template_alias": {
             "type": [
               "string",
@@ -23308,12 +23385,25 @@
           "to_hubuum_class_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "to_max_relations": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ObjectRelationLimit",
+                "description": "Maximum relations allowed for each object in `to_hubuum_class_id`.\nOmit or set to `null` for unlimited."
+              }
+            ]
           }
         },
         "example": {
           "forward_template_alias": "rooms",
+          "from_max_relations": 1,
           "reverse_template_alias": "hosts",
-          "to_hubuum_class_id": 2
+          "to_hubuum_class_id": 2,
+          "to_max_relations": null
         }
       },
       "NewHubuumObject": {
@@ -23866,6 +23956,12 @@
             "type": "string"
           }
         }
+      },
+      "ObjectRelationLimit": {
+        "type": "integer",
+        "format": "int32",
+        "description": "Maximum number of object relations allowed for one object on one side of a class relation.",
+        "minimum": 1
       },
       "ObjectsByClass": {
         "type": "object",

@@ -18,6 +18,28 @@ For filtering, sorting, and cursor pagination support, see:
 | Create | `POST` | `/api/v1/relations/classes` | Create a class relation |
 | Delete | `DELETE` | `/api/v1/relations/classes/{relation_id}` | Delete a class relation |
 
+Class relation create payloads accept `from_max_relations` and
+`to_max_relations`. Each is either a positive integer or `null`; `null` means
+unlimited. A limit applies independently to every object in the class on that
+side of the relation. For example, this allows each jack to relate to at most
+one room while allowing a room to contain any number of jacks:
+
+```json
+{
+  "from_hubuum_class_id": 10,
+  "to_hubuum_class_id": 20,
+  "forward_template_alias": "room",
+  "reverse_template_alias": "jacks",
+  "from_max_relations": 1,
+  "to_max_relations": null
+}
+```
+
+Class relations are stored in canonical class-ID order. If the supplied class
+IDs are reversed during creation, the aliases and limits are reversed with
+them, so each setting continues to apply to the class supplied on that side.
+Creating an object relation beyond either limit returns `409 Conflict`.
+
 ### Object relations
 
 | Operation | Method | Path | Description |

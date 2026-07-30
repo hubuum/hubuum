@@ -15,6 +15,7 @@ use crate::models::{
     NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission,
     Permissions, PermissionsList, Principal, RestoreTimestamps, ServiceAccount, UpdateCollection,
     UpdateHubuumClass, UpdateHubuumObject, UpdatePermission, User,
+    ObjectRelationLimit,
 };
 use crate::utilities::aliases::normalize_template_alias;
 
@@ -1468,6 +1469,8 @@ pub async fn create_class_relation_db(
     right: i32,
     forward_template_alias: Option<String>,
     reverse_template_alias: Option<String>,
+    from_max_relations: Option<ObjectRelationLimit>,
+    to_max_relations: Option<ObjectRelationLimit>,
     timestamps: Option<&RestoreTimestamps>,
 ) -> Result<HubuumClassRelation, ApiError> {
     use crate::schema::hubuumclass_relation::dsl::{created_at, hubuumclass_relation, updated_at};
@@ -1488,6 +1491,16 @@ pub async fn create_class_relation_db(
             reverse_template_alias
         } else {
             forward_template_alias
+        },
+        from_max_relations: if left <= right {
+            from_max_relations
+        } else {
+            to_max_relations
+        },
+        to_max_relations: if left <= right {
+            to_max_relations
+        } else {
+            from_max_relations
         },
     };
 

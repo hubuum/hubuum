@@ -1,9 +1,15 @@
 use crate::db::prelude::*;
 use async_trait::async_trait;
+use diesel::deserialize::{self, FromSql, FromSqlRow};
+use diesel::expression::AsExpression;
+use diesel::pg::{Pg, PgValue};
+use diesel::serialize::{self, Output, ToSql};
 use diesel::sql_types::{Array, Bool, Integer, Jsonb, Nullable, Text, Timestamp};
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use utoipa::openapi::schema::{Schema, Type};
+use utoipa::openapi::{KnownFormat, ObjectBuilder, RefOr, SchemaFormat};
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
@@ -18,6 +24,67 @@ crate::int_id_newtype! {
     noun = "class relation id";
 }
 
+/// Maximum number of object relations allowed for one object on one side of a
+/// class relation.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, AsExpression, FromSqlRow)]
+#[diesel(sql_type = Integer)]
+pub struct ObjectRelationLimit(i32);
+
+impl ObjectRelationLimit {
+    /// Create a positive object-relation limit.
+    pub fn new(value: i32) -> Result<Self, ApiError> {
+        if value <= 0 {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid object relation limit '{value}': must be a positive integer"
+            )));
+        }
+        Ok(Self(value))
+    }
+
+    /// Return the underlying positive limit.
+    pub fn value(self) -> i32 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for ObjectRelationLimit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = i32::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl FromSql<Integer, Pg> for ObjectRelationLimit {
+    fn from_sql(value: PgValue<'_>) -> deserialize::Result<Self> {
+        let value = i32::from_sql(value)?;
+        Self::new(value).map_err(|error| error.to_string().into())
+    }
+}
+
+impl ToSql<Integer, Pg> for ObjectRelationLimit {
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Pg>) -> serialize::Result {
+        <i32 as ToSql<Integer, Pg>>::to_sql(&self.0, out)
+    }
+}
+
+impl utoipa::PartialSchema for ObjectRelationLimit {
+    fn schema() -> RefOr<Schema> {
+        ObjectBuilder::new()
+            .schema_type(Type::Integer)
+            .format(Some(SchemaFormat::KnownFormat(KnownFormat::Int32)))
+            .minimum(Some(1))
+            .description(Some(
+                "Maximum number of object relations allowed for one object on one side of a class relation.",
+            ))
+            .into()
+    }
+}
+
+impl ToSchema for ObjectRelationLimit {}
+
 #[derive(Debug, Serialize, Deserialize, Queryable, Clone, PartialEq, Eq, ToSchema)]
 #[diesel(table_name = hubuumclass_relation)]
 pub struct HubuumClassRelation {
@@ -28,6 +95,12 @@ pub struct HubuumClassRelation {
     pub reverse_template_alias: Option<String>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    /// Maximum relations allowed for each object in `from_hubuum_class_id`.
+    /// `None` means unlimited.
+    pub from_max_relations: Option<ObjectRelationLimit>,
+    /// Maximum relations allowed for each object in `to_hubuum_class_id`.
+    /// `None` means unlimited.
+    pub to_max_relations: Option<ObjectRelationLimit>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Insertable, ToSchema)]
@@ -38,6 +111,12 @@ pub struct NewHubuumClassRelation {
     pub to_hubuum_class_id: i32,
     pub forward_template_alias: Option<String>,
     pub reverse_template_alias: Option<String>,
+    /// Maximum relations allowed for each object in `from_hubuum_class_id`.
+    /// Omit or set to `null` for unlimited.
+    pub from_max_relations: Option<ObjectRelationLimit>,
+    /// Maximum relations allowed for each object in `to_hubuum_class_id`.
+    /// Omit or set to `null` for unlimited.
+    pub to_max_relations: Option<ObjectRelationLimit>,
 }
 
 /// To create new relations between classes from within a class
@@ -48,6 +127,12 @@ pub struct NewHubuumClassRelationFromClass {
     pub to_hubuum_class_id: i32,
     pub forward_template_alias: Option<String>,
     pub reverse_template_alias: Option<String>,
+    /// Maximum relations allowed for each object in the class from the URL.
+    /// Omit or set to `null` for unlimited.
+    pub from_max_relations: Option<ObjectRelationLimit>,
+    /// Maximum relations allowed for each object in `to_hubuum_class_id`.
+    /// Omit or set to `null` for unlimited.
+    pub to_max_relations: Option<ObjectRelationLimit>,
 }
 
 crate::int_id_newtype! {
@@ -293,6 +378,8 @@ fn new_hubuum_class_relation_example() -> NewHubuumClassRelation {
         to_hubuum_class_id: 2,
         forward_template_alias: Some("rooms".to_string()),
         reverse_template_alias: Some("hosts".to_string()),
+        from_max_relations: Some(ObjectRelationLimit::new(1).expect("valid example limit")),
+        to_max_relations: None,
     }
 }
 
@@ -301,6 +388,8 @@ fn new_hubuum_class_relation_from_class_example() -> NewHubuumClassRelationFromC
         to_hubuum_class_id: 2,
         forward_template_alias: Some("rooms".to_string()),
         reverse_template_alias: Some("hosts".to_string()),
+        from_max_relations: Some(ObjectRelationLimit::new(1).expect("valid example limit")),
+        to_max_relations: None,
     }
 }
 
@@ -500,6 +589,8 @@ pub mod tests {
             to_hubuum_class_id: class2.id,
             forward_template_alias: None,
             reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
         };
 
         let relation = relation.save_without_events(pool).await.unwrap();
@@ -512,6 +603,8 @@ pub mod tests {
                 to_hubuum_class_id: class1.id,
                 forward_template_alias: None,
                 reverse_template_alias: None,
+                from_max_relations: None,
+                to_max_relations: None,
             }
         } else {
             NewHubuumClassRelation {
@@ -519,6 +612,8 @@ pub mod tests {
                 to_hubuum_class_id: class2.id,
                 forward_template_alias: None,
                 reverse_template_alias: None,
+                from_max_relations: None,
+                to_max_relations: None,
             }
         };
 
@@ -574,6 +669,8 @@ pub mod tests {
             to_hubuum_class_id: class1.id,
             forward_template_alias: None,
             reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
         };
 
         match relation.save_without_events(&pool).await {
@@ -602,6 +699,8 @@ pub mod tests {
             to_hubuum_class_id: class1.id,
             forward_template_alias: None,
             reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
         };
         match old_relation.save_without_events(&pool).await {
             Err(ApiError::Conflict(_)) => {}

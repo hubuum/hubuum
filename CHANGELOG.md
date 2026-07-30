@@ -13,6 +13,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   classes, objects, class relations, and object relations without exposing
   timestamp mutation through standard resource endpoints. Unchanged import
   overwrites do not create redundant history revisions.
+- Added optional per-class-side object relation limits, allowing class
+  relations to enforce one-to-one, one-to-many, or bounded object
+  cardinalities.
 
 ## [0.0.6] - 2026-07-29
 

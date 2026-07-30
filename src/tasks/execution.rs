@@ -734,6 +734,8 @@ pub(super) async fn execute_planned_item(
                 to_class.id,
                 input.forward_template_alias.clone(),
                 input.reverse_template_alias.clone(),
+                input.from_max_relations,
+                input.to_max_relations,
                 input.timestamps.as_ref(),
             )
             .await?;
