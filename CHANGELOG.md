@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Authorized imports can preserve `created_at` and `updated_at` for collections,
+  classes, objects, class relations, and object relations without exposing
+  timestamp mutation through standard resource endpoints. Unchanged import
+  overwrites do not create redundant history revisions.
+
 ## [0.0.6] - 2026-07-29
 
 ### Added

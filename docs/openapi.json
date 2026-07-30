@@ -21373,6 +21373,16 @@
               "null"
             ]
           },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
+          },
           "validate_schema": {
             "type": [
               "boolean",
@@ -21416,6 +21426,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
             ]
           },
           "to_class_key": {
@@ -21469,6 +21489,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
             ]
           }
         }
@@ -22144,6 +22174,16 @@
               "string",
               "null"
             ]
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
           }
         }
       },
@@ -22170,6 +22210,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
             ]
           },
           "to_object_key": {

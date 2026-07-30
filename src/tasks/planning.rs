@@ -17,7 +17,8 @@ use super::resolution::{
 };
 use super::types::{
     ClassResolution, CollectionResolution, FailureKind, ImportAdminStatus, ObjectResolution,
-    PlannedExecution, PlannedItem, PlanningFailure, PlanningOutcome, PlanningState,
+    PlannedExecution, PlannedItem, PlannedTaskResult, PlanningFailure, PlanningOutcome,
+    PlanningState,
 };
 use crate::db::prelude::AsyncConnection;
 use crate::db::traits::UserPermissions;
@@ -31,7 +32,7 @@ use crate::models::{
     Collection, CollectionID, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
     ImportCollectionInput, ImportCollectionPermissionInput, ImportCollisionPolicy, ImportMode,
     ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
-    ImportRequest, Permissions,
+    ImportRequest, Permissions, RestoreTimestamps,
 };
 use crate::permissions::PrincipalRef;
 use crate::traits::BackendContext;
@@ -330,6 +331,74 @@ async fn object_relation_exists_cached(
         .is_some();
     state.object_relation_exists_cache.insert(pair, exists);
     Ok(exists)
+}
+
+#[derive(Debug)]
+enum RelationPlanDecision {
+    Create,
+    Update(RestoreTimestamps),
+    Noop,
+    Collision,
+}
+
+impl RelationPlanDecision {
+    fn new(
+        relation_exists: bool,
+        timestamps: Option<&RestoreTimestamps>,
+        collision_policy: Option<ImportCollisionPolicy>,
+    ) -> Self {
+        if !relation_exists {
+            return Self::Create;
+        }
+        if matches!(collision_policy, Some(ImportCollisionPolicy::Abort)) {
+            return Self::Collision;
+        }
+        match timestamps {
+            Some(timestamps) => Self::Update(timestamps.clone()),
+            None => Self::Noop,
+        }
+    }
+
+    fn permission_requirement(
+        &self,
+        create_permission: Permissions,
+        update_permission: Permissions,
+    ) -> (Permissions, &'static str) {
+        match self {
+            Self::Update(_) => (update_permission, "update"),
+            Self::Create | Self::Noop | Self::Collision => (create_permission, "create"),
+        }
+    }
+}
+
+async fn ensure_relation_permissions<C>(
+    backend: &C,
+    user: &impl crate::db::traits::authz::AuthzSubject,
+    state: &mut PlanningState,
+    collections: [&CollectionResolution; 2],
+    permission: Permissions,
+    failure_item: PlannedTaskResult,
+) -> Result<(), PlanningFailure>
+where
+    C: BackendContext + ?Sized,
+{
+    for collection in collections {
+        ensure_collection_permission_cached(
+            backend,
+            user,
+            state,
+            collection.id,
+            collection.exists_in_db,
+            permission,
+        )
+        .await
+        .map_err(|message| PlanningFailure {
+            kind: FailureKind::Permission,
+            item: failure_item.clone(),
+            message,
+        })?;
+    }
+    Ok(())
 }
 
 pub(super) async fn plan_import<C>(
@@ -1506,46 +1575,7 @@ where
             message,
         })?;
 
-    ensure_collection_permission_cached(
-        backend,
-        user,
-        state,
-        from_collection.id,
-        from_collection.exists_in_db,
-        Permissions::CreateClassRelation,
-    )
-    .await
-    .map_err(|message| PlanningFailure {
-        kind: FailureKind::Permission,
-        item: planned_result(
-            "class_relation",
-            "create",
-            input.ref_.clone(),
-            identifier.clone(),
-        ),
-        message,
-    })?;
-    ensure_collection_permission_cached(
-        backend,
-        user,
-        state,
-        to_collection.id,
-        to_collection.exists_in_db,
-        Permissions::CreateClassRelation,
-    )
-    .await
-    .map_err(|message| PlanningFailure {
-        kind: FailureKind::Permission,
-        item: planned_result(
-            "class_relation",
-            "create",
-            input.ref_.clone(),
-            identifier.clone(),
-        ),
-        message,
-    })?;
-
-    if class_relation_exists_cached(pool, state, pair.0, pair.1)
+    let relation_exists = class_relation_exists_cached(pool, state, pair.0, pair.1)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Runtime,
@@ -1556,31 +1586,62 @@ where
                 identifier.clone(),
             ),
             message,
-        })?
-    {
-        if matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort)) {
+        })?;
+    let decision = RelationPlanDecision::new(
+        relation_exists,
+        input.timestamps.as_ref(),
+        mode.collision_policy,
+    );
+    let (permission, permission_action) = decision.permission_requirement(
+        Permissions::CreateClassRelation,
+        Permissions::UpdateClassRelation,
+    );
+    let permission_item = planned_result(
+        "class_relation",
+        permission_action,
+        input.ref_.clone(),
+        identifier.clone(),
+    );
+    ensure_relation_permissions(
+        backend,
+        user,
+        state,
+        [&from_collection, &to_collection],
+        permission,
+        permission_item,
+    )
+    .await?;
+
+    match decision {
+        RelationPlanDecision::Collision => {
             return Err(PlanningFailure {
                 kind: FailureKind::Collision,
                 item: planned_result("class_relation", "create", input.ref_.clone(), identifier),
                 message: "Class relation already exists".to_string(),
             });
         }
-
-        return Ok(PlannedItem {
-            result: planned_result("class_relation", "noop", input.ref_.clone(), identifier),
-            execution: None,
-        });
+        RelationPlanDecision::Update(timestamps) => {
+            return Ok(PlannedItem {
+                result: planned_result("class_relation", "update", input.ref_.clone(), identifier),
+                execution: Some(PlannedExecution::UpdateClassRelationTimestamps {
+                    input: input.clone(),
+                    timestamps,
+                }),
+            });
+        }
+        RelationPlanDecision::Noop => {
+            return Ok(PlannedItem {
+                result: planned_result("class_relation", "noop", input.ref_.clone(), identifier),
+                execution: None,
+            });
+        }
+        RelationPlanDecision::Create => {}
     }
 
     state.class_relations.insert(pair);
 
     Ok(PlannedItem {
-        result: planned_result(
-            "class_relation",
-            "create",
-            input.ref_.clone(),
-            Some(format!("{}<->{}", from_class.name, to_class.name)),
-        ),
+        result: planned_result("class_relation", "create", input.ref_.clone(), identifier),
         execution: Some(PlannedExecution::CreateClassRelation(input.clone())),
     })
 }
@@ -1621,50 +1682,32 @@ where
         message,
     })?;
     let pair = normalize_pair(from_object.id, to_object.id);
+    let identifier = Some(format!("{}<->{}", from_object.name, to_object.name));
 
     let from_collection = resolve_collection_by_id_planning(pool, state, from_object.collection_id)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Resolution,
-            item: planned_result("object_relation", "create", input.ref_.clone(), None),
+            item: planned_result(
+                "object_relation",
+                "create",
+                input.ref_.clone(),
+                identifier.clone(),
+            ),
             message,
         })?;
     let to_collection = resolve_collection_by_id_planning(pool, state, to_object.collection_id)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Resolution,
-            item: planned_result("object_relation", "create", input.ref_.clone(), None),
+            item: planned_result(
+                "object_relation",
+                "create",
+                input.ref_.clone(),
+                identifier.clone(),
+            ),
             message,
         })?;
-
-    ensure_collection_permission_cached(
-        backend,
-        user,
-        state,
-        from_collection.id,
-        from_collection.exists_in_db,
-        Permissions::CreateObjectRelation,
-    )
-    .await
-    .map_err(|message| PlanningFailure {
-        kind: FailureKind::Permission,
-        item: planned_result("object_relation", "create", input.ref_.clone(), None),
-        message,
-    })?;
-    ensure_collection_permission_cached(
-        backend,
-        user,
-        state,
-        to_collection.id,
-        to_collection.exists_in_db,
-        Permissions::CreateObjectRelation,
-    )
-    .await
-    .map_err(|message| PlanningFailure {
-        kind: FailureKind::Permission,
-        item: planned_result("object_relation", "create", input.ref_.clone(), None),
-        message,
-    })?;
 
     let class_pair = normalize_pair(from_object.class_id, to_object.class_id);
     let class_relation_exists =
@@ -1672,50 +1715,91 @@ where
             .await
             .map_err(|message| PlanningFailure {
                 kind: FailureKind::Runtime,
-                item: planned_result("object_relation", "lookup", input.ref_.clone(), None),
+                item: planned_result(
+                    "object_relation",
+                    "lookup",
+                    input.ref_.clone(),
+                    identifier.clone(),
+                ),
                 message,
             })?;
 
     if !class_relation_exists {
         return Err(PlanningFailure {
             kind: FailureKind::Resolution,
-            item: planned_result("object_relation", "create", input.ref_.clone(), None),
+            item: planned_result("object_relation", "create", input.ref_.clone(), identifier),
             message: "Object relation requires a direct class relation between the object classes"
                 .to_string(),
         });
     }
 
-    if object_relation_exists_cached(pool, state, pair.0, pair.1)
+    let relation_exists = object_relation_exists_cached(pool, state, pair.0, pair.1)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Runtime,
-            item: planned_result("object_relation", "lookup", input.ref_.clone(), None),
+            item: planned_result(
+                "object_relation",
+                "lookup",
+                input.ref_.clone(),
+                identifier.clone(),
+            ),
             message,
-        })?
-    {
-        if matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort)) {
+        })?;
+    let decision = RelationPlanDecision::new(
+        relation_exists,
+        input.timestamps.as_ref(),
+        mode.collision_policy,
+    );
+    let (permission, permission_action) = decision.permission_requirement(
+        Permissions::CreateObjectRelation,
+        Permissions::UpdateObjectRelation,
+    );
+    let permission_item = planned_result(
+        "object_relation",
+        permission_action,
+        input.ref_.clone(),
+        identifier.clone(),
+    );
+    ensure_relation_permissions(
+        backend,
+        user,
+        state,
+        [&from_collection, &to_collection],
+        permission,
+        permission_item,
+    )
+    .await?;
+
+    match decision {
+        RelationPlanDecision::Collision => {
             return Err(PlanningFailure {
                 kind: FailureKind::Collision,
-                item: planned_result("object_relation", "create", input.ref_.clone(), None),
+                item: planned_result("object_relation", "create", input.ref_.clone(), identifier),
                 message: "Object relation already exists".to_string(),
             });
         }
-
-        return Ok(PlannedItem {
-            result: planned_result("object_relation", "noop", input.ref_.clone(), None),
-            execution: None,
-        });
+        RelationPlanDecision::Update(timestamps) => {
+            return Ok(PlannedItem {
+                result: planned_result("object_relation", "update", input.ref_.clone(), identifier),
+                execution: Some(PlannedExecution::UpdateObjectRelationTimestamps {
+                    input: input.clone(),
+                    timestamps,
+                }),
+            });
+        }
+        RelationPlanDecision::Noop => {
+            return Ok(PlannedItem {
+                result: planned_result("object_relation", "noop", input.ref_.clone(), identifier),
+                execution: None,
+            });
+        }
+        RelationPlanDecision::Create => {}
     }
 
     state.object_relations.insert(pair);
 
     Ok(PlannedItem {
-        result: planned_result(
-            "object_relation",
-            "create",
-            input.ref_.clone(),
-            Some(format!("{}<->{}", from_object.name, to_object.name)),
-        ),
+        result: planned_result("object_relation", "create", input.ref_.clone(), identifier),
         execution: Some(PlannedExecution::CreateObjectRelation(input.clone())),
     })
 }

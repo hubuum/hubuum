@@ -6,7 +6,7 @@ use crate::models::{
     ImportEventSubscriptionInput, ImportExportTemplateInput, ImportGroupInput,
     ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
     ImportObjectRelationInput, ImportPrincipalInput, ImportRemoteTargetInput,
-    NewImportTaskResultRecord, Permissions, TaskResultCounts, TaskStatus,
+    NewImportTaskResultRecord, Permissions, RestoreTimestamps, TaskResultCounts, TaskStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -157,7 +157,15 @@ pub(super) enum PlannedExecution {
         input: ImportObjectInput,
     },
     CreateClassRelation(ImportClassRelationInput),
+    UpdateClassRelationTimestamps {
+        input: ImportClassRelationInput,
+        timestamps: RestoreTimestamps,
+    },
     CreateObjectRelation(ImportObjectRelationInput),
+    UpdateObjectRelationTimestamps {
+        input: ImportObjectRelationInput,
+        timestamps: RestoreTimestamps,
+    },
     ApplyCollectionPermissions(ImportCollectionPermissionInput),
     UpsertExportTemplate {
         input: ImportExportTemplateInput,

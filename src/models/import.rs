@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use hubuum_events_core::EventSubscriptionFilter;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -91,20 +92,51 @@ pub struct EventSinkKey {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, ToSchema)]
 pub struct RestoreTimestamps {
-    pub created_at: chrono::NaiveDateTime,
-    pub updated_at: chrono::NaiveDateTime,
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
 }
 
 impl RestoreTimestamps {
-    pub fn validate(&self) -> Result<(), ApiError> {
-        if self.updated_at < self.created_at {
+    pub fn new(created_at: NaiveDateTime, updated_at: NaiveDateTime) -> Result<Self, ApiError> {
+        if updated_at < created_at {
             return Err(ApiError::BadRequest(
                 "Imported updated_at must not be earlier than created_at".to_string(),
             ));
         }
-        Ok(())
+        Ok(Self {
+            created_at,
+            updated_at,
+        })
+    }
+
+    pub fn created_at(&self) -> NaiveDateTime {
+        self.created_at
+    }
+
+    pub fn updated_at(&self) -> NaiveDateTime {
+        self.updated_at
+    }
+
+    pub fn as_pair(&self) -> (NaiveDateTime, NaiveDateTime) {
+        (self.created_at, self.updated_at)
+    }
+}
+
+#[derive(Deserialize)]
+struct UncheckedRestoreTimestamps {
+    created_at: NaiveDateTime,
+    updated_at: NaiveDateTime,
+}
+
+impl<'de> Deserialize<'de> for RestoreTimestamps {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let unchecked = UncheckedRestoreTimestamps::deserialize(deserializer)?;
+        Self::new(unchecked.created_at, unchecked.updated_at).map_err(serde::de::Error::custom)
     }
 }
 
@@ -149,8 +181,8 @@ pub struct ImportGroupInput {
     pub identity_scope_key: Option<IdentityScopeKey>,
     pub managed_by: String,
     pub external_key: Option<String>,
-    pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
-    pub last_sync_success_at: Option<chrono::NaiveDateTime>,
+    pub last_sync_attempted_at: Option<NaiveDateTime>,
+    pub last_sync_success_at: Option<NaiveDateTime>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -162,7 +194,7 @@ pub enum ImportPrincipalSubtype {
         password_hash: Option<String>,
         proper_name: Option<String>,
         email: Option<String>,
-        anonymized_at: Option<chrono::NaiveDateTime>,
+        anonymized_at: Option<NaiveDateTime>,
     },
     ServiceAccount {
         description: String,
@@ -170,7 +202,7 @@ pub enum ImportPrincipalSubtype {
         owner_group_key: Option<GroupKey>,
         created_by_ref: Option<String>,
         created_by_key: Option<PrincipalKey>,
-        disabled_at: Option<chrono::NaiveDateTime>,
+        disabled_at: Option<NaiveDateTime>,
     },
 }
 
@@ -185,8 +217,8 @@ pub struct ImportPrincipalInput {
     #[serde(default = "empty_json_object")]
     pub settings: serde_json::Value,
     pub external_subject: Option<String>,
-    pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
-    pub last_sync_success_at: Option<chrono::NaiveDateTime>,
+    pub last_sync_attempted_at: Option<NaiveDateTime>,
+    pub last_sync_success_at: Option<NaiveDateTime>,
     #[serde(flatten)]
     pub subtype: ImportPrincipalSubtype,
     pub timestamps: Option<RestoreTimestamps>,
@@ -256,6 +288,7 @@ pub struct ImportCollectionInput {
     pub description: String,
     pub parent_collection_ref: Option<String>,
     pub parent_collection_key: Option<CollectionKey>,
+    pub timestamps: Option<RestoreTimestamps>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -268,6 +301,7 @@ pub struct ImportClassInput {
     pub validate_schema: Option<bool>,
     pub collection_ref: Option<String>,
     pub collection_key: Option<CollectionKey>,
+    pub timestamps: Option<RestoreTimestamps>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -279,6 +313,7 @@ pub struct ImportObjectInput {
     pub data: serde_json::Value,
     pub class_ref: Option<String>,
     pub class_key: Option<ClassKey>,
+    pub timestamps: Option<RestoreTimestamps>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -291,6 +326,7 @@ pub struct ImportClassRelationInput {
     pub to_class_key: Option<ClassKey>,
     pub forward_template_alias: Option<String>,
     pub reverse_template_alias: Option<String>,
+    pub timestamps: Option<RestoreTimestamps>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -301,6 +337,7 @@ pub struct ImportObjectRelationInput {
     pub from_object_key: Option<ObjectKey>,
     pub to_object_ref: Option<String>,
     pub to_object_key: Option<ObjectKey>,
+    pub timestamps: Option<RestoreTimestamps>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -609,60 +646,6 @@ impl ImportGraph {
         }
         Ok(())
     }
-
-    fn validate_extended_timestamps(&self) -> Result<(), ApiError> {
-        let timestamps = self
-            .identity_scopes
-            .iter()
-            .filter_map(|item| item.timestamps.as_ref())
-            .chain(
-                self.groups
-                    .iter()
-                    .filter_map(|item| item.timestamps.as_ref()),
-            )
-            .chain(
-                self.principals
-                    .iter()
-                    .filter_map(|item| item.timestamps.as_ref()),
-            )
-            .chain(
-                self.group_memberships
-                    .iter()
-                    .filter_map(|item| item.timestamps.as_ref()),
-            )
-            .chain(
-                self.export_templates
-                    .iter()
-                    .filter_map(|item| item.timestamps.as_ref()),
-            )
-            .chain(
-                self.remote_targets
-                    .iter()
-                    .filter_map(|item| item.timestamps.as_ref()),
-            )
-            .chain(
-                self.event_sinks
-                    .iter()
-                    .filter_map(|item| item.timestamps.as_ref()),
-            )
-            .chain(
-                self.event_subscriptions
-                    .iter()
-                    .filter_map(|item| item.timestamps.as_ref()),
-            );
-        for timestamps in timestamps {
-            timestamps.validate()?;
-        }
-        for timestamps in self
-            .group_memberships
-            .iter()
-            .flat_map(|membership| &membership.sources)
-            .filter_map(|source| source.timestamps.as_ref())
-        {
-            timestamps.validate()?;
-        }
-        Ok(())
-    }
 }
 
 impl ImportRequest {
@@ -674,7 +657,6 @@ impl ImportRequest {
             )));
         }
         self.graph.validate_extended_selectors()?;
-        self.graph.validate_extended_timestamps()?;
         for principal in &self.graph.principals {
             principal.validate_credentials()?;
         }
@@ -876,12 +858,70 @@ mod tests {
         #[case] updated_at: &str,
         #[case] expected_valid: bool,
     ) {
-        let timestamps = RestoreTimestamps {
-            created_at: created_at.parse().expect("created_at test timestamp"),
-            updated_at: updated_at.parse().expect("updated_at test timestamp"),
-        };
+        let timestamps = RestoreTimestamps::new(
+            created_at.parse().expect("created_at test timestamp"),
+            updated_at.parse().expect("updated_at test timestamp"),
+        );
 
-        assert_eq!(timestamps.validate().is_ok(), expected_valid);
+        assert_eq!(timestamps.is_ok(), expected_valid);
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum CoreImportSection {
+        Collection,
+        Class,
+        Object,
+        ClassRelation,
+        ObjectRelation,
+    }
+
+    impl CoreImportSection {
+        const fn field_name(self) -> &'static str {
+            match self {
+                Self::Collection => "collections",
+                Self::Class => "classes",
+                Self::Object => "objects",
+                Self::ClassRelation => "class_relations",
+                Self::ObjectRelation => "object_relations",
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::collection(CoreImportSection::Collection)]
+    #[case::class(CoreImportSection::Class)]
+    #[case::object(CoreImportSection::Object)]
+    #[case::class_relation(CoreImportSection::ClassRelation)]
+    #[case::object_relation(CoreImportSection::ObjectRelation)]
+    fn core_import_timestamps_are_validated(#[case] section: CoreImportSection) {
+        let timestamps = serde_json::json!({
+            "created_at": "2026-07-14T10:00:00",
+            "updated_at": "2026-07-14T09:00:00"
+        });
+        let item = match section {
+            CoreImportSection::Collection => serde_json::json!({
+                "name": "collection",
+                "description": "collection",
+                "timestamps": timestamps
+            }),
+            CoreImportSection::Class => serde_json::json!({
+                "name": "class",
+                "description": "class",
+                "timestamps": timestamps
+            }),
+            CoreImportSection::Object => serde_json::json!({
+                "name": "object",
+                "description": "object",
+                "data": {},
+                "timestamps": timestamps
+            }),
+            CoreImportSection::ClassRelation | CoreImportSection::ObjectRelation => {
+                serde_json::json!({ "timestamps": timestamps })
+            }
+        };
+        let mut graph = serde_json::Map::new();
+        graph.insert(section.field_name().to_string(), serde_json::json!([item]));
+        assert!(serde_json::from_value::<ImportGraph>(serde_json::Value::Object(graph)).is_err());
     }
 
     fn request_with_graph(graph: ImportGraph) -> ImportRequest {

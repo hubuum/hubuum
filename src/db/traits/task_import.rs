@@ -1,6 +1,9 @@
 use crate::db::prelude::*;
 
-use crate::db::{DbPool, with_connection};
+use chrono::{NaiveDateTime, Utc};
+
+use crate::db::traits::collection::CollectionRowInsert;
+use crate::db::{DbPool, SendAsyncFn, with_connection};
 use crate::errors::ApiError;
 use crate::models::event_subscription::validate_subscription_parts;
 use crate::models::{
@@ -10,8 +13,8 @@ use crate::models::{
     ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
     ImportPrincipalInput, ImportPrincipalSubtype, ImportRemoteTargetInput, NewHubuumClass,
     NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission,
-    Permissions, PermissionsList, Principal, ServiceAccount, UpdateCollection, UpdateHubuumClass,
-    UpdateHubuumObject, UpdatePermission, User,
+    Permissions, PermissionsList, Principal, RestoreTimestamps, ServiceAccount, UpdateCollection,
+    UpdateHubuumClass, UpdateHubuumObject, UpdatePermission, User,
 };
 use crate::utilities::aliases::normalize_template_alias;
 
@@ -406,13 +409,13 @@ pub async fn create_collection_db(
     input: &ImportCollectionInput,
     parent_collection_id: Option<i32>,
 ) -> Result<Collection, ApiError> {
-    crate::db::traits::collection::insert_collection_row_with_closure(
-        conn,
-        &input.name,
-        &input.description,
-        parent_collection_id,
-    )
-    .await
+    let insert = CollectionRowInsert::new(&input.name, &input.description)
+        .parent_collection_id(parent_collection_id);
+    let insert = match input.timestamps.as_ref() {
+        Some(timestamps) => insert.timestamps(timestamps.created_at(), timestamps.updated_at()),
+        None => insert,
+    };
+    crate::db::traits::collection::insert_collection_row_with_closure(conn, insert).await
 }
 
 pub async fn update_collection_db(
@@ -420,12 +423,37 @@ pub async fn update_collection_db(
     collection_id_value: i32,
     input: &ImportCollectionInput,
 ) -> Result<Collection, ApiError> {
-    use crate::schema::collections::dsl::{collections, id};
+    use crate::schema::collections::dsl::{collections, created_at, id, updated_at};
 
     let update = UpdateCollection {
         name: Some(input.name.clone()),
         description: Some(input.description.clone()),
     };
+
+    if let Some(timestamps) = input.timestamps.as_ref() {
+        return with_imported_timestamp_override(conn, async |conn| {
+            crate::db::updated_or_current(
+                diesel::update(collections.filter(id.eq(collection_id_value)))
+                    .set((
+                        &update,
+                        created_at.eq(timestamps.created_at()),
+                        updated_at.eq(timestamps.updated_at()),
+                    ))
+                    .get_result::<Collection>(conn)
+                    .await
+                    .optional(),
+                async || {
+                    collections
+                        .filter(id.eq(collection_id_value))
+                        .first(conn)
+                        .await
+                },
+            )
+            .await
+            .map_err(ApiError::from)
+        })
+        .await;
+    }
 
     crate::db::updated_or_current(
         diesel::update(collections.filter(id.eq(collection_id_value)))
@@ -449,7 +477,7 @@ pub async fn create_class_db(
     input: &ImportClassInput,
     collection_id_value: i32,
 ) -> Result<HubuumClass, ApiError> {
-    use crate::schema::hubuumclass::dsl::hubuumclass;
+    use crate::schema::hubuumclass::dsl::{created_at, hubuumclass, updated_at};
 
     let new_class = NewHubuumClass {
         name: input.name.clone(),
@@ -459,11 +487,22 @@ pub async fn create_class_db(
         description: input.description.clone(),
     };
 
-    diesel::insert_into(hubuumclass)
-        .values(&new_class)
-        .get_result::<HubuumClass>(conn)
-        .await
-        .map_err(ApiError::from)
+    match input.timestamps.as_ref() {
+        Some(timestamps) => diesel::insert_into(hubuumclass)
+            .values((
+                &new_class,
+                created_at.eq(timestamps.created_at()),
+                updated_at.eq(timestamps.updated_at()),
+            ))
+            .get_result::<HubuumClass>(conn)
+            .await
+            .map_err(ApiError::from),
+        None => diesel::insert_into(hubuumclass)
+            .values(&new_class)
+            .get_result::<HubuumClass>(conn)
+            .await
+            .map_err(ApiError::from),
+    }
 }
 
 pub async fn update_class_db(
@@ -471,7 +510,7 @@ pub async fn update_class_db(
     class_id_value: i32,
     input: &ImportClassInput,
 ) -> Result<HubuumClass, ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, id};
+    use crate::schema::hubuumclass::dsl::{created_at, hubuumclass, id, updated_at};
 
     let update = UpdateHubuumClass {
         name: Some(input.name.clone()),
@@ -480,6 +519,26 @@ pub async fn update_class_db(
         validate_schema: input.validate_schema,
         description: Some(input.description.clone()),
     };
+
+    if let Some(timestamps) = input.timestamps.as_ref() {
+        return with_imported_timestamp_override(conn, async |conn| {
+            crate::db::updated_or_current(
+                diesel::update(hubuumclass.filter(id.eq(class_id_value)))
+                    .set((
+                        &update,
+                        created_at.eq(timestamps.created_at()),
+                        updated_at.eq(timestamps.updated_at()),
+                    ))
+                    .get_result::<HubuumClass>(conn)
+                    .await
+                    .optional(),
+                async || hubuumclass.filter(id.eq(class_id_value)).first(conn).await,
+            )
+            .await
+            .map_err(ApiError::from)
+        })
+        .await;
+    }
 
     crate::db::updated_or_current(
         diesel::update(hubuumclass.filter(id.eq(class_id_value)))
@@ -498,7 +557,7 @@ pub async fn create_object_db(
     input: &ImportObjectInput,
     class: &HubuumClass,
 ) -> Result<HubuumObject, ApiError> {
-    use crate::schema::hubuumobject::dsl::hubuumobject;
+    use crate::schema::hubuumobject::dsl::{created_at, hubuumobject, updated_at};
 
     let new_object = NewHubuumObject {
         name: input.name.clone(),
@@ -508,11 +567,22 @@ pub async fn create_object_db(
         description: input.description.clone(),
     };
 
-    let object = diesel::insert_into(hubuumobject)
-        .values(&new_object)
-        .get_result::<HubuumObject>(conn)
-        .await
-        .map_err(ApiError::from)?;
+    let object = match input.timestamps.as_ref() {
+        Some(timestamps) => diesel::insert_into(hubuumobject)
+            .values((
+                &new_object,
+                created_at.eq(timestamps.created_at()),
+                updated_at.eq(timestamps.updated_at()),
+            ))
+            .get_result::<HubuumObject>(conn)
+            .await
+            .map_err(ApiError::from)?,
+        None => diesel::insert_into(hubuumobject)
+            .values(&new_object)
+            .get_result::<HubuumObject>(conn)
+            .await
+            .map_err(ApiError::from)?,
+    };
     crate::db::traits::computed_field::materialize_object_in_transaction(conn, &object).await?;
     Ok(object)
 }
@@ -522,7 +592,7 @@ pub async fn update_object_db(
     object_id_value: i32,
     input: &ImportObjectInput,
 ) -> Result<HubuumObject, ApiError> {
-    use crate::schema::hubuumobject::dsl::{hubuumobject, id};
+    use crate::schema::hubuumobject::dsl::{created_at, hubuumobject, id, updated_at};
 
     let update = UpdateHubuumObject {
         name: Some(input.name.clone()),
@@ -532,44 +602,92 @@ pub async fn update_object_db(
         description: Some(input.description.clone()),
     };
 
-    let object = crate::db::updated_or_current(
-        diesel::update(hubuumobject.filter(id.eq(object_id_value)))
-            .set(&update)
-            .get_result::<HubuumObject>(conn)
+    let object = if let Some(timestamps) = input.timestamps.as_ref() {
+        with_imported_timestamp_override(conn, async |conn| {
+            crate::db::updated_or_current(
+                diesel::update(hubuumobject.filter(id.eq(object_id_value)))
+                    .set((
+                        &update,
+                        created_at.eq(timestamps.created_at()),
+                        updated_at.eq(timestamps.updated_at()),
+                    ))
+                    .get_result::<HubuumObject>(conn)
+                    .await
+                    .optional(),
+                async || {
+                    hubuumobject
+                        .filter(id.eq(object_id_value))
+                        .first(conn)
+                        .await
+                },
+            )
             .await
-            .optional(),
-        async || {
-            hubuumobject
-                .filter(id.eq(object_id_value))
-                .first(conn)
+            .map_err(ApiError::from)
+        })
+        .await?
+    } else {
+        crate::db::updated_or_current(
+            diesel::update(hubuumobject.filter(id.eq(object_id_value)))
+                .set(&update)
+                .get_result::<HubuumObject>(conn)
                 .await
-        },
-    )
-    .await
-    .map_err(ApiError::from)?;
+                .optional(),
+            async || {
+                hubuumobject
+                    .filter(id.eq(object_id_value))
+                    .first(conn)
+                    .await
+            },
+        )
+        .await
+        .map_err(ApiError::from)?
+    };
     crate::db::traits::computed_field::materialize_object_in_transaction(conn, &object).await?;
     Ok(object)
 }
 
-fn imported_timestamps(
-    timestamps: Option<&crate::models::RestoreTimestamps>,
-) -> (chrono::NaiveDateTime, chrono::NaiveDateTime) {
-    let now = chrono::Utc::now().naive_utc();
+fn imported_timestamps(timestamps: Option<&RestoreTimestamps>) -> (NaiveDateTime, NaiveDateTime) {
+    let now = Utc::now().naive_utc();
     timestamps
-        .map(|value| (value.created_at, value.updated_at))
+        .map(RestoreTimestamps::as_pair)
         .unwrap_or((now, now))
 }
 
-async fn preserve_imported_timestamps(
+async fn set_imported_timestamp_override(
     conn: &mut crate::db::DbConnection,
-    preserve: bool,
+    value: &str,
 ) -> Result<(), ApiError> {
-    let value = if preserve { "on" } else { "off" };
     diesel::sql_query("SELECT set_config('hubuum.preserve_imported_timestamps', $1, true)")
         .bind::<diesel::sql_types::Text, _>(value)
         .execute(conn)
         .await?;
     Ok(())
+}
+
+async fn with_imported_timestamp_override<F, R>(
+    conn: &mut crate::db::DbConnection,
+    operation: F,
+) -> Result<R, ApiError>
+where
+    F: for<'conn> AsyncFnOnce(&'conn mut crate::db::DbConnection) -> Result<R, ApiError>
+        + for<'conn> SendAsyncFn<&'conn mut crate::db::DbConnection, Result<R, ApiError>, Fut: Send>
+        + Send,
+    R: Send,
+{
+    conn.transaction::<R, ApiError, _>(async move |conn| {
+        let previous = diesel::select(diesel::dsl::sql::<
+            diesel::sql_types::Nullable<diesel::sql_types::Text>,
+        >(
+            "current_setting('hubuum.preserve_imported_timestamps', true)",
+        ))
+        .get_result::<Option<String>>(conn)
+        .await?;
+        set_imported_timestamp_override(conn, "on").await?;
+        let result = operation(conn).await?;
+        set_imported_timestamp_override(conn, previous.as_deref().unwrap_or("off")).await?;
+        Ok(result)
+    })
+    .await
 }
 
 pub async fn upsert_identity_scope_db(
@@ -596,20 +714,18 @@ pub async fn upsert_identity_scope_db(
             let (created, updated) = input
                 .timestamps
                 .as_ref()
-                .map(|value| (value.created_at, value.updated_at))
+                .map(RestoreTimestamps::as_pair)
                 .unwrap_or((existing.created_at, existing.updated_at));
-            conn.transaction::<IdentityScope, ApiError, _>(async |conn| {
-                preserve_imported_timestamps(conn, true).await?;
-                let row = diesel::update(identity_scopes.filter(id.eq(existing.id)))
+            with_imported_timestamp_override(conn, async |conn| {
+                diesel::update(identity_scopes.filter(id.eq(existing.id)))
                     .set((
                         provider_kind.eq(&input.provider_kind),
                         created_at.eq(created),
                         updated_at.eq(updated),
                     ))
                     .get_result::<IdentityScope>(conn)
-                    .await?;
-                preserve_imported_timestamps(conn, false).await?;
-                Ok(row)
+                    .await
+                    .map_err(ApiError::from)
             })
             .await?
         }
@@ -653,11 +769,10 @@ pub async fn upsert_group_db(
             let (created, updated) = input
                 .timestamps
                 .as_ref()
-                .map(|value| (value.created_at, value.updated_at))
+                .map(RestoreTimestamps::as_pair)
                 .unwrap_or((existing.created_at, existing.updated_at));
-            conn.transaction::<Group, ApiError, _>(async |conn| {
-                preserve_imported_timestamps(conn, true).await?;
-                let row = diesel::update(groups.filter(id.eq(existing.id)))
+            with_imported_timestamp_override(conn, async |conn| {
+                diesel::update(groups.filter(id.eq(existing.id)))
                     .set((
                         description.eq(&input.description),
                         managed_by.eq(&input.managed_by),
@@ -668,9 +783,8 @@ pub async fn upsert_group_db(
                         updated_at.eq(updated),
                     ))
                     .get_result::<Group>(conn)
-                    .await?;
-                preserve_imported_timestamps(conn, false).await?;
-                Ok(row)
+                    .await
+                    .map_err(ApiError::from)
             })
             .await?
         }
@@ -751,11 +865,10 @@ pub async fn upsert_principal_db(
             let (created, updated) = input
                 .timestamps
                 .as_ref()
-                .map(|value| (value.created_at, value.updated_at))
+                .map(RestoreTimestamps::as_pair)
                 .unwrap_or((existing.created_at, existing.updated_at));
-            conn.transaction::<Principal, ApiError, _>(async |conn| {
-                preserve_imported_timestamps(conn, true).await?;
-                let principal = diesel::update(p::principals.filter(p::id.eq(existing.id)))
+            with_imported_timestamp_override(conn, async |conn| {
+                diesel::update(p::principals.filter(p::id.eq(existing.id)))
                     .set((
                         p::provider_managed.eq(input.provider_managed),
                         p::settings.eq(&input.settings),
@@ -766,9 +879,8 @@ pub async fn upsert_principal_db(
                         p::updated_at.eq(updated),
                     ))
                     .get_result::<Principal>(conn)
-                    .await?;
-                preserve_imported_timestamps(conn, false).await?;
-                Ok(principal)
+                    .await
+                    .map_err(ApiError::from)
             })
             .await?
         }
@@ -809,7 +921,7 @@ pub async fn upsert_principal_db(
             let (created, updated) = input
                 .timestamps
                 .as_ref()
-                .map(|value| (value.created_at, value.updated_at))
+                .map(RestoreTimestamps::as_pair)
                 .or_else(|| {
                     existing_user
                         .as_ref()
@@ -817,8 +929,7 @@ pub async fn upsert_principal_db(
                 })
                 .unwrap_or_else(|| imported_timestamps(None));
             if let Some(existing_user) = existing_user {
-                conn.transaction::<(), ApiError, _>(async |conn| {
-                    preserve_imported_timestamps(conn, true).await?;
+                with_imported_timestamp_override(conn, async |conn| {
                     diesel::update(u::users.filter(u::id.eq(principal.id)))
                         .set((
                             u::password.eq(supplied_password.or(existing_user.password)),
@@ -830,7 +941,6 @@ pub async fn upsert_principal_db(
                         ))
                         .execute(conn)
                         .await?;
-                    preserve_imported_timestamps(conn, false).await?;
                     Ok(())
                 })
                 .await?;
@@ -867,7 +977,7 @@ pub async fn upsert_principal_db(
             let (created, updated) = input
                 .timestamps
                 .as_ref()
-                .map(|value| (value.created_at, value.updated_at))
+                .map(RestoreTimestamps::as_pair)
                 .or_else(|| {
                     existing_account
                         .as_ref()
@@ -875,8 +985,7 @@ pub async fn upsert_principal_db(
                 })
                 .unwrap_or_else(|| imported_timestamps(None));
             if existing_account.is_some() {
-                conn.transaction::<(), ApiError, _>(async |conn| {
-                    preserve_imported_timestamps(conn, true).await?;
+                with_imported_timestamp_override(conn, async |conn| {
                     diesel::update(s::service_accounts.filter(s::id.eq(principal.id)))
                         .set((
                             s::description.eq(account_description),
@@ -888,7 +997,6 @@ pub async fn upsert_principal_db(
                         ))
                         .execute(conn)
                         .await?;
-                    preserve_imported_timestamps(conn, false).await?;
                     Ok(())
                 })
                 .await?;
@@ -927,7 +1035,7 @@ pub async fn upsert_group_membership_db(
         .filter(m::principal_id.eq(principal_id_value))
         .filter(m::group_id.eq(group_id_value))
         .select((m::created_at, m::updated_at))
-        .first::<(chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+        .first::<(NaiveDateTime, NaiveDateTime)>(conn)
         .await
         .optional()?;
     if existing_membership.is_some() && !overwrite {
@@ -936,12 +1044,11 @@ pub async fn upsert_group_membership_db(
         )));
     }
 
-    conn.transaction::<(), ApiError, _>(async |conn| {
-        preserve_imported_timestamps(conn, true).await?;
+    with_imported_timestamp_override(conn, async |conn| {
         let membership_timestamps = input
             .timestamps
             .as_ref()
-            .map(|value| (value.created_at, value.updated_at))
+            .map(RestoreTimestamps::as_pair)
             .or(existing_membership)
             .unwrap_or_else(|| imported_timestamps(None));
         match existing_membership {
@@ -979,13 +1086,13 @@ pub async fn upsert_group_membership_db(
                 .filter(s::source_scope_id.eq(*source_scope_id_value))
                 .filter(s::source_key.eq(&source.source_key))
                 .select((s::created_at, s::updated_at))
-                .first::<(chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+                .first::<(NaiveDateTime, NaiveDateTime)>(conn)
                 .await
                 .optional()?;
             let source_timestamps = source
                 .timestamps
                 .as_ref()
-                .map(|value| (value.created_at, value.updated_at))
+                .map(RestoreTimestamps::as_pair)
                 .or(existing_source)
                 .unwrap_or_else(|| imported_timestamps(None));
             if existing_source.is_some() {
@@ -1018,7 +1125,6 @@ pub async fn upsert_group_membership_db(
                     .await?;
             }
         }
-        preserve_imported_timestamps(conn, false).await?;
         Ok(())
     })
     .await
@@ -1050,7 +1156,7 @@ pub async fn upsert_export_template_db(
         .filter(t::collection_id.eq(collection_id_value))
         .filter(t::name.eq(&input.name))
         .select((t::id, t::created_at, t::updated_at))
-        .first::<(i32, chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+        .first::<(i32, NaiveDateTime, NaiveDateTime)>(conn)
         .await
         .optional()?;
     if existing.is_some() && !overwrite {
@@ -1083,10 +1189,9 @@ pub async fn upsert_export_template_db(
             let (created, updated) = input
                 .timestamps
                 .as_ref()
-                .map(|value| (value.created_at, value.updated_at))
+                .map(RestoreTimestamps::as_pair)
                 .unwrap_or((existing_created, existing_updated));
-            conn.transaction::<(), ApiError, _>(async |conn| {
-                preserve_imported_timestamps(conn, true).await?;
+            with_imported_timestamp_override(conn, async |conn| {
                 diesel::update(t::export_templates.filter(t::id.eq(existing_id)))
                     .set((
                         t::description.eq(&input.description),
@@ -1105,7 +1210,6 @@ pub async fn upsert_export_template_db(
                     ))
                     .execute(conn)
                     .await?;
-                preserve_imported_timestamps(conn, false).await?;
                 Ok(())
             })
             .await?;
@@ -1150,7 +1254,7 @@ pub async fn upsert_remote_target_db(
         .filter(r::collection_id.eq(collection_id_value))
         .filter(r::name.eq(&input.name))
         .select((r::id, r::created_at, r::updated_at))
-        .first::<(i32, chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+        .first::<(i32, NaiveDateTime, NaiveDateTime)>(conn)
         .await
         .optional()?;
     if existing.is_some() && !overwrite {
@@ -1166,10 +1270,9 @@ pub async fn upsert_remote_target_db(
             let (created, updated) = input
                 .timestamps
                 .as_ref()
-                .map(|value| (value.created_at, value.updated_at))
+                .map(RestoreTimestamps::as_pair)
                 .unwrap_or((existing_created, existing_updated));
-            conn.transaction::<(), ApiError, _>(async |conn| {
-                preserve_imported_timestamps(conn, true).await?;
+            with_imported_timestamp_override(conn, async |conn| {
                 diesel::update(r::remote_targets.filter(r::id.eq(existing_id)))
                     .set((
                         r::class_id.eq(class_id_value),
@@ -1187,7 +1290,6 @@ pub async fn upsert_remote_target_db(
                     ))
                     .execute(conn)
                     .await?;
-                preserve_imported_timestamps(conn, false).await?;
                 Ok(())
             })
             .await?;
@@ -1228,7 +1330,7 @@ pub async fn upsert_event_sink_db(
     let existing = s::event_sinks
         .filter(s::name.eq(&input.name))
         .select((s::id, s::created_at, s::updated_at))
-        .first::<(i32, chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+        .first::<(i32, NaiveDateTime, NaiveDateTime)>(conn)
         .await
         .optional()?;
     if existing.is_some() && !overwrite {
@@ -1242,10 +1344,9 @@ pub async fn upsert_event_sink_db(
             let (created, updated) = input
                 .timestamps
                 .as_ref()
-                .map(|value| (value.created_at, value.updated_at))
+                .map(RestoreTimestamps::as_pair)
                 .unwrap_or((existing_created, existing_updated));
-            conn.transaction::<(), ApiError, _>(async |conn| {
-                preserve_imported_timestamps(conn, true).await?;
+            with_imported_timestamp_override(conn, async |conn| {
                 diesel::update(s::event_sinks.filter(s::id.eq(existing_id)))
                     .set((
                         s::kind.eq(input.kind.as_str()),
@@ -1257,7 +1358,6 @@ pub async fn upsert_event_sink_db(
                     ))
                     .execute(conn)
                     .await?;
-                preserve_imported_timestamps(conn, false).await?;
                 Ok(())
             })
             .await?;
@@ -1301,7 +1401,7 @@ pub async fn upsert_event_subscription_db(
         .filter(s::collection_id.eq(collection_id_value))
         .filter(s::name.eq(&input.name))
         .select((s::id, s::created_at, s::updated_at))
-        .first::<(i32, chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+        .first::<(i32, NaiveDateTime, NaiveDateTime)>(conn)
         .await
         .optional()?;
     if existing.is_some() && !overwrite {
@@ -1317,10 +1417,9 @@ pub async fn upsert_event_subscription_db(
             let (created, updated) = input
                 .timestamps
                 .as_ref()
-                .map(|value| (value.created_at, value.updated_at))
+                .map(RestoreTimestamps::as_pair)
                 .unwrap_or((existing_created, existing_updated));
-            conn.transaction::<(), ApiError, _>(async |conn| {
-                preserve_imported_timestamps(conn, true).await?;
+            with_imported_timestamp_override(conn, async |conn| {
                 diesel::update(s::event_subscriptions.filter(s::id.eq(existing_id)))
                     .set((
                         s::sink_id.eq(sink_id_value),
@@ -1335,7 +1434,6 @@ pub async fn upsert_event_subscription_db(
                     ))
                     .execute(conn)
                     .await?;
-                preserve_imported_timestamps(conn, false).await?;
                 Ok(())
             })
             .await?;
@@ -1370,8 +1468,9 @@ pub async fn create_class_relation_db(
     right: i32,
     forward_template_alias: Option<String>,
     reverse_template_alias: Option<String>,
+    timestamps: Option<&RestoreTimestamps>,
 ) -> Result<HubuumClassRelation, ApiError> {
-    use crate::schema::hubuumclass_relation::dsl::hubuumclass_relation;
+    use crate::schema::hubuumclass_relation::dsl::{created_at, hubuumclass_relation, updated_at};
     let pair = normalize_pair(left, right);
     let forward_template_alias =
         normalize_template_alias_option(forward_template_alias.as_deref())?;
@@ -1392,11 +1491,61 @@ pub async fn create_class_relation_db(
         },
     };
 
-    diesel::insert_into(hubuumclass_relation)
-        .values(&new_relation)
-        .get_result::<HubuumClassRelation>(conn)
+    match timestamps {
+        Some(timestamps) => diesel::insert_into(hubuumclass_relation)
+            .values((
+                &new_relation,
+                created_at.eq(timestamps.created_at()),
+                updated_at.eq(timestamps.updated_at()),
+            ))
+            .get_result::<HubuumClassRelation>(conn)
+            .await
+            .map_err(ApiError::from),
+        None => diesel::insert_into(hubuumclass_relation)
+            .values(&new_relation)
+            .get_result::<HubuumClassRelation>(conn)
+            .await
+            .map_err(ApiError::from),
+    }
+}
+
+pub async fn update_class_relation_timestamps_db(
+    conn: &mut crate::db::DbConnection,
+    left: i32,
+    right: i32,
+    timestamps: &RestoreTimestamps,
+) -> Result<HubuumClassRelation, ApiError> {
+    use crate::schema::hubuumclass_relation::dsl::{
+        created_at, from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id, updated_at,
+    };
+    let pair = normalize_pair(left, right);
+
+    with_imported_timestamp_override(conn, async |conn| {
+        crate::db::updated_or_current(
+            diesel::update(
+                hubuumclass_relation
+                    .filter(from_hubuum_class_id.eq(pair.0))
+                    .filter(to_hubuum_class_id.eq(pair.1)),
+            )
+            .set((
+                created_at.eq(timestamps.created_at()),
+                updated_at.eq(timestamps.updated_at()),
+            ))
+            .get_result::<HubuumClassRelation>(conn)
+            .await
+            .optional(),
+            async || {
+                hubuumclass_relation
+                    .filter(from_hubuum_class_id.eq(pair.0))
+                    .filter(to_hubuum_class_id.eq(pair.1))
+                    .first(conn)
+                    .await
+            },
+        )
         .await
         .map_err(ApiError::from)
+    })
+    .await
 }
 
 fn normalize_template_alias_option(alias: Option<&str>) -> Result<Option<String>, ApiError> {
@@ -1407,11 +1556,14 @@ pub async fn create_object_relation_db(
     conn: &mut crate::db::DbConnection,
     from_object: &HubuumObject,
     to_object: &HubuumObject,
+    timestamps: Option<&RestoreTimestamps>,
 ) -> Result<HubuumObjectRelation, ApiError> {
     use crate::schema::hubuumclass_relation::dsl::{
         from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id,
     };
-    use crate::schema::hubuumobject_relation::dsl::hubuumobject_relation;
+    use crate::schema::hubuumobject_relation::dsl::{
+        created_at, hubuumobject_relation, updated_at,
+    };
     let class_pair = normalize_pair(from_object.hubuum_class_id, to_object.hubuum_class_id);
     let relation = hubuumclass_relation
         .filter(from_hubuum_class_id.eq(class_pair.0))
@@ -1426,11 +1578,61 @@ pub async fn create_object_relation_db(
         class_relation_id: relation.id,
     };
 
-    diesel::insert_into(hubuumobject_relation)
-        .values(&new_relation)
-        .get_result::<HubuumObjectRelation>(conn)
+    match timestamps {
+        Some(timestamps) => diesel::insert_into(hubuumobject_relation)
+            .values((
+                &new_relation,
+                created_at.eq(timestamps.created_at()),
+                updated_at.eq(timestamps.updated_at()),
+            ))
+            .get_result::<HubuumObjectRelation>(conn)
+            .await
+            .map_err(ApiError::from),
+        None => diesel::insert_into(hubuumobject_relation)
+            .values(&new_relation)
+            .get_result::<HubuumObjectRelation>(conn)
+            .await
+            .map_err(ApiError::from),
+    }
+}
+
+pub async fn update_object_relation_timestamps_db(
+    conn: &mut crate::db::DbConnection,
+    from_object: &HubuumObject,
+    to_object: &HubuumObject,
+    timestamps: &RestoreTimestamps,
+) -> Result<HubuumObjectRelation, ApiError> {
+    use crate::schema::hubuumobject_relation::dsl::{
+        created_at, from_hubuum_object_id, hubuumobject_relation, to_hubuum_object_id, updated_at,
+    };
+    let pair = normalize_pair(from_object.id, to_object.id);
+
+    with_imported_timestamp_override(conn, async |conn| {
+        crate::db::updated_or_current(
+            diesel::update(
+                hubuumobject_relation
+                    .filter(from_hubuum_object_id.eq(pair.0))
+                    .filter(to_hubuum_object_id.eq(pair.1)),
+            )
+            .set((
+                created_at.eq(timestamps.created_at()),
+                updated_at.eq(timestamps.updated_at()),
+            ))
+            .get_result::<HubuumObjectRelation>(conn)
+            .await
+            .optional(),
+            async || {
+                hubuumobject_relation
+                    .filter(from_hubuum_object_id.eq(pair.0))
+                    .filter(to_hubuum_object_id.eq(pair.1))
+                    .first(conn)
+                    .await
+            },
+        )
         .await
         .map_err(ApiError::from)
+    })
+    .await
 }
 
 pub async fn apply_permissions_db(
