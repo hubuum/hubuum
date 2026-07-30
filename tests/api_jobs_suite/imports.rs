@@ -135,6 +135,8 @@ mod tests {
                     to_class_key: None,
                     forward_template_alias: None,
                     reverse_template_alias: None,
+                    from_max_relations: None,
+                    to_max_relations: None,
                     timestamps: Some(timestamps.clone()),
                 }],
                 object_relations: vec![ImportObjectRelationInput {
@@ -457,6 +459,7 @@ mod tests {
                     description: "Relation cardinality import".to_string(),
                     parent_collection_ref: None,
                     parent_collection_key: None,
+                    timestamps: None,
                 }],
                 classes: vec![
                     ImportClassInput {
@@ -467,6 +470,7 @@ mod tests {
                         validate_schema: Some(false),
                         collection_ref: Some("collection:cardinality".to_string()),
                         collection_key: None,
+                        timestamps: None,
                     },
                     ImportClassInput {
                         ref_: Some("class:room".to_string()),
@@ -476,6 +480,7 @@ mod tests {
                         validate_schema: Some(false),
                         collection_ref: Some("collection:cardinality".to_string()),
                         collection_key: None,
+                        timestamps: None,
                     },
                 ],
                 class_relations: vec![ImportClassRelationInput {
@@ -488,6 +493,7 @@ mod tests {
                     reverse_template_alias: Some("jacks".to_string()),
                     from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
                     to_max_relations: None,
+                    timestamps: None,
                 }],
                 ..ImportGraph::default()
             },
