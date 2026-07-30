@@ -1,5 +1,6 @@
-use chrono::NaiveDate;
-use diesel::{ExpressionMethods, QueryDsl};
+use chrono::{NaiveDate, NaiveDateTime};
+use diesel::sql_types::Timestamp;
+use diesel::{ExpressionMethods, QueryDsl, QueryableByName};
 use diesel_async::RunQueryDsl;
 use rstest::rstest;
 use std::sync::Arc;
@@ -22,12 +23,16 @@ use super::types::{
     PlanningFailure, PlanningState, RuntimeState, WorkerLoopAction,
 };
 use super::worker::{background_worker_action, mark_claimed_task_failed, process_one_task};
+use crate::db::traits::collection::DeleteCollectionRecord;
 use crate::db::traits::task::{TaskBackend, insert_import_results};
 use crate::db::traits::task_import::{
-    create_class_db, create_object_db, upsert_export_template_db, upsert_group_membership_db,
-    upsert_identity_scope_db,
+    create_class_db, create_class_relation_db, create_collection_db, create_object_db,
+    create_object_relation_db, update_class_db, update_class_relation_timestamps_db,
+    update_collection_db, update_object_db, update_object_relation_timestamps_db,
+    upsert_export_template_db, upsert_group_membership_db, upsert_identity_scope_db,
+    upsert_remote_target_db,
 };
-use crate::db::{capture_queries, with_connection};
+use crate::db::{capture_queries, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
     CURRENT_IMPORT_VERSION, ClassKey, CollectionID, CollectionKey, ExportContentType,
@@ -326,16 +331,7 @@ async fn relation_timestamp_overwrite_requires_update_permission(
         class_ref: None,
         class_key: Some(class_key(index)),
     };
-    let timestamps = RestoreTimestamps {
-        created_at: NaiveDate::from_ymd_opt(2020, 1, 2)
-            .unwrap()
-            .and_hms_opt(3, 4, 5)
-            .unwrap(),
-        updated_at: NaiveDate::from_ymd_opt(2021, 2, 3)
-            .unwrap()
-            .and_hms_opt(4, 5, 6)
-            .unwrap(),
-    };
+    let timestamps = restore_timestamps("2020-01-02T03:04:05", "2021-02-03T04:05:06");
     let mut graph = ImportGraph::default();
     match kind {
         TimestampRelationKind::Class => {
@@ -380,8 +376,8 @@ async fn relation_timestamp_overwrite_requires_update_permission(
             planning.planned_items.as_slice(),
             [PlannedItem {
                 execution: Some(
-                    PlannedExecution::UpdateClassRelationTimestamps(_)
-                        | PlannedExecution::UpdateObjectRelationTimestamps(_)
+                    PlannedExecution::UpdateClassRelationTimestamps { .. }
+                        | PlannedExecution::UpdateObjectRelationTimestamps { .. }
                 ),
                 ..
             }]
@@ -421,10 +417,423 @@ enum ClassBoundImport {
 }
 
 #[derive(Clone, Copy, Debug)]
+enum TimestampOverwrite {
+    Omitted,
+    Identical,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CoreTemporalEntity {
+    Collection,
+    Class,
+    Object,
+    ClassRelation,
+    ObjectRelation,
+}
+
+#[derive(Clone, Copy, Debug)]
 enum TemplateDependency {
     Existing,
     SameImport,
     Missing,
+}
+
+#[derive(QueryableByName)]
+struct DatabaseNaiveTimestamp {
+    #[diesel(sql_type = Timestamp)]
+    value: NaiveDateTime,
+}
+
+fn restore_timestamps(created_at_value: &str, updated_at_value: &str) -> RestoreTimestamps {
+    RestoreTimestamps::new(
+        created_at_value.parse().expect("created_at test timestamp"),
+        updated_at_value.parse().expect("updated_at test timestamp"),
+    )
+    .expect("ordered restore timestamps")
+}
+
+#[tokio::test]
+async fn imported_collection_timestamps_are_written_in_the_initial_history_entry() {
+    let context = TestContext::new().await;
+    let parent = context.collection_fixture("import_history_parent").await;
+    let timestamps = restore_timestamps("2020-01-02T03:04:05", "2020-02-03T04:05:06");
+    let collection = with_connection(&context.pool, async |conn| {
+        create_collection_db(
+            conn,
+            &ImportCollectionInput {
+                ref_: None,
+                name: context.scoped_name("import_history_collection"),
+                description: "Imported collection history".to_string(),
+                parent_collection_ref: None,
+                parent_collection_key: None,
+                timestamps: Some(timestamps.clone()),
+            },
+            Some(parent.collection.id),
+        )
+        .await
+    })
+    .await
+    .unwrap();
+
+    let history = with_connection(&context.pool, async |conn| {
+        use crate::schema::collections_history::dsl as h;
+        h::collections_history
+            .filter(h::id.eq(collection.id))
+            .order(h::history_id.asc())
+            .select((h::op, h::created_at, h::updated_at))
+            .load::<(String, NaiveDateTime, NaiveDateTime)>(conn)
+            .await
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        history,
+        vec![(
+            "I".to_string(),
+            timestamps.created_at(),
+            timestamps.updated_at()
+        )]
+    );
+
+    collection
+        .delete_collection_record_without_events(&context.pool)
+        .await
+        .unwrap();
+    parent.cleanup().await.unwrap();
+}
+
+#[rstest]
+#[case::export_omitted(ClassBoundImport::ExportTemplate, TimestampOverwrite::Omitted)]
+#[case::export_identical(ClassBoundImport::ExportTemplate, TimestampOverwrite::Identical)]
+#[case::remote_omitted(ClassBoundImport::RemoteTarget, TimestampOverwrite::Omitted)]
+#[case::remote_identical(ClassBoundImport::RemoteTarget, TimestampOverwrite::Identical)]
+#[tokio::test]
+async fn unchanged_temporal_import_overwrite_does_not_append_history(
+    #[case] kind: ClassBoundImport,
+    #[case] overwrite: TimestampOverwrite,
+) {
+    let context = TestContext::new().await;
+    let fixture = context
+        .collection_fixture("unchanged_temporal_import")
+        .await;
+    let timestamps = restore_timestamps("2020-01-02T03:04:05", "2020-02-03T04:05:06");
+    let overwrite_timestamps = match overwrite {
+        TimestampOverwrite::Omitted => None,
+        TimestampOverwrite::Identical => Some(timestamps.clone()),
+    };
+
+    let history_count = with_connection(&context.pool, async |conn| match kind {
+        ClassBoundImport::ExportTemplate => {
+            let input = ImportExportTemplateInput {
+                ref_: None,
+                collection_ref: None,
+                collection_key: None,
+                class_ref: None,
+                class_key: None,
+                name: context.scoped_name("unchanged_export_template"),
+                description: "Unchanged export template".to_string(),
+                content_type: ExportContentType::TextPlain,
+                template: "unchanged".to_string(),
+                kind: ExportTemplateKind::Fragment,
+                scope_kind: None,
+                default_query: None,
+                include: None,
+                relation_context: None,
+                default_missing_data_policy: None,
+                default_limits: None,
+                timestamps: Some(timestamps.clone()),
+            };
+            let id =
+                upsert_export_template_db(conn, &input, fixture.collection.id, None, false).await?;
+            let mut overwrite_input = input;
+            overwrite_input.timestamps = overwrite_timestamps;
+            upsert_export_template_db(conn, &overwrite_input, fixture.collection.id, None, true)
+                .await?;
+
+            use crate::schema::export_templates_history::dsl as h;
+            Ok::<_, ApiError>(
+                h::export_templates_history
+                    .filter(h::id.eq(id))
+                    .count()
+                    .get_result::<i64>(conn)
+                    .await?,
+            )
+        }
+        ClassBoundImport::RemoteTarget => {
+            let input = ImportRemoteTargetInput {
+                ref_: None,
+                collection_ref: None,
+                collection_key: None,
+                class_ref: None,
+                class_key: None,
+                name: context.scoped_name("unchanged_remote_target"),
+                description: "Unchanged remote target".to_string(),
+                method: RemoteHttpMethod::Get,
+                url_template: "https://example.test/static".to_string(),
+                headers_template: serde_json::json!({}),
+                body_template: None,
+                auth_config: RemoteAuthConfig::None,
+                allowed_subject_types: vec![RemoteTargetSubjectType::Collection],
+                timeout_ms: 1_000,
+                enabled: true,
+                timestamps: Some(timestamps.clone()),
+            };
+            let id =
+                upsert_remote_target_db(conn, &input, fixture.collection.id, None, false).await?;
+            let mut overwrite_input = input;
+            overwrite_input.timestamps = overwrite_timestamps;
+            upsert_remote_target_db(conn, &overwrite_input, fixture.collection.id, None, true)
+                .await?;
+
+            use crate::schema::remote_targets_history::dsl as h;
+            Ok::<_, ApiError>(
+                h::remote_targets_history
+                    .filter(h::id.eq(id))
+                    .count()
+                    .get_result::<i64>(conn)
+                    .await?,
+            )
+        }
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(history_count, 1);
+
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest]
+#[case::collection(CoreTemporalEntity::Collection)]
+#[case::class(CoreTemporalEntity::Class)]
+#[case::object(CoreTemporalEntity::Object)]
+#[case::class_relation(CoreTemporalEntity::ClassRelation)]
+#[case::object_relation(CoreTemporalEntity::ObjectRelation)]
+#[tokio::test]
+async fn unchanged_core_import_overwrite_returns_current_row_without_history(
+    #[case] entity: CoreTemporalEntity,
+) {
+    let context = TestContext::new().await;
+    let parent = context
+        .collection_fixture("unchanged_core_import_parent")
+        .await;
+    let timestamps = restore_timestamps("2020-01-02T03:04:05", "2020-02-03T04:05:06");
+    let collection_input = ImportCollectionInput {
+        ref_: None,
+        name: context.scoped_name("unchanged_core_import_collection"),
+        description: "Unchanged core import collection".to_string(),
+        parent_collection_ref: None,
+        parent_collection_key: None,
+        timestamps: Some(timestamps.clone()),
+    };
+    let class_inputs = [0, 1].map(|index| ImportClassInput {
+        ref_: None,
+        name: context.scoped_name(&format!("unchanged_core_import_class_{index}")),
+        description: format!("Unchanged core import class {index}"),
+        json_schema: None,
+        validate_schema: Some(false),
+        collection_ref: None,
+        collection_key: None,
+        timestamps: Some(timestamps.clone()),
+    });
+    let object_inputs = [0, 1].map(|index| ImportObjectInput {
+        ref_: None,
+        name: context.scoped_name(&format!("unchanged_core_import_object_{index}")),
+        description: format!("Unchanged core import object {index}"),
+        data: serde_json::json!({"index": index}),
+        class_ref: None,
+        class_key: None,
+        timestamps: Some(timestamps.clone()),
+    });
+
+    let (collection, history_count) = with_transaction(&context.pool, async |conn| {
+        let collection =
+            create_collection_db(conn, &collection_input, Some(parent.collection.id)).await?;
+        let mut classes = Vec::new();
+        let mut objects = Vec::new();
+        for index in 0..2 {
+            let class = create_class_db(conn, &class_inputs[index], collection.id).await?;
+            let object = create_object_db(conn, &object_inputs[index], &class).await?;
+            classes.push(class);
+            objects.push(object);
+        }
+        let class_relation = create_class_relation_db(
+            conn,
+            classes[0].id,
+            classes[1].id,
+            None,
+            None,
+            Some(&timestamps),
+        )
+        .await?;
+        let object_relation =
+            create_object_relation_db(conn, &objects[0], &objects[1], Some(&timestamps)).await?;
+
+        let history_count = match entity {
+            CoreTemporalEntity::Collection => {
+                update_collection_db(conn, collection.id, &collection_input).await?;
+                use crate::schema::collections_history::dsl as h;
+                h::collections_history
+                    .filter(h::id.eq(collection.id))
+                    .count()
+                    .get_result::<i64>(conn)
+                    .await?
+            }
+            CoreTemporalEntity::Class => {
+                update_class_db(conn, classes[0].id, &class_inputs[0]).await?;
+                use crate::schema::hubuumclass_history::dsl as h;
+                h::hubuumclass_history
+                    .filter(h::id.eq(classes[0].id))
+                    .count()
+                    .get_result::<i64>(conn)
+                    .await?
+            }
+            CoreTemporalEntity::Object => {
+                update_object_db(conn, objects[0].id, &object_inputs[0]).await?;
+                use crate::schema::hubuumobject_history::dsl as h;
+                h::hubuumobject_history
+                    .filter(h::id.eq(objects[0].id))
+                    .count()
+                    .get_result::<i64>(conn)
+                    .await?
+            }
+            CoreTemporalEntity::ClassRelation => {
+                update_class_relation_timestamps_db(
+                    conn,
+                    classes[0].id,
+                    classes[1].id,
+                    &timestamps,
+                )
+                .await?;
+                use crate::schema::hubuumclass_relation_history::dsl as h;
+                h::hubuumclass_relation_history
+                    .filter(h::id.eq(class_relation.id))
+                    .count()
+                    .get_result::<i64>(conn)
+                    .await?
+            }
+            CoreTemporalEntity::ObjectRelation => {
+                update_object_relation_timestamps_db(conn, &objects[0], &objects[1], &timestamps)
+                    .await?;
+                use crate::schema::hubuumobject_relation_history::dsl as h;
+                h::hubuumobject_relation_history
+                    .filter(h::id.eq(object_relation.id))
+                    .count()
+                    .get_result::<i64>(conn)
+                    .await?
+            }
+        };
+
+        Ok::<_, ApiError>((collection, history_count))
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(history_count, 1);
+
+    collection
+        .delete_collection_record_without_events(&context.pool)
+        .await
+        .unwrap();
+    parent.cleanup().await.unwrap();
+}
+
+#[tokio::test]
+async fn core_imports_without_timestamps_use_database_transaction_time() {
+    let context = TestContext::new().await;
+    let parent = context
+        .collection_fixture("database_timestamp_parent")
+        .await;
+    let imported_collection_name = context.scoped_name("database_timestamp_collection");
+    let class_names = [
+        context.scoped_name("database_timestamp_class_one"),
+        context.scoped_name("database_timestamp_class_two"),
+    ];
+    let object_names = [
+        context.scoped_name("database_timestamp_object_one"),
+        context.scoped_name("database_timestamp_object_two"),
+    ];
+
+    let (collection, expected, actual) = with_transaction(&context.pool, async |conn| {
+        let expected = diesel::sql_query("SELECT transaction_timestamp()::timestamp AS value")
+            .get_result::<DatabaseNaiveTimestamp>(conn)
+            .await?
+            .value;
+        let collection = create_collection_db(
+            conn,
+            &ImportCollectionInput {
+                ref_: None,
+                name: imported_collection_name,
+                description: "Database timestamp collection".to_string(),
+                parent_collection_ref: None,
+                parent_collection_key: None,
+                timestamps: None,
+            },
+            Some(parent.collection.id),
+        )
+        .await?;
+        let mut classes = Vec::new();
+        let mut objects = Vec::new();
+        for (index, imported_class_name) in class_names.into_iter().enumerate() {
+            let class = create_class_db(
+                conn,
+                &ImportClassInput {
+                    ref_: None,
+                    name: imported_class_name,
+                    description: format!("Database timestamp class {index}"),
+                    json_schema: None,
+                    validate_schema: Some(false),
+                    collection_ref: None,
+                    collection_key: None,
+                    timestamps: None,
+                },
+                collection.id,
+            )
+            .await?;
+            let object = create_object_db(
+                conn,
+                &ImportObjectInput {
+                    ref_: None,
+                    name: object_names[index].clone(),
+                    description: format!("Database timestamp object {index}"),
+                    data: serde_json::json!({"index": index}),
+                    class_ref: None,
+                    class_key: None,
+                    timestamps: None,
+                },
+                &class,
+            )
+            .await?;
+            classes.push(class);
+            objects.push(object);
+        }
+        let class_relation =
+            create_class_relation_db(conn, classes[0].id, classes[1].id, None, None, None).await?;
+        let object_relation =
+            create_object_relation_db(conn, &objects[0], &objects[1], None).await?;
+        let actual = [
+            (collection.created_at, collection.updated_at),
+            (classes[0].created_at, classes[0].updated_at),
+            (classes[1].created_at, classes[1].updated_at),
+            (objects[0].created_at, objects[0].updated_at),
+            (objects[1].created_at, objects[1].updated_at),
+            (class_relation.created_at, class_relation.updated_at),
+            (object_relation.created_at, object_relation.updated_at),
+        ];
+
+        Ok::<_, ApiError>((collection, expected, actual))
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(actual, [(expected, expected); 7]);
+
+    collection
+        .delete_collection_record_without_events(&context.pool)
+        .await
+        .unwrap();
+    parent.cleanup().await.unwrap();
 }
 
 #[tokio::test]
@@ -469,26 +878,8 @@ async fn test_extended_import_uses_backend_grant_for_non_sql_administrator() {
 async fn test_identity_scope_overwrite_preserves_imported_timestamps() {
     let context = (TestContext::new()).await;
     let name = context.scoped_name("identity_scope_timestamp_overwrite");
-    let initial = RestoreTimestamps {
-        created_at: NaiveDate::from_ymd_opt(2020, 1, 2)
-            .unwrap()
-            .and_hms_opt(3, 4, 5)
-            .unwrap(),
-        updated_at: NaiveDate::from_ymd_opt(2020, 2, 3)
-            .unwrap()
-            .and_hms_opt(4, 5, 6)
-            .unwrap(),
-    };
-    let restored = RestoreTimestamps {
-        created_at: NaiveDate::from_ymd_opt(2019, 4, 5)
-            .unwrap()
-            .and_hms_opt(6, 7, 8)
-            .unwrap(),
-        updated_at: NaiveDate::from_ymd_opt(2021, 6, 7)
-            .unwrap()
-            .and_hms_opt(8, 9, 10)
-            .unwrap(),
-    };
+    let initial = restore_timestamps("2020-01-02T03:04:05", "2020-02-03T04:05:06");
+    let restored = restore_timestamps("2019-04-05T06:07:08", "2021-06-07T08:09:10");
 
     let id = with_connection(&context.pool, async |conn| {
         upsert_identity_scope_db(
@@ -526,8 +917,8 @@ async fn test_identity_scope_overwrite_preserves_imported_timestamps() {
     })
     .await
     .unwrap();
-    assert_eq!(row.created_at, restored.created_at);
-    assert_eq!(row.updated_at, restored.updated_at);
+    assert_eq!(row.created_at, restored.created_at());
+    assert_eq!(row.updated_at, restored.updated_at());
 
     with_connection(&context.pool, async |conn| {
         use crate::schema::identity_scopes::dsl::{id as scope_id, identity_scopes};
@@ -723,26 +1114,8 @@ async fn membership_import_honors_collision_policy(
 ) {
     let context = TestContext::new().await;
     let group = create_test_group(&context.pool).await;
-    let initial = RestoreTimestamps {
-        created_at: NaiveDate::from_ymd_opt(2020, 1, 2)
-            .unwrap()
-            .and_hms_opt(3, 4, 5)
-            .unwrap(),
-        updated_at: NaiveDate::from_ymd_opt(2020, 2, 3)
-            .unwrap()
-            .and_hms_opt(4, 5, 6)
-            .unwrap(),
-    };
-    let restored = RestoreTimestamps {
-        created_at: NaiveDate::from_ymd_opt(2019, 4, 5)
-            .unwrap()
-            .and_hms_opt(6, 7, 8)
-            .unwrap(),
-        updated_at: NaiveDate::from_ymd_opt(2021, 6, 7)
-            .unwrap()
-            .and_hms_opt(8, 9, 10)
-            .unwrap(),
-    };
+    let initial = restore_timestamps("2020-01-02T03:04:05", "2020-02-03T04:05:06");
+    let restored = restore_timestamps("2019-04-05T06:07:08", "2021-06-07T08:09:10");
     let membership = |timestamps: RestoreTimestamps| ImportGroupMembershipInput {
         ref_: None,
         principal_ref: None,
@@ -784,7 +1157,7 @@ async fn membership_import_honors_collision_policy(
             .filter(m::principal_id.eq(context.admin_user.id))
             .filter(m::group_id.eq(group.id))
             .select((m::created_at, m::updated_at))
-            .first::<(chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+            .first::<(NaiveDateTime, NaiveDateTime)>(conn)
             .await?;
         let stored_source = s::group_membership_sources
             .filter(s::principal_id.eq(context.admin_user.id))
@@ -793,7 +1166,7 @@ async fn membership_import_honors_collision_policy(
             .filter(s::source_scope_id.eq(group.identity_scope_id))
             .filter(s::source_key.eq("operators"))
             .select((s::created_at, s::updated_at))
-            .first::<(chrono::NaiveDateTime, chrono::NaiveDateTime)>(conn)
+            .first::<(NaiveDateTime, NaiveDateTime)>(conn)
             .await?;
         Ok::<_, ApiError>((collision, stored_membership, stored_source))
     })
@@ -811,12 +1184,12 @@ async fn membership_import_honors_collision_policy(
         (
             expected_outcome,
             (
-                expected_timestamps.created_at,
-                expected_timestamps.updated_at
+                expected_timestamps.created_at(),
+                expected_timestamps.updated_at()
             ),
             (
-                expected_timestamps.created_at,
-                expected_timestamps.updated_at
+                expected_timestamps.created_at(),
+                expected_timestamps.updated_at()
             )
         )
     );

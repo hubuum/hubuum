@@ -1,5 +1,6 @@
 use super::*;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
+use chrono::NaiveDateTime;
 use diesel_async::RunQueryDsl;
 
 fn collection_snapshot(collection: &Collection) -> serde_json::Value {
@@ -99,25 +100,72 @@ pub(crate) async fn insert_collection_closure_rows(
     Ok(())
 }
 
+pub(crate) struct CollectionRowInsert<'a> {
+    name: &'a str,
+    description: &'a str,
+    parent_collection_id: Option<i32>,
+    timestamps: Option<(NaiveDateTime, NaiveDateTime)>,
+}
+
+impl<'a> CollectionRowInsert<'a> {
+    pub(crate) fn new(name: &'a str, description: &'a str) -> Self {
+        Self {
+            name,
+            description,
+            parent_collection_id: None,
+            timestamps: None,
+        }
+    }
+
+    pub(crate) fn parent_collection_id(mut self, parent_collection_id: Option<i32>) -> Self {
+        self.parent_collection_id = parent_collection_id;
+        self
+    }
+
+    pub(crate) fn timestamps(
+        mut self,
+        created_at: NaiveDateTime,
+        updated_at: NaiveDateTime,
+    ) -> Self {
+        self.timestamps = Some((created_at, updated_at));
+        self
+    }
+}
+
 pub(crate) async fn insert_collection_row_with_closure(
     conn: &mut crate::db::DbConnection,
-    name_value: &str,
-    description_value: &str,
-    requested_parent_collection_id: Option<i32>,
+    input: CollectionRowInsert<'_>,
 ) -> Result<Collection, ApiError> {
-    use crate::schema::collections::dsl::{collections, parent_collection_id};
+    use crate::schema::collections::dsl::{
+        collections, created_at, description, name, parent_collection_id, updated_at,
+    };
 
-    let resolved_parent_id =
-        resolve_parent_collection_id(conn, requested_parent_collection_id).await?;
+    let resolved_parent_id = resolve_parent_collection_id(conn, input.parent_collection_id).await?;
 
-    let collection = diesel::insert_into(collections)
-        .values((
-            crate::schema::collections::name.eq(name_value),
-            crate::schema::collections::description.eq(description_value),
-            parent_collection_id.eq(resolved_parent_id),
-        ))
-        .get_result::<Collection>(conn)
-        .await?;
+    let collection = match input.timestamps {
+        Some((created, updated)) => {
+            diesel::insert_into(collections)
+                .values((
+                    name.eq(input.name),
+                    description.eq(input.description),
+                    parent_collection_id.eq(resolved_parent_id),
+                    created_at.eq(created),
+                    updated_at.eq(updated),
+                ))
+                .get_result::<Collection>(conn)
+                .await?
+        }
+        None => {
+            diesel::insert_into(collections)
+                .values((
+                    name.eq(input.name),
+                    description.eq(input.description),
+                    parent_collection_id.eq(resolved_parent_id),
+                ))
+                .get_result::<Collection>(conn)
+                .await?
+        }
+    };
 
     insert_collection_closure_rows(conn, collection.id, resolved_parent_id).await?;
 
@@ -176,9 +224,8 @@ async fn insert_collection_for_group(
 
     let collection = insert_collection_row_with_closure(
         conn,
-        &new_collection.name,
-        &new_collection.description,
-        new_collection.parent_collection_id,
+        CollectionRowInsert::new(&new_collection.name, &new_collection.description)
+            .parent_collection_id(new_collection.parent_collection_id),
     )
     .await?;
 

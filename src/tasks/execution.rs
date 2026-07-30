@@ -4,8 +4,9 @@ use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::db::{DbPool, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
-    Collection, EventSinkKey, GroupKey, IdentityScopeKey, ImportAtomicity, ImportCollisionPolicy,
-    ImportExportTemplateInput, ImportMode, ImportPermissionPolicy, ImportPrincipalSubtype,
+    Collection, EventSinkKey, GroupKey, HubuumClass, HubuumObject, IdentityScopeKey,
+    ImportAtomicity, ImportClassRelationInput, ImportCollisionPolicy, ImportExportTemplateInput,
+    ImportMode, ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
     ImportRequest, NewTaskEventRecord, PrincipalKey, TaskRecord, TaskResultCounts, TaskStatus,
     TokenScope,
 };
@@ -148,6 +149,50 @@ async fn resolve_event_sink_runtime(
     lookup_event_sink_id_by_name_db(conn, name)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Event sink '{name}' not found")))
+}
+
+async fn resolve_class_relation_runtime(
+    conn: &mut crate::db::DbConnection,
+    runtime: &RuntimeState,
+    input: &ImportClassRelationInput,
+) -> Result<(HubuumClass, HubuumClass), ApiError> {
+    let from_class = resolve_class_runtime(
+        conn,
+        runtime,
+        input.from_class_ref.as_deref(),
+        input.from_class_key.as_ref(),
+    )
+    .await?;
+    let to_class = resolve_class_runtime(
+        conn,
+        runtime,
+        input.to_class_ref.as_deref(),
+        input.to_class_key.as_ref(),
+    )
+    .await?;
+    Ok((from_class, to_class))
+}
+
+async fn resolve_object_relation_runtime(
+    conn: &mut crate::db::DbConnection,
+    runtime: &RuntimeState,
+    input: &ImportObjectRelationInput,
+) -> Result<(HubuumObject, HubuumObject), ApiError> {
+    let from_object = resolve_object_runtime(
+        conn,
+        runtime,
+        input.from_object_ref.as_deref(),
+        input.from_object_key.as_ref(),
+    )
+    .await?;
+    let to_object = resolve_object_runtime(
+        conn,
+        runtime,
+        input.to_object_ref.as_deref(),
+        input.to_object_key.as_ref(),
+    )
+    .await?;
+    Ok((from_object, to_object))
 }
 
 pub(super) async fn execute_import_task<C>(
@@ -681,20 +726,8 @@ pub(super) async fn execute_planned_item(
             }
         }
         PlannedExecution::CreateClassRelation(input) => {
-            let from_class = resolve_class_runtime(
-                conn,
-                runtime,
-                input.from_class_ref.as_deref(),
-                input.from_class_key.as_ref(),
-            )
-            .await?;
-            let to_class = resolve_class_runtime(
-                conn,
-                runtime,
-                input.to_class_ref.as_deref(),
-                input.to_class_key.as_ref(),
-            )
-            .await?;
+            let (from_class, to_class) =
+                resolve_class_relation_runtime(conn, runtime, input).await?;
             create_class_relation_db(
                 conn,
                 from_class.id,
@@ -705,67 +738,21 @@ pub(super) async fn execute_planned_item(
             )
             .await?;
         }
-        PlannedExecution::UpdateClassRelationTimestamps(input) => {
-            let from_class = resolve_class_runtime(
-                conn,
-                runtime,
-                input.from_class_ref.as_deref(),
-                input.from_class_key.as_ref(),
-            )
-            .await?;
-            let to_class = resolve_class_runtime(
-                conn,
-                runtime,
-                input.to_class_ref.as_deref(),
-                input.to_class_key.as_ref(),
-            )
-            .await?;
-            let timestamps = input.timestamps.as_ref().ok_or_else(|| {
-                ApiError::BadRequest(
-                    "Class-relation timestamp update requires imported timestamps".to_string(),
-                )
-            })?;
+        PlannedExecution::UpdateClassRelationTimestamps { input, timestamps } => {
+            let (from_class, to_class) =
+                resolve_class_relation_runtime(conn, runtime, input).await?;
             update_class_relation_timestamps_db(conn, from_class.id, to_class.id, timestamps)
                 .await?;
         }
         PlannedExecution::CreateObjectRelation(input) => {
-            let from_object = resolve_object_runtime(
-                conn,
-                runtime,
-                input.from_object_ref.as_deref(),
-                input.from_object_key.as_ref(),
-            )
-            .await?;
-            let to_object = resolve_object_runtime(
-                conn,
-                runtime,
-                input.to_object_ref.as_deref(),
-                input.to_object_key.as_ref(),
-            )
-            .await?;
+            let (from_object, to_object) =
+                resolve_object_relation_runtime(conn, runtime, input).await?;
             create_object_relation_db(conn, &from_object, &to_object, input.timestamps.as_ref())
                 .await?;
         }
-        PlannedExecution::UpdateObjectRelationTimestamps(input) => {
-            let from_object = resolve_object_runtime(
-                conn,
-                runtime,
-                input.from_object_ref.as_deref(),
-                input.from_object_key.as_ref(),
-            )
-            .await?;
-            let to_object = resolve_object_runtime(
-                conn,
-                runtime,
-                input.to_object_ref.as_deref(),
-                input.to_object_key.as_ref(),
-            )
-            .await?;
-            let timestamps = input.timestamps.as_ref().ok_or_else(|| {
-                ApiError::BadRequest(
-                    "Object-relation timestamp update requires imported timestamps".to_string(),
-                )
-            })?;
+        PlannedExecution::UpdateObjectRelationTimestamps { input, timestamps } => {
+            let (from_object, to_object) =
+                resolve_object_relation_runtime(conn, runtime, input).await?;
             update_object_relation_timestamps_db(conn, &from_object, &to_object, timestamps)
                 .await?;
         }

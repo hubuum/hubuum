@@ -429,10 +429,12 @@ send `principal_ref` or `principal_key`, `group_ref` or `group_key`, and
 
 Core collections, classes, objects, and relations, along with extended records,
 can carry a `timestamps` object with `created_at` and `updated_at`. Timestamps
-are accepted only through the import API and are intended for trusted migration
-data. Standard resource create and update endpoints continue to manage
-timestamps automatically. Supplied import timestamps replace stored values on
-overwrite, and `updated_at` cannot be earlier than `created_at`.
+are accepted only through the import API and are intended for authorized
+migration data. Core records use the same live collection permissions as other
+core imports; extended records require an unscoped runtime administrator.
+Standard resource create and update endpoints continue to manage timestamps
+automatically. Supplied import timestamps replace stored values on overwrite,
+and `updated_at` cannot be earlier than `created_at`.
 
 When timestamps are omitted, new core records use the current time. Core
 collection, class, and object overwrites preserve `created_at` and refresh
