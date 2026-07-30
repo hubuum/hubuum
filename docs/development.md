@@ -104,12 +104,13 @@ Benchmarking runs in a separate GitHub workflow, `.github/workflows/benchmarks.y
 The benchmark targets are split one benchmark binary per file so CI can fan them out independently:
 
 ```bash
-cargo bench --bench parse_query_parameter_callgrind
-cargo bench --bench parse_integer_list_callgrind
+cargo bench -p hubuum-query --bench parse_query_parameter_callgrind
+cargo bench -p hubuum-query --bench parse_integer_list_callgrind
 cargo bench --bench json_sql_filters_callgrind
-cargo bench --bench search_operator_parsing_callgrind
+cargo bench -p hubuum-query --bench search_operator_parsing_callgrind
 cargo bench --bench permissions_parsing_callgrind
-cargo bench --bench jsonb_type_inference_callgrind
+cargo bench -p hubuum-query --bench jsonb_type_inference_callgrind
+cargo bench -p hubuum-templates --bench size_limited_writer_callgrind
 cargo bench --bench token_storage_hash_callgrind
 cargo bench --bench request_hash_callgrind
 cargo bench --bench unified_search_query_parsing_callgrind
