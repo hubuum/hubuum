@@ -7,8 +7,8 @@ use crate::models::{
     Collection, EventSinkKey, GroupKey, HubuumClass, HubuumObject, IdentityScopeKey,
     ImportAtomicity, ImportClassRelationInput, ImportCollisionPolicy, ImportExportTemplateInput,
     ImportMode, ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
-    ImportRequest, NewTaskEventRecord, PrincipalKey, TaskRecord, TaskResultCounts, TaskStatus,
-    TokenScope,
+    ImportRequest, NewHubuumClassRelation, NewTaskEventRecord, PrincipalKey, TaskRecord,
+    TaskResultCounts, TaskStatus, TokenScope,
 };
 use crate::observability::metrics;
 use crate::traits::BackendContext;
@@ -730,12 +730,14 @@ pub(super) async fn execute_planned_item(
                 resolve_class_relation_runtime(conn, runtime, input).await?;
             create_class_relation_db(
                 conn,
-                from_class.id,
-                to_class.id,
-                input.forward_template_alias.clone(),
-                input.reverse_template_alias.clone(),
-                input.from_max_relations,
-                input.to_max_relations,
+                NewHubuumClassRelation {
+                    from_hubuum_class_id: from_class.id,
+                    to_hubuum_class_id: to_class.id,
+                    forward_template_alias: input.forward_template_alias.clone(),
+                    reverse_template_alias: input.reverse_template_alias.clone(),
+                    from_max_relations: input.from_max_relations,
+                    to_max_relations: input.to_max_relations,
+                },
                 input.timestamps.as_ref(),
             )
             .await?;

@@ -201,6 +201,23 @@ mod tests {
         objects
     }
 
+    async fn create_relation_test_object(
+        pool: &DbPool,
+        class: &HubuumClass,
+        label: &str,
+    ) -> HubuumObject {
+        NewHubuumObject {
+            hubuum_class_id: class.id,
+            collection_id: class.collection_id,
+            name: format!("{label}_in_{}", class.name),
+            description: format!("{label} in {}", class.description),
+            data: serde_json::json!({}),
+        }
+        .save_without_events(pool)
+        .await
+        .expect("relation test object should be created")
+    }
+
     #[rstest]
     #[actix_web::test]
     async fn test_get_class_relations_list(#[future(awt)] test_context: TestContext) {
@@ -804,8 +821,8 @@ mod tests {
         let content = NewHubuumClassRelation {
             from_hubuum_class_id: classes[1].id,
             to_hubuum_class_id: classes[0].id,
-            forward_template_alias: None,
-            reverse_template_alias: None,
+            forward_template_alias: Some("Jack Room".to_string()),
+            reverse_template_alias: Some("Room Jacks".to_string()),
             from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
             to_max_relations: Some(ObjectRelationLimit::new(2).unwrap()),
         };
@@ -822,6 +839,14 @@ mod tests {
 
         assert_eq!(relation.from_hubuum_class_id, classes[0].id);
         assert_eq!(relation.to_hubuum_class_id, classes[1].id);
+        assert_eq!(
+            relation.forward_template_alias.as_deref(),
+            Some("room_jacks")
+        );
+        assert_eq!(
+            relation.reverse_template_alias.as_deref(),
+            Some("jack_room")
+        );
         assert_eq!(
             relation.from_max_relations,
             Some(ObjectRelationLimit::new(2).unwrap())
@@ -853,16 +878,8 @@ mod tests {
         .await
         .unwrap();
         let objects = create_objects_in_classes(&context.pool, &classes).await;
-        let second_target = NewHubuumObject {
-            hubuum_class_id: classes[1].id,
-            collection_id: classes[1].collection_id,
-            name: format!("second_object_in_{}", classes[1].name),
-            description: "Second relation target".to_string(),
-            data: serde_json::json!({}),
-        }
-        .save_without_events(&context.pool)
-        .await
-        .unwrap();
+        let second_target =
+            create_relation_test_object(&context.pool, &classes[1], "second_relation_target").await;
         let first_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: objects[0].id,
             to_hubuum_object_id: objects[1].id,
@@ -922,16 +939,8 @@ mod tests {
         .await
         .unwrap();
         let objects = create_objects_in_classes(&context.pool, &classes).await;
-        let second_source = NewHubuumObject {
-            hubuum_class_id: classes[0].id,
-            collection_id: classes[0].collection_id,
-            name: format!("second_object_in_{}", classes[0].name),
-            description: "Second relation source".to_string(),
-            data: serde_json::json!({}),
-        }
-        .save_without_events(&context.pool)
-        .await
-        .unwrap();
+        let second_source =
+            create_relation_test_object(&context.pool, &classes[0], "second_relation_source").await;
         let first_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: objects[0].id,
             to_hubuum_object_id: objects[1].id,
@@ -989,26 +998,12 @@ mod tests {
         .await
         .unwrap();
         let objects = create_objects_in_classes(&context.pool, &classes).await;
-        let second_source = NewHubuumObject {
-            hubuum_class_id: classes[0].id,
-            collection_id: classes[0].collection_id,
-            name: format!("second_object_in_{}", classes[0].name),
-            description: "Independent relation source".to_string(),
-            data: serde_json::json!({}),
-        }
-        .save_without_events(&context.pool)
-        .await
-        .unwrap();
-        let second_target = NewHubuumObject {
-            hubuum_class_id: classes[1].id,
-            collection_id: classes[1].collection_id,
-            name: format!("second_object_in_{}", classes[1].name),
-            description: "Independent relation target".to_string(),
-            data: serde_json::json!({}),
-        }
-        .save_without_events(&context.pool)
-        .await
-        .unwrap();
+        let second_source =
+            create_relation_test_object(&context.pool, &classes[0], "independent_relation_source")
+                .await;
+        let second_target =
+            create_relation_test_object(&context.pool, &classes[1], "independent_relation_target")
+                .await;
         let held_relation = NewHubuumObjectRelation {
             from_hubuum_object_id: objects[0].id,
             to_hubuum_object_id: objects[1].id,

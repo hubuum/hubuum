@@ -1,8 +1,7 @@
 //! Shared normalization for export template aliases.
 //!
-//! Relation creation (`db::traits::relations`) and import processing
-//! (`db::traits::task_import`) both validate and canonicalize user-supplied template aliases the
-//! same way, so the rule lives here once.
+//! Class relation requests and import processing both validate user-supplied
+//! template aliases the same way, so the rule lives here once.
 
 use crate::errors::ApiError;
 

@@ -15,6 +15,7 @@ use crate::observability::metrics;
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
 const PUBLIC_PERMISSION_BACKEND_UNAVAILABLE: &str = "Permission backend temporarily unavailable";
+const OBJECT_RELATION_CARDINALITY_CONSTRAINT: &str = "hubuumobject_relation_cardinality";
 
 // Exit codes for startup/initialization failures.
 // These help shell scripts and orchestration systems determine the failure mode.
@@ -316,7 +317,12 @@ impl From<DieselError> for ApiError {
                 debug!(message = message, error = ?e);
                 ApiError::NotFound(message)
             }
-            DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, _) => {
+            DieselError::DatabaseError(DatabaseErrorKind::CheckViolation, ref info) => {
+                if info.constraint_name() == Some(OBJECT_RELATION_CARDINALITY_CONSTRAINT) {
+                    let message = info.message().to_string();
+                    debug!(message = message, error = ?e);
+                    return ApiError::Conflict(message);
+                }
                 let message = "Check constraint not met".to_string();
                 debug!(message = message, error = ?e);
                 ApiError::BadRequest(message)
@@ -326,10 +332,6 @@ impl From<DieselError> for ApiError {
                 if message.starts_with("Invalid object relation:") {
                     debug!(message = message, error = ?e);
                     return ApiError::BadRequest(message.to_string());
-                }
-                if message.starts_with("Object relation cardinality exceeded:") {
-                    debug!(message = message, error = ?e);
-                    return ApiError::Conflict(message.to_string());
                 }
                 error!(message = "Database error", error = ?e);
                 ApiError::DatabaseError(e.to_string())

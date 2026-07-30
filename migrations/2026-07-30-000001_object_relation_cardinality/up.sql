@@ -46,6 +46,10 @@ DECLARE
     relation_from_object_id INT;
     relation_to_object_id INT;
     current_relation_count BIGINT;
+    cardinality_constraint_name CONSTANT TEXT :=
+        'hubuumobject_relation_cardinality';
+    cardinality_error_template CONSTANT TEXT :=
+        'Object relation cardinality exceeded: object %s is limited to %s relations by class relation %s';
 BEGIN
     IF NEW.from_hubuum_object_id = NEW.to_hubuum_object_id THEN
         RAISE EXCEPTION 'Invalid object relation: objects cannot be related to themselves';
@@ -123,11 +127,15 @@ BEGIN
           );
 
         IF current_relation_count >= relation_from_max_relations THEN
-            RAISE EXCEPTION
-                'Object relation cardinality exceeded: object % is limited to % relations by class relation %',
-                relation_from_object_id,
-                relation_from_max_relations,
-                NEW.class_relation_id;
+            RAISE EXCEPTION USING
+                ERRCODE = '23514',
+                CONSTRAINT = cardinality_constraint_name,
+                MESSAGE = format(
+                    cardinality_error_template,
+                    relation_from_object_id,
+                    relation_from_max_relations,
+                    NEW.class_relation_id
+                );
         END IF;
     END IF;
 
@@ -143,11 +151,15 @@ BEGIN
           );
 
         IF current_relation_count >= relation_to_max_relations THEN
-            RAISE EXCEPTION
-                'Object relation cardinality exceeded: object % is limited to % relations by class relation %',
-                relation_to_object_id,
-                relation_to_max_relations,
-                NEW.class_relation_id;
+            RAISE EXCEPTION USING
+                ERRCODE = '23514',
+                CONSTRAINT = cardinality_constraint_name,
+                MESSAGE = format(
+                    cardinality_error_template,
+                    relation_to_object_id,
+                    relation_to_max_relations,
+                    NEW.class_relation_id
+                );
         END IF;
     END IF;
 

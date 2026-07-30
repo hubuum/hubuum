@@ -11,15 +11,14 @@ mod tests {
 
     use crate::db::{DbPool, with_connection};
     use crate::models::{
-        CURRENT_IMPORT_VERSION, CollectionKey, GroupKey, IdentityScopeKey, ImportAtomicity,
-        ImportClassInput, ImportClassRelationInput, ImportCollectionInput,
+        CURRENT_IMPORT_VERSION, CollectionKey, GroupKey, HubuumClassRelation, IdentityScopeKey,
+        ImportAtomicity, ImportClassInput, ImportClassRelationInput, ImportCollectionInput,
         ImportCollectionPermissionInput, ImportCollisionPolicy, ImportEventSubscriptionInput,
         ImportGraph, ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput,
         ImportMode, ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy,
         ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest, ImportTaskResultResponse,
-        NewTaskRecord, Permissions, RestoreTimestamps, TaskEventResponse, TaskKind, TaskResponse,
-        TaskStatus,
-        ObjectRelationLimit,
+        NewTaskRecord, ObjectRelationLimit, Permissions, RestoreTimestamps, TaskEventResponse,
+        TaskKind, TaskResponse, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::schema::collections::dsl::{
@@ -28,11 +27,10 @@ mod tests {
     use crate::schema::hubuumclass::dsl::{
         collection_id as class_collection_id, hubuumclass, id as class_id, name as class_name,
     };
-    use crate::schema::hubuumclass_relation::dsl::{
-        from_hubuum_class_id, from_max_relations, hubuumclass_relation, to_hubuum_class_id,
-        to_max_relations,
-    };
     use crate::schema::hubuumclass_relation::dsl as class_relation;
+    use crate::schema::hubuumclass_relation::dsl::{
+        from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id,
+    };
     use crate::schema::hubuumobject::dsl as object;
     use crate::schema::hubuumobject_relation::dsl as object_relation;
     use crate::schema::tasks::dsl::{
@@ -508,7 +506,7 @@ mod tests {
         let completed = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
         assert_eq!(completed.progress.success_items, 4);
 
-        let limits = with_connection(&context.pool, async |conn| {
+        let (jack_id, room_id, relation) = with_connection(&context.pool, async |conn| {
             let jack_id = hubuumclass
                 .filter(class_name.eq(jack_name))
                 .select(class_id)
@@ -519,16 +517,25 @@ mod tests {
                 .select(class_id)
                 .first::<i32>(conn)
                 .await?;
-            hubuumclass_relation
+            let relation = hubuumclass_relation
                 .filter(from_hubuum_class_id.eq(jack_id.min(room_id)))
                 .filter(to_hubuum_class_id.eq(jack_id.max(room_id)))
-                .select((from_max_relations, to_max_relations))
-                .first::<(Option<i32>, Option<i32>)>(conn)
-                .await
+                .first::<HubuumClassRelation>(conn)
+                .await?;
+            Ok::<_, diesel::result::Error>((jack_id, room_id, relation))
         })
         .await
         .unwrap();
-        assert_eq!(limits, (Some(1), None));
+        let (jack_limit, room_limit) = if relation.from_hubuum_class_id == jack_id {
+            assert_eq!(relation.to_hubuum_class_id, room_id);
+            (relation.from_max_relations, relation.to_max_relations)
+        } else {
+            assert_eq!(relation.from_hubuum_class_id, room_id);
+            assert_eq!(relation.to_hubuum_class_id, jack_id);
+            (relation.to_max_relations, relation.from_max_relations)
+        };
+        assert_eq!(jack_limit, Some(ObjectRelationLimit::new(1).unwrap()));
+        assert_eq!(room_limit, None);
     }
 
     #[rstest]

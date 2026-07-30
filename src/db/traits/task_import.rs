@@ -15,9 +15,7 @@ use crate::models::{
     NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission,
     Permissions, PermissionsList, Principal, RestoreTimestamps, ServiceAccount, UpdateCollection,
     UpdateHubuumClass, UpdateHubuumObject, UpdatePermission, User,
-    ObjectRelationLimit,
 };
-use crate::utilities::aliases::normalize_template_alias;
 
 pub async fn lookup_collections_by_name(
     pool: &DbPool,
@@ -1465,44 +1463,11 @@ pub async fn upsert_event_subscription_db(
 
 pub async fn create_class_relation_db(
     conn: &mut crate::db::DbConnection,
-    left: i32,
-    right: i32,
-    forward_template_alias: Option<String>,
-    reverse_template_alias: Option<String>,
-    from_max_relations: Option<ObjectRelationLimit>,
-    to_max_relations: Option<ObjectRelationLimit>,
+    new_relation: NewHubuumClassRelation,
     timestamps: Option<&RestoreTimestamps>,
 ) -> Result<HubuumClassRelation, ApiError> {
     use crate::schema::hubuumclass_relation::dsl::{created_at, hubuumclass_relation, updated_at};
-    let pair = normalize_pair(left, right);
-    let forward_template_alias =
-        normalize_template_alias_option(forward_template_alias.as_deref())?;
-    let reverse_template_alias =
-        normalize_template_alias_option(reverse_template_alias.as_deref())?;
-    let new_relation = NewHubuumClassRelation {
-        from_hubuum_class_id: pair.0,
-        to_hubuum_class_id: pair.1,
-        forward_template_alias: if left <= right {
-            forward_template_alias.clone()
-        } else {
-            reverse_template_alias.clone()
-        },
-        reverse_template_alias: if left <= right {
-            reverse_template_alias
-        } else {
-            forward_template_alias
-        },
-        from_max_relations: if left <= right {
-            from_max_relations
-        } else {
-            to_max_relations
-        },
-        to_max_relations: if left <= right {
-            to_max_relations
-        } else {
-            from_max_relations
-        },
-    };
+    let new_relation = new_relation.normalized()?;
 
     match timestamps {
         Some(timestamps) => diesel::insert_into(hubuumclass_relation)
@@ -1559,10 +1524,6 @@ pub async fn update_class_relation_timestamps_db(
         .map_err(ApiError::from)
     })
     .await
-}
-
-fn normalize_template_alias_option(alias: Option<&str>) -> Result<Option<String>, ApiError> {
-    alias.map(normalize_template_alias).transpose()
 }
 
 pub async fn create_object_relation_db(

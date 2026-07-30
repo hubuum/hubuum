@@ -1281,6 +1281,47 @@ mod tests {
     }
 
     #[test]
+    fn object_relation_limits_document_positive_nullable_fields() {
+        let json = openapi_json();
+        assert_eq!(
+            json.pointer("/components/schemas/ObjectRelationLimit/minimum"),
+            Some(&Value::from(1)),
+            "ObjectRelationLimit should document its positive-value invariant"
+        );
+
+        for schema_name in [
+            "HubuumClassRelation",
+            "ImportClassRelationInput",
+            "NewHubuumClassRelation",
+            "NewHubuumClassRelationFromClass",
+        ] {
+            for field in ["from_max_relations", "to_max_relations"] {
+                let variants = json
+                    .pointer(&format!(
+                        "/components/schemas/{schema_name}/properties/{field}/oneOf"
+                    ))
+                    .and_then(Value::as_array)
+                    .unwrap_or_else(|| {
+                        panic!("{schema_name}.{field} should be a nullable limit schema")
+                    });
+                assert!(
+                    variants.iter().any(|variant| {
+                        variant.get("type").and_then(Value::as_str) == Some("null")
+                    }),
+                    "{schema_name}.{field} should allow null for unlimited relations"
+                );
+                assert!(
+                    variants.iter().any(|variant| {
+                        variant.get("$ref").and_then(Value::as_str)
+                            == Some("#/components/schemas/ObjectRelationLimit")
+                    }),
+                    "{schema_name}.{field} should reference ObjectRelationLimit"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn object_data_json_patch_media_type_limits_and_statuses_are_documented() {
         let json = openapi_json();
         let operation_pointers = [

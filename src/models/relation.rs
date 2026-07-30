@@ -16,6 +16,7 @@ use crate::errors::ApiError;
 use crate::models::{HubuumClassID, HubuumClassWithPath, HubuumObjectID, HubuumObjectWithPath};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::traits::SelfAccessors;
+use crate::utilities::aliases::normalize_template_alias;
 use crate::{schema::hubuumclass_relation, schema::hubuumobject_relation};
 
 crate::int_id_newtype! {
@@ -133,6 +134,59 @@ pub struct NewHubuumClassRelationFromClass {
     /// Maximum relations allowed for each object in `to_hubuum_class_id`.
     /// Omit or set to `null` for unlimited.
     pub to_max_relations: Option<ObjectRelationLimit>,
+}
+
+impl NewHubuumClassRelation {
+    /// Validate and normalize a class relation before persistence.
+    ///
+    /// Class IDs are stored in ascending order. Directional aliases and limits
+    /// move with their corresponding class when the supplied order is reversed.
+    pub(crate) fn normalized(mut self) -> Result<Self, ApiError> {
+        if self.from_hubuum_class_id == self.to_hubuum_class_id {
+            return Err(ApiError::BadRequest(
+                "from_hubuum_class_id and to_hubuum_class_id cannot be the same".to_string(),
+            ));
+        }
+
+        self.forward_template_alias = self
+            .forward_template_alias
+            .as_deref()
+            .map(normalize_template_alias)
+            .transpose()?;
+        self.reverse_template_alias = self
+            .reverse_template_alias
+            .as_deref()
+            .map(normalize_template_alias)
+            .transpose()?;
+
+        if self.from_hubuum_class_id > self.to_hubuum_class_id {
+            std::mem::swap(&mut self.from_hubuum_class_id, &mut self.to_hubuum_class_id);
+            std::mem::swap(
+                &mut self.forward_template_alias,
+                &mut self.reverse_template_alias,
+            );
+            std::mem::swap(&mut self.from_max_relations, &mut self.to_max_relations);
+        }
+
+        Ok(self)
+    }
+}
+
+impl NewHubuumClassRelationFromClass {
+    /// Complete a class-scoped relation request with the class from the route.
+    pub(crate) fn into_relation(
+        self,
+        from_hubuum_class_id: HubuumClassID,
+    ) -> NewHubuumClassRelation {
+        NewHubuumClassRelation {
+            from_hubuum_class_id: from_hubuum_class_id.id(),
+            to_hubuum_class_id: self.to_hubuum_class_id,
+            forward_template_alias: self.forward_template_alias,
+            reverse_template_alias: self.reverse_template_alias,
+            from_max_relations: self.from_max_relations,
+            to_max_relations: self.to_max_relations,
+        }
+    }
 }
 
 crate::int_id_newtype! {
@@ -536,6 +590,39 @@ pub mod tests {
     use crate::models::{HubuumClass, HubuumObject};
     use crate::tests::{TestContext, TestScope, test_context};
     use crate::traits::{CanDelete, CanSave, SelfAccessors};
+
+    #[test]
+    fn class_relation_normalization_keeps_directional_settings_with_their_classes() {
+        let normalized = NewHubuumClassRelation {
+            from_hubuum_class_id: 20,
+            to_hubuum_class_id: 10,
+            forward_template_alias: Some("Jack Room".to_string()),
+            reverse_template_alias: Some("Room Jacks".to_string()),
+            from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
+            to_max_relations: Some(ObjectRelationLimit::new(2).unwrap()),
+        }
+        .normalized()
+        .expect("class relation should normalize");
+
+        assert_eq!(normalized.from_hubuum_class_id, 10);
+        assert_eq!(normalized.to_hubuum_class_id, 20);
+        assert_eq!(
+            normalized.forward_template_alias.as_deref(),
+            Some("room_jacks")
+        );
+        assert_eq!(
+            normalized.reverse_template_alias.as_deref(),
+            Some("jack_room")
+        );
+        assert_eq!(
+            normalized.from_max_relations,
+            Some(ObjectRelationLimit::new(2).unwrap())
+        );
+        assert_eq!(
+            normalized.to_max_relations,
+            Some(ObjectRelationLimit::new(1).unwrap())
+        );
+    }
 
     pub async fn create_collection_and_classes(
         suffix: &str,

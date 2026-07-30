@@ -16,7 +16,6 @@ use crate::models::{
     user_can_on_any,
 };
 use crate::permissions::{ResourceAttrs, ResourceKind, ResourceRef};
-use crate::utilities::aliases::normalize_template_alias;
 use crate::{
     apply_query_options, bind_transitive_filter_params, date_search, numeric_search, string_search,
     trace_query,
@@ -1063,32 +1062,7 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
     ) -> Result<HubuumClassRelation, ApiError> {
         use crate::schema::hubuumclass_relation::dsl::hubuumclass_relation;
 
-        if self.from_hubuum_class_id == self.to_hubuum_class_id {
-            return Err(ApiError::BadRequest(
-                "from_hubuum_class_id and to_hubuum_class_id cannot be the same".to_string(),
-            ));
-        }
-
-        let mut normalized = self.clone();
-        normalized.forward_template_alias =
-            normalize_template_alias_option(&normalized.forward_template_alias)?;
-        normalized.reverse_template_alias =
-            normalize_template_alias_option(&normalized.reverse_template_alias)?;
-
-        if normalized.from_hubuum_class_id > normalized.to_hubuum_class_id {
-            std::mem::swap(
-                &mut normalized.from_hubuum_class_id,
-                &mut normalized.to_hubuum_class_id,
-            );
-            std::mem::swap(
-                &mut normalized.forward_template_alias,
-                &mut normalized.reverse_template_alias,
-            );
-            std::mem::swap(
-                &mut normalized.from_max_relations,
-                &mut normalized.to_max_relations,
-            );
-        }
+        let normalized = self.clone().normalized()?;
 
         with_connection(pool, async |conn| {
             diesel::insert_into(hubuumclass_relation)
@@ -1111,32 +1085,7 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
         use crate::schema::hubuumclass::dsl::{hubuumclass, id};
         use crate::schema::hubuumclass_relation::dsl::hubuumclass_relation;
 
-        if self.from_hubuum_class_id == self.to_hubuum_class_id {
-            return Err(ApiError::BadRequest(
-                "from_hubuum_class_id and to_hubuum_class_id cannot be the same".to_string(),
-            ));
-        }
-
-        let mut normalized = self.clone();
-        normalized.forward_template_alias =
-            normalize_template_alias_option(&normalized.forward_template_alias)?;
-        normalized.reverse_template_alias =
-            normalize_template_alias_option(&normalized.reverse_template_alias)?;
-
-        if normalized.from_hubuum_class_id > normalized.to_hubuum_class_id {
-            std::mem::swap(
-                &mut normalized.from_hubuum_class_id,
-                &mut normalized.to_hubuum_class_id,
-            );
-            std::mem::swap(
-                &mut normalized.forward_template_alias,
-                &mut normalized.reverse_template_alias,
-            );
-            std::mem::swap(
-                &mut normalized.from_max_relations,
-                &mut normalized.to_max_relations,
-            );
-        }
+        let normalized = self.clone().normalized()?;
 
         with_transaction(
             pool,
@@ -1172,10 +1121,6 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
         )
         .await
     }
-}
-
-fn normalize_template_alias_option(alias: &Option<String>) -> Result<Option<String>, ApiError> {
-    alias.as_deref().map(normalize_template_alias).transpose()
 }
 
 pub trait LoadObjectRelationRecord {
