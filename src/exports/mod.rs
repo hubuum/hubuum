@@ -3049,6 +3049,8 @@ mod tests {
             to_hubuum_class_id: hidden_adjacent_class.id,
             forward_template_alias: Some("secret_alias".to_string()),
             reverse_template_alias: Some("secret_reverse_alias".to_string()),
+            from_max_relations: None,
+            to_max_relations: None,
         }
         .save_without_events(&context.pool)
         .await
@@ -3135,6 +3137,8 @@ mod tests {
             to_hubuum_class_id: intermediate_class.id,
             forward_template_alias: None,
             reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
         }
         .save_without_events(&context.pool)
         .await
@@ -3443,6 +3447,8 @@ mod tests {
             to_hubuum_class_id: room_class.id,
             forward_template_alias: Some("rooms".to_string()),
             reverse_template_alias: Some("hosts".to_string()),
+            from_max_relations: None,
+            to_max_relations: None,
         }
         .save_without_events(&scope.pool)
         .await

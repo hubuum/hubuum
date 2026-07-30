@@ -12,8 +12,8 @@ use crate::models::export_template::{
 use crate::models::remote_target::validate_target_parts;
 use crate::models::{
     EventSinkKind, ExportContentType, ExportInclude, ExportLimits, ExportMissingDataPolicy,
-    ExportRelationContext, ExportScopeKind, ExportTemplateKind, Permissions, RemoteAuthConfig,
-    RemoteHttpMethod, RemoteTargetSubjectType,
+    ExportRelationContext, ExportScopeKind, ExportTemplateKind, ObjectRelationLimit, Permissions,
+    RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType,
 };
 
 pub const CURRENT_IMPORT_VERSION: i32 = 1;
@@ -326,6 +326,8 @@ pub struct ImportClassRelationInput {
     pub to_class_key: Option<ClassKey>,
     pub forward_template_alias: Option<String>,
     pub reverse_template_alias: Option<String>,
+    pub from_max_relations: Option<ObjectRelationLimit>,
+    pub to_max_relations: Option<ObjectRelationLimit>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 

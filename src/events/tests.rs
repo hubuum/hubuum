@@ -46,7 +46,7 @@ use crate::models::{
     EventSinkID, EventSinkKind, EventSubscription, ExportContentType, ExportTemplateID,
     ExportTemplateKind, GroupID, HubuumClassRelationID, NewEventSink, NewEventSubscription,
     NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow,
-    NewUser, Permissions, PermissionsList, PrincipalID, PrincipalToken,
+    NewUser, ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
     PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID, UpdateExportTemplate,
     UpdateRemoteTargetRow, UpdateUser,
 };
@@ -1396,6 +1396,8 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
         to_hubuum_class_id: class_b.id,
         forward_template_alias: Some("children".to_string()),
         reverse_template_alias: Some("parents".to_string()),
+        from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
+        to_max_relations: None,
     }
     .save(&scope.pool, &context)
     .await
@@ -1432,6 +1434,10 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
         rows[0].after.as_ref().unwrap()["forward_template_alias"],
         "children"
     );
+    assert_eq!(
+        rows[0].after.as_ref().unwrap()["from_max_relations"],
+        serde_json::json!(1)
+    );
 
     assert_eq!(rows[1].action, "deleted");
     assert_eq!(
@@ -1441,6 +1447,10 @@ async fn class_relation_writes_emit_lifecycle_events_in_transaction() {
     assert_eq!(
         rows[1].before.as_ref().unwrap()["reverse_template_alias"],
         "parents"
+    );
+    assert_eq!(
+        rows[1].before.as_ref().unwrap()["from_max_relations"],
+        serde_json::json!(1)
     );
     assert!(rows[1].after.is_none());
 
@@ -1484,6 +1494,8 @@ async fn object_relation_writes_emit_lifecycle_events_in_transaction() {
         to_hubuum_class_id: class_b.id,
         forward_template_alias: None,
         reverse_template_alias: None,
+        from_max_relations: None,
+        to_max_relations: None,
     }
     .save_without_events(&scope.pool)
     .await

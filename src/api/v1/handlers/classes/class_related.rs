@@ -111,8 +111,6 @@ async fn create_class_relation(
     relation_data: web::Json<NewHubuumClassRelationFromClass>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    use crate::models::NewHubuumClassRelation;
-
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
     let partial_relation = relation_data.into_inner();
@@ -124,12 +122,7 @@ async fn create_class_relation(
         to_class = partial_relation.to_hubuum_class_id,
     );
 
-    let relation = NewHubuumClassRelation {
-        from_hubuum_class_id: class_id.id(),
-        to_hubuum_class_id: partial_relation.to_hubuum_class_id,
-        forward_template_alias: partial_relation.forward_template_alias.clone(),
-        reverse_template_alias: partial_relation.reverse_template_alias.clone(),
-    };
+    let relation = partial_relation.into_relation(class_id);
 
     let resource = relation.to_resource_ref(&pool).await?;
     authorize_resources(

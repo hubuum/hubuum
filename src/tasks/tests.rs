@@ -278,6 +278,8 @@ async fn relation_timestamp_overwrite_requires_update_permission(
         to_hubuum_class_id: classes[1].id,
         forward_template_alias: None,
         reverse_template_alias: None,
+        from_max_relations: None,
+        to_max_relations: None,
     }
     .save_without_events(&context.pool)
     .await
@@ -343,6 +345,8 @@ async fn relation_timestamp_overwrite_requires_update_permission(
                 to_class_key: Some(class_key(1)),
                 forward_template_alias: None,
                 reverse_template_alias: None,
+                from_max_relations: None,
+                to_max_relations: None,
                 timestamps: Some(timestamps),
             });
         }
@@ -660,10 +664,14 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         }
         let class_relation = create_class_relation_db(
             conn,
-            classes[0].id,
-            classes[1].id,
-            None,
-            None,
+            NewHubuumClassRelation {
+                from_hubuum_class_id: classes[0].id,
+                to_hubuum_class_id: classes[1].id,
+                forward_template_alias: None,
+                reverse_template_alias: None,
+                from_max_relations: None,
+                to_max_relations: None,
+            },
             Some(&timestamps),
         )
         .await?;
@@ -808,8 +816,19 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
             classes.push(class);
             objects.push(object);
         }
-        let class_relation =
-            create_class_relation_db(conn, classes[0].id, classes[1].id, None, None, None).await?;
+        let class_relation = create_class_relation_db(
+            conn,
+            NewHubuumClassRelation {
+                from_hubuum_class_id: classes[0].id,
+                to_hubuum_class_id: classes[1].id,
+                forward_template_alias: None,
+                reverse_template_alias: None,
+                from_max_relations: None,
+                to_max_relations: None,
+            },
+            None,
+        )
+        .await?;
         let object_relation =
             create_object_relation_db(conn, &objects[0], &objects[1], None).await?;
         let actual = [

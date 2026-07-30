@@ -9,7 +9,7 @@ use hubuum::db::{
 };
 use hubuum::events::{Action, ActorKind, EntityType, MutationProvenance, NewEvent, emit_event};
 use hubuum::models::{
-    BackupRequest, NewHubuumClass, NewHubuumClassRelation, NewTaskRecord,
+    BackupRequest, NewHubuumClass, NewHubuumClassRelation, NewTaskRecord, ObjectRelationLimit,
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreInitiator, RestoreJobStatus,
     RestoreStageRequest, TaskKind, TaskStatus,
 };
@@ -74,6 +74,8 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         to_hubuum_class_id: second_class.id,
         forward_template_alias: None,
         reverse_template_alias: None,
+        from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
+        to_max_relations: None,
     }
     .save_without_events(&pool)
     .await
@@ -292,8 +294,12 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     let (relation_exists, reachability_exists) = with_connection(&pool, async |conn| {
         let relation_exists = hubuumclass_relation::table
             .filter(hubuumclass_relation::id.eq(class_relation.id))
-            .select(hubuumclass_relation::id)
-            .first::<i32>(conn)
+            .select((
+                hubuumclass_relation::id,
+                hubuumclass_relation::from_max_relations,
+                hubuumclass_relation::to_max_relations,
+            ))
+            .first::<(i32, Option<i32>, Option<i32>)>(conn)
             .await
             .optional()?;
         let reachability_exists = hubuumclass_reachability::table
@@ -313,7 +319,11 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
             reachability_exists,
             maintenance_state(&pool).await.unwrap(),
         ),
-        (Some(class_relation.id), Some(1), "normal".to_string())
+        (
+            Some((class_relation.id, Some(1), None)),
+            Some(1),
+            "normal".to_string(),
+        )
     );
 
     let initiator = RestoreInitiator::new(None, "test", "restore-confirmation")

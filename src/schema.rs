@@ -324,6 +324,8 @@ diesel::table! {
         reverse_template_alias -> Nullable<Varchar>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        from_max_relations -> Nullable<Int4>,
+        to_max_relations -> Nullable<Int4>,
     }
 }
 
@@ -344,6 +346,8 @@ diesel::table! {
         actor_kind -> Nullable<Text>,
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
+        from_max_relations -> Nullable<Int4>,
+        to_max_relations -> Nullable<Int4>,
     }
 }
 

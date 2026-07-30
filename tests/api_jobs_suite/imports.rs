@@ -11,23 +11,26 @@ mod tests {
 
     use crate::db::{DbPool, with_connection};
     use crate::models::{
-        CURRENT_IMPORT_VERSION, CollectionKey, GroupKey, IdentityScopeKey, ImportAtomicity,
-        ImportClassInput, ImportClassRelationInput, ImportCollectionInput,
+        CURRENT_IMPORT_VERSION, CollectionKey, GroupKey, HubuumClassRelation, IdentityScopeKey,
+        ImportAtomicity, ImportClassInput, ImportClassRelationInput, ImportCollectionInput,
         ImportCollectionPermissionInput, ImportCollisionPolicy, ImportEventSubscriptionInput,
         ImportGraph, ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput,
         ImportMode, ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy,
         ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest, ImportTaskResultResponse,
-        NewTaskRecord, Permissions, RestoreTimestamps, TaskEventResponse, TaskKind, TaskResponse,
-        TaskStatus,
+        NewTaskRecord, ObjectRelationLimit, Permissions, RestoreTimestamps, TaskEventResponse,
+        TaskKind, TaskResponse, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::schema::collections::dsl::{
         collections, description as collection_description, id as collection_id_field,
     };
     use crate::schema::hubuumclass::dsl::{
-        collection_id as class_collection_id, hubuumclass, name as class_name,
+        collection_id as class_collection_id, hubuumclass, id as class_id, name as class_name,
     };
     use crate::schema::hubuumclass_relation::dsl as class_relation;
+    use crate::schema::hubuumclass_relation::dsl::{
+        from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id,
+    };
     use crate::schema::hubuumobject::dsl as object;
     use crate::schema::hubuumobject_relation::dsl as object_relation;
     use crate::schema::tasks::dsl::{
@@ -132,6 +135,8 @@ mod tests {
                     to_class_key: None,
                     forward_template_alias: None,
                     reverse_template_alias: None,
+                    from_max_relations: None,
+                    to_max_relations: None,
                     timestamps: Some(timestamps.clone()),
                 }],
                 object_relations: vec![ImportObjectRelationInput {
@@ -429,6 +434,114 @@ mod tests {
                 vec![(expected.created_at(), expected.updated_at()); 7]
             );
         }
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn class_relation_import_preserves_object_relation_limits(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let jack_name = context.scoped_name("import_cardinality_jack");
+        let room_name = context.scoped_name("import_cardinality_room");
+        let body = ImportRequest {
+            version: CURRENT_IMPORT_VERSION,
+            dry_run: Some(false),
+            mode: Some(ImportMode {
+                atomicity: Some(ImportAtomicity::Strict),
+                collision_policy: Some(ImportCollisionPolicy::Abort),
+                permission_policy: Some(ImportPermissionPolicy::Abort),
+            }),
+            graph: ImportGraph {
+                collections: vec![ImportCollectionInput {
+                    ref_: Some("collection:cardinality".to_string()),
+                    name: context.scoped_name("import_cardinality"),
+                    description: "Relation cardinality import".to_string(),
+                    parent_collection_ref: None,
+                    parent_collection_key: None,
+                    timestamps: None,
+                }],
+                classes: vec![
+                    ImportClassInput {
+                        ref_: Some("class:jack".to_string()),
+                        name: jack_name.clone(),
+                        description: "Jack".to_string(),
+                        json_schema: None,
+                        validate_schema: Some(false),
+                        collection_ref: Some("collection:cardinality".to_string()),
+                        collection_key: None,
+                        timestamps: None,
+                    },
+                    ImportClassInput {
+                        ref_: Some("class:room".to_string()),
+                        name: room_name.clone(),
+                        description: "Room".to_string(),
+                        json_schema: None,
+                        validate_schema: Some(false),
+                        collection_ref: Some("collection:cardinality".to_string()),
+                        collection_key: None,
+                        timestamps: None,
+                    },
+                ],
+                class_relations: vec![ImportClassRelationInput {
+                    ref_: Some("relation:jack-room".to_string()),
+                    from_class_ref: Some("class:jack".to_string()),
+                    from_class_key: None,
+                    to_class_ref: Some("class:room".to_string()),
+                    to_class_key: None,
+                    forward_template_alias: Some("room".to_string()),
+                    reverse_template_alias: Some("jacks".to_string()),
+                    from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
+                    to_max_relations: None,
+                    timestamps: None,
+                }],
+                ..ImportGraph::default()
+            },
+        };
+
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &body,
+            Vec::new(),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(response).await;
+        let completed = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        assert_eq!(completed.progress.success_items, 4);
+
+        let (jack_id, room_id, relation) = with_connection(&context.pool, async |conn| {
+            let jack_id = hubuumclass
+                .filter(class_name.eq(jack_name))
+                .select(class_id)
+                .first::<i32>(conn)
+                .await?;
+            let room_id = hubuumclass
+                .filter(class_name.eq(room_name))
+                .select(class_id)
+                .first::<i32>(conn)
+                .await?;
+            let relation = hubuumclass_relation
+                .filter(from_hubuum_class_id.eq(jack_id.min(room_id)))
+                .filter(to_hubuum_class_id.eq(jack_id.max(room_id)))
+                .first::<HubuumClassRelation>(conn)
+                .await?;
+            Ok::<_, diesel::result::Error>((jack_id, room_id, relation))
+        })
+        .await
+        .unwrap();
+        let (jack_limit, room_limit) = if relation.from_hubuum_class_id == jack_id {
+            assert_eq!(relation.to_hubuum_class_id, room_id);
+            (relation.from_max_relations, relation.to_max_relations)
+        } else {
+            assert_eq!(relation.from_hubuum_class_id, room_id);
+            assert_eq!(relation.to_hubuum_class_id, jack_id);
+            (relation.to_max_relations, relation.from_max_relations)
+        };
+        assert_eq!(jack_limit, Some(ObjectRelationLimit::new(1).unwrap()));
+        assert_eq!(room_limit, None);
     }
 
     #[rstest]
