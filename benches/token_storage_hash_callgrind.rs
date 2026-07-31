@@ -1,5 +1,5 @@
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use hubuum::models::Token;
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 
 // Token storage hashing (HMAC-SHA256 + hex encoding) runs on every

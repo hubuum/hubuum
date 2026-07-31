@@ -1,6 +1,6 @@
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use hubuum::models::parse_unified_search_query_with_limits;
 use hubuum::pagination::PageLimits;
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 
 // Unified-search query parsing: percent-decoding, kind-set parsing, boolean and

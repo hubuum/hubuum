@@ -12,7 +12,7 @@ minijinja = { version = "2", features = ["fuel"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 
 [dev-dependencies]
-iai-callgrind = "0.16.1"
+gungraun = "0.19.4"
 
 [[bench]]
 name = "size_limited_writer_callgrind"

@@ -1,5 +1,5 @@
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use hubuum_query::{Operator, get_jsonb_field_type_from_value_and_operator};
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 
 const CASES: [(&str, Operator); 7] = [

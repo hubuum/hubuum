@@ -114,7 +114,7 @@ libc = "0.2"
 
 [dev-dependencies]
 criterion = "0.8.2"
-iai-callgrind = "0.16.1"
+gungraun = "0.19.4"
 regex = "1"
 rstest = "0.26"
 tokio-rustls = "0.26"

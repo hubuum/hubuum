@@ -17,6 +17,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   relations to enforce one-to-one, one-to-many, or bounded object
   cardinalities.
 
+### Changed
+
+- Migrated deterministic benchmarks from IAI-Callgrind to Gungraun and updated
+  the reusable benchmark workflow to its v2.3 migration bridge.
+
 ## [0.0.6] - 2026-07-29
 
 ### Added

@@ -1,5 +1,5 @@
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use hubuum::models::{UnifiedSearchCursorToken, decode_cursor, encode_cursor};
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use std::hint::black_box;
 
 // Pagination cursor round-trip: serde serialization + base64url encode, then

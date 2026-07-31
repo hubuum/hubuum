@@ -104,12 +104,13 @@ Benchmarking runs in a separate GitHub workflow, `.github/workflows/benchmarks.y
 The benchmark targets are split one benchmark binary per file so CI can fan them out independently:
 
 ```bash
-cargo bench --bench parse_query_parameter_callgrind
-cargo bench --bench parse_integer_list_callgrind
+cargo bench -p hubuum-query --bench parse_query_parameter_callgrind
+cargo bench -p hubuum-query --bench parse_integer_list_callgrind
 cargo bench --bench json_sql_filters_callgrind
-cargo bench --bench search_operator_parsing_callgrind
+cargo bench -p hubuum-query --bench search_operator_parsing_callgrind
 cargo bench --bench permissions_parsing_callgrind
-cargo bench --bench jsonb_type_inference_callgrind
+cargo bench -p hubuum-query --bench jsonb_type_inference_callgrind
+cargo bench -p hubuum-templates --bench size_limited_writer_callgrind
 cargo bench --bench token_storage_hash_callgrind
 cargo bench --bench request_hash_callgrind
 cargo bench --bench unified_search_query_parsing_callgrind
@@ -125,7 +126,12 @@ database benchmarks live in nested benchmark directories with explicit Cargo
 paths so they remain in their dedicated jobs without disabling autodiscovery.
 The container-build tests enforce this separation.
 
-`iai-callgrind` requires `valgrind` to be installed locally.
+Gungraun requires `valgrind` and the matching benchmark runner to be installed
+locally:
+
+```bash
+cargo install --locked --version 0.19.4 gungraun-runner
+```
 
 The PostgreSQL storage benchmark is opt-in and requires an empty, migrated,
 disposable benchmark database. Fixture creation, cleanup, and warmup happen
@@ -194,7 +200,8 @@ query nondeterministically to the next operation.
 
 - The self-contained benchmark job runs both backends in one combined
   `backend: all` job, so PRs get a single consolidated benchmark export.
-- `iai-callgrind` remains the practical gating signal with a low regression threshold.
+- Gungraun's Callgrind measurements remain the practical gating signal with a
+  low regression threshold.
 - Criterion still runs in the same combined job, but uses a very high regression threshold so it exports timing changes without acting as a meaningful gate.
 - A separate PostgreSQL job runs storage Criterion benchmarks against
   isolated base and pull-request databases. It warns above a 10% median change
