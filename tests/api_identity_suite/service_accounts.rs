@@ -32,17 +32,18 @@ mod tests {
     use crate::errors::ApiError;
     use crate::events::{Action, EntityType};
     use crate::models::Collection;
-    use crate::models::collection::user_can_on_any;
+    use crate::models::collection::{group_can_on, user_can_on_any};
     use crate::models::principal::{PrincipalKind, load_principal_by_id};
     use crate::models::token::Token;
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
-        CollectionID, GroupResponse, HubuumClassID, HubuumObject, HubuumObjectID,
-        MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClassRelation, NewHubuumObject,
-        NewHubuumObjectRelation, NewServiceAccount, NewTaskRecord, Permissions, PrincipalID,
-        PrincipalMemberResponse, PrincipalTokenCreateRequest, PrincipalTokenMetadata,
-        ServiceAccount, ServiceAccountID, ServiceAccountResponse, TaskID, TaskKind, TaskRecord,
-        TaskStatus, TokenResourceScope, TokenScope,
+        CollectionID, GroupResponse, HubuumClassID, HubuumClassRelation, HubuumObject,
+        HubuumObjectID, HubuumObjectRelation, MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClass,
+        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewServiceAccount,
+        NewTaskRecord, Permissions, PrincipalID, PrincipalMemberResponse,
+        PrincipalTokenCreateRequest, PrincipalTokenMetadata, ServiceAccount, ServiceAccountID,
+        ServiceAccountResponse, TaskID, TaskKind, TaskRecord, TaskStatus, TokenResourceScope,
+        TokenScope,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
     use crate::test_support::{
@@ -52,9 +53,9 @@ mod tests {
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
-        ClassFixture, TestContext, create_test_classes, create_test_group,
+        ClassFixture, TestContext, create_class_fixture, create_test_classes, create_test_group,
         create_test_service_account, create_test_user, ensure_admin_group, lock_test_mutex,
-        resource_scoped_token, scoped_token, service_account_token,
+        resource_scoped_token, scoped_token, scoped_token_with_resources, service_account_token,
     };
     use crate::traits::{CanSave, PermissionController};
     use crate::utilities::auth::generate_random_password;
@@ -92,6 +93,94 @@ mod tests {
             .await
             .unwrap();
         (classes, objects, sa)
+    }
+
+    struct ScopedAdminListFixture {
+        classes: ClassFixture,
+        objects: Vec<HubuumObject>,
+        class_relation: HubuumClassRelation,
+        object_relation: HubuumObjectRelation,
+    }
+
+    impl ScopedAdminListFixture {
+        fn collection_id(&self) -> i32 {
+            self.classes.collection.collection.id
+        }
+
+        fn token_resources(&self) -> Vec<TokenResourceScope> {
+            std::iter::once(TokenResourceScope::Collection(
+                CollectionID::new(self.collection_id()).unwrap(),
+            ))
+            .chain(
+                self.classes
+                    .iter()
+                    .map(|class| TokenResourceScope::Class(HubuumClassID::new(class.id).unwrap())),
+            )
+            .collect()
+        }
+    }
+
+    async fn scoped_admin_list_fixture(context: &TestContext) -> ScopedAdminListFixture {
+        let collection = context
+            .scope
+            .collection_fixture("scoped_admin_list_visibility")
+            .await;
+        let classes = create_class_fixture(
+            &context.pool,
+            collection,
+            (0..2)
+                .map(|index| NewHubuumClass {
+                    name: context.scoped_name(&format!("scoped_admin_class_{index}")),
+                    description: "scoped administrator list test".to_string(),
+                    collection_id: 0,
+                    json_schema: None,
+                    validate_schema: Some(false),
+                })
+                .collect(),
+        )
+        .await
+        .unwrap();
+        let mut objects = Vec::with_capacity(classes.len());
+        for (index, class) in classes.iter().enumerate() {
+            objects.push(
+                NewHubuumObject {
+                    name: context.scoped_name(&format!("scoped_admin_object_{index}")),
+                    collection_id: class.collection_id,
+                    hubuum_class_id: class.id,
+                    data: serde_json::json!({"index": index}),
+                    description: "scoped administrator list test".to_string(),
+                }
+                .save_without_events(&context.pool)
+                .await
+                .unwrap(),
+            );
+        }
+        let class_relation = NewHubuumClassRelation {
+            from_hubuum_class_id: classes[0].id,
+            to_hubuum_class_id: classes[1].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let object_relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: objects[0].id,
+            to_hubuum_object_id: objects[1].id,
+            class_relation_id: class_relation.id,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+
+        ScopedAdminListFixture {
+            classes,
+            objects,
+            class_relation,
+            object_relation,
+        }
     }
 
     #[derive(QueryableByName)]
@@ -1190,6 +1279,139 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!((total, ids), (1, vec![i64::from(objects[0].id)]));
+    }
+
+    #[derive(Clone, Copy)]
+    enum ScopedAdminListTarget {
+        Collections,
+        Classes,
+        ObjectsByClassId,
+        ObjectsByClassName,
+        ClassRelations,
+        ObjectRelations,
+    }
+
+    struct ScopedAdminListRequest {
+        exact_endpoint: String,
+        list_endpoint: String,
+        expected_ids: Vec<i32>,
+    }
+
+    impl ScopedAdminListTarget {
+        fn request(self, fixture: &ScopedAdminListFixture) -> ScopedAdminListRequest {
+            match self {
+                Self::Collections => ScopedAdminListRequest {
+                    exact_endpoint: format!("{COLLECTIONS_ENDPOINT}/{}", fixture.collection_id()),
+                    list_endpoint: COLLECTIONS_ENDPOINT.to_string(),
+                    expected_ids: vec![fixture.collection_id()],
+                },
+                Self::Classes => ScopedAdminListRequest {
+                    exact_endpoint: format!("/api/v1/classes/{}", fixture.classes[0].id),
+                    list_endpoint: "/api/v1/classes".to_string(),
+                    expected_ids: fixture.classes.iter().map(|class| class.id).collect(),
+                },
+                Self::ObjectsByClassId => ScopedAdminListRequest {
+                    exact_endpoint: format!(
+                        "/api/v1/classes/{}/{}",
+                        fixture.classes[0].id, fixture.objects[0].id
+                    ),
+                    list_endpoint: format!("/api/v1/classes/{}/", fixture.classes[0].id),
+                    expected_ids: vec![fixture.objects[0].id],
+                },
+                Self::ObjectsByClassName => ScopedAdminListRequest {
+                    exact_endpoint: format!(
+                        "/api/v1/classes/by-name/{}/objects/by-name/{}",
+                        fixture.classes[0].name, fixture.objects[0].name
+                    ),
+                    list_endpoint: format!(
+                        "/api/v1/classes/by-name/{}/objects",
+                        fixture.classes[0].name
+                    ),
+                    expected_ids: vec![fixture.objects[0].id],
+                },
+                Self::ClassRelations => ScopedAdminListRequest {
+                    exact_endpoint: format!(
+                        "/api/v1/relations/classes/{}",
+                        fixture.class_relation.id
+                    ),
+                    list_endpoint: "/api/v1/relations/classes".to_string(),
+                    expected_ids: vec![fixture.class_relation.id],
+                },
+                Self::ObjectRelations => ScopedAdminListRequest {
+                    exact_endpoint: format!(
+                        "/api/v1/classes/{}/{}/relations/{}/{}",
+                        fixture.classes[0].id,
+                        fixture.objects[0].id,
+                        fixture.classes[1].id,
+                        fixture.objects[1].id
+                    ),
+                    list_endpoint: "/api/v1/relations/objects".to_string(),
+                    expected_ids: vec![fixture.object_relation.id],
+                },
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::collections(ScopedAdminListTarget::Collections)]
+    #[case::classes(ScopedAdminListTarget::Classes)]
+    #[case::objects_by_class_id(ScopedAdminListTarget::ObjectsByClassId)]
+    #[case::objects_by_class_name(ScopedAdminListTarget::ObjectsByClassName)]
+    #[case::class_relations(ScopedAdminListTarget::ClassRelations)]
+    #[case::object_relations(ScopedAdminListTarget::ObjectRelations)]
+    #[actix_web::test]
+    async fn test_resource_scoped_admin_lists_in_scope_resources_without_group_grants(
+        #[case] target: ScopedAdminListTarget,
+    ) {
+        let context = TestContext::new().await;
+        let fixture = scoped_admin_list_fixture(&context).await;
+        let admin_group = ensure_admin_group(&context.pool).await;
+        assert!(
+            !group_can_on(
+                &context.pool,
+                admin_group.id,
+                fixture.classes.collection.collection.clone(),
+                Permissions::ReadCollection,
+            )
+            .await
+            .unwrap(),
+            "the administrator group must not have an explicit collection grant"
+        );
+
+        let token = scoped_token_with_resources(
+            &context.pool,
+            context.admin_user.id,
+            &[
+                Permissions::ReadCollection,
+                Permissions::ReadClass,
+                Permissions::ReadObject,
+                Permissions::ReadClassRelation,
+                Permissions::ReadObjectRelation,
+            ],
+            fixture.token_resources(),
+        )
+        .await;
+        let request = target.request(&fixture);
+
+        let exact = get_request(&context.pool, &token, &request.exact_endpoint).await;
+        assert_response_status(exact, StatusCode::OK).await;
+
+        let response = get_request(&context.pool, &token, &request.list_endpoint).await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let total = header_value(&response, TOTAL_COUNT_HEADER)
+            .unwrap()
+            .parse::<i64>()
+            .unwrap();
+        let body: serde_json::Value = test::read_body_json(response).await;
+        let ids = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|resource| i32::try_from(resource["id"].as_i64().unwrap()).unwrap())
+            .collect::<Vec<_>>();
+        let expected_total = i64::try_from(request.expected_ids.len()).unwrap();
+
+        assert_eq!((total, ids), (expected_total, request.expected_ids));
     }
 
     #[derive(Clone, Copy)]

@@ -3,14 +3,54 @@ mod tests {
     use actix_web::{http::StatusCode, test};
     use rstest::rstest;
 
-    use crate::models::{NewHubuumClass, NewHubuumObject, UnifiedSearchResponse};
+    use crate::models::{
+        CollectionID, NewHubuumClass, NewHubuumObject, Permissions, TokenResourceScope,
+        UnifiedSearchResponse,
+    };
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::assert_response_status;
-    use crate::tests::{TestContext, test_context};
+    use crate::tests::{CollectionFixture, TestContext, scoped_token_with_resources, test_context};
     use crate::traits::CanSave;
 
     const SEARCH_ENDPOINT: &str = "/api/v1/search";
     const SEARCH_STREAM_ENDPOINT: &str = "/api/v1/search/stream";
+
+    struct SearchResourceFixture {
+        class_id: i32,
+        object_id: i32,
+    }
+
+    async fn create_search_resources(
+        context: &TestContext,
+        collection: &CollectionFixture,
+        needle: &str,
+    ) -> SearchResourceFixture {
+        let class = NewHubuumClass {
+            name: format!("{needle}-class-{}", collection.collection.id),
+            collection_id: collection.collection.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: format!("{needle} class"),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let object = NewHubuumObject {
+            name: format!("{needle}-object-{}", collection.collection.id),
+            collection_id: collection.collection.id,
+            hubuum_class_id: class.id,
+            data: serde_json::json!({"tag": needle}),
+            description: format!("{needle} object"),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+
+        SearchResourceFixture {
+            class_id: class.id,
+            object_id: object.id,
+        }
+    }
 
     #[rstest]
     #[actix_web::test]
@@ -230,27 +270,7 @@ mod tests {
             .unwrap();
 
         for collection in [&visible, &hidden] {
-            let class = NewHubuumClass {
-                name: format!("permneedle-class-{}", collection.collection.id),
-                collection_id: collection.collection.id,
-                json_schema: None,
-                validate_schema: Some(false),
-                description: "permneedle class".to_string(),
-            }
-            .save_without_events(&context.pool)
-            .await
-            .unwrap();
-
-            NewHubuumObject {
-                name: format!("permneedle-object-{}", collection.collection.id),
-                collection_id: collection.collection.id,
-                hubuum_class_id: class.id,
-                data: serde_json::json!({"tag": "permneedle"}),
-                description: "permneedle object".to_string(),
-            }
-            .save_without_events(&context.pool)
-            .await
-            .unwrap();
+            create_search_resources(&context, collection, "permneedle").await;
         }
 
         let resp = get_request(
@@ -283,6 +303,79 @@ mod tests {
                 .objects
                 .iter()
                 .all(|object| object.collection_id == visible.collection.id)
+        );
+
+        visible.cleanup().await.unwrap();
+        hidden.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_search_resource_scoped_admin_without_group_grants(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let needle = context.scoped_name("scopedadminsearch").replace('_', "");
+        let visible = context
+            .scope
+            .collection_fixture(&format!("{needle}_visible"))
+            .await;
+        let hidden = context
+            .scope
+            .collection_fixture(&format!("{needle}_hidden"))
+            .await;
+
+        let visible_resources = create_search_resources(&context, &visible, &needle).await;
+        create_search_resources(&context, &hidden, &needle).await;
+        let token = scoped_token_with_resources(
+            &context.pool,
+            context.admin_user.id,
+            &[
+                Permissions::ReadCollection,
+                Permissions::ReadClass,
+                Permissions::ReadObject,
+            ],
+            vec![TokenResourceScope::Collection(
+                CollectionID::new(visible.collection.id).unwrap(),
+            )],
+        )
+        .await;
+
+        let response = get_request(
+            &context.pool,
+            &token,
+            &format!("{SEARCH_ENDPOINT}?q={needle}&kinds=collection,class,object"),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let search: UnifiedSearchResponse = test::read_body_json(response).await;
+
+        assert_eq!(
+            search
+                .results
+                .collections
+                .iter()
+                .map(|collection| collection.id)
+                .collect::<Vec<_>>(),
+            vec![visible.collection.id]
+        );
+        assert_eq!(
+            search
+                .results
+                .classes
+                .iter()
+                .map(|class| class.id)
+                .collect::<Vec<_>>(),
+            vec![visible_resources.class_id]
+        );
+        assert_eq!(
+            search
+                .results
+                .objects
+                .iter()
+                .map(|object| object.id)
+                .collect::<Vec<_>>(),
+            vec![visible_resources.object_id]
         );
 
         visible.cleanup().await.unwrap();

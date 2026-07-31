@@ -103,13 +103,14 @@ where
 }
 
 pub trait LoadPermittedCollections: GroupAccessors + AuthzSubject {
-    /// Load all collections the subject has the given permissions on, intersected
-    /// with the token scope set.
+    /// Load the collections the subject has the given permissions on after
+    /// enforcing the token's permission scope.
     ///
     /// * `scopes = None` — unscoped (admins get all collections via the fast path).
-    /// * `scopes = Some(..)` — the requested permissions must be within scope; a
-    ///   scoped admin falls through to the per-collection permission query rather
-    ///   than the all-collections fast path.
+    /// * `scopes = Some(..)` — the requested permissions must be within scope.
+    ///   Admins retain their collection authority. The downstream entity query
+    ///   applies the resource boundary because a class- or object-only scope may
+    ///   select a descendant without exposing its parent collection.
     async fn load_collections_with_permissions<'a, I>(
         &self,
         pool: &DbPool,
@@ -171,9 +172,11 @@ where
             return Ok(Vec::new());
         }
 
-        // Unscoped admins see everything; scoped admins fall through to the
-        // permission query so their token scope still bounds the listing.
-        if is_admin && scopes.is_none() {
+        // Do not filter this collection context by collection-only resource IDs:
+        // class- and object-scoped tokens still need their parent collection as
+        // query context. Every downstream entity query applies its own resource
+        // predicate before returning rows.
+        if is_admin {
             return with_connection(pool, async |conn| {
                 collections
                     .select(collections::all_columns())

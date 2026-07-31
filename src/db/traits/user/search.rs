@@ -236,7 +236,6 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         if !scope_allows(scopes, &[Permissions::ReadCollection]) {
             return Ok(Vec::new());
         }
-        let is_admin = is_admin && scopes.is_none();
         use crate::schema::collection_closure::dsl::{
             ancestor_collection_id, collection_closure, descendant_collection_id,
         };
@@ -357,7 +356,6 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         if !scope_allows(scopes, &[Permissions::ReadCollection]) {
             return Ok(0);
         }
-        let is_admin = is_admin && scopes.is_none();
 
         let query_params = query_options.filters.clone();
         // Validate any `permissions` query filters. The requested value does not
