@@ -46,8 +46,8 @@ use crate::models::collection::{Collection, NewCollectionWithAssignee};
 use crate::models::group::{Group, NewGroup};
 use crate::models::user::{NewUser, User};
 use crate::models::{
-    HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject, PrincipalID,
-    PrincipalTokenCreateRequest, TokenScope,
+    HubuumClass, HubuumObject, NewHubuumClass, NewHubuumObject, Permissions, PrincipalID,
+    PrincipalTokenCreateRequest, TokenResourceScope, TokenScope,
 };
 
 use crate::utilities::auth::{generate_random_password, hash_password};
@@ -580,14 +580,39 @@ pub async fn create_test_service_account(
 }
 
 /// Mint a scoped token for a principal id; returns the raw token string.
-pub async fn scoped_token(
-    pool: &DbPool,
-    principal_id: i32,
-    permissions: &[crate::models::Permissions],
-) -> String {
+pub async fn scoped_token(pool: &DbPool, principal_id: i32, permissions: &[Permissions]) -> String {
     let scope = TokenScope::from_request_parts(Some(permissions.to_vec()), None)
         .expect("valid permission token scope")
         .expect("permission token scope is present");
+    scoped_principal_token(pool, principal_id, scope).await
+}
+
+/// Mint a token narrowed to the supplied collection, class, or object entries.
+pub async fn resource_scoped_token(
+    pool: &DbPool,
+    principal_id: i32,
+    resource_scopes: Vec<TokenResourceScope>,
+) -> String {
+    let scope = TokenScope::from_request_parts(None, Some(resource_scopes))
+        .expect("valid resource token scope")
+        .expect("resource token scope is present");
+    scoped_principal_token(pool, principal_id, scope).await
+}
+
+/// Mint a token narrowed by both permission and resource dimensions.
+pub async fn scoped_token_with_resources(
+    pool: &DbPool,
+    principal_id: i32,
+    permissions: &[Permissions],
+    resource_scopes: Vec<TokenResourceScope>,
+) -> String {
+    let scope = TokenScope::from_request_parts(Some(permissions.to_vec()), Some(resource_scopes))
+        .expect("valid combined token scope")
+        .expect("combined token scope is present");
+    scoped_principal_token(pool, principal_id, scope).await
+}
+
+async fn scoped_principal_token(pool: &DbPool, principal_id: i32, scope: TokenScope) -> String {
     PrincipalTokenCreateRequest::new(
         PrincipalID::new(principal_id).expect("valid persisted principal id"),
     )
@@ -595,25 +620,6 @@ pub async fn scoped_token(
     .create(pool, None)
     .await
     .expect("failed to mint scoped token")
-    .get_token()
-}
-
-/// Mint a token narrowed to the supplied collection, class, or object entries.
-pub async fn resource_scoped_token(
-    pool: &DbPool,
-    principal_id: i32,
-    resource_scopes: Vec<crate::models::TokenResourceScope>,
-) -> String {
-    let scope = crate::models::TokenScope::from_request_parts(None, Some(resource_scopes))
-        .expect("valid resource token scope")
-        .expect("resource token scope is present");
-    PrincipalTokenCreateRequest::new(
-        PrincipalID::new(principal_id).expect("valid persisted principal id"),
-    )
-    .scope(Some(scope))
-    .create(pool, None)
-    .await
-    .expect("failed to mint resource-scoped token")
     .get_token()
 }
 

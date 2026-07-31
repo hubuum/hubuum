@@ -4,16 +4,53 @@ mod tests {
     use rstest::rstest;
 
     use crate::models::{
-        CollectionID, NewHubuumClass, NewHubuumObject, Permissions, PrincipalID,
-        PrincipalTokenCreateRequest, TokenResourceScope, TokenScope, UnifiedSearchResponse,
+        CollectionID, NewHubuumClass, NewHubuumObject, Permissions, TokenResourceScope,
+        UnifiedSearchResponse,
     };
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::assert_response_status;
-    use crate::tests::{TestContext, test_context};
+    use crate::tests::{CollectionFixture, TestContext, scoped_token_with_resources, test_context};
     use crate::traits::CanSave;
 
     const SEARCH_ENDPOINT: &str = "/api/v1/search";
     const SEARCH_STREAM_ENDPOINT: &str = "/api/v1/search/stream";
+
+    struct SearchResourceFixture {
+        class_id: i32,
+        object_id: i32,
+    }
+
+    async fn create_search_resources(
+        context: &TestContext,
+        collection: &CollectionFixture,
+        needle: &str,
+    ) -> SearchResourceFixture {
+        let class = NewHubuumClass {
+            name: format!("{needle}-class-{}", collection.collection.id),
+            collection_id: collection.collection.id,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: format!("{needle} class"),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let object = NewHubuumObject {
+            name: format!("{needle}-object-{}", collection.collection.id),
+            collection_id: collection.collection.id,
+            hubuum_class_id: class.id,
+            data: serde_json::json!({"tag": needle}),
+            description: format!("{needle} object"),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+
+        SearchResourceFixture {
+            class_id: class.id,
+            object_id: object.id,
+        }
+    }
 
     #[rstest]
     #[actix_web::test]
@@ -233,27 +270,7 @@ mod tests {
             .unwrap();
 
         for collection in [&visible, &hidden] {
-            let class = NewHubuumClass {
-                name: format!("permneedle-class-{}", collection.collection.id),
-                collection_id: collection.collection.id,
-                json_schema: None,
-                validate_schema: Some(false),
-                description: "permneedle class".to_string(),
-            }
-            .save_without_events(&context.pool)
-            .await
-            .unwrap();
-
-            NewHubuumObject {
-                name: format!("permneedle-object-{}", collection.collection.id),
-                collection_id: collection.collection.id,
-                hubuum_class_id: class.id,
-                data: serde_json::json!({"tag": "permneedle"}),
-                description: "permneedle object".to_string(),
-            }
-            .save_without_events(&context.pool)
-            .await
-            .unwrap();
+            create_search_resources(&context, collection, "permneedle").await;
         }
 
         let resp = get_request(
@@ -308,54 +325,21 @@ mod tests {
             .collection_fixture(&format!("{needle}_hidden"))
             .await;
 
-        let mut visible_class = None;
-        let mut visible_object = None;
-        for collection in [&visible, &hidden] {
-            let class = NewHubuumClass {
-                name: format!("{needle}-class-{}", collection.collection.id),
-                collection_id: collection.collection.id,
-                json_schema: None,
-                validate_schema: Some(false),
-                description: format!("{needle} class"),
-            }
-            .save_without_events(&context.pool)
-            .await
-            .unwrap();
-            let object = NewHubuumObject {
-                name: format!("{needle}-object-{}", collection.collection.id),
-                collection_id: collection.collection.id,
-                hubuum_class_id: class.id,
-                data: serde_json::json!({"tag": &needle}),
-                description: format!("{needle} object"),
-            }
-            .save_without_events(&context.pool)
-            .await
-            .unwrap();
-            if collection.collection.id == visible.collection.id {
-                visible_class = Some(class);
-                visible_object = Some(object);
-            }
-        }
-
-        let scope = TokenScope::from_request_parts(
-            Some(vec![
+        let visible_resources = create_search_resources(&context, &visible, &needle).await;
+        create_search_resources(&context, &hidden, &needle).await;
+        let token = scoped_token_with_resources(
+            &context.pool,
+            context.admin_user.id,
+            &[
                 Permissions::ReadCollection,
                 Permissions::ReadClass,
                 Permissions::ReadObject,
-            ]),
-            Some(vec![TokenResourceScope::Collection(
+            ],
+            vec![TokenResourceScope::Collection(
                 CollectionID::new(visible.collection.id).unwrap(),
-            )]),
+            )],
         )
-        .unwrap()
-        .unwrap();
-        let token =
-            PrincipalTokenCreateRequest::new(PrincipalID::new(context.admin_user.id).unwrap())
-                .scope(Some(scope))
-                .create(&context.pool, None)
-                .await
-                .unwrap()
-                .get_token();
+        .await;
 
         let response = get_request(
             &context.pool,
@@ -382,7 +366,7 @@ mod tests {
                 .iter()
                 .map(|class| class.id)
                 .collect::<Vec<_>>(),
-            vec![visible_class.unwrap().id]
+            vec![visible_resources.class_id]
         );
         assert_eq!(
             search
@@ -391,7 +375,7 @@ mod tests {
                 .iter()
                 .map(|object| object.id)
                 .collect::<Vec<_>>(),
-            vec![visible_object.unwrap().id]
+            vec![visible_resources.object_id]
         );
 
         visible.cleanup().await.unwrap();
