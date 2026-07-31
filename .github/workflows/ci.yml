@@ -662,7 +662,9 @@ jobs:
           done
           archive_name="hubuum-${{ matrix.platform.os_name }}-all-features-${GITHUB_REF_NAME}.tar.gz"
           tar czvf "dist/${archive_name}" -C dist/bin hubuum-server hubuum-admin
-          shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
+          cd dist
+          shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
+          shasum -a 256 -c "${archive_name}.sha256"
       - name: Upload release artifact
         uses: actions/upload-artifact@v7
         with:
@@ -754,7 +756,16 @@ jobs:
           $archive_name = "hubuum-${{ matrix.platform.os_name }}-full-release-${env:GITHUB_REF_NAME}.zip"
           Compress-Archive -Path "target/${{ matrix.platform.target }}/release/hubuum-server.exe", "target/${{ matrix.platform.target }}/release/hubuum-admin.exe" -DestinationPath "dist/$archive_name"
           $hash = (Get-FileHash "dist/$archive_name" -Algorithm SHA256).Hash.ToLower()
-          "$hash  $archive_name" | Out-File -FilePath "dist/$archive_name.sha256" -Encoding ascii
+          # Keep checksum files portable: UTF-8 without a BOM and an explicit LF.
+          $checksum = "$hash  $archive_name`n"
+          [System.IO.File]::WriteAllText(
+            "dist/$archive_name.sha256",
+            $checksum,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+          if ([System.IO.File]::ReadAllText("dist/$archive_name.sha256") -cne $checksum) {
+            throw "Checksum file was not written exactly as expected"
+          }
       
       - name: Upload release artifact
         uses: actions/upload-artifact@v7
@@ -859,7 +870,9 @@ jobs:
           done
           archive_name="hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz"
           tar czvf "dist/${archive_name}" -C dist/bin hubuum-server hubuum-admin
-          shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
+          cd dist
+          shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
+          shasum -a 256 -c "${archive_name}.sha256"
       - name: Upload main artifact
         uses: actions/upload-artifact@v7
         with:
@@ -944,7 +957,9 @@ jobs:
           mkdir -p dist
           archive_name="hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.tar.gz"
           tar czvf "dist/${archive_name}" -C "target/${{ matrix.platform.target }}/release" hubuum-server hubuum-admin
-          shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
+          cd dist
+          shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
+          shasum -a 256 -c "${archive_name}.sha256"
       - name: Package main archive (Windows)
         if: contains(matrix.platform.os_name, 'windows')
         shell: pwsh
@@ -953,7 +968,16 @@ jobs:
           $archive_name = "hubuum-${{ matrix.platform.os_name }}-${{ matrix.feature.ext }}-main.zip"
           Compress-Archive -Path "target/${{ matrix.platform.target }}/release/hubuum-server.exe", "target/${{ matrix.platform.target }}/release/hubuum-admin.exe" -DestinationPath "dist/$archive_name"
           $hash = (Get-FileHash "dist/$archive_name" -Algorithm SHA256).Hash.ToLower()
-          "$hash  $archive_name" | Out-File -FilePath "dist/$archive_name.sha256" -Encoding ascii
+          # Keep checksum files portable: UTF-8 without a BOM and an explicit LF.
+          $checksum = "$hash  $archive_name`n"
+          [System.IO.File]::WriteAllText(
+            "dist/$archive_name.sha256",
+            $checksum,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+          if ([System.IO.File]::ReadAllText("dist/$archive_name.sha256") -cne $checksum) {
+            throw "Checksum file was not written exactly as expected"
+          }
       - name: Upload main artifact
         uses: actions/upload-artifact@v7
         with:
