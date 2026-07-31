@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-08-01
+
+### Fixed
+
+- Resource-scoped administrator tokens now list in-scope collections, classes,
+  objects, and relations without requiring duplicate collection permission
+  grants.
+
 ## [0.0.7] - 2026-07-31
 
 ### Added
@@ -23,12 +31,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Migrated deterministic benchmarks from IAI-Callgrind to Gungraun and updated
   the reusable benchmark workflow to its v2.3 migration bridge.
-
-### Fixed
-
-- Resource-scoped administrator tokens now list in-scope collections, classes,
-  objects, and relations without requiring duplicate collection permission
-  grants.
 
 ## [0.0.6] - 2026-07-29
 
