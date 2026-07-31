@@ -37,12 +37,13 @@ mod tests {
     use crate::models::token::Token;
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
-        CollectionID, GroupResponse, HubuumClassID, HubuumObject, HubuumObjectID,
-        HubuumObjectRelation, MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClass, NewHubuumClassRelation,
-        NewHubuumObject, NewHubuumObjectRelation, NewServiceAccount, NewTaskRecord, Permissions,
-        PrincipalID, PrincipalMemberResponse, PrincipalTokenCreateRequest, PrincipalTokenMetadata,
-        ServiceAccount, ServiceAccountID, ServiceAccountResponse, TaskID, TaskKind, TaskRecord,
-        TaskStatus, TokenResourceScope, TokenScope,
+        CollectionID, GroupResponse, HubuumClassID, HubuumClassRelation, HubuumObject,
+        HubuumObjectID, HubuumObjectRelation, MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClass,
+        NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewServiceAccount,
+        NewTaskRecord, Permissions, PrincipalID, PrincipalMemberResponse,
+        PrincipalTokenCreateRequest, PrincipalTokenMetadata, ServiceAccount, ServiceAccountID,
+        ServiceAccountResponse, TaskID, TaskKind, TaskRecord, TaskStatus, TokenResourceScope,
+        TokenScope,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
     use crate::test_support::{
@@ -52,7 +53,7 @@ mod tests {
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
-        ClassFixture, TestContext, create_test_classes, create_test_group,
+        ClassFixture, TestContext, create_class_fixture, create_test_classes, create_test_group,
         create_test_service_account, create_test_user, ensure_admin_group, lock_test_mutex,
         resource_scoped_token, scoped_token, scoped_token_with_resources, service_account_token,
     };
@@ -97,6 +98,7 @@ mod tests {
     struct ScopedAdminListFixture {
         classes: ClassFixture,
         objects: Vec<HubuumObject>,
+        class_relation: HubuumClassRelation,
         object_relation: HubuumObjectRelation,
     }
 
@@ -123,7 +125,7 @@ mod tests {
             .scope
             .collection_fixture("scoped_admin_list_visibility")
             .await;
-        let classes = crate::tests::create_class_fixture(
+        let classes = create_class_fixture(
             &context.pool,
             collection,
             (0..2)
@@ -176,6 +178,7 @@ mod tests {
         ScopedAdminListFixture {
             classes,
             objects,
+            class_relation,
             object_relation,
         }
     }
@@ -1284,6 +1287,7 @@ mod tests {
         Classes,
         ObjectsByClassId,
         ObjectsByClassName,
+        ClassRelations,
         ObjectRelations,
     }
 
@@ -1316,8 +1320,8 @@ mod tests {
                 },
                 Self::ObjectsByClassName => ScopedAdminListRequest {
                     exact_endpoint: format!(
-                        "/api/v1/classes/{}/{}",
-                        fixture.classes[0].id, fixture.objects[0].id
+                        "/api/v1/classes/by-name/{}/objects/by-name/{}",
+                        fixture.classes[0].name, fixture.objects[0].name
                     ),
                     list_endpoint: format!(
                         "/api/v1/classes/by-name/{}/objects",
@@ -1325,10 +1329,21 @@ mod tests {
                     ),
                     expected_ids: vec![fixture.objects[0].id],
                 },
+                Self::ClassRelations => ScopedAdminListRequest {
+                    exact_endpoint: format!(
+                        "/api/v1/relations/classes/{}",
+                        fixture.class_relation.id
+                    ),
+                    list_endpoint: "/api/v1/relations/classes".to_string(),
+                    expected_ids: vec![fixture.class_relation.id],
+                },
                 Self::ObjectRelations => ScopedAdminListRequest {
                     exact_endpoint: format!(
-                        "/api/v1/relations/objects/{}",
-                        fixture.object_relation.id
+                        "/api/v1/classes/{}/{}/relations/{}/{}",
+                        fixture.classes[0].id,
+                        fixture.objects[0].id,
+                        fixture.classes[1].id,
+                        fixture.objects[1].id
                     ),
                     list_endpoint: "/api/v1/relations/objects".to_string(),
                     expected_ids: vec![fixture.object_relation.id],
@@ -1342,6 +1357,7 @@ mod tests {
     #[case::classes(ScopedAdminListTarget::Classes)]
     #[case::objects_by_class_id(ScopedAdminListTarget::ObjectsByClassId)]
     #[case::objects_by_class_name(ScopedAdminListTarget::ObjectsByClassName)]
+    #[case::class_relations(ScopedAdminListTarget::ClassRelations)]
     #[case::object_relations(ScopedAdminListTarget::ObjectRelations)]
     #[actix_web::test]
     async fn test_resource_scoped_admin_lists_in_scope_resources_without_group_grants(
@@ -1378,9 +1394,10 @@ mod tests {
         let request = target.request(&fixture);
 
         let exact = get_request(&context.pool, &token, &request.exact_endpoint).await;
-        assert_eq!(exact.status(), StatusCode::OK);
+        assert_response_status(exact, StatusCode::OK).await;
 
         let response = get_request(&context.pool, &token, &request.list_endpoint).await;
+        let response = assert_response_status(response, StatusCode::OK).await;
         let total = header_value(&response, TOTAL_COUNT_HEADER)
             .unwrap()
             .parse::<i64>()
