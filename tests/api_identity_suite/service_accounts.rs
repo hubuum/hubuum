@@ -32,13 +32,13 @@ mod tests {
     use crate::errors::ApiError;
     use crate::events::{Action, EntityType};
     use crate::models::Collection;
-    use crate::models::collection::user_can_on_any;
+    use crate::models::collection::{group_can_on, user_can_on_any};
     use crate::models::principal::{PrincipalKind, load_principal_by_id};
     use crate::models::token::Token;
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
         CollectionID, GroupResponse, HubuumClassID, HubuumObject, HubuumObjectID,
-        MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClassRelation, NewHubuumObject,
+        MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
         NewHubuumObjectRelation, NewServiceAccount, NewTaskRecord, Permissions, PrincipalID,
         PrincipalMemberResponse, PrincipalTokenCreateRequest, PrincipalTokenMetadata,
         ServiceAccount, ServiceAccountID, ServiceAccountResponse, TaskID, TaskKind, TaskRecord,
@@ -1190,6 +1190,170 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!((total, ids), (1, vec![i64::from(objects[0].id)]));
+    }
+
+    #[derive(Clone, Copy)]
+    enum ScopedAdminListTarget {
+        Collections,
+        Classes,
+        ObjectsByClassId,
+        ObjectsByClassName,
+        ObjectRelations,
+    }
+
+    #[rstest]
+    #[case::collections(ScopedAdminListTarget::Collections, 1)]
+    #[case::classes(ScopedAdminListTarget::Classes, 2)]
+    #[case::objects_by_class_id(ScopedAdminListTarget::ObjectsByClassId, 1)]
+    #[case::objects_by_class_name(ScopedAdminListTarget::ObjectsByClassName, 1)]
+    #[case::object_relations(ScopedAdminListTarget::ObjectRelations, 1)]
+    #[actix_web::test]
+    async fn test_resource_scoped_admin_lists_in_scope_resources_without_group_grants(
+        #[case] target: ScopedAdminListTarget,
+        #[case] expected_total: i64,
+    ) {
+        let context = TestContext::new().await;
+        let collection = context
+            .scope
+            .collection_fixture("scoped_admin_list_visibility")
+            .await;
+        let classes = crate::tests::create_class_fixture(
+            &context.pool,
+            collection,
+            (0..2)
+                .map(|index| NewHubuumClass {
+                    name: context.scoped_name(&format!("scoped_admin_class_{index}")),
+                    description: "scoped administrator list test".to_string(),
+                    collection_id: 0,
+                    json_schema: None,
+                    validate_schema: Some(false),
+                })
+                .collect(),
+        )
+        .await
+        .unwrap();
+        let mut objects = Vec::new();
+        for (index, class) in classes.iter().enumerate() {
+            objects.push(
+                NewHubuumObject {
+                    name: context.scoped_name(&format!("scoped_admin_object_{index}")),
+                    collection_id: class.collection_id,
+                    hubuum_class_id: class.id,
+                    data: serde_json::json!({"index": index}),
+                    description: "scoped administrator list test".to_string(),
+                }
+                .save_without_events(&context.pool)
+                .await
+                .unwrap(),
+            );
+        }
+        let class_relation = NewHubuumClassRelation {
+            from_hubuum_class_id: classes[0].id,
+            to_hubuum_class_id: classes[1].id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let object_relation = NewHubuumObjectRelation {
+            from_hubuum_object_id: objects[0].id,
+            to_hubuum_object_id: objects[1].id,
+            class_relation_id: class_relation.id,
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+
+        let admin_group = ensure_admin_group(&context.pool).await;
+        assert!(
+            !group_can_on(
+                &context.pool,
+                admin_group.id,
+                classes.collection.collection.clone(),
+                Permissions::ReadCollection,
+            )
+            .await
+            .unwrap(),
+            "the administrator group must not have an explicit collection grant"
+        );
+
+        let scope = TokenScope::from_request_parts(
+            Some(vec![
+                Permissions::ReadCollection,
+                Permissions::ReadClass,
+                Permissions::ReadObject,
+                Permissions::ReadClassRelation,
+                Permissions::ReadObjectRelation,
+            ]),
+            Some(vec![
+                TokenResourceScope::Collection(
+                    CollectionID::new(classes.collection.collection.id).unwrap(),
+                ),
+                TokenResourceScope::Class(HubuumClassID::new(classes[0].id).unwrap()),
+                TokenResourceScope::Class(HubuumClassID::new(classes[1].id).unwrap()),
+            ]),
+        )
+        .unwrap()
+        .unwrap();
+        let token =
+            PrincipalTokenCreateRequest::new(PrincipalID::new(context.admin_user.id).unwrap())
+                .scope(Some(scope))
+                .create(&context.pool, None)
+                .await
+                .unwrap()
+                .get_token();
+
+        let (exact_endpoint, list_endpoint, expected_ids) = match target {
+            ScopedAdminListTarget::Collections => (
+                format!(
+                    "{COLLECTIONS_ENDPOINT}/{}",
+                    classes.collection.collection.id
+                ),
+                COLLECTIONS_ENDPOINT.to_string(),
+                vec![classes.collection.collection.id],
+            ),
+            ScopedAdminListTarget::Classes => (
+                format!("/api/v1/classes/{}", classes[0].id),
+                "/api/v1/classes".to_string(),
+                classes.iter().map(|class| class.id).collect(),
+            ),
+            ScopedAdminListTarget::ObjectsByClassId => (
+                format!("/api/v1/classes/{}/{}", classes[0].id, objects[0].id),
+                format!("/api/v1/classes/{}/", classes[0].id),
+                vec![objects[0].id],
+            ),
+            ScopedAdminListTarget::ObjectsByClassName => (
+                format!("/api/v1/classes/{}/{}", classes[0].id, objects[0].id),
+                format!("/api/v1/classes/by-name/{}/objects", classes[0].name),
+                vec![objects[0].id],
+            ),
+            ScopedAdminListTarget::ObjectRelations => (
+                format!("/api/v1/relations/objects/{}", object_relation.id),
+                "/api/v1/relations/objects".to_string(),
+                vec![object_relation.id],
+            ),
+        };
+
+        let exact = get_request(&context.pool, &token, &exact_endpoint).await;
+        assert_eq!(exact.status(), StatusCode::OK);
+
+        let response = get_request(&context.pool, &token, &list_endpoint).await;
+        let total = header_value(&response, TOTAL_COUNT_HEADER)
+            .unwrap()
+            .parse::<i64>()
+            .unwrap();
+        let body: serde_json::Value = test::read_body_json(response).await;
+        let ids = body
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|resource| resource["id"].as_i64().unwrap() as i32)
+            .collect::<Vec<_>>();
+
+        assert_eq!((total, ids), (expected_total, expected_ids));
     }
 
     #[derive(Clone, Copy)]

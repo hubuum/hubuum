@@ -177,12 +177,9 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         params: &UnifiedSearchSpec,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError> {
-        let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
+        let is_admin = AuthzSubject::is_admin(self, pool).await?;
         self.search_unified_collections_from_backend_with_admin_status(
-            pool,
-            params,
-            scopes,
-            is_unscoped_admin,
+            pool, params, scopes, is_admin,
         )
         .await
     }
@@ -192,7 +189,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         params: &UnifiedSearchSpec,
         scopes: Option<&TokenScope>,
-        is_unscoped_admin: bool,
+        is_admin: bool,
     ) -> Result<Vec<Collection>, ApiError> {
         if !scope_allows(scopes, &[Permissions::ReadCollection]) {
             return Ok(Vec::new());
@@ -208,7 +205,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         with_connection_async(pool.clone(), async move |conn| {
             sql_query(COLLECTION_SEARCH_SQL)
                 .bind::<Text, _>(query)
-                .bind::<Bool, _>(is_unscoped_admin)
+                .bind::<Bool, _>(is_admin)
                 .bind::<Integer, _>(principal_id)
                 .bind::<Bool, _>(scope_binds.unrestricted)
                 .bind::<Array<Integer>, _>(scope_binds.collection_ids)
@@ -229,14 +226,9 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         params: &UnifiedSearchSpec,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
-        let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
-        self.search_unified_classes_from_backend_with_admin_status(
-            pool,
-            params,
-            scopes,
-            is_unscoped_admin,
-        )
-        .await
+        let is_admin = AuthzSubject::is_admin(self, pool).await?;
+        self.search_unified_classes_from_backend_with_admin_status(pool, params, scopes, is_admin)
+            .await
     }
 
     async fn search_unified_classes_from_backend_with_admin_status(
@@ -244,7 +236,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         params: &UnifiedSearchSpec,
         scopes: Option<&TokenScope>,
-        is_unscoped_admin: bool,
+        is_admin: bool,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         if !scope_allows(
             scopes,
@@ -264,7 +256,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
             sql_query(CLASS_SEARCH_SQL)
                 .bind::<Text, _>(query)
                 .bind::<Bool, _>(search_schema)
-                .bind::<Bool, _>(is_unscoped_admin)
+                .bind::<Bool, _>(is_admin)
                 .bind::<Integer, _>(principal_id)
                 .bind::<Bool, _>(scope_binds.unrestricted)
                 .bind::<Array<Integer>, _>(scope_binds.collection_ids)
@@ -309,14 +301,9 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         params: &UnifiedSearchSpec,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
-        let is_unscoped_admin = AuthzSubject::is_admin(self, pool).await? && scopes.is_none();
-        self.search_unified_objects_from_backend_with_admin_status(
-            pool,
-            params,
-            scopes,
-            is_unscoped_admin,
-        )
-        .await
+        let is_admin = AuthzSubject::is_admin(self, pool).await?;
+        self.search_unified_objects_from_backend_with_admin_status(pool, params, scopes, is_admin)
+            .await
     }
 
     async fn search_unified_objects_from_backend_with_admin_status(
@@ -324,7 +311,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         pool: &DbPool,
         params: &UnifiedSearchSpec,
         scopes: Option<&TokenScope>,
-        is_unscoped_admin: bool,
+        is_admin: bool,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         if !scope_allows(
             scopes,
@@ -344,7 +331,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
             sql_query(OBJECT_SEARCH_SQL)
                 .bind::<Text, _>(query)
                 .bind::<Bool, _>(search_data)
-                .bind::<Bool, _>(is_unscoped_admin)
+                .bind::<Bool, _>(is_admin)
                 .bind::<Integer, _>(principal_id)
                 .bind::<Bool, _>(scope_binds.unrestricted)
                 .bind::<Array<Integer>, _>(scope_binds.collection_ids)

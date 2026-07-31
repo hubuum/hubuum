@@ -261,15 +261,14 @@ pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
         return Ok(vec![]);
     }
 
-    // The admin "all collections" fast path applies only to unscoped tokens; a
-    // scoped admin token falls through to the scoped grant query below.
-    if scopes.is_none() && AuthzSubject::is_admin(&user_id, pool).await? {
-        return with_connection(pool, async |conn| {
-            crate::schema::collections::table
-                .load::<Collection>(conn)
-                .await
-        })
-        .await;
+    // The permission scope has already been checked above. Admins retain their
+    // collection authority, while the resource predicate still bounds results.
+    if AuthzSubject::is_admin(&user_id, pool).await? {
+        let mut query = collections.into_boxed();
+        if let Some(scope) = resource_scope_ids(scopes) {
+            query = query.filter(collection_scope_predicate(scope));
+        }
+        return with_connection(pool, async |conn| query.load::<Collection>(conn).await).await;
     }
 
     let base_query = {

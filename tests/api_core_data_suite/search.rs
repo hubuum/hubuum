@@ -3,7 +3,10 @@ mod tests {
     use actix_web::{http::StatusCode, test};
     use rstest::rstest;
 
-    use crate::models::{NewHubuumClass, NewHubuumObject, UnifiedSearchResponse};
+    use crate::models::{
+        CollectionID, NewHubuumClass, NewHubuumObject, Permissions, PrincipalID,
+        PrincipalTokenCreateRequest, TokenResourceScope, TokenScope, UnifiedSearchResponse,
+    };
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{TestContext, test_context};
@@ -283,6 +286,112 @@ mod tests {
                 .objects
                 .iter()
                 .all(|object| object.collection_id == visible.collection.id)
+        );
+
+        visible.cleanup().await.unwrap();
+        hidden.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn test_api_search_resource_scoped_admin_without_group_grants(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let needle = context.scoped_name("scopedadminsearch").replace('_', "");
+        let visible = context
+            .scope
+            .collection_fixture(&format!("{needle}_visible"))
+            .await;
+        let hidden = context
+            .scope
+            .collection_fixture(&format!("{needle}_hidden"))
+            .await;
+
+        let mut visible_class = None;
+        let mut visible_object = None;
+        for collection in [&visible, &hidden] {
+            let class = NewHubuumClass {
+                name: format!("{needle}-class-{}", collection.collection.id),
+                collection_id: collection.collection.id,
+                json_schema: None,
+                validate_schema: Some(false),
+                description: format!("{needle} class"),
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+            let object = NewHubuumObject {
+                name: format!("{needle}-object-{}", collection.collection.id),
+                collection_id: collection.collection.id,
+                hubuum_class_id: class.id,
+                data: serde_json::json!({"tag": &needle}),
+                description: format!("{needle} object"),
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap();
+            if collection.collection.id == visible.collection.id {
+                visible_class = Some(class);
+                visible_object = Some(object);
+            }
+        }
+
+        let scope = TokenScope::from_request_parts(
+            Some(vec![
+                Permissions::ReadCollection,
+                Permissions::ReadClass,
+                Permissions::ReadObject,
+            ]),
+            Some(vec![TokenResourceScope::Collection(
+                CollectionID::new(visible.collection.id).unwrap(),
+            )]),
+        )
+        .unwrap()
+        .unwrap();
+        let token =
+            PrincipalTokenCreateRequest::new(PrincipalID::new(context.admin_user.id).unwrap())
+                .scope(Some(scope))
+                .create(&context.pool, None)
+                .await
+                .unwrap()
+                .get_token();
+
+        let response = get_request(
+            &context.pool,
+            &token,
+            &format!("{SEARCH_ENDPOINT}?q={needle}&kinds=collection,class,object"),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let search: UnifiedSearchResponse = test::read_body_json(response).await;
+
+        assert_eq!(
+            search
+                .results
+                .collections
+                .iter()
+                .map(|collection| collection.id)
+                .collect::<Vec<_>>(),
+            vec![visible.collection.id]
+        );
+        assert_eq!(
+            search
+                .results
+                .classes
+                .iter()
+                .map(|class| class.id)
+                .collect::<Vec<_>>(),
+            vec![visible_class.unwrap().id]
+        );
+        assert_eq!(
+            search
+                .results
+                .objects
+                .iter()
+                .map(|object| object.id)
+                .collect::<Vec<_>>(),
+            vec![visible_object.unwrap().id]
         );
 
         visible.cleanup().await.unwrap();
