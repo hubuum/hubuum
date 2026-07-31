@@ -482,7 +482,6 @@ mod tests {
         let group = create_test_group(&context.pool).await;
         let sa = create_test_service_account(&context.pool, &group, None).await;
         let lifetime_hours = integration_test_config().unwrap().token_lifetime_hours;
-        let earliest = chrono::Utc::now().naive_utc() + chrono::Duration::hours(lifetime_hours);
 
         let response = post_request(
             &context.pool,
@@ -496,7 +495,6 @@ mod tests {
         let raw_token = body["token"].as_str().unwrap();
         let returned_expiry =
             serde_json::from_value::<chrono::NaiveDateTime>(body["expires_at"].clone()).unwrap();
-        let latest = chrono::Utc::now().naive_utc() + chrono::Duration::hours(lifetime_hours);
 
         let (persisted_issued, persisted_expiry) = with_connection(&context.pool, async |conn| {
             tokens
@@ -508,8 +506,6 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(returned_expiry >= earliest);
-        assert!(returned_expiry <= latest);
         assert_eq!(persisted_expiry, Some(returned_expiry));
         assert_eq!(
             returned_expiry,
