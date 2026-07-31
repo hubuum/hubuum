@@ -10,7 +10,7 @@ permissions:
 jobs:
   benchmarks:
     name: Self-contained benchmarks
-    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@v2.3
+    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@v3
     secrets: inherit
     with:
       backend: all
