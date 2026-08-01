@@ -30,12 +30,61 @@ impl WebhookSink {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WebhookSinkSettings {
-    pub max_timeout_ms: u64,
-    pub max_response_bytes: usize,
-    pub max_request_bytes: usize,
-    pub allow_private_targets: bool,
-    pub dangerous_accept_invalid_certs: bool,
-    pub dangerous_allow_localhost: bool,
+    max_timeout_ms: u64,
+    max_response_bytes: usize,
+    max_request_bytes: usize,
+    allow_private_targets: bool,
+    dangerous_accept_invalid_certs: bool,
+    dangerous_allow_localhost: bool,
+}
+
+impl WebhookSinkSettings {
+    pub fn new(max_timeout_ms: u64, max_response_bytes: usize) -> Result<Self, SinkError> {
+        if max_timeout_ms == 0 {
+            return Err(SinkError::new(
+                "Webhook maximum timeout must be greater than zero",
+            ));
+        }
+        if max_response_bytes == 0 {
+            return Err(SinkError::new(
+                "Webhook maximum response size must be greater than zero",
+            ));
+        }
+
+        Ok(Self {
+            max_timeout_ms,
+            max_response_bytes,
+            max_request_bytes: max_response_bytes,
+            allow_private_targets: false,
+            dangerous_accept_invalid_certs: false,
+            dangerous_allow_localhost: false,
+        })
+    }
+
+    pub fn with_max_request_bytes(mut self, max_request_bytes: usize) -> Result<Self, SinkError> {
+        if max_request_bytes == 0 {
+            return Err(SinkError::new(
+                "Webhook maximum request size must be greater than zero",
+            ));
+        }
+        self.max_request_bytes = max_request_bytes;
+        Ok(self)
+    }
+
+    pub fn allow_private_targets(mut self, allow_private_targets: bool) -> Self {
+        self.allow_private_targets = allow_private_targets;
+        self
+    }
+
+    pub fn dangerous_accept_invalid_certs(mut self, dangerous_accept_invalid_certs: bool) -> Self {
+        self.dangerous_accept_invalid_certs = dangerous_accept_invalid_certs;
+        self
+    }
+
+    pub fn dangerous_allow_localhost(mut self, dangerous_allow_localhost: bool) -> Self {
+        self.dangerous_allow_localhost = dangerous_allow_localhost;
+        self
+    }
 }
 
 #[derive(Deserialize)]
@@ -82,7 +131,7 @@ async fn deliver_webhook(
 
     let config: WebhookConfig = parse_sink_config(&delivery, "webhook")?;
 
-    let mut headers = webhook_headers(&config, delivery.secret_ref)?;
+    let mut headers = webhook_headers(&config, delivery.secret_ref())?;
     headers
         .insert("content-type", "application/json")
         .map_err(sink_error)?;
@@ -257,14 +306,43 @@ mod tests {
     }
 
     fn settings() -> WebhookSinkSettings {
-        WebhookSinkSettings {
-            max_timeout_ms: 30_000,
-            max_response_bytes: 1_000_000,
-            max_request_bytes: 1_000_000,
-            allow_private_targets: false,
-            dangerous_accept_invalid_certs: true,
-            dangerous_allow_localhost: true,
-        }
+        WebhookSinkSettings::new(30_000, 1_000_000)
+            .unwrap()
+            .dangerous_accept_invalid_certs(true)
+            .dangerous_allow_localhost(true)
+    }
+
+    #[test]
+    fn webhook_sink_settings_reject_zero_timeout() {
+        let error = WebhookSinkSettings::new(0, 1_000_000).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Webhook maximum timeout must be greater than zero"
+        );
+    }
+
+    #[test]
+    fn webhook_sink_settings_reject_zero_response_limit() {
+        let error = WebhookSinkSettings::new(30_000, 0).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Webhook maximum response size must be greater than zero"
+        );
+    }
+
+    #[test]
+    fn webhook_sink_settings_reject_zero_request_limit() {
+        let error = WebhookSinkSettings::new(30_000, 1_000_000)
+            .unwrap()
+            .with_max_request_bytes(0)
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Webhook maximum request size must be greater than zero"
+        );
     }
 
     fn delivery(url: String) -> (serde_json::Value, serde_json::Value) {

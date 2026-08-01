@@ -24,6 +24,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `Clone`; pagination borrows or moves rows and accepts non-clone domain types.
 - External identity refresh removes stale group memberships with one set-based
   database write instead of issuing one delete per stale membership.
+- **Breaking (Rust API):** Encapsulated event-sink delivery and webhook settings
+  fields. Workspace-crate consumers must use `SinkDelivery` accessors and the
+  validating `WebhookSinkSettings` constructor and configuration methods.
 
 ### Security
 

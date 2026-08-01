@@ -85,7 +85,7 @@ impl EmailSink {
     ) -> Result<(), SinkError> {
         let config = parse_config(&delivery)?;
         let routing = parse_routing(&delivery)?;
-        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref, "email")?;
+        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref(), "email")?;
         require_tls_uri_scheme(&uri, "email", &["smtps"])?;
         let rendered = render_email(envelope, &config)?;
         let message = build_message(&config, &routing, rendered)?;

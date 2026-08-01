@@ -130,14 +130,11 @@ fn webhook_settings() -> WebhookSinkSettings {
             DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
             DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS,
         ));
-    WebhookSinkSettings {
-        max_timeout_ms,
-        max_response_bytes,
-        max_request_bytes: max_response_bytes,
-        allow_private_targets,
-        dangerous_accept_invalid_certs: cfg!(test),
-        dangerous_allow_localhost: cfg!(test),
-    }
+    WebhookSinkSettings::new(max_timeout_ms, max_response_bytes)
+        .expect("remote call limits are validated before event sinks are initialized")
+        .allow_private_targets(allow_private_targets)
+        .dangerous_accept_invalid_certs(cfg!(test))
+        .dangerous_allow_localhost(cfg!(test))
 }
 
 impl Sink for hubuum_event_sink_webhook::WebhookSink {
