@@ -50,6 +50,9 @@ pub struct ClientAuthenticationConfig {
     /// explicit expiry.
     #[schema(minimum = 1)]
     pub default_token_lifetime_hours: i64,
+    /// Largest lifetime accepted for an explicitly requested token expiry.
+    #[schema(minimum = 1)]
+    pub max_token_lifetime_hours: i64,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -158,6 +161,7 @@ pub struct RemoteCallConfig {
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct AuthenticationConfig {
     pub token_lifetime_hours: i64,
+    pub max_token_lifetime_hours: i64,
     pub token_retention_purge_enabled: bool,
     pub token_retention_days: i64,
     pub token_retention_purge_interval_seconds: u64,
@@ -227,6 +231,7 @@ impl From<&RunningConfig> for ClientConfig {
             },
             authentication: ClientAuthenticationConfig {
                 default_token_lifetime_hours: config.authentication.token_lifetime_hours,
+                max_token_lifetime_hours: config.authentication.max_token_lifetime_hours,
             },
         }
     }
@@ -335,6 +340,7 @@ impl From<&AppConfig> for RunningConfig {
             },
             authentication: AuthenticationConfig {
                 token_lifetime_hours: config.token_lifetime_hours,
+                max_token_lifetime_hours: config.max_token_lifetime_hours,
                 token_retention_purge_enabled: config.token_retention_purge_enabled,
                 token_retention_days: config.token_retention_days,
                 token_retention_purge_interval_seconds: config

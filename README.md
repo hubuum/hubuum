@@ -137,11 +137,16 @@ resolved from the right of the `[X-Forwarded-For..., peer]` hop chain, so attack
 ### Token Lifetime
 
 - `HUBUUM_TOKEN_LIFETIME_HOURS` controls bearer token lifetime and defaults to `24`.
+- `HUBUUM_MAX_TOKEN_LIFETIME_HOURS` bounds explicitly requested expirations and
+  defaults to `8760` (365 days). It must be at least the default lifetime.
 - When a token request omits `expires_at`, Hubuum stores `issued +` this default
   as the token's explicit expiry and returns it with the raw token.
+- Explicit expirations must be later than issuance and no later than `issued +`
+  the configured maximum lifetime.
 - Clients can discover the effective default without authentication at
   `GET /api/v1/config` under
-  `authentication.default_token_lifetime_hours`.
+  `authentication.default_token_lifetime_hours`; the same object exposes
+  `authentication.max_token_lifetime_hours`.
 - Expired token rows are retained for `HUBUUM_TOKEN_RETENTION_DAYS` (default `30`)
   and then deleted automatically in bounded batches.
 - `HUBUUM_TOKEN_RETENTION_PURGE_ENABLED` enables the cleanup worker and defaults

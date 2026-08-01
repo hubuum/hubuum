@@ -187,11 +187,26 @@ mod tests {
         principal_id: i32,
         expires_at: Option<NaiveDateTime>,
     ) -> Token {
-        PrincipalTokenCreateRequest::new(PrincipalID::new(principal_id).unwrap())
-            .expires_at(expires_at)
+        let token = PrincipalTokenCreateRequest::new(PrincipalID::new(principal_id).unwrap())
             .create(pool, None)
             .await
-            .unwrap()
+            .unwrap();
+        if let Some(expires_at) = expires_at {
+            set_persisted_expiry(pool, &token, expires_at).await;
+        }
+        token
+    }
+
+    async fn set_persisted_expiry(pool: &DbPool, token_value: &Token, expires_at: NaiveDateTime) {
+        let token_hash = token_value.storage_hash();
+        with_connection(pool, async |conn| {
+            diesel::update(tokens::table.filter(tokens::token.eq(token_hash)))
+                .set(tokens::expires_at.eq(Some(expires_at)))
+                .execute(conn)
+                .await
+        })
+        .await
+        .unwrap();
     }
 
     async fn token_exists(pool: &DbPool, token_value: &Token) -> bool {
@@ -360,11 +375,11 @@ mod tests {
         let scope =
             TokenScope::from_request_parts(Some(vec![Permissions::ReadCollection]), None).unwrap();
         let token = PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
-            .expires_at(Some(now - Duration::days(TEST_RETENTION_DAYS + 1)))
             .scope(scope)
             .create(&pool, None)
             .await
             .unwrap();
+        set_persisted_expiry(&pool, &token, now - Duration::days(TEST_RETENTION_DAYS + 1)).await;
         let token_hash = token.storage_hash();
         let token_id = with_connection(&pool, async |conn| {
             tokens::table

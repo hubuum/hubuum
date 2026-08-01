@@ -445,11 +445,28 @@ mod tests {
         let token = match offset_hours {
             Some(h) => {
                 let expiry = chrono::Utc::now().naive_utc() + chrono::Duration::hours(h);
-                PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
-                    .expires_at(Some(expiry))
-                    .create(pool, None)
+                if h < 0 {
+                    let token = user.create_token(pool).await.unwrap();
+                    let token_hash = token.storage_hash();
+                    with_connection(pool, async |conn| {
+                        diesel::update(
+                            crate::schema::tokens::table
+                                .filter(crate::schema::tokens::token.eq(token_hash)),
+                        )
+                        .set(crate::schema::tokens::expires_at.eq(Some(expiry)))
+                        .execute(conn)
+                        .await
+                    })
                     .await
-                    .unwrap()
+                    .unwrap();
+                    token
+                } else {
+                    PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
+                        .expires_at(Some(expiry))
+                        .create(pool, None)
+                        .await
+                        .unwrap()
+                }
             }
             None => {
                 let token = user.create_token(pool).await.unwrap();
@@ -537,6 +554,52 @@ mod tests {
             serde_json::from_value::<chrono::NaiveDateTime>(body["expires_at"].clone()).unwrap();
 
         assert_eq!(returned_expiry, requested_expiry);
+    }
+
+    async fn assert_token_mint_expiry_rejected(
+        requested_expiry: chrono::NaiveDateTime,
+        expected_message: &str,
+    ) {
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        let service_account = create_test_service_account(&context.pool, &group, None).await;
+
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", service_account.id),
+            &serde_json::json!({
+                "name": "rejected-expiry",
+                "expires_at": requested_expiry,
+            }),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::BAD_REQUEST).await;
+        let body: serde_json::Value = test::read_body_json(response).await;
+
+        assert_eq!(body["message"], expected_message);
+    }
+
+    #[actix_web::test]
+    async fn token_mint_rejects_past_expiry() {
+        assert_token_mint_expiry_rejected(
+            chrono::Utc::now().naive_utc() - chrono::Duration::hours(1),
+            "expires_at must be later than the token issuance time",
+        )
+        .await;
+    }
+
+    #[actix_web::test]
+    async fn token_mint_rejects_expiry_beyond_configured_maximum() {
+        let maximum_hours = integration_test_config().unwrap().max_token_lifetime_hours;
+        assert_token_mint_expiry_rejected(
+            chrono::Utc::now().naive_utc() + chrono::Duration::hours(maximum_hours + 1),
+            &format!(
+                "expires_at must not exceed the configured maximum token lifetime of \
+                 {maximum_hours} hours"
+            ),
+        )
+        .await;
     }
 
     /// #4: revocation is a soft delete — the token no longer validates...

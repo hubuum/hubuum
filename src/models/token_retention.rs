@@ -25,25 +25,29 @@ impl TokenRetentionPeriod {
     }
 }
 
-/// Validated lifetime applied to tokens that omit an explicit expiry.
+/// A validated token lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenLifetime(Duration);
 
 impl TokenLifetime {
     pub fn from_hours(hours: i64) -> Result<Self, ApiError> {
+        Self::from_hours_for("token_lifetime_hours", hours)
+    }
+
+    fn from_hours_for(setting_name: &str, hours: i64) -> Result<Self, ApiError> {
         if hours <= 0 {
-            return Err(ApiError::BadRequest(
-                "token_lifetime_hours must be greater than 0".to_string(),
-            ));
+            return Err(ApiError::BadRequest(format!(
+                "{setting_name} must be greater than 0"
+            )));
         }
         if hours > i64::from(i32::MAX) {
             return Err(ApiError::BadRequest(format!(
-                "token_lifetime_hours must not exceed {}",
+                "{setting_name} must not exceed {}",
                 i32::MAX
             )));
         }
         Duration::try_hours(hours).map(Self).ok_or_else(|| {
-            ApiError::BadRequest("token_lifetime_hours is outside the supported range".to_string())
+            ApiError::BadRequest(format!("{setting_name} is outside the supported range"))
         })
     }
 
@@ -55,6 +59,66 @@ impl TokenLifetime {
         now.checked_sub_signed(self.0).ok_or_else(|| {
             ApiError::BadRequest("token lifetime cutoff is outside the supported range".to_string())
         })
+    }
+
+    fn expiry_from(self, issued_at: NaiveDateTime) -> Result<NaiveDateTime, ApiError> {
+        issued_at.checked_add_signed(self.0).ok_or_else(|| {
+            ApiError::BadRequest("token expiry is outside the supported range".to_string())
+        })
+    }
+}
+
+/// Validated policy for materializing and bounding newly issued token expiry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TokenIssuancePolicy {
+    default_lifetime: TokenLifetime,
+    maximum_lifetime: TokenLifetime,
+}
+
+impl TokenIssuancePolicy {
+    pub(crate) fn from_hours(
+        default_lifetime_hours: i64,
+        maximum_lifetime_hours: i64,
+    ) -> Result<Self, ApiError> {
+        let default_lifetime = TokenLifetime::from_hours(default_lifetime_hours)?;
+        let maximum_lifetime =
+            TokenLifetime::from_hours_for("max_token_lifetime_hours", maximum_lifetime_hours)?;
+        if default_lifetime.hours() > maximum_lifetime.hours() {
+            return Err(ApiError::BadRequest(
+                "token_lifetime_hours must not exceed max_token_lifetime_hours".to_string(),
+            ));
+        }
+        Ok(Self {
+            default_lifetime,
+            maximum_lifetime,
+        })
+    }
+
+    pub(crate) fn default_lifetime(self) -> TokenLifetime {
+        self.default_lifetime
+    }
+
+    pub(crate) fn resolve_expiry(
+        self,
+        issued_at: NaiveDateTime,
+        requested_expiry: Option<NaiveDateTime>,
+    ) -> Result<NaiveDateTime, ApiError> {
+        let expires_at = match requested_expiry {
+            Some(expires_at) => expires_at,
+            None => self.default_lifetime.expiry_from(issued_at)?,
+        };
+        if expires_at <= issued_at {
+            return Err(ApiError::BadRequest(
+                "expires_at must be later than the token issuance time".to_string(),
+            ));
+        }
+        if expires_at > self.maximum_lifetime.expiry_from(issued_at)? {
+            return Err(ApiError::BadRequest(format!(
+                "expires_at must not exceed the configured maximum token lifetime of {} hours",
+                self.maximum_lifetime.hours()
+            )));
+        }
+        Ok(expires_at)
     }
 }
 
@@ -250,6 +314,83 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "token_lifetime_hours must not exceed 2147483647"
+        );
+    }
+
+    #[test]
+    fn token_issuance_policy_requires_maximum_to_cover_default() {
+        let error = TokenIssuancePolicy::from_hours(48, 24).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "token_lifetime_hours must not exceed max_token_lifetime_hours"
+        );
+    }
+
+    #[test]
+    fn token_issuance_policy_materializes_the_default_expiry() {
+        let issued_at = NaiveDate::from_ymd_opt(2026, 8, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let policy = TokenIssuancePolicy::from_hours(24, 168).unwrap();
+
+        assert_eq!(
+            policy.resolve_expiry(issued_at, None).unwrap(),
+            issued_at + Duration::hours(24)
+        );
+    }
+
+    #[rstest]
+    #[case::equal(Duration::zero())]
+    #[case::past(Duration::hours(-1))]
+    fn token_issuance_policy_rejects_non_future_expiry(#[case] offset: Duration) {
+        let issued_at = NaiveDate::from_ymd_opt(2026, 8, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let policy = TokenIssuancePolicy::from_hours(24, 168).unwrap();
+
+        let error = policy
+            .resolve_expiry(issued_at, Some(issued_at + offset))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "expires_at must be later than the token issuance time"
+        );
+    }
+
+    #[test]
+    fn token_issuance_policy_rejects_expiry_beyond_maximum() {
+        let issued_at = NaiveDate::from_ymd_opt(2026, 8, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let policy = TokenIssuancePolicy::from_hours(24, 168).unwrap();
+
+        let error = policy
+            .resolve_expiry(issued_at, Some(issued_at + Duration::hours(169)))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "expires_at must not exceed the configured maximum token lifetime of 168 hours"
+        );
+    }
+
+    #[test]
+    fn token_issuance_policy_accepts_expiry_at_maximum() {
+        let issued_at = NaiveDate::from_ymd_opt(2026, 8, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let policy = TokenIssuancePolicy::from_hours(24, 168).unwrap();
+        let maximum = issued_at + Duration::hours(168);
+
+        assert_eq!(
+            policy.resolve_expiry(issued_at, Some(maximum)).unwrap(),
+            maximum
         );
     }
 

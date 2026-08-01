@@ -42,6 +42,8 @@ mod tests {
             "500",
             "--token-lifetime-hours",
             "72",
+            "--max-token-lifetime-hours",
+            "720",
         ]);
         let running_config = RunningConfig::from(&app_config);
         let app = test::init_service(
@@ -59,5 +61,6 @@ mod tests {
         assert_eq!(body["pagination"]["default_page_limit"], 125);
         assert_eq!(body["pagination"]["max_page_limit"], 500);
         assert_eq!(body["authentication"]["default_token_lifetime_hours"], 72);
+        assert_eq!(body["authentication"]["max_token_lifetime_hours"], 720);
     }
 }

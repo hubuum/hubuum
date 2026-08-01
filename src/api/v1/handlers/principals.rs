@@ -60,8 +60,9 @@ async fn ensure_can_manage_principal_settings(
 pub struct NewTokenRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    /// Requested expiry. When omitted, the server applies the public default
-    /// token lifetime and returns the resulting timestamp in the response.
+    /// Requested expiry. It must be in the future and no farther from issuance
+    /// than the server's public maximum token lifetime. When omitted, the
+    /// server applies the public default lifetime.
     pub expires_at: Option<chrono::NaiveDateTime>,
     /// Optional permission and resource boundaries. Omit or send `null` for an
     /// unscoped token.
