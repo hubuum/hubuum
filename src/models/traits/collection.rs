@@ -187,7 +187,7 @@ impl NewCollection {
     {
         self.save_collection_for_group_record_without_events(
             backend.db_pool(),
-            collection_with_assignee.group_id,
+            collection_with_assignee.group_id.id(),
         )
         .await
     }

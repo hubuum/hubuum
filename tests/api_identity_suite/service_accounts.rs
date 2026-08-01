@@ -285,7 +285,7 @@ mod tests {
                 identity_scope: None,
                 name,
                 description: None,
-                owner_group_id: group.id,
+                owner_group_id: GroupID::new(group.id).unwrap(),
             }
             .save_without_events(pool, None)
             .await
@@ -2865,6 +2865,26 @@ mod tests {
 
     const SERVICE_ACCOUNTS_ENDPOINT: &str = "/api/v1/iam/service-accounts";
 
+    #[actix_web::test]
+    async fn service_account_creation_rejects_a_non_positive_owner_group_id() {
+        let context = TestContext::new().await;
+        let request = serde_json::json!({
+            "name": context.scoped_name("invalid_owner"),
+            "description": "invalid owner",
+            "owner_group_id": 0
+        });
+
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            SERVICE_ACCOUNTS_ENDPOINT,
+            &request,
+        )
+        .await;
+
+        assert_response_status(response, StatusCode::BAD_REQUEST).await;
+    }
+
     async fn service_account_audit_event_count(
         context: &TestContext,
         action_value: Action,
@@ -2893,7 +2913,7 @@ mod tests {
             identity_scope: None,
             name: context.scoped_name("audited_sa"),
             description: Some("audited".to_string()),
-            owner_group_id: group.id,
+            owner_group_id: GroupID::new(group.id).unwrap(),
         };
         let resp = post_request(
             &context.pool,
@@ -3118,7 +3138,7 @@ mod tests {
                 identity_scope: None,
                 name: format!("{prefix}-{index}"),
                 description: None,
-                owner_group_id: group.id,
+                owner_group_id: GroupID::new(group.id).unwrap(),
             }
             .save_without_events(pool, None)
             .await

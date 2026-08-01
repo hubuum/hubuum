@@ -485,7 +485,7 @@ impl SaveCollectionWithAssigneeRecord for NewCollectionWithAssignee {
         };
 
         new_collection
-            .save_collection_for_group_record_without_events(pool, self.group_id)
+            .save_collection_for_group_record_without_events(pool, self.group_id.id())
             .await
     }
 
@@ -501,7 +501,7 @@ impl SaveCollectionWithAssigneeRecord for NewCollectionWithAssignee {
         };
 
         new_collection
-            .save_collection_for_group_record(pool, self.group_id, context)
+            .save_collection_for_group_record(pool, self.group_id.id(), context)
             .await
     }
 }

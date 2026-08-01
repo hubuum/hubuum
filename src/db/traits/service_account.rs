@@ -77,7 +77,7 @@ where
 {
     let name = account.name.clone();
     let description = account.description.clone().unwrap_or_default();
-    let owner_group_id = account.owner_group_id;
+    let owner_group_id = account.owner_group_id.id();
     let scope_name = account
         .identity_scope
         .as_deref()

@@ -18,7 +18,7 @@ use crate::events::EventContext;
 use crate::models::collection::effective_group_on;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    CollectionID, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
+    CollectionID, GroupID, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
     NewHubuumObject, NewHubuumObjectRelation, UpdateCollection, UserID, collection_ancestors,
 };
 use crate::tests::{TestScope, ensure_admin_user};
@@ -200,7 +200,7 @@ async fn collection_ancestor_query_count_is_constant_with_depth() {
         let collection = NewCollectionWithAssignee {
             name: scope.scoped_name(&format!("query_budget_ancestor_{depth}")),
             description: format!("query budget ancestor level {depth}"),
-            group_id: root_fixture.owner_group.id,
+            group_id: GroupID::new(root_fixture.owner_group.id).unwrap(),
             parent_collection_id: Some(
                 CollectionID::new(parent.id).expect("valid parent collection id"),
             ),
@@ -250,7 +250,7 @@ async fn collection_ancestor_plan_has_bounded_logical_work_at_representative_sca
         let collection = NewCollectionWithAssignee {
             name: scope.scoped_name(&format!("query_plan_ancestor_{depth}")),
             description: format!("query plan ancestor level {depth}"),
-            group_id: fixture.owner_group.id,
+            group_id: GroupID::new(fixture.owner_group.id).unwrap(),
             parent_collection_id: Some(
                 CollectionID::new(parent_id).expect("valid parent collection id"),
             ),
@@ -308,7 +308,7 @@ async fn collection_create_with_event_has_a_fixed_query_budget() {
     let command = NewCollectionWithAssignee {
         name: scope.scoped_name("query_budget_create_child"),
         description: "query budget create child".to_string(),
-        group_id: parent.owner_group.id,
+        group_id: GroupID::new(parent.owner_group.id).unwrap(),
         parent_collection_id: Some(
             CollectionID::new(parent.collection.id).expect("valid parent collection id"),
         ),
@@ -449,7 +449,7 @@ async fn effective_permission_query_count_is_constant_with_collection_depth() {
         let collection = NewCollectionWithAssignee {
             name: scope.scoped_name(&format!("query_budget_permission_depth_{depth}")),
             description: format!("query budget permission depth {depth}"),
-            group_id: root.owner_group.id,
+            group_id: GroupID::new(root.owner_group.id).unwrap(),
             parent_collection_id: Some(
                 CollectionID::new(parent.id).expect("valid parent collection id"),
             ),

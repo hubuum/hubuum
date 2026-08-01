@@ -4,6 +4,7 @@ use utoipa::ToSchema;
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
+use crate::models::GroupID;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::service_accounts;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
@@ -190,7 +191,8 @@ pub struct NewServiceAccount {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
-    pub owner_group_id: i32,
+    #[schema(value_type = i32, minimum = 1)]
+    pub owner_group_id: GroupID,
 }
 
 /// Mutable fields on a service account.
@@ -229,6 +231,6 @@ fn new_service_account_example() -> NewServiceAccount {
         identity_scope: None,
         name: "dns-sync".to_string(),
         description: Some("Production DNS importer".to_string()),
-        owner_group_id: 1,
+        owner_group_id: GroupID::new(1).expect("valid example owner group id"),
     }
 }

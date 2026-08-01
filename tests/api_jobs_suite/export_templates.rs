@@ -22,7 +22,7 @@ mod tests {
         NewCollectionWithAssignee {
             name: format!("template_collection_{suffix}"),
             description: "template test collection".to_string(),
-            group_id: admin_group.id,
+            group_id: GroupID::new(admin_group.id).unwrap(),
             parent_collection_id: None,
         }
         .save_without_events(pool)

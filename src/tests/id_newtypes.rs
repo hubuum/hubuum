@@ -7,7 +7,7 @@
 use crate::errors::ApiError;
 use crate::models::{
     CollectionID, ExportTemplateID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
-    HubuumObjectRelationID, TaskID, TokenID, UserID,
+    HubuumObjectRelationID, NewCollectionWithAssignee, NewServiceAccount, TaskID, TokenID, UserID,
 };
 
 macro_rules! assert_id_newtype_validates {
@@ -49,4 +49,27 @@ fn all_id_newtypes_reject_invalid_ids() {
         TaskID,
         TokenID,
     );
+}
+
+#[test]
+fn new_collection_assignee_rejects_a_non_positive_group_id() {
+    let request = serde_json::json!({
+        "name": "assets",
+        "description": "Assets",
+        "group_id": 0,
+        "parent_collection_id": null
+    });
+
+    assert!(serde_json::from_value::<NewCollectionWithAssignee>(request).is_err());
+}
+
+#[test]
+fn new_service_account_owner_rejects_a_non_positive_group_id() {
+    let request = serde_json::json!({
+        "name": "dns-sync",
+        "description": "DNS automation",
+        "owner_group_id": 0
+    });
+
+    assert!(serde_json::from_value::<NewServiceAccount>(request).is_err());
 }
