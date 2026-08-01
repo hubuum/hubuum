@@ -36,6 +36,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   callers must migrate to the validated APIs and stop invoking the private
   claim helpers. Operators must correct zero, inconsistent, or unrepresentable
   worker-duration values before upgrading; those values now fail startup.
+- **Breaking (Rust API):** task-worker settings now use a validating builder,
+  and low-level task claim and lease-renewal helpers are crate-private.
+  Downstream callers must migrate to the builder and stop invoking the private
+  helpers. Operators must correct zero, inconsistent, or unrepresentable
+  worker-duration values before upgrading; those values now fail startup.
 
 ### Security
 

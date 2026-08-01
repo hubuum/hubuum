@@ -35,6 +35,7 @@ use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
 
+use super::TaskWorkerSettings;
 use super::execution::execute_import_task;
 use super::helpers::sanitize_error_for_storage;
 use super::remote_call::execute_remote_call_task;
@@ -59,59 +60,11 @@ static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| 
 
 const TASK_LEASE_POOL_SIZE: u32 = 1;
 
-#[derive(Clone, Copy, Debug)]
-pub struct TaskWorkerSettings {
-    worker_count: usize,
-    poll_interval: Duration,
-    lease_duration: Duration,
-    heartbeat_interval: Duration,
-    recovery_interval: Duration,
-    export_output_cleanup_interval: Duration,
-}
-
-impl TaskWorkerSettings {
-    pub fn new(
-        worker_count: usize,
-        poll_interval: Duration,
-        lease_duration: Duration,
-        heartbeat_interval: Duration,
-        recovery_interval: Duration,
-        export_output_cleanup_interval: Duration,
-    ) -> Result<Self, String> {
-        if poll_interval.is_zero() {
-            return Err("task worker poll interval must be greater than zero".to_string());
-        }
-        if lease_duration.is_zero() {
-            return Err("task worker lease duration must be greater than zero".to_string());
-        }
-        if heartbeat_interval.is_zero() || heartbeat_interval >= lease_duration {
-            return Err(
-                "task worker heartbeat interval must be greater than zero and shorter than the lease"
-                    .to_string(),
-            );
-        }
-        if recovery_interval.is_zero() {
-            return Err("task recovery interval must be greater than zero".to_string());
-        }
-        if export_output_cleanup_interval.is_zero() {
-            return Err("export output cleanup interval must be greater than zero".to_string());
-        }
-        Ok(Self {
-            worker_count,
-            poll_interval,
-            lease_duration,
-            heartbeat_interval,
-            recovery_interval,
-            export_output_cleanup_interval,
-        })
-    }
-}
-
 pub fn initialize_task_worker_settings(settings: TaskWorkerSettings) -> Result<(), String> {
     TASK_WORKER_SETTINGS
         .set(settings)
         .map_err(|_| "task worker settings were already initialized".to_string())?;
-    metrics::task_worker_config(settings.worker_count, settings.poll_interval);
+    metrics::task_worker_config(settings.worker_count(), settings.poll_interval());
     Ok(())
 }
 
@@ -132,27 +85,27 @@ fn recovery_state() -> &'static Mutex<Option<Instant>> {
 }
 
 fn task_worker_settings() -> TaskWorkerSettings {
-    TASK_WORKER_SETTINGS
-        .get()
-        .copied()
-        .unwrap_or(TaskWorkerSettings {
-            worker_count: 1,
-            poll_interval: Duration::from_millis(DEFAULT_TASK_POLL_INTERVAL_MS),
-            lease_duration: Duration::from_secs(DEFAULT_TASK_LEASE_SECONDS),
-            heartbeat_interval: Duration::from_secs(DEFAULT_TASK_HEARTBEAT_SECONDS),
-            recovery_interval: Duration::from_secs(DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS),
-            export_output_cleanup_interval: Duration::from_secs(
+    TASK_WORKER_SETTINGS.get().copied().unwrap_or_else(|| {
+        TaskWorkerSettings::builder()
+            .worker_count(1)
+            .poll_interval(Duration::from_millis(DEFAULT_TASK_POLL_INTERVAL_MS))
+            .lease_duration(Duration::from_secs(DEFAULT_TASK_LEASE_SECONDS))
+            .heartbeat_interval(Duration::from_secs(DEFAULT_TASK_HEARTBEAT_SECONDS))
+            .recovery_interval(Duration::from_secs(DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS))
+            .export_output_cleanup_interval(Duration::from_secs(
                 DEFAULT_EXPORT_OUTPUT_CLEANUP_INTERVAL_SECONDS,
-            ),
-        })
+            ))
+            .build()
+            .expect("default task worker settings must be valid")
+    })
 }
 
 fn configured_task_worker_count() -> usize {
-    task_worker_settings().worker_count
+    task_worker_settings().worker_count()
 }
 
 fn configured_task_poll_interval() -> Duration {
-    task_worker_settings().poll_interval
+    task_worker_settings().poll_interval()
 }
 
 fn new_task_lease_pool() -> DbPool {
@@ -368,7 +321,7 @@ async fn process_one_task_with_settings(
 
     let settings = task_worker_settings();
     let claim_started_at = TokioInstant::now();
-    let task = match claim_next_queued_task(context, settings.lease_duration).await {
+    let task = match claim_next_queued_task(context, settings.validated_lease_duration()).await {
         Ok(task) => task,
         Err(error) => {
             metrics::task_worker_iteration("error");
@@ -396,7 +349,7 @@ async fn process_one_task_with_settings(
         let mut heartbeat = start_task_lease_heartbeat(
             task_lease_pool(),
             &task,
-            claim_started_at + settings.lease_duration,
+            claim_started_at + settings.lease_duration(),
         );
         let execution = async {
             match shutdown {
@@ -532,7 +485,12 @@ fn start_task_lease_heartbeat(
             async move {
                 with_db_call_site(
                     DbCallSite::TaskLease,
-                    renew_task_lease(&pool, task_id, claim_token, settings.lease_duration),
+                    renew_task_lease(
+                        &pool,
+                        task_id,
+                        claim_token,
+                        settings.validated_lease_duration(),
+                    ),
                 )
                 .await
             }
@@ -586,7 +544,7 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<bool, ApiError>>,
 {
-    let mut next_heartbeat = TokioInstant::now() + settings.heartbeat_interval;
+    let mut next_heartbeat = TokioInstant::now() + settings.heartbeat_interval();
     loop {
         tokio::select! {
             biased;
@@ -618,7 +576,7 @@ where
                         // PostgreSQL extends the lease after this request starts, so anchoring the
                         // new deadline at request start is conservative even if the response is
                         // delayed in transit.
-                        confirmed_expiry = renewal_started_at + settings.lease_duration;
+                        confirmed_expiry = renewal_started_at + settings.lease_duration();
                     }
                     Ok(false) => {
                         warn!(
@@ -635,7 +593,7 @@ where
                         );
                     }
                 }
-                next_heartbeat = TokioInstant::now() + settings.heartbeat_interval;
+                next_heartbeat = TokioInstant::now() + settings.heartbeat_interval();
             }
         }
     }
@@ -668,7 +626,7 @@ where
 }
 
 async fn maybe_recover_expired_task_leases(pool: &DbPool) -> Result<(), ApiError> {
-    let recovery_interval = task_worker_settings().recovery_interval;
+    let recovery_interval = task_worker_settings().recovery_interval();
     let previous_last_run = {
         let mut state = recovery_state().lock().map_err(|_| {
             ApiError::InternalServerError("Task recovery state lock poisoned".to_string())
@@ -707,7 +665,7 @@ async fn maybe_recover_expired_task_leases(pool: &DbPool) -> Result<(), ApiError
 }
 
 async fn maybe_cleanup_expired_task_outputs(pool: &DbPool) -> Result<(), ApiError> {
-    let cleanup_interval = task_worker_settings().export_output_cleanup_interval;
+    let cleanup_interval = task_worker_settings().export_output_cleanup_interval();
     let Some(reservation) = CleanupReservation::reserve(cleanup_state(), cleanup_interval)? else {
         return Ok(());
     };
@@ -931,6 +889,21 @@ mod lease_heartbeat_tests {
         assert!(!source.contains(&optional_token_field));
     }
 
+    fn lease_test_settings(
+        lease_duration: Duration,
+        heartbeat_interval: Duration,
+    ) -> TaskWorkerSettings {
+        TaskWorkerSettings::builder()
+            .worker_count(1)
+            .poll_interval(Duration::from_millis(10))
+            .lease_duration(lease_duration)
+            .heartbeat_interval(heartbeat_interval)
+            .recovery_interval(Duration::from_secs(1))
+            .export_output_cleanup_interval(Duration::from_secs(1))
+            .build()
+            .unwrap()
+    }
+
     fn new_single_connection_execution_pool() -> DbPool {
         let config = get_config().expect("test requires database configuration");
         let settings = DatabasePoolSettings::builder(config.database_url.clone())
@@ -946,21 +919,13 @@ mod lease_heartbeat_tests {
     fn heartbeat_progresses_while_task_runtime_thread_is_blocked() {
         let renewal_attempts = Arc::new(AtomicUsize::new(0));
         let attempts = renewal_attempts.clone();
-        let settings = TaskWorkerSettings::new(
-            1,
-            Duration::from_millis(10),
-            Duration::from_millis(500),
-            Duration::from_millis(10),
-            Duration::from_secs(1),
-            Duration::from_secs(1),
-        )
-        .unwrap();
+        let settings = lease_test_settings(Duration::from_millis(500), Duration::from_millis(10));
 
         actix_rt::System::new().block_on(async move {
             let heartbeat = spawn_task_lease_monitor(
                 1,
                 settings,
-                TokioInstant::now() + settings.lease_duration,
+                TokioInstant::now() + settings.lease_duration(),
                 move || {
                     attempts.fetch_add(1, Ordering::Relaxed);
                     async { Ok(true) }
@@ -979,21 +944,13 @@ mod lease_heartbeat_tests {
 
     #[test]
     fn lease_loss_is_detected_while_task_runtime_thread_is_blocked() {
-        let settings = TaskWorkerSettings::new(
-            1,
-            Duration::from_millis(10),
-            Duration::from_millis(75),
-            Duration::from_millis(10),
-            Duration::from_secs(1),
-            Duration::from_secs(1),
-        )
-        .unwrap();
+        let settings = lease_test_settings(Duration::from_millis(75), Duration::from_millis(10));
 
         actix_rt::System::new().block_on(async move {
             let mut heartbeat = spawn_task_lease_monitor(
                 1,
                 settings,
-                TokioInstant::now() + settings.lease_duration,
+                TokioInstant::now() + settings.lease_duration(),
                 || async {
                     Err(ApiError::DbConnectionError(
                         "database unavailable".to_string(),
@@ -1054,18 +1011,10 @@ mod lease_heartbeat_tests {
 
     #[tokio::test]
     async fn renewal_errors_signal_loss_at_the_confirmed_expiry() {
-        let settings = TaskWorkerSettings::new(
-            1,
-            Duration::from_millis(10),
-            Duration::from_millis(60),
-            Duration::from_millis(10),
-            Duration::from_secs(1),
-            Duration::from_secs(1),
-        )
-        .unwrap();
+        let settings = lease_test_settings(Duration::from_millis(60), Duration::from_millis(10));
         let renewal_attempts = AtomicUsize::new(0);
         let (_stop_tx, mut stop_rx) = oneshot::channel();
-        let confirmed_expiry = TokioInstant::now() + settings.lease_duration;
+        let confirmed_expiry = TokioInstant::now() + settings.lease_duration();
 
         let lost = timeout(
             Duration::from_millis(250),
