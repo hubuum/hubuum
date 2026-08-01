@@ -66,10 +66,11 @@ async fn live_health_check_succeeds() {
 }
 
 #[actix_test]
-async fn live_authorize_many_preserves_request_order() {
+async fn live_authorize_many_preserves_order_across_wire_batches() {
     let Some(url) = treetop_url() else {
         eprintln!(
-            "skipping live_authorize_many_preserves_request_order: HUBUUM_TREETOP_TEST_URL not set"
+            "skipping live_authorize_many_preserves_order_across_wire_batches: \
+             HUBUUM_TREETOP_TEST_URL not set"
         );
         return;
     };
@@ -94,22 +95,30 @@ async fn live_authorize_many_preserves_request_order() {
         permissions: vec![Permissions::DeleteCollection],
     };
 
+    // Repeat the mixed decision pattern past the 512-check wire limit. The
+    // boundary falls inside the pattern, so concatenating batches in the wrong
+    // order cannot accidentally satisfy the expected sequence.
+    let request_pattern = [granted, denied_by_resource, denied_by_action];
+    let requests = (0..600)
+        .map(|index| request_pattern[index % request_pattern.len()].clone())
+        .collect();
+    let expected_pattern = [
+        PermissionDecision::Allow,
+        PermissionDecision::Deny,
+        PermissionDecision::Deny,
+    ];
+    let expected = (0..600)
+        .map(|index| expected_pattern[index % expected_pattern.len()])
+        .collect::<Vec<_>>();
+
     let decisions = backend
-        .authorize_many(
-            &principal,
-            vec![granted, denied_by_resource, denied_by_action],
-        )
+        .authorize_many(&principal, requests)
         .await
         .expect("authorize_many failed");
 
     assert_eq!(
-        decisions,
-        vec![
-            PermissionDecision::Allow,
-            PermissionDecision::Deny,
-            PermissionDecision::Deny,
-        ],
-        "Treetop must return decisions in input order"
+        decisions, expected,
+        "Treetop must preserve cross-batch order"
     );
 }
 

@@ -11,13 +11,14 @@ use super::backend::PermissionBackend;
 use super::observability::record_paginate_authorized;
 use super::types::{PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef};
 
+/// Bound duplicate request/resource allocations while walking a candidate set.
+/// Backends may apply a smaller wire-level limit of their own.
+const MAX_AUTHORIZATION_CHECKS_PER_BATCH: usize = 512;
+
 /// A page of authorized rows plus the total authorized count.
 ///
-/// Constructed only by `paginate_authorized`, which today is called from
-/// the Treetop backend's reverse queries. The Local backend uses the SQL
-/// join fast path instead. Marked `dead_code`-allow because a build without
-/// the optional Treetop backend has no caller for either type, and the lints
-/// would otherwise fire.
+/// Constructed by the candidate-authorization visibility helpers. The Local
+/// backend normally uses its SQL join fast path instead.
 pub struct AuthorizedPage<T> {
     pub rows: Vec<T>,
     pub total_count: i64,
@@ -97,6 +98,10 @@ fn permission_requests<T>(
         .collect()
 }
 
+fn candidate_batch_size(permissions: &[Permissions]) -> usize {
+    (MAX_AUTHORIZATION_CHECKS_PER_BATCH / permissions.len().max(1)).max(1)
+}
+
 fn allowed_candidate_values<T>(
     candidates: Vec<ResourceScopedCandidate<T>>,
     decisions: Vec<PermissionDecision>,
@@ -115,6 +120,36 @@ fn allowed_candidate_values<T>(
         .collect())
 }
 
+async fn visit_authorized_candidates<T, F>(
+    backend: &dyn PermissionBackend,
+    principal: &PrincipalRef,
+    candidates: Vec<ResourceScopedCandidate<T>>,
+    permissions: &[Permissions],
+    mut visit: F,
+) -> Result<usize, ApiError>
+where
+    F: FnMut(T),
+{
+    let mut candidates = candidates.into_iter();
+    let mut authorized_count = 0;
+    let batch_size = candidate_batch_size(permissions);
+
+    loop {
+        let batch = candidates.by_ref().take(batch_size).collect::<Vec<_>>();
+        if batch.is_empty() {
+            break;
+        }
+
+        let requests = permission_requests(&batch, permissions);
+        let decisions = backend.authorize_many(principal, requests).await?;
+        let allowed = allowed_candidate_values(batch, decisions)?;
+        authorized_count += allowed.len();
+        allowed.into_iter().for_each(&mut visit);
+    }
+
+    Ok(authorized_count)
+}
+
 pub async fn authorize_all_candidates<T, F>(
     backend: &dyn PermissionBackend,
     principal: &PrincipalRef,
@@ -127,9 +162,12 @@ where
     F: Fn(&T) -> ResourceRef,
 {
     let candidates = resource_scoped_candidates(candidates, scope, &to_resource);
-    let requests = permission_requests(&candidates, &permissions);
-    let decisions = backend.authorize_many(principal, requests).await?;
-    allowed_candidate_values(candidates, decisions)
+    let mut authorized = Vec::new();
+    visit_authorized_candidates(backend, principal, candidates, &permissions, |candidate| {
+        authorized.push(candidate)
+    })
+    .await?;
+    Ok(authorized)
 }
 
 pub async fn authorize_cursor_page<T, F>(
@@ -149,10 +187,12 @@ where
     let backend_kind = backend.kind();
     let candidate_count = candidates.len();
     let candidates = resource_scoped_candidates(candidates, scope, &to_resource);
-    let requests = permission_requests(&candidates, &permissions);
-    let decisions = backend.authorize_many(principal, requests).await?;
-    let authorized = allowed_candidate_values(candidates, decisions)?;
-    let authorized_count = authorized.len();
+    let mut authorized = Vec::new();
+    let authorized_count =
+        visit_authorized_candidates(backend, principal, candidates, &permissions, |candidate| {
+            authorized.push(candidate)
+        })
+        .await?;
     let total_count = known_count_or_skipped(query_options, authorized_count as i64);
     let rows = paginate_in_memory(authorized, query_options)?;
     record_paginate_authorized(
@@ -174,6 +214,8 @@ where
 /// caller is responsible for fetching this list via a SQL query that
 /// applies all NON-permission filters (name, collection, JSON body,
 /// etc.) but skips the `permissions`-table join.
+/// Authorization requests are assembled and dispatched in bounded batches;
+/// the candidate vector itself remains the caller's responsibility.
 ///
 /// `to_resource` maps each candidate to the [`ResourceRef`] used for
 /// authorization. `permissions` is the conjunctive permission set
@@ -205,40 +247,17 @@ where
     let backend_kind = backend.kind();
     let candidate_count = candidates.len();
     let candidates = resource_scoped_candidates(candidates, scope, &to_resource);
-
-    if candidates.is_empty() {
-        record_paginate_authorized(backend_kind, 0, 0, offset, limit, 0, start.elapsed());
-        return Ok(AuthorizedPage {
-            rows: Vec::new(),
-            total_count: 0,
-        });
-    }
-
-    let requests = permission_requests(&candidates, &permissions);
-
-    let decisions = backend.authorize_candidates(principal, requests).await?;
-
-    if candidates.len() != decisions.len() {
-        return Err(ApiError::InternalServerError(
-            "Permission backend returned an unexpected number of decisions".to_string(),
-        ));
-    }
-
-    let authorized: Vec<T> = candidates
-        .into_iter()
-        .zip(decisions)
-        .filter_map(|(row, result)| {
-            if result.decision == PermissionDecision::Allow {
-                Some(row.value)
-            } else {
-                None
+    let mut rows = Vec::new();
+    let mut authorized_seen = 0;
+    let authorized_count =
+        visit_authorized_candidates(backend, principal, candidates, &permissions, |candidate| {
+            if authorized_seen >= offset && rows.len() < limit {
+                rows.push(candidate);
             }
+            authorized_seen += 1;
         })
-        .collect();
-
-    let authorized_count = authorized.len();
+        .await?;
     let total_count = authorized_count as i64;
-    let rows: Vec<T> = authorized.into_iter().skip(offset).take(limit).collect();
     let returned_count = rows.len();
 
     record_paginate_authorized(
