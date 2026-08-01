@@ -68,6 +68,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Library callers must construct `GroupID` values for those fields. Collection
   and service-account creation reject non-positive group IDs at the request
   boundary.
+- **Breaking (Rust API):** replaced the partial `FilterField::table_field`
+  helper, which panicked for non-JSON fields, with the total
+  `FilterField::json_column` mapping. Callers must handle its optional result.
 
 ### Security
 
