@@ -5,7 +5,9 @@ use hubuum_auth_core::{AuthProviderError, ExternalIdentityProvider, ExternalUser
 use hubuum_auth_ldap::{LdapIdentityProvider, LdapScopeConfig};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fs::File;
 use std::future::Future;
+use std::io::Read;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock, OnceLock};
@@ -23,6 +25,7 @@ use crate::models::{LDAP_PROVIDER_KIND, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIN
 
 const DEFAULT_REFRESH_TTL_SECONDS: i64 = 300;
 const DEFAULT_MAX_STALE_SECONDS: i64 = 3600;
+const MAX_AUTH_CONFIG_BYTES: usize = 1024 * 1024;
 
 static REFRESH_LOCKS: LazyLock<Mutex<HashMap<i32, Arc<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -427,15 +430,77 @@ fn build_auth_provider_registry() -> Result<AuthProviderRegistry, ApiError> {
 }
 
 fn load_auth_config() -> Result<AuthProvidersConfig, ApiError> {
-    let Some(path) = crate::config::get_config()?.auth_config_path.clone() else {
+    let config = crate::config::get_config()?;
+    let Some(path) = config.auth_config_path.as_deref() else {
         return Ok(AuthProvidersConfig { ldap: Vec::new() });
     };
-    let raw = std::fs::read_to_string(Path::new(&path)).map_err(|e| {
-        ApiError::InternalServerError(format!("Failed to read auth config '{path}': {e}"))
+    let path = Path::new(path);
+    let source = read_auth_config_source(path)?;
+    parse_auth_config_source(path, &source)
+}
+
+fn read_auth_config_source(path: &Path) -> Result<String, ApiError> {
+    let file = File::open(path).map_err(|error| {
+        ApiError::InternalServerError(format!("Failed to open auth config {path:?}: {error}"))
     })?;
-    toml::from_str::<AuthProvidersConfig>(&raw).map_err(|e| {
-        ApiError::InternalServerError(format!("Failed to parse auth config '{path}': {e}"))
+    let metadata = file.metadata().map_err(|error| {
+        ApiError::InternalServerError(format!("Failed to inspect auth config {path:?}: {error}"))
+    })?;
+    if !metadata.is_file() {
+        return Err(ApiError::InternalServerError(format!(
+            "Auth config {path:?} must be a regular file"
+        )));
+    }
+    if metadata.len() > MAX_AUTH_CONFIG_BYTES as u64 {
+        return Err(auth_config_size_error(path));
+    }
+
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_AUTH_CONFIG_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            ApiError::InternalServerError(format!("Failed to read auth config {path:?}: {error}"))
+        })?;
+    if bytes.len() > MAX_AUTH_CONFIG_BYTES {
+        return Err(auth_config_size_error(path));
+    }
+    String::from_utf8(bytes).map_err(|_| {
+        ApiError::InternalServerError(format!("Auth config {path:?} must contain valid UTF-8"))
     })
+}
+
+fn auth_config_size_error(path: &Path) -> ApiError {
+    ApiError::InternalServerError(format!(
+        "Auth config {path:?} exceeds the {MAX_AUTH_CONFIG_BYTES}-byte limit"
+    ))
+}
+
+fn parse_auth_config_source(path: &Path, source: &str) -> Result<AuthProvidersConfig, ApiError> {
+    toml::from_str::<AuthProvidersConfig>(source).map_err(|error| {
+        let location = error.span().map(|span| {
+            let (line, column) = source_position(source, span.start);
+            format!(" at line {line}, column {column}")
+        });
+        ApiError::InternalServerError(format!(
+            "Failed to parse auth config {path:?}{}; source content omitted because it may contain credentials",
+            location.as_deref().unwrap_or_default()
+        ))
+    })
+}
+
+fn source_position(source: &str, byte_offset: usize) -> (usize, usize) {
+    let bytes = source.as_bytes();
+    let offset = byte_offset.min(bytes.len());
+    let line = bytes[..offset]
+        .iter()
+        .filter(|byte| **byte == b'\n')
+        .count()
+        + 1;
+    let line_start = bytes[..offset]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |newline| newline + 1);
+    (line, offset - line_start + 1)
 }
 
 fn provider_error(err: AuthProviderError) -> ApiError {
@@ -617,8 +682,46 @@ pub(crate) async fn sync_external_user(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use hubuum_auth_ldap::{LdapScopeConfig, LdapSearchScope};
+    use rstest::rstest;
+    use uuid::Uuid;
+
+    const CONFIG_SECRET: &str = "auth-config-secret";
+
+    struct TestAuthConfigFile {
+        path: PathBuf,
+    }
+
+    impl TestAuthConfigFile {
+        fn new(contents: &[u8]) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("hubuum-auth-config-{}.toml", Uuid::new_v4()));
+            std::fs::write(&path, contents).expect("test auth config should be written");
+            Self { path }
+        }
+
+        fn with_len(len: u64) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("hubuum-auth-config-{}.toml", Uuid::new_v4()));
+            File::create(&path)
+                .and_then(|file| file.set_len(len))
+                .expect("sized test auth config should be created");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestAuthConfigFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 
     fn ldap_scope(scope: &str) -> ConfiguredLdapScope {
         ConfiguredLdapScope {
@@ -643,6 +746,65 @@ mod tests {
             refresh_ttl_seconds: Some(300),
             max_stale_seconds: Some(3600),
         }
+    }
+
+    #[rstest]
+    #[case::syntax(concat!("[[ldap]]\n", "bind_password = \"auth-config-secret\n"))]
+    #[case::type_mismatch(concat!(
+        "[[ldap]]\n",
+        "connect_timeout_seconds = \"auth-config-secret\"\n"
+    ))]
+    fn auth_config_parse_errors_do_not_disclose_source(#[case] source: &str) {
+        let error = parse_auth_config_source(Path::new("auth.toml"), source)
+            .expect_err("test auth config should be rejected");
+        let message = error.to_string();
+
+        assert!(!message.contains(CONFIG_SECRET));
+        assert!(message.contains(" at line "));
+        assert!(message.contains(", column "));
+        assert!(message.contains("source content omitted"));
+    }
+
+    #[test]
+    fn auth_config_reader_rejects_oversized_files() {
+        let file = TestAuthConfigFile::with_len(MAX_AUTH_CONFIG_BYTES as u64 + 1);
+
+        let error = read_auth_config_source(file.path())
+            .expect_err("oversized auth config should be rejected");
+
+        assert_eq!(error, auth_config_size_error(file.path()));
+    }
+
+    #[test]
+    fn auth_config_reader_rejects_invalid_utf8() {
+        let file = TestAuthConfigFile::new(&[0xff]);
+
+        let error = read_auth_config_source(file.path())
+            .expect_err("non-UTF-8 auth config should be rejected");
+
+        assert_eq!(
+            error,
+            ApiError::InternalServerError(format!(
+                "Auth config {:?} must contain valid UTF-8",
+                file.path()
+            ))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auth_config_reader_rejects_non_regular_files() {
+        let path = Path::new("/dev/null");
+
+        let error =
+            read_auth_config_source(path).expect_err("non-regular auth config should be rejected");
+
+        assert_eq!(
+            error,
+            ApiError::InternalServerError(
+                "Auth config \"/dev/null\" must be a regular file".to_string()
+            )
+        );
     }
 
     fn timestamp() -> NaiveDateTime {

@@ -107,6 +107,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   paths whose final component is a symbolic link or another non-regular file.
   Operators relying on group-readable archives must move that access behind an
   owner-controlled collector; no database migration is required.
+- Auth provider configuration loading now bounds regular UTF-8 files to 1 MiB
+  and reports TOML error locations without echoing credential-bearing source
+  lines.
 - **Breaking (HTTP and Rust API):** Event-delivery API responses no longer
   expose the internal `claim_token` worker lease capability. API clients must
   stop deserializing or depending on this field. The persistence-only
