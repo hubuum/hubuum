@@ -76,6 +76,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   ordering and extracts each value once, so failures cannot silently leave rows
   unordered and fallible work is not repeated inside the sort comparator.
 
+### Fixed
+
+- Export, backup, and staged-restore retention horizons now reject durations or
+  expiry timestamps outside the supported range instead of panicking during
+  startup or artifact creation.
+
 ## [0.0.8] - 2026-08-01
 
 ### Fixed

@@ -1,13 +1,14 @@
 use crate::models::token_scope::TokenScope;
 use std::collections::BTreeMap;
 
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use sha2::{Digest, Sha256};
 
 use crate::db::DbPool;
 use crate::db::traits::backup::snapshot_backup_db;
 use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
+use crate::models::retention::FutureRetention;
 use crate::models::{
     BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState,
     CURRENT_BACKUP_VERSION, NewBackupTaskOutputRecord, NewTaskEventRecord, TaskRecord,
@@ -18,7 +19,7 @@ use crate::traits::AuthzSubject;
 
 #[derive(Clone, Debug)]
 pub struct BackupSettings {
-    output_retention_hours: i64,
+    output_retention: FutureRetention,
     max_active_tasks_per_user: usize,
     max_output_bytes: usize,
 }
@@ -29,9 +30,8 @@ impl BackupSettings {
         max_active_tasks_per_user: usize,
         max_output_bytes: usize,
     ) -> Result<Self, String> {
-        if output_retention_hours <= 0 {
-            return Err("backup output retention must be greater than zero".to_string());
-        }
+        let output_retention =
+            FutureRetention::from_hours(output_retention_hours, "backup output retention")?;
         if max_active_tasks_per_user == 0 {
             return Err("backup active-task limit must be greater than zero".to_string());
         }
@@ -39,18 +39,27 @@ impl BackupSettings {
             return Err("backup output size limit must be greater than zero".to_string());
         }
         Ok(Self {
-            output_retention_hours,
+            output_retention,
             max_active_tasks_per_user,
             max_output_bytes,
         })
     }
 
-    pub fn output_retention_hours(&self) -> i64 {
-        self.output_retention_hours
+    fn output_expires_at(
+        &self,
+        now: chrono::NaiveDateTime,
+    ) -> Result<chrono::NaiveDateTime, ApiError> {
+        self.output_retention
+            .expires_at(now)
+            .map_err(ApiError::BadRequest)
     }
 
     pub fn max_active_tasks_per_user(&self) -> usize {
         self.max_active_tasks_per_user
+    }
+
+    pub fn output_retention_hours(&self) -> i64 {
+        self.output_retention.hours()
     }
 
     pub fn max_output_bytes(&self) -> usize {
@@ -128,7 +137,7 @@ pub async fn execute_backup_task(
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     let byte_size = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
-    let expires_at = Utc::now().naive_utc() + Duration::hours(settings.output_retention_hours());
+    let expires_at = settings.output_expires_at(Utc::now().naive_utc())?;
     let total_items = document.manifest.item_counts.values().copied().sum::<i64>();
     let total_items = i32::try_from(total_items).unwrap_or(i32::MAX);
     let summary = format!(
@@ -233,5 +242,15 @@ mod tests {
         #[case] output_bytes: usize,
     ) {
         assert!(BackupSettings::new(retention_hours, active_tasks, output_bytes).is_err());
+    }
+
+    #[test]
+    fn backup_settings_reject_unrepresentable_retention() {
+        let error = BackupSettings::new(i64::MAX, 1, 1024).unwrap_err();
+
+        assert_eq!(
+            error,
+            "backup output retention is outside the supported duration range"
+        );
     }
 }

@@ -28,6 +28,7 @@ pub mod principal;
 pub mod principal_group;
 pub mod relation;
 pub mod remote_target;
+pub(crate) mod retention;
 pub mod search;
 pub mod service_account;
 pub mod task;
