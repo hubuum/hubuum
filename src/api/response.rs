@@ -227,7 +227,7 @@ fn insert_headers(
 ) {
     if let Some(headers) = headers {
         for (key, value) in headers {
-            debug!(message = "Adding response header", key = key, value = value);
+            debug!(message = "Adding response header", key = key);
             response_builder.insert_header((key, value));
         }
     }
