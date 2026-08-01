@@ -12,7 +12,7 @@ use crate::errors::ApiError;
 use crate::events::{Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance};
 use crate::models::principal::PrincipalID;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{BackupOutputLookup, redacted_debug_option};
+use crate::models::{BackupOutputLookup, REDACTED_DEBUG_VALUE, redacted_debug_option};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::{backup_task_outputs, export_task_outputs, import_task_results, tasks};
 use crate::traits::SelfAccessors;
@@ -214,7 +214,7 @@ crate::int_id_newtype! {
     noun = "task id";
 }
 
-#[derive(Clone, Serialize, Deserialize, Queryable, Selectable)]
+#[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = tasks)]
 pub struct TaskRecord {
     pub id: i32,
@@ -259,7 +259,7 @@ impl fmt::Debug for TaskRecord {
                 "idempotency_key",
                 &redacted_debug_option(&self.idempotency_key),
             )
-            .field("request_hash", &self.request_hash)
+            .field("request_hash", &redacted_debug_option(&self.request_hash))
             .field(
                 "request_payload",
                 &redacted_debug_option(&self.request_payload),
@@ -271,7 +271,7 @@ impl fmt::Debug for TaskRecord {
             .field("failed_items", &self.failed_items)
             .field("submitted_token_id", &self.submitted_token_id)
             .field("submitted_token_scoped", &self.submitted_token_scoped)
-            .field("submitted_token_scopes", &self.submitted_token_scopes)
+            .field("submitted_token_scopes", &REDACTED_DEBUG_VALUE)
             .field("request_redacted_at", &self.request_redacted_at)
             .field("started_at", &self.started_at)
             .field("finished_at", &self.finished_at)
@@ -326,38 +326,7 @@ pub struct NewTaskRecord {
     pub finished_at: Option<NaiveDateTime>,
 }
 
-impl fmt::Debug for NewTaskRecord {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("NewTaskRecord")
-            .field("kind", &self.kind)
-            .field("status", &self.status)
-            .field("submitted_by", &self.submitted_by)
-            .field(
-                "idempotency_key",
-                &redacted_debug_option(&self.idempotency_key),
-            )
-            .field("request_hash", &self.request_hash)
-            .field(
-                "request_payload",
-                &redacted_debug_option(&self.request_payload),
-            )
-            .field("summary", &self.summary)
-            .field("total_items", &self.total_items)
-            .field("processed_items", &self.processed_items)
-            .field("success_items", &self.success_items)
-            .field("failed_items", &self.failed_items)
-            .field("submitted_token_id", &self.submitted_token_id)
-            .field("submitted_token_scoped", &self.submitted_token_scoped)
-            .field("submitted_token_scopes", &self.submitted_token_scopes)
-            .field("request_redacted_at", &self.request_redacted_at)
-            .field("started_at", &self.started_at)
-            .field("finished_at", &self.finished_at)
-            .finish()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct TaskEventRecord {
     pub id: i64,
     pub task_id: i32,
@@ -371,7 +340,6 @@ pub struct TaskEventRecord {
     pub provenance_task_id: Option<i32>,
 }
 
-#[derive(Debug)]
 pub struct NewTaskEventRecord {
     pub task_id: i32,
     pub event_type: String,
@@ -379,7 +347,7 @@ pub struct NewTaskEventRecord {
     pub data: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable)]
+#[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = import_task_results)]
 pub struct ImportTaskResultRecord {
     pub id: i32,
@@ -394,7 +362,7 @@ pub struct ImportTaskResultRecord {
     pub created_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Insertable)]
+#[derive(Clone, Insertable)]
 #[diesel(table_name = import_task_results)]
 pub struct NewImportTaskResultRecord {
     pub task_id: i32,
@@ -508,7 +476,7 @@ pub struct ImportTaskResultResponse {
     pub created_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable)]
+#[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = export_task_outputs)]
 pub struct ExportTaskOutputRecord {
     pub id: i32,
@@ -529,7 +497,7 @@ pub struct ExportTaskOutputRecord {
     pub created_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Insertable)]
+#[derive(Clone, Insertable)]
 #[diesel(table_name = export_task_outputs)]
 pub struct NewExportTaskOutputRecord {
     pub task_id: i32,
@@ -1042,86 +1010,11 @@ impl AuthzTarget for TaskID {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::REDACTED_DEBUG_VALUE;
 
     fn test_timestamp() -> NaiveDateTime {
         chrono::DateTime::from_timestamp(1_700_000_000, 0)
             .unwrap()
             .naive_utc()
-    }
-
-    #[test]
-    fn task_record_debug_redacts_sensitive_execution_fields() {
-        let idempotency_key = "idempotency-secret";
-        let payload_secret = "task-payload-secret";
-        let lease_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-        let timestamp = test_timestamp();
-        let task = TaskRecord {
-            id: 7,
-            kind: TaskKind::Import.as_str().to_string(),
-            status: TaskStatus::Running.as_str().to_string(),
-            submitted_by: Some(1),
-            idempotency_key: Some(idempotency_key.to_string()),
-            request_hash: Some("request-hash".to_string()),
-            request_payload: Some(serde_json::json!({"password": payload_secret})),
-            summary: None,
-            total_items: 1,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            submitted_token_id: Some(2),
-            submitted_token_scoped: true,
-            submitted_token_scopes: serde_json::json!([]),
-            request_redacted_at: None,
-            started_at: Some(timestamp),
-            finished_at: None,
-            deleted_at: None,
-            deleted_by: None,
-            created_at: timestamp,
-            updated_at: timestamp,
-            lease_token: Some(uuid::Uuid::parse_str(lease_token).unwrap()),
-            lease_expires_at: Some(timestamp),
-            attempt_count: 1,
-            initiator_user_id: Some(1),
-        };
-
-        let output = format!("{task:?}");
-
-        assert!(output.contains(REDACTED_DEBUG_VALUE));
-        assert!(!output.contains(idempotency_key));
-        assert!(!output.contains(payload_secret));
-        assert!(!output.contains(lease_token));
-    }
-
-    #[test]
-    fn new_task_record_debug_redacts_sensitive_request_fields() {
-        let idempotency_key = "idempotency-secret";
-        let payload_secret = "task-payload-secret";
-        let task = NewTaskRecord {
-            kind: TaskKind::Import.as_str().to_string(),
-            status: TaskStatus::Queued.as_str().to_string(),
-            submitted_by: Some(1),
-            idempotency_key: Some(idempotency_key.to_string()),
-            request_hash: Some("request-hash".to_string()),
-            request_payload: Some(serde_json::json!({"password": payload_secret})),
-            summary: None,
-            total_items: 1,
-            processed_items: 0,
-            success_items: 0,
-            failed_items: 0,
-            submitted_token_id: Some(2),
-            submitted_token_scoped: true,
-            submitted_token_scopes: serde_json::json!([]),
-            request_redacted_at: None,
-            started_at: None,
-            finished_at: None,
-        };
-
-        let output = format!("{task:?}");
-
-        assert!(output.contains(REDACTED_DEBUG_VALUE));
-        assert!(!output.contains(idempotency_key));
-        assert!(!output.contains(payload_secret));
     }
 
     #[test]
@@ -1189,6 +1082,54 @@ mod tests {
         assert_eq!(serde_json::from_str::<TaskID>("7").unwrap().id(), 7);
         assert!(serde_json::from_str::<TaskID>("0").is_err());
         assert!(serde_json::from_str::<TaskID>("-3").is_err());
+    }
+
+    #[test]
+    fn task_record_debug_redacts_request_and_lease_material() {
+        let timestamp = test_timestamp();
+        let lease_token = uuid::Uuid::parse_str("de305d54-75b4-431b-adb2-eb6b9e546014").unwrap();
+        let task = TaskRecord {
+            id: 7,
+            kind: TaskKind::Import.as_str().to_string(),
+            status: TaskStatus::Running.as_str().to_string(),
+            submitted_by: Some(1),
+            idempotency_key: Some("idempotency-secret".to_string()),
+            request_hash: Some("request-hash-secret".to_string()),
+            request_payload: Some(serde_json::json!({"password": "payload-secret"})),
+            summary: Some("safe summary".to_string()),
+            total_items: 1,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            submitted_token_id: Some(3),
+            submitted_token_scoped: true,
+            submitted_token_scopes: serde_json::json!({"token": "scope-secret"}),
+            request_redacted_at: None,
+            started_at: Some(timestamp),
+            finished_at: None,
+            deleted_at: None,
+            deleted_by: None,
+            created_at: timestamp,
+            updated_at: timestamp,
+            lease_token: Some(lease_token),
+            lease_expires_at: Some(timestamp),
+            attempt_count: 1,
+            initiator_user_id: Some(1),
+        };
+
+        let debug = format!("{task:?}");
+
+        assert!(debug.contains("safe summary"));
+        assert!(debug.contains(REDACTED_DEBUG_VALUE));
+        for secret in [
+            "idempotency-secret",
+            "request-hash-secret",
+            "payload-secret",
+            "scope-secret",
+            "de305d54-75b4-431b-adb2-eb6b9e546014",
+        ] {
+            assert!(!debug.contains(secret), "debug output exposed {secret}");
+        }
     }
 
     #[test]
