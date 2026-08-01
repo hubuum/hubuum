@@ -16391,7 +16391,8 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "format": "int64"
+              "format": "int64",
+              "minimum": 1
             }
           }
         ],
@@ -16498,7 +16499,8 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "format": "int64"
+              "format": "int64",
+              "minimum": 1
             }
           }
         ],

@@ -10,8 +10,8 @@ use hubuum::db::{
 use hubuum::events::{Action, ActorKind, EntityType, MutationProvenance, NewEvent, emit_event};
 use hubuum::models::{
     BackupRequest, NewHubuumClass, NewHubuumClassRelation, NewTaskRecord, ObjectRelationLimit,
-    RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreInitiator, RestoreJobStatus,
-    RestoreStageRequest, TaskKind, TaskStatus,
+    RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreInitiator, RestoreJobID,
+    RestoreJobStatus, RestoreStageRequest, TaskKind, TaskStatus,
 };
 use hubuum::restores::{
     RestoreSettings, confirm_restore, maintenance_state, reconcile_interrupted_restore,
@@ -334,7 +334,7 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
         .expect("stage confirmation-path restore");
     let completed = confirm_restore(
         &pool,
-        confirmed_stage.id,
+        RestoreJobID::new(confirmed_stage.id).expect("positive staged restore id"),
         &RestoreConfirmRequest {
             restore_capability: confirmed_stage
                 .restore_capability

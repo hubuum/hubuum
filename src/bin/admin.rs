@@ -26,7 +26,7 @@ use hubuum::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use hubuum::logger;
 use hubuum::models::{
     BackupRequest, ExportTaskOutputRecord, ExportTemplate, RESTORE_CONFIRMATION_PHRASE,
-    RestoreConfirmRequest, RestoreInitiator, RestoreStageRequest, User,
+    RestoreConfirmRequest, RestoreInitiator, RestoreJobID, RestoreStageRequest, User,
 };
 use hubuum::restores::{RestoreSettings, confirm_restore, stage_restore};
 use hubuum::schema::export_task_outputs::dsl::export_task_outputs;
@@ -411,7 +411,7 @@ async fn restore_database(
     })?;
     let restored = confirm_restore(
         &pool,
-        staged.id,
+        RestoreJobID::new(staged.id)?,
         &RestoreConfirmRequest {
             restore_capability: capability,
             sha256: staged.sha256,

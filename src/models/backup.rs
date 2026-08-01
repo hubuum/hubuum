@@ -249,7 +249,7 @@ impl BackupDocument {
 mod tests {
     use rstest::rstest;
 
-    use super::{BackupRequest, RestoreInitiator, RestoreStageRequest};
+    use super::{BackupRequest, RestoreInitiator, RestoreJobID, RestoreStageRequest};
 
     #[test]
     fn backup_requests_include_history_by_default() {
@@ -286,6 +286,13 @@ mod tests {
 
         assert!(RestoreStageRequest::new(initiator, Vec::new()).is_err());
     }
+
+    #[test]
+    fn restore_job_id_rejects_non_positive_values_at_deserialization() {
+        assert_eq!(RestoreJobID::new(1).unwrap().id(), 1);
+        assert!(serde_json::from_str::<RestoreJobID>("0").is_err());
+        assert!(serde_json::from_str::<RestoreJobID>("-1").is_err());
+    }
 }
 
 #[derive(Queryable, Selectable)]
@@ -308,6 +315,36 @@ pub struct NewBackupTaskOutputRecord {
     pub byte_size: i64,
     pub sha256: String,
     pub output_expires_at: NaiveDateTime,
+}
+
+/// Identifier wrapper for a staged restore job.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, ToSchema)]
+#[schema(value_type = i64)]
+pub struct RestoreJobID(i64);
+
+impl RestoreJobID {
+    pub fn new(id: i64) -> Result<Self, ApiError> {
+        if id <= 0 {
+            return Err(ApiError::BadRequest(format!(
+                "Invalid restore job id '{id}': must be a positive integer"
+            )));
+        }
+        Ok(Self(id))
+    }
+
+    pub fn id(self) -> i64 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for RestoreJobID {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let id = <i64 as Deserialize>::deserialize(deserializer)?;
+        Self::new(id).map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone)]
