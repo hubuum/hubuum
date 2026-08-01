@@ -44,8 +44,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Response debug logs no longer include custom HTTP header values, preventing
   pagination cursors and future secret-bearing headers from leaking into logs.
 - Redacted passwords, raw logout bearer tokens, stored token digests, task
-  request payloads, idempotency keys, task lease tokens, and credential-bearing
-  event-sink connection keys from debug output.
+  request payloads, idempotency keys, task lease tokens, event-sink delivery
+  fields, and credential-bearing event-sink connection keys from debug output.
 
 ## [0.0.8] - 2026-08-01
 

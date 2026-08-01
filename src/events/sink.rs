@@ -299,6 +299,23 @@ mod tests {
         assert!(!debug.contains("example.invalid"));
     }
 
+    #[test]
+    fn sink_delivery_debug_omits_config_routing_and_secret_reference() {
+        let config = serde_json::json!({
+            "headers": {"authorization": "Bearer config-secret"}
+        });
+        let routing = serde_json::json!({
+            "url": "https://user:routing-secret@example.invalid/events"
+        });
+        let delivery = SinkDelivery::new(&config, &routing, Some("secret-reference"));
+
+        let debug = format!("{delivery:?}");
+        assert_eq!(debug, "SinkDelivery { .. }");
+        assert!(!debug.contains("config-secret"));
+        assert!(!debug.contains("routing-secret"));
+        assert!(!debug.contains("secret-reference"));
+    }
+
     #[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
     #[test]
     fn tls_scheme_validator_rejects_cleartext_uris() {

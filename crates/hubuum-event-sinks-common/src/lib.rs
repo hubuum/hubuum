@@ -76,11 +76,17 @@ pub fn ensure_payload_within_limit(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct SinkDelivery<'a> {
     pub config: &'a Value,
     pub routing: &'a Value,
     pub secret_ref: Option<&'a str>,
+}
+
+impl fmt::Debug for SinkDelivery<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SinkDelivery").finish_non_exhaustive()
+    }
 }
 
 impl<'a> SinkDelivery<'a> {
