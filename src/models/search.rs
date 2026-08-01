@@ -68,7 +68,7 @@ impl From<hubuum_query::QueryError> for ApiError {
     }
 }
 
-/// ## A struct that represents a SQL query component.
+/// An internal SQL fragment paired with its typed bind values.
 ///
 /// This struct holds a SQL query and a list of bind variables. The SQL query is a string that
 /// represents a part of a SQL query, and the bind variables are the values that should be bound to
@@ -79,17 +79,14 @@ impl From<hubuum_query::QueryError> for ApiError {
 /// replace_question_mark_with_indexed_n does this on &str and string via
 /// crate::utilities::extensions::CustomStringExtensions.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SQLComponent {
-    pub sql: String,
-    pub bind_variables: Vec<SQLValue>,
+pub(crate) struct SQLComponent {
+    pub(crate) sql: String,
+    pub(crate) bind_variables: Vec<SQLValue>,
 }
 
-/// ## An sql value for bind variables
-///
-/// This enum represents the different types of values that can be bound to a SQL query. The types
-/// are defined as we need to bind the correct type in Diesel.
+/// An internal typed value for a dynamic SQL bind parameter.
 #[derive(Debug, Clone, PartialEq)]
-pub enum SQLValue {
+pub(crate) enum SQLValue {
     String(String),
     Integer(i32),
     Date(NaiveDateTime),
@@ -195,34 +192,13 @@ pub trait ParsedQueryParamExt {
     ///
     /// * A boolean or ApiError::BadRequest if the value is invalid
     fn value_as_boolean(&self) -> Result<bool, ApiError>;
+}
 
-    /// ## Coerce the entire ParsedQueryParam into a JSONB SQLComponent
-    ///
-    /// This is creates a JSONB SQLComponent from a ParsedQueryParam.
-    ///
-    /// ### Constraints on the ParseQueryParam
-    ///
-    /// * The field must be a JSONB field (see `is_json`).
-    /// * The value must be a key=value pair. The key is the JSONB
-    ///   key to search in and the value is the value to search for.
-    ///
-    /// The operator is used to determine the type of search to perform. In the future we
-    /// may also use the schema to determine the type of the value.
-    ///
-    /// Note that the key is not validated against the schema, this is something that may be
-    /// added in the future. Right now, having a typo in the key will just result in no matches.
-    ///
-    /// ### Returns
-    ///
-    /// * A SQLComponent or:
-    ///   * ApiError::InternalServerError if the field is not JSONB
-    ///   * ApiError::BadRequest if the value is not a key=value pair
+pub(crate) trait ParsedQueryParamSqlExt {
     fn as_json_sql(&self) -> Result<SQLComponent, ApiError>;
 
     fn as_json_sql_for_field_expr(&self, jsonb_field_expr: &str) -> Result<SQLComponent, ApiError>;
-}
 
-trait ParsedQueryParamSqlExt {
     fn as_json_ip_sql(
         &self,
         field_expr: &str,
@@ -319,7 +295,9 @@ impl ParsedQueryParamExt for ParsedQueryParam {
     fn value_as_boolean(&self) -> Result<bool, ApiError> {
         self.value.as_boolean()
     }
+}
 
+impl ParsedQueryParamSqlExt for ParsedQueryParam {
     fn as_json_sql(&self) -> Result<SQLComponent, ApiError> {
         let json_column = self.field.json_column().ok_or_else(|| {
             ApiError::InternalServerError(format!("Attempt to filter '{}' as JSON!", self.field))
@@ -454,9 +432,6 @@ impl ParsedQueryParamExt for ParsedQueryParam {
             bind_variables,
         })
     }
-}
-
-impl ParsedQueryParamSqlExt for ParsedQueryParam {
     fn as_json_ip_sql(
         &self,
         field_expr: &str,

@@ -71,6 +71,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (Rust API):** replaced the partial `FilterField::table_field`
   helper, which panicked for non-JSON fields, with the total
   `FilterField::json_column` mapping. Callers must handle its optional result.
+- **Breaking (Rust API):** raw dynamic SQL components, bind values, and JSON SQL
+  generation helpers are now crate-private. External query integrations should
+  use the validated `JsonPredicateExt::as_json_predicate` API instead.
 
 ### Security
 

@@ -9,7 +9,7 @@ use crate::db::traits::resource_scope::{
 use crate::db::traits::search::JsonPredicateExt;
 use crate::models::RelatedObjectForRootRow;
 use crate::models::permissions::PermissionFilter;
-use crate::models::search::{ParsedQueryParamExt, SQLValue};
+use crate::models::search::{ParsedQueryParamExt, ParsedQueryParamSqlExt, SQLValue};
 use crate::models::token_scope::TokenScope;
 use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::traits::PrincipalIdAccessor;

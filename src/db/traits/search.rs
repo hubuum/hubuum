@@ -5,7 +5,7 @@ use diesel::result::QueryResult;
 use diesel::sql_types::{Bool, Integer, Text, Timestamp};
 
 use crate::errors::ApiError;
-use crate::models::search::{ParsedQueryParam, ParsedQueryParamExt, SQLComponent, SQLValue};
+use crate::models::search::{ParsedQueryParam, ParsedQueryParamSqlExt, SQLComponent, SQLValue};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct JsonSqlPredicate {
