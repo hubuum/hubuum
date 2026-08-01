@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Security
+
+- Redacted embedded URL credentials and common secret-header spellings from
+  event sink configuration and subscription routing responses and audit
+  snapshots.
+
 ## [0.0.8] - 2026-08-01
 
 ### Fixed
