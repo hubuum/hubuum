@@ -159,9 +159,14 @@ fn uri_userinfo(uri: &str) -> Option<&str> {
     (!userinfo.is_empty() && !host.is_empty()).then_some(userinfo)
 }
 
-#[derive(Debug)]
 pub struct UriConnectionPool<K, V> {
     entries: Mutex<std::collections::HashMap<K, V>>,
+}
+
+impl<K, V> fmt::Debug for UriConnectionPool<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UriConnectionPool").finish_non_exhaustive()
+    }
 }
 
 impl<K, V> Default for UriConnectionPool<K, V> {
