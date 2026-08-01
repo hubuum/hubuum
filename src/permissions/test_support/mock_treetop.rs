@@ -7,7 +7,10 @@ use chrono::DateTime;
 
 use crate::errors::ApiError;
 use crate::models::search::{QueryOptions, QueryParamsExt};
-use crate::models::{Collection, Group, GroupPermission, Permission, Permissions, PermissionsList};
+use crate::models::{
+    Collection, CollectionID, Group, GroupID, GroupPermission, Permission, Permissions,
+    PermissionsList,
+};
 use crate::pagination::{known_count_or_skipped, paginate_in_memory};
 
 use super::super::backend::PermissionBackend;
@@ -446,10 +449,11 @@ impl PermissionBackend for MockTreetopBackend {
 
     async fn groups_with_permissions_on(
         &self,
-        collection_id: i32,
+        collection_id: CollectionID,
         permissions_filter: &[Permissions],
         page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
+        let collection_id = collection_id.id();
         let groups_opt = self.group_candidates.lock().unwrap().clone();
         let all_groups = match groups_opt {
             Some(g) => g,
@@ -516,9 +520,11 @@ impl PermissionBackend for MockTreetopBackend {
 
     async fn group_permission_on(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionID,
+        group_id: GroupID,
     ) -> Result<Option<Permission>, ApiError> {
+        let collection_id = collection_id.id();
+        let group_id = group_id.id();
         let principal = PrincipalRef::new(0, vec![group_id]);
         let requests: Vec<PermissionRequest> = Permissions::all()
             .iter()
@@ -545,8 +551,8 @@ impl PermissionBackend for MockTreetopBackend {
 
     async fn apply_permissions(
         &self,
-        _collection_id: i32,
-        _group_id: i32,
+        _collection_id: CollectionID,
+        _group_id: GroupID,
         _list: PermissionsList<Permissions>,
         _replace_existing: bool,
     ) -> Result<Permission, ApiError> {
@@ -558,8 +564,8 @@ impl PermissionBackend for MockTreetopBackend {
 
     async fn revoke_permissions(
         &self,
-        _collection_id: i32,
-        _group_id: i32,
+        _collection_id: CollectionID,
+        _group_id: GroupID,
         _list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError> {
         Err(ApiError::NotImplemented(
@@ -568,7 +574,11 @@ impl PermissionBackend for MockTreetopBackend {
         ))
     }
 
-    async fn revoke_all(&self, _collection_id: i32, _group_id: i32) -> Result<(), ApiError> {
+    async fn revoke_all(
+        &self,
+        _collection_id: CollectionID,
+        _group_id: GroupID,
+    ) -> Result<(), ApiError> {
         Err(ApiError::NotImplemented(
             "permission mutations are managed out-of-band when using a treetop-style backend"
                 .to_string(),

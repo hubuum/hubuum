@@ -5,7 +5,7 @@ use crate::db::traits::authz::AuthzSubject;
 use crate::db::traits::permissions::PermissionControllerBackend;
 use crate::errors::ApiError;
 use crate::events::EventContext;
-use crate::models::{Permission, Permissions, PermissionsList};
+use crate::models::{GroupID, Permission, Permissions, PermissionsList};
 
 use super::{BackendContext, CollectionAccessors};
 
@@ -98,7 +98,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn grant_without_events<C>(
         &self,
         backend: &C,
-        group_id_for_grant: i32,
+        group_id_for_grant: GroupID,
         permission_list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError>
     where
@@ -111,7 +111,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn grant<C>(
         &self,
         backend: &C,
-        group_id_for_grant: i32,
+        group_id_for_grant: GroupID,
         permission_list: PermissionsList<Permissions>,
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError>
@@ -136,7 +136,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn apply_permissions_without_events<C>(
         &self,
         backend: &C,
-        group_id_for_grant: i32,
+        group_id_for_grant: GroupID,
         permission_list: PermissionsList<Permissions>,
         replace_existing: bool,
     ) -> Result<Permission, ApiError>
@@ -155,7 +155,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn apply_permissions<C>(
         &self,
         backend: &C,
-        group_id_for_grant: i32,
+        group_id_for_grant: GroupID,
         permission_list: PermissionsList<Permissions>,
         replace_existing: bool,
         context: Option<&EventContext>,
@@ -201,7 +201,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn revoke_without_events<C>(
         &self,
         backend: &C,
-        group_id_for_revoke: i32,
+        group_id_for_revoke: GroupID,
         permission_list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError>
     where
@@ -218,7 +218,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn revoke<C>(
         &self,
         backend: &C,
-        group_id_for_revoke: i32,
+        group_id_for_revoke: GroupID,
         permission_list: PermissionsList<Permissions>,
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError>
@@ -258,7 +258,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn grant_one<C>(
         &self,
         backend: &C,
-        group_identifier: i32,
+        group_identifier: GroupID,
         permission: Permissions,
     ) -> Result<Permission, ApiError>
     where
@@ -295,7 +295,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn revoke_one<C>(
         &self,
         backend: &C,
-        group_identifier: i32,
+        group_identifier: GroupID,
         permission: Permissions,
     ) -> Result<Permission, ApiError>
     where
@@ -337,7 +337,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn set_permissions_without_events<C>(
         &self,
         backend: &C,
-        group_identifier: i32,
+        group_identifier: GroupID,
         permission_list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError>
     where
@@ -350,7 +350,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn set_permissions<C>(
         &self,
         backend: &C,
-        group_identifier: i32,
+        group_identifier: GroupID,
         permission_list: PermissionsList<Permissions>,
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError>
@@ -385,7 +385,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn revoke_all_without_events<C>(
         &self,
         backend: &C,
-        group_id_for_revoke: i32,
+        group_id_for_revoke: GroupID,
     ) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
@@ -397,7 +397,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     async fn revoke_all<C>(
         &self,
         backend: &C,
-        group_id_for_revoke: i32,
+        group_id_for_revoke: GroupID,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError>
     where

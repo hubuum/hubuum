@@ -8,7 +8,7 @@ pub mod tests {
     use crate::events::EventContext;
     use crate::models::traits::{ResolveClassTarget, UpdateResolvedClass};
     use crate::models::{
-        ClassSelector, HubuumClassExpanded, HubuumClassID, NewHubuumClass, Permissions,
+        ClassSelector, GroupID, HubuumClassExpanded, HubuumClassID, NewHubuumClass, Permissions,
         PermissionsList, UpdateHubuumClass,
     };
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
@@ -501,7 +501,7 @@ pub mod tests {
             .collection
             .grant_without_events(
                 &context.pool,
-                group.id,
+                GroupID::new(group.id).unwrap(),
                 PermissionsList::new([Permissions::UpdateClass]),
             )
             .await
@@ -534,7 +534,7 @@ pub mod tests {
             .collection
             .grant_without_events(
                 &context.pool,
-                group.id,
+                GroupID::new(group.id).unwrap(),
                 PermissionsList::new([Permissions::CreateClass]),
             )
             .await

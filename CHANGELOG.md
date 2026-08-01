@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (Rust API):** permission-controller group parameters and
+  permission-backend collection and group parameters now use validated
+  `CollectionID` and `GroupID` values instead of raw integers. Downstream
+  callers and backend implementations must construct the newtypes at their
+  input boundaries and update their method signatures.
+
 ## [0.0.8] - 2026-08-01
 
 ### Fixed

@@ -22,7 +22,7 @@ mod tests {
 
     use crate::db::with_connection;
     use crate::models::{
-        HubuumClassRelation, HubuumObjectRelation, NewHubuumClass, NewHubuumClassRelation,
+        GroupID, HubuumClassRelation, HubuumObjectRelation, NewHubuumClass, NewHubuumClassRelation,
         NewHubuumObject, NewHubuumObjectRelation, Permissions, PermissionsList, RemoteCallResult,
         RemoteTarget, TaskResponse, TaskStatus,
     };
@@ -469,7 +469,7 @@ mod tests {
         collection
             .grant_without_events(
                 &context.pool,
-                group.id,
+                GroupID::new(group.id).unwrap(),
                 PermissionsList::new([Permissions::CreateRemoteTarget]),
             )
             .await
@@ -639,7 +639,7 @@ mod tests {
         source_collection
             .grant_without_events(
                 &context.pool,
-                group.id,
+                GroupID::new(group.id).unwrap(),
                 PermissionsList::new([Permissions::UpdateRemoteTarget]),
             )
             .await
@@ -664,7 +664,7 @@ mod tests {
             .collection
             .grant_without_events(
                 &context.pool,
-                group.id,
+                GroupID::new(group.id).unwrap(),
                 PermissionsList::new([Permissions::CreateRemoteTarget]),
             )
             .await
@@ -1110,7 +1110,7 @@ mod tests {
         collection
             .grant_without_events(
                 &context.pool,
-                group.id,
+                GroupID::new(group.id).unwrap(),
                 PermissionsList::new([Permissions::ReadObject]),
             )
             .await
@@ -1216,7 +1216,7 @@ mod tests {
         from_collection
             .grant_without_events(
                 &context.pool,
-                group.id,
+                GroupID::new(group.id).unwrap(),
                 PermissionsList::new([
                     Permissions::ReadObjectRelation,
                     Permissions::ExecuteRemoteTarget,
@@ -1240,7 +1240,11 @@ mod tests {
             .await
             .unwrap();
         to_collection
-            .grant_one(&context.pool, group.id, Permissions::ReadObjectRelation)
+            .grant_one(
+                &context.pool,
+                GroupID::new(group.id).unwrap(),
+                Permissions::ReadObjectRelation,
+            )
             .await
             .unwrap();
 

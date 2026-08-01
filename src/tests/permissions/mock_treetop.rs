@@ -6,7 +6,7 @@ use actix_web::test as actix_test;
 
 use crate::errors::ApiError;
 use crate::models::search::parse_query_parameter;
-use crate::models::{GroupPermission, Permissions};
+use crate::models::{CollectionID, GroupID, GroupPermission, Permissions};
 use crate::pagination::{finalize_page, prepare_db_pagination};
 use crate::permissions::backend::PermissionBackend;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
@@ -130,8 +130,8 @@ async fn mock_mutation_methods_return_not_implemented() {
 
     let result = backend
         .apply_permissions(
-            7,
-            100,
+            CollectionID::new(7).unwrap(),
+            GroupID::new(100).unwrap(),
             PermissionsList::new(vec![Permissions::ReadCollection]),
             false,
         )
@@ -140,14 +140,16 @@ async fn mock_mutation_methods_return_not_implemented() {
 
     let result = backend
         .revoke_permissions(
-            7,
-            100,
+            CollectionID::new(7).unwrap(),
+            GroupID::new(100).unwrap(),
             PermissionsList::new(vec![Permissions::ReadCollection]),
         )
         .await;
     assert!(matches!(result, Err(ApiError::NotImplemented(_))));
 
-    let result = backend.revoke_all(7, 100).await;
+    let result = backend
+        .revoke_all(CollectionID::new(7).unwrap(), GroupID::new(100).unwrap())
+        .await;
     assert!(matches!(result, Err(ApiError::NotImplemented(_))));
 
     assert!(!backend.supports_mutation());
@@ -226,7 +228,10 @@ async fn mock_group_permission_on_synthesizes_row_from_rules() {
         },
     });
 
-    let row = backend.group_permission_on(7, 100).await.unwrap();
+    let row = backend
+        .group_permission_on(CollectionID::new(7).unwrap(), GroupID::new(100).unwrap())
+        .await
+        .unwrap();
     assert!(
         row.is_some(),
         "should synthesize a row when at least one perm is Allow"
@@ -249,7 +254,10 @@ async fn mock_group_permission_on_synthesizes_row_from_rules() {
     assert_eq!(row.group_id, 100);
 
     // No rules for group 200 → None.
-    let none = backend.group_permission_on(7, 200).await.unwrap();
+    let none = backend
+        .group_permission_on(CollectionID::new(7).unwrap(), GroupID::new(200).unwrap())
+        .await
+        .unwrap();
     assert!(
         none.is_none(),
         "no permissions → None (mirrors Local 'no row exists')"
@@ -355,7 +363,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
         include_total: true,
     };
     let (results, count) = backend
-        .groups_with_permissions_on(7, &[], &page)
+        .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &page)
         .await
         .unwrap();
     assert_eq!(count, 2, "group 100 and 200 have permissions");
@@ -366,7 +374,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
     // Non-empty filter: only groups with ALL filter permissions.
     let (results, count) = backend
         .groups_with_permissions_on(
-            7,
+            CollectionID::new(7).unwrap(),
             &[Permissions::ReadCollection, Permissions::CreateClass],
             &page,
         )
@@ -385,7 +393,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
         include_total: true,
     };
     let (results, count) = backend
-        .groups_with_permissions_on(7, &[], &page_limited)
+        .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &page_limited)
         .await
         .unwrap();
     assert_eq!(count, 2, "total count is 2 even though limit is 1");
@@ -395,7 +403,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
     let first_request = parse_query_parameter("sort=groupname.desc&limit=1").unwrap();
     let first_prepared = prepare_db_pagination::<GroupPermission>(&first_request).unwrap();
     let (first_rows, _) = backend
-        .groups_with_permissions_on(7, &[], &first_prepared)
+        .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &first_prepared)
         .await
         .unwrap();
     let first_page = finalize_page(first_rows, &first_request).unwrap();
@@ -405,7 +413,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
     second_request.cursor = first_page.next_cursor;
     let second_prepared = prepare_db_pagination::<GroupPermission>(&second_request).unwrap();
     let (second_rows, _) = backend
-        .groups_with_permissions_on(7, &[], &second_prepared)
+        .groups_with_permissions_on(CollectionID::new(7).unwrap(), &[], &second_prepared)
         .await
         .unwrap();
     let second_page = finalize_page(second_rows, &second_request).unwrap();

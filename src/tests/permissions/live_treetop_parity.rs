@@ -18,7 +18,7 @@ use actix_web::test as actix_test;
 
 use crate::config::{PermissionBackendKind, get_config};
 use crate::errors::ApiError;
-use crate::models::Permissions;
+use crate::models::{CollectionID, GroupID, Permissions};
 use crate::permissions::backend::PermissionBackend;
 use crate::permissions::treetop::TreetopPermissionBackend;
 use crate::permissions::types::{PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef};
@@ -182,7 +182,10 @@ async fn live_group_permission_on_returns_grant_grid_for_known_group() {
     seed_collection_if_missing(TEST_NAMESPACE_ID).await;
 
     let perm = backend
-        .group_permission_on(TEST_NAMESPACE_ID, TEST_NORMAL_GROUP_ID)
+        .group_permission_on(
+            CollectionID::new(TEST_NAMESPACE_ID).unwrap(),
+            GroupID::new(TEST_NORMAL_GROUP_ID).unwrap(),
+        )
         .await
         .expect("group_permission_on failed");
 

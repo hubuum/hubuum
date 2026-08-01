@@ -40,7 +40,7 @@ mod tests {
     use super::*;
     use rstest::rstest;
 
-    use crate::models::{Permissions as P, PermissionsList as PL};
+    use crate::models::{GroupID, Permissions as P, PermissionsList as PL};
     use crate::tests::{TestScope, create_test_group, create_user_with_params};
     use crate::traits::AuthzSubject;
     use crate::traits::PermissionController;
@@ -124,7 +124,7 @@ mod tests {
             .collection
             .grant_without_events(
                 &pool,
-                groups[0].id,
+                GroupID::new(groups[0].id).unwrap(),
                 PL::new(vec![P::CreateClass, P::ReadClass]),
             )
             .await
@@ -133,7 +133,7 @@ mod tests {
             .collection
             .grant_without_events(
                 &pool,
-                groups[0].id,
+                GroupID::new(groups[0].id).unwrap(),
                 PL::new(vec![P::CreateClass, P::DeleteClass]),
             )
             .await
@@ -143,7 +143,7 @@ mod tests {
             .collection
             .grant_without_events(
                 &pool,
-                groups[1].id,
+                GroupID::new(groups[1].id).unwrap(),
                 PL::new(vec![P::CreateObject, P::ReadObject]),
             )
             .await
@@ -152,7 +152,7 @@ mod tests {
             .collection
             .grant_without_events(
                 &pool,
-                groups[1].id,
+                GroupID::new(groups[1].id).unwrap(),
                 PL::new(vec![P::CreateObject, P::DeleteObject]),
             )
             .await

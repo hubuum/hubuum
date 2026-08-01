@@ -6,7 +6,7 @@ mod tests {
 
     use crate::db::with_connection;
     use crate::events::{Action, ActorKind, EntityType, EventResponse, NewEvent, emit_event};
-    use crate::models::{NewHubuumClass, NewHubuumObject, Permissions, PermissionsList};
+    use crate::models::{GroupID, NewHubuumClass, NewHubuumObject, Permissions, PermissionsList};
     use crate::tests::TestContext;
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -58,7 +58,7 @@ mod tests {
             .collection
             .grant_without_events(
                 &context.pool,
-                group.id,
+                GroupID::new(group.id).unwrap(),
                 PermissionsList::new([Permissions::ReadAudit]),
             )
             .await
@@ -100,7 +100,7 @@ mod tests {
             .collection
             .grant_without_events(
                 &context.pool,
-                group.id,
+                GroupID::new(group.id).unwrap(),
                 PermissionsList::new([Permissions::ReadAudit]),
             )
             .await
@@ -172,7 +172,7 @@ mod tests {
             .collection
             .grant_without_events(
                 &context.pool,
-                group.id,
+                GroupID::new(group.id).unwrap(),
                 PermissionsList::new([Permissions::ReadAudit]),
             )
             .await
@@ -244,7 +244,7 @@ mod tests {
         related_collection
             .grant_without_events(
                 &context.pool,
-                group.id,
+                GroupID::new(group.id).unwrap(),
                 PermissionsList::new([Permissions::ReadAudit]),
             )
             .await

@@ -9,7 +9,7 @@ mod tests {
     use crate::db::{DbPool, with_transaction};
     use crate::errors::ApiError;
     use crate::models::{
-        CollectionID, HubuumClass, HubuumClassRelation, HubuumClassWithPath, HubuumObject,
+        CollectionID, GroupID, HubuumClass, HubuumClassRelation, HubuumClassWithPath, HubuumObject,
         HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass, NewHubuumClassRelation,
         NewHubuumClassRelationFromClass, NewHubuumObject, NewHubuumObjectRelation,
         ObjectRelationLimit, Permissions, RelatedClassGraph, RelatedObjectGraph,
@@ -1120,7 +1120,11 @@ mod tests {
 
         // Grant permissions to the group (and indirectly to the user).
         collection
-            .grant_one(&context.pool, group.id, Permissions::ReadClassRelation)
+            .grant_one(
+                &context.pool,
+                GroupID::new(group.id).unwrap(),
+                Permissions::ReadClassRelation,
+            )
             .await
             .unwrap();
 
@@ -2200,7 +2204,11 @@ mod tests {
             .await
             .unwrap();
         collection
-            .grant_one(&context.pool, group.id, Permissions::ReadObject)
+            .grant_one(
+                &context.pool,
+                GroupID::new(group.id).unwrap(),
+                Permissions::ReadObject,
+            )
             .await
             .unwrap();
 
@@ -2317,11 +2325,19 @@ mod tests {
             .await
             .unwrap();
         visible_collection
-            .grant_one(&context.pool, group.id, Permissions::ReadObject)
+            .grant_one(
+                &context.pool,
+                GroupID::new(group.id).unwrap(),
+                Permissions::ReadObject,
+            )
             .await
             .unwrap();
         visible_collection
-            .grant_one(&context.pool, group.id, Permissions::ReadObjectRelation)
+            .grant_one(
+                &context.pool,
+                GroupID::new(group.id).unwrap(),
+                Permissions::ReadObjectRelation,
+            )
             .await
             .unwrap();
 

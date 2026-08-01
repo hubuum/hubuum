@@ -12,8 +12,8 @@ use actix_web::test as actix_test;
 use serde_json::json;
 
 use crate::models::{
-    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
-    PermissionsList,
+    CollectionID, GroupID, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
+    NewHubuumObjectRelation, Permissions, PermissionsList,
 };
 use crate::permissions::{
     AuthzTarget, LocalPermissionBackend, PermissionBackend, PermissionDecision, PermissionRequest,
@@ -427,8 +427,8 @@ async fn local_backend_relation_and_check_denies_partial_permission() {
     // Grant ReadClassRelation on collection_a only.
     backend
         .apply_permissions(
-            fixture_a.collection.id,
-            group.id,
+            CollectionID::new(fixture_a.collection.id).unwrap(),
+            GroupID::new(group.id).unwrap(),
             PermissionsList::new(vec![Permissions::ReadClassRelation]),
             false,
         )
@@ -449,8 +449,8 @@ async fn local_backend_relation_and_check_denies_partial_permission() {
     // Grant ReadClassRelation on collection_b too.
     backend
         .apply_permissions(
-            fixture_b.collection.id,
-            group.id,
+            CollectionID::new(fixture_b.collection.id).unwrap(),
+            GroupID::new(group.id).unwrap(),
             PermissionsList::new(vec![Permissions::ReadClassRelation]),
             false,
         )

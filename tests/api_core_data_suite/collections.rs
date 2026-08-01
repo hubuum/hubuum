@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::models::{
-        Collection, GroupPermission, GroupResponse, NewCollectionWithAssignee, NewGroup,
+        Collection, GroupID, GroupPermission, GroupResponse, NewCollectionWithAssignee, NewGroup,
         Permission, Permissions, UpdateCollection,
     };
 
@@ -542,7 +542,7 @@ mod tests {
         let np_read = Permissions::ReadCollection;
         collection_fixture
             .collection
-            .grant_one(&context.pool, test_group.id, np_read)
+            .grant_one(&context.pool, GroupID::new(test_group.id).unwrap(), np_read)
             .await
             .unwrap();
 
@@ -560,7 +560,11 @@ mod tests {
         let np_update = Permissions::UpdateCollection;
         collection_fixture
             .collection
-            .grant_one(&context.pool, test_group.id, np_update)
+            .grant_one(
+                &context.pool,
+                GroupID::new(test_group.id).unwrap(),
+                np_update,
+            )
             .await
             .unwrap();
 
@@ -591,7 +595,11 @@ mod tests {
         let np_delegate = Permissions::DelegateCollection;
         collection_fixture
             .collection
-            .grant_one(&context.pool, test_group.id, np_delegate)
+            .grant_one(
+                &context.pool,
+                GroupID::new(test_group.id).unwrap(),
+                np_delegate,
+            )
             .await
             .unwrap();
 
@@ -662,12 +670,20 @@ mod tests {
 
         collection_fixture
             .collection
-            .grant_one(&context.pool, group_one.id, Permissions::ReadCollection)
+            .grant_one(
+                &context.pool,
+                GroupID::new(group_one.id).unwrap(),
+                Permissions::ReadCollection,
+            )
             .await
             .unwrap();
         collection_fixture
             .collection
-            .grant_one(&context.pool, group_two.id, Permissions::ReadCollection)
+            .grant_one(
+                &context.pool,
+                GroupID::new(group_two.id).unwrap(),
+                Permissions::ReadCollection,
+            )
             .await
             .unwrap();
 
@@ -770,7 +786,11 @@ mod tests {
         for group in [&group_one, &group_two, &group_three] {
             collection_fixture
                 .collection
-                .grant_one(&context.pool, group.id, Permissions::ReadCollection)
+                .grant_one(
+                    &context.pool,
+                    GroupID::new(group.id).unwrap(),
+                    Permissions::ReadCollection,
+                )
                 .await
                 .unwrap();
         }

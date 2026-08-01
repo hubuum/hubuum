@@ -448,7 +448,7 @@ pub async fn get_collection_permissions(
         .await?
     } else {
         pool.permission_backend()
-            .groups_with_permissions_on(collection.id, &[], &search_params)
+            .groups_with_permissions_on(*collection_id, &[], &search_params)
             .await?
     };
     ApiResponse::paginated(permissions, total_count, &params)
@@ -500,7 +500,7 @@ pub async fn get_collection_group_permissions(
         collection_model::group_on(&pool, collection.id, group_id.id()).await?
     } else {
         pool.permission_backend()
-            .group_permission_on(collection.id, group_id.id())
+            .group_permission_on(collection_id, group_id)
             .await?
             .ok_or_else(|| ApiError::NotFound("Permission record not found".to_string()))?
     };
@@ -608,11 +608,11 @@ pub async fn grant_collection_group_permissions(
     if pool.permission_backend().supports_mutation() {
         let event_context = requestor.event_context(&req);
         collection
-            .grant(&pool, group_id.id(), permissions, Some(&event_context))
+            .grant(&pool, group_id, permissions, Some(&event_context))
             .await?;
     } else {
         pool.permission_backend()
-            .apply_permissions(collection.id, group_id.id(), permissions, false)
+            .apply_permissions(collection_id, group_id, permissions, false)
             .await?;
     }
 
@@ -676,11 +676,11 @@ pub async fn replace_collection_group_permissions(
     if pool.permission_backend().supports_mutation() {
         let event_context = requestor.event_context(&req);
         collection
-            .set_permissions(&pool, group_id.id(), permissions, Some(&event_context))
+            .set_permissions(&pool, group_id, permissions, Some(&event_context))
             .await?;
     } else {
         pool.permission_backend()
-            .apply_permissions(collection.id, group_id.id(), permissions, true)
+            .apply_permissions(collection_id, group_id, permissions, true)
             .await?;
     }
 
@@ -731,11 +731,11 @@ pub async fn revoke_collection_group_permissions(
     if pool.permission_backend().supports_mutation() {
         let event_context = requestor.event_context(&req);
         collection
-            .revoke_all(&pool, group_id.id(), Some(&event_context))
+            .revoke_all(&pool, group_id, Some(&event_context))
             .await?;
     } else {
         pool.permission_backend()
-            .revoke_all(collection.id, group_id.id())
+            .revoke_all(collection_id, group_id)
             .await?;
     }
 
@@ -789,7 +789,7 @@ pub async fn get_collection_group_permission(
         group_can_on(&pool, group_id.id(), collection, permission).await?
     } else {
         pool.permission_backend()
-            .group_permission_on(collection.id, group_id.id())
+            .group_permission_on(collection_id, group_id)
             .await?
             .is_some_and(|row| row.granted().contains(&permission))
     };
@@ -847,11 +847,11 @@ pub async fn grant_collection_group_permission(
     if pool.permission_backend().supports_mutation() {
         let event_context = requestor.event_context(&req);
         collection
-            .grant(&pool, group_id.id(), permissions, Some(&event_context))
+            .grant(&pool, group_id, permissions, Some(&event_context))
             .await?;
     } else {
         pool.permission_backend()
-            .apply_permissions(collection.id, group_id.id(), permissions, false)
+            .apply_permissions(collection_id, group_id, permissions, false)
             .await?;
     }
 
@@ -905,11 +905,11 @@ pub async fn revoke_collection_group_permission(
     if pool.permission_backend().supports_mutation() {
         let event_context = requestor.event_context(&req);
         collection
-            .revoke(&pool, group_id.id(), permissions, Some(&event_context))
+            .revoke(&pool, group_id, permissions, Some(&event_context))
             .await?;
     } else {
         pool.permission_backend()
-            .revoke_permissions(collection.id, group_id.id(), permissions)
+            .revoke_permissions(collection_id, group_id, permissions)
             .await?;
     }
 
@@ -1075,7 +1075,7 @@ pub async fn get_collection_groups_with_permission(
     } else {
         let (permissions, total_count) = pool
             .permission_backend()
-            .groups_with_permissions_on(collection.id, &[permission], &search_params)
+            .groups_with_permissions_on(collection_id, &[permission], &search_params)
             .await?;
         (
             permissions.into_iter().map(|row| row.group).collect(),

@@ -538,7 +538,7 @@ mod test {
         class
             .grant_without_events(
                 &context.pool,
-                test_group_1.id,
+                GroupID::new(test_group_1.id).unwrap(),
                 PermissionsList::new([
                     Permissions::ReadClass,
                     Permissions::UpdateClass,
@@ -602,7 +602,11 @@ mod test {
         assert_not_contains!(&classlist, &class);
 
         collection_fixture
-            .grant_one(&context.pool, test_group_2.id, Permissions::ReadCollection)
+            .grant_one(
+                &context.pool,
+                GroupID::new(test_group_2.id).unwrap(),
+                Permissions::ReadCollection,
+            )
             .await
             .unwrap();
 
@@ -633,7 +637,11 @@ mod test {
         assert_contains!(&classlist, &class);
 
         class
-            .grant_one(&context.pool, test_group_2.id, Permissions::ReadClass)
+            .grant_one(
+                &context.pool,
+                GroupID::new(test_group_2.id).unwrap(),
+                Permissions::ReadClass,
+            )
             .await
             .unwrap();
 
@@ -648,7 +656,11 @@ mod test {
         assert_contains!(&classlist, &class);
 
         class
-            .revoke_one(&context.pool, test_group_2.id, Permissions::ReadClass)
+            .revoke_one(
+                &context.pool,
+                GroupID::new(test_group_2.id).unwrap(),
+                Permissions::ReadClass,
+            )
             .await
             .unwrap();
 
@@ -673,7 +685,7 @@ mod test {
         assert_contains!(&collection_list, &collection_fixture);
 
         collection_fixture
-            .revoke_all_without_events(&context.pool, test_group_2.id)
+            .revoke_all_without_events(&context.pool, GroupID::new(test_group_2.id).unwrap())
             .await
             .unwrap();
 

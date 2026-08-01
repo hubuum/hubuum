@@ -15,7 +15,7 @@ mod tests {
     use crate::events::EventContext;
     use crate::models::search::parse_query_parameter;
     use crate::models::{
-        ComputedFieldDefinitionRequest, HubuumClassID, NewHubuumClass, NewHubuumObject,
+        ComputedFieldDefinitionRequest, GroupID, HubuumClassID, NewHubuumClass, NewHubuumObject,
         Permissions, TaskID, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, finalize_page};
@@ -438,7 +438,7 @@ mod tests {
             fixture
                 .collection
                 .collection
-                .grant_one(&context.pool, group.id, *permission)
+                .grant_one(&context.pool, GroupID::new(group.id).unwrap(), *permission)
                 .await
                 .unwrap();
         }

@@ -37,7 +37,7 @@ mod tests {
     use crate::models::token::Token;
     use crate::models::user::{LoginUser, NewUser};
     use crate::models::{
-        CollectionID, GroupResponse, HubuumClassID, HubuumClassRelation, HubuumObject,
+        CollectionID, GroupID, GroupResponse, HubuumClassID, HubuumClassRelation, HubuumObject,
         HubuumObjectID, HubuumObjectRelation, MAX_TOKEN_RESOURCE_SCOPES, NewHubuumClass,
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewServiceAccount,
         NewTaskRecord, Permissions, PrincipalID, PrincipalMemberResponse,
@@ -2557,7 +2557,11 @@ mod tests {
         let group = create_test_group(pool).await;
         fixture
             .collection
-            .grant_one(pool, group.id, Permissions::ReadTemplate)
+            .grant_one(
+                pool,
+                GroupID::new(group.id).unwrap(),
+                Permissions::ReadTemplate,
+            )
             .await
             .unwrap();
         let sa = create_test_service_account(pool, &group, None).await;
@@ -2584,7 +2588,11 @@ mod tests {
         let group = create_test_group(pool).await;
         for collection in [&included.collection, &excluded.collection] {
             collection
-                .grant_one(pool, group.id, Permissions::ReadTemplate)
+                .grant_one(
+                    pool,
+                    GroupID::new(group.id).unwrap(),
+                    Permissions::ReadTemplate,
+                )
                 .await
                 .unwrap();
         }
@@ -2654,7 +2662,7 @@ mod tests {
         let group = create_test_group(pool).await;
         fixture
             .collection
-            .grant_one(pool, group.id, granted)
+            .grant_one(pool, GroupID::new(group.id).unwrap(), granted)
             .await
             .unwrap();
         let sa = create_test_service_account(pool, &group, None).await;

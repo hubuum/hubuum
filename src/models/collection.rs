@@ -503,7 +503,7 @@ mod tests {
     use super::*;
     use crate::db::DbPool;
     use crate::db::traits::UserPermissions;
-    use crate::models::group::NewGroup;
+    use crate::models::group::{GroupID, NewGroup};
     use crate::models::permissions::PermissionsList;
     use crate::tests::{TestScope, create_test_user, generate_all_subsets};
     use crate::traits::{CanDelete, CanSave, PermissionController};
@@ -519,7 +519,7 @@ mod tests {
         for group in groups {
             collection
                 .clone()
-                .grant_without_events(pool, group.id, permissions.clone())
+                .grant_without_events(pool, GroupID::new(group.id).unwrap(), permissions.clone())
                 .await
                 .unwrap();
 
@@ -588,7 +588,7 @@ mod tests {
             .collection
             .set_permissions_without_events(
                 &pool,
-                parent.owner_group.id,
+                GroupID::new(parent.owner_group.id).unwrap(),
                 PermissionsList::new([Permissions::ReadCollection]),
             )
             .await
@@ -596,7 +596,7 @@ mod tests {
         child
             .set_permissions_without_events(
                 &pool,
-                child_group.id,
+                GroupID::new(child_group.id).unwrap(),
                 PermissionsList::new([Permissions::UpdateCollection]),
             )
             .await
@@ -772,7 +772,11 @@ mod tests {
         // This should return an ApiError::NotFound
         let result = collection
             .collection
-            .grant_one(&pool, 99999999, Permissions::ReadCollection)
+            .grant_one(
+                &pool,
+                GroupID::new(99_999_999).unwrap(),
+                Permissions::ReadCollection,
+            )
             .await;
 
         assert!(result.is_err());
@@ -906,7 +910,11 @@ mod tests {
             // Grant this subset of permissions
             collection
                 .collection
-                .grant_without_events(&pool, group_id, PermissionsList::new(subset.clone()))
+                .grant_without_events(
+                    &pool,
+                    GroupID::new(group_id).unwrap(),
+                    PermissionsList::new(subset.clone()),
+                )
                 .await
                 .unwrap();
 
@@ -973,14 +981,22 @@ mod tests {
             // Grant all permissions
             collection
                 .collection
-                .grant_without_events(&pool, group_id, PermissionsList::new(permissions.clone()))
+                .grant_without_events(
+                    &pool,
+                    GroupID::new(group_id).unwrap(),
+                    PermissionsList::new(permissions.clone()),
+                )
                 .await
                 .unwrap();
 
             // Revoke this subset of permissions
             collection
                 .collection
-                .revoke_without_events(&pool, group_id, PermissionsList::new(subset.clone()))
+                .revoke_without_events(
+                    &pool,
+                    GroupID::new(group_id).unwrap(),
+                    PermissionsList::new(subset.clone()),
+                )
                 .await
                 .unwrap();
 
@@ -1025,7 +1041,7 @@ mod tests {
 
         collection
             .collection
-            .grant_one(&pool, group_id, NP::ReadCollection)
+            .grant_one(&pool, GroupID::new(group_id).unwrap(), NP::ReadCollection)
             .await
             .unwrap();
 
@@ -1059,7 +1075,7 @@ mod tests {
 
         collection
             .collection
-            .grant_one(&pool, group_id, NP::UpdateCollection)
+            .grant_one(&pool, GroupID::new(group_id).unwrap(), NP::UpdateCollection)
             .await
             .unwrap();
 
@@ -1088,7 +1104,7 @@ mod tests {
 
         collection
             .collection
-            .revoke_one(&pool, group_id, NP::UpdateCollection)
+            .revoke_one(&pool, GroupID::new(group_id).unwrap(), NP::UpdateCollection)
             .await
             .unwrap();
 
@@ -1146,7 +1162,7 @@ mod tests {
             .collection
             .set_permissions_without_events(
                 &pool,
-                group_id,
+                GroupID::new(group_id).unwrap(),
                 PermissionsList::new([Permissions::ReadTemplate, Permissions::UpdateTemplate]),
             )
             .await
@@ -1195,7 +1211,11 @@ mod tests {
 
         collection
             .collection
-            .grant_one(&pool, group_id, Permissions::CreateTemplate)
+            .grant_one(
+                &pool,
+                GroupID::new(group_id).unwrap(),
+                Permissions::CreateTemplate,
+            )
             .await
             .unwrap();
 
@@ -1212,7 +1232,11 @@ mod tests {
 
         collection
             .collection
-            .revoke_one(&pool, group_id, Permissions::UpdateTemplate)
+            .revoke_one(
+                &pool,
+                GroupID::new(group_id).unwrap(),
+                Permissions::UpdateTemplate,
+            )
             .await
             .unwrap();
 
@@ -1272,12 +1296,20 @@ mod tests {
 
         collection
             .collection
-            .grant_one(&pool, delegate_group.id, Permissions::DelegateCollection)
+            .grant_one(
+                &pool,
+                GroupID::new(delegate_group.id).unwrap(),
+                Permissions::DelegateCollection,
+            )
             .await
             .unwrap();
         collection
             .collection
-            .grant_one(&pool, non_delegate_group.id, Permissions::ReadCollection)
+            .grant_one(
+                &pool,
+                GroupID::new(non_delegate_group.id).unwrap(),
+                Permissions::ReadCollection,
+            )
             .await
             .unwrap();
 
