@@ -174,10 +174,14 @@ where
 pub fn parse_as_of(query_string: &str) -> Result<DateTime<Utc>, ApiError> {
     let (_opts, passthrough) =
         crate::models::search::parse_query_parameter_with_passthrough(query_string, &["at"])?;
-    let at = passthrough
+    let at_values = passthrough
         .get("at")
-        .and_then(|values| values.as_slice().first())
         .ok_or_else(|| ApiError::BadRequest("missing required 'at' parameter".into()))?;
+    let [at] = at_values.as_slice() else {
+        return Err(ApiError::BadRequest(
+            "at may be supplied exactly once".to_string(),
+        ));
+    };
     DateTime::parse_from_rfc3339(at)
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|_| ApiError::BadRequest(format!("invalid rfc3339 timestamp: {at}")))
@@ -284,6 +288,16 @@ mod tests {
         assert!(matches!(
             parse_as_of("at=not-a-date"),
             Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn parse_as_of_rejects_duplicate_timestamps() {
+        let error = parse_as_of("at=2026-01-02T03:04:05Z&at=2026-01-03T03:04:05Z").unwrap_err();
+
+        assert!(matches!(
+            error,
+            ApiError::BadRequest(message) if message == "at may be supplied exactly once"
         ));
     }
 

@@ -87,6 +87,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   those fields within the new limits before upgrading. Oversized requests are
   rejected before rate-limit state or password workers are used, bounding
   unauthenticated limiter-key memory and password-processing work.
+- **Breaking (HTTP API):** Common resource queries now reject more than 128
+  parameters, 64 filters, or 8 distinct sort fields before building database
+  queries. Duplicate sort fields and ambiguous repeated history `at` parameters
+  are also rejected. Clients must keep queries within those limits and send one
+  value for each sort field and history `at` parameter before upgrading. This
+  bounds query-parser allocation and quadratic cursor-predicate growth.
 - **Breaking (HTTP and Rust API):** Event-delivery API responses no longer
   expose the internal `claim_token` worker lease capability. API clients must
   stop deserializing or depending on this field. The persistence-only
