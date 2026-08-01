@@ -167,6 +167,63 @@ mod tests {
     }
 
     #[rstest]
+    #[case::existing_stage(true)]
+    #[case::missing_stage(false)]
+    #[actix_web::test]
+    async fn invalid_restore_capability_does_not_disclose_stage_existence(
+        #[future(awt)] test_context: TestContext,
+        #[case] stage_exists: bool,
+    ) {
+        let context = test_context;
+        let restore_id = if stage_exists {
+            let response = post_request(
+                &context.pool,
+                &context.admin_token,
+                "/api/v1/restores",
+                &minimally_valid_full_backup_document(),
+            )
+            .await;
+            let response = assert_response_status(response, StatusCode::CREATED).await;
+            test::read_body_json::<RestoreStageResponse, _>(response)
+                .await
+                .id
+        } else {
+            i64::MAX
+        };
+
+        let response = get_request_with_headers(
+            &context.pool,
+            "",
+            &format!("/api/v1/restores/{restore_id}/status"),
+            vec![(
+                actix_web::http::header::HeaderName::from_static("x-hubuum-restore-capability"),
+                "invalid-restore-capability".to_string(),
+            )],
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::FORBIDDEN).await;
+        let body = test::read_body_json::<serde_json::Value, _>(response).await;
+
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "error": "Forbidden",
+                "message": "Restore capability is invalid"
+            })
+        );
+
+        if stage_exists {
+            with_connection(&context.pool, async |conn| {
+                diesel::delete(restore_jobs.filter(id.eq(restore_id)))
+                    .execute(conn)
+                    .await
+            })
+            .await
+            .unwrap();
+        }
+    }
+
+    #[rstest]
     #[case::local_identity_scope(MissingRestoreSeed::LocalIdentityScope)]
     #[case::root_collection(MissingRestoreSeed::RootCollection)]
     #[case::root_closure(MissingRestoreSeed::RootClosure)]

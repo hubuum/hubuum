@@ -117,6 +117,10 @@ fn capability_matches(capability_hash: &str, capability: &str) -> bool {
             == 0
 }
 
+fn invalid_restore_capability() -> ApiError {
+    ApiError::Forbidden("Restore capability is invalid".to_string())
+}
+
 fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSummary, ApiError> {
     document.validate_version()?;
     for required in BACKUP_STATE_SECTIONS {
@@ -490,11 +494,12 @@ pub async fn restore_status(
     job_id: i64,
     capability: &str,
 ) -> Result<RestoreStageResponse, ApiError> {
-    let job = load_restore_status_job_db(pool, job_id).await?;
+    let job = match load_restore_status_job_db(pool, job_id).await {
+        Err(ApiError::NotFound(_)) => return Err(invalid_restore_capability()),
+        result => result?,
+    };
     if !capability_matches(&job.capability_hash, capability) {
-        return Err(ApiError::Forbidden(
-            "Restore capability is invalid".to_string(),
-        ));
+        return Err(invalid_restore_capability());
     }
     let status = job.status.parse::<RestoreJobStatus>()?;
     let validation = serde_json::from_value(job.validation_summary.clone())?;
