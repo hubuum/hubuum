@@ -68,6 +68,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   should use the hash-free `PrincipalTokenMetadata` schema returned by token
   listing endpoints.
 
+### Fixed
+
+- In-memory cursor pagination now computes every row's sort values before
+  ordering and extracts each value once, so failures cannot silently leave rows
+  unordered and fallible work is not repeated inside the sort comparator.
+
 ## [0.0.8] - 2026-08-01
 
 ### Fixed
