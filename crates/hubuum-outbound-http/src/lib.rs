@@ -307,9 +307,23 @@ fn transport_controls_header(name: &HeaderName) -> bool {
     )
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct OutboundHeaders {
     inner: HeaderMap,
+}
+
+impl fmt::Debug for OutboundHeaders {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names = self
+            .inner
+            .keys()
+            .map(HeaderName::as_str)
+            .collect::<Vec<_>>();
+        formatter
+            .debug_struct("OutboundHeaders")
+            .field("names", &names)
+            .finish()
+    }
 }
 
 impl OutboundHeaders {
@@ -394,7 +408,6 @@ impl OutboundRequest {
     }
 }
 
-#[derive(Debug)]
 pub struct OutboundResponse {
     status_code: u16,
     status_display: String,
@@ -403,6 +416,21 @@ pub struct OutboundResponse {
     body_preview: String,
     duration_ms: i32,
     url: String,
+}
+
+impl fmt::Debug for OutboundResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OutboundResponse")
+            .field("status_code", &self.status_code)
+            .field("status_display", &self.status_display)
+            .field("success", &self.success)
+            .field("headers", &"[REDACTED]")
+            .field("body_preview", &"[REDACTED]")
+            .field("duration_ms", &self.duration_ms)
+            .field("url", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl OutboundResponse {
@@ -686,6 +714,41 @@ mod tests {
             OutboundHttpError::Request.to_string(),
             "outbound call failed"
         );
+    }
+
+    #[test]
+    fn outbound_headers_debug_omits_header_values() {
+        let raw_authorization = "Bearer outbound-secret";
+        let mut headers = OutboundHeaders::new();
+        headers.insert("authorization", raw_authorization).unwrap();
+        headers.insert("x-request-id", "request-1").unwrap();
+
+        let debug = format!("{headers:?}");
+
+        assert!(debug.contains("authorization"));
+        assert!(debug.contains("x-request-id"));
+        assert!(!debug.contains(raw_authorization));
+    }
+
+    #[test]
+    fn outbound_response_debug_omits_payload_headers_and_url() {
+        let response = OutboundResponse {
+            status_code: 200,
+            status_display: "200 OK".to_string(),
+            success: true,
+            headers: serde_json::json!({"set-cookie": "response-header-secret"}),
+            body_preview: "response-body-secret".to_string(),
+            duration_ms: 12,
+            url: "https://example.invalid/hook?token=url-secret".to_string(),
+        };
+
+        let debug = format!("{response:?}");
+
+        assert!(debug.contains("status_code: 200"));
+        assert!(debug.contains("duration_ms: 12"));
+        assert!(!debug.contains("response-header-secret"));
+        assert!(!debug.contains("response-body-secret"));
+        assert!(!debug.contains("url-secret"));
     }
 
     #[test]
