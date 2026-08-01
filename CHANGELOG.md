@@ -20,6 +20,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   effective maximum alongside the default lifetime. Before upgrading, clients
   that request longer expirations must shorten them, or operators must raise
   the new limit; no database migration is required.
+- The public `CursorPaginated` trait no longer requires row types to implement
+  `Clone`; pagination borrows or moves rows and accepts non-clone domain types.
 
 ### Security
 
