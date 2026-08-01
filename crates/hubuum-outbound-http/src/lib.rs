@@ -122,11 +122,22 @@ impl OutboundMethod {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OutboundUrlParts {
     url: Url,
     host: String,
     port: u16,
+}
+
+impl fmt::Debug for OutboundUrlParts {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OutboundUrlParts")
+            .field("url", &"[REDACTED]")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .finish()
+    }
 }
 
 impl OutboundUrlParts {
@@ -669,6 +680,17 @@ mod tests {
             validate_outbound_url("https://example.com@127.0.0.1/hook"),
             Err(OutboundHttpError::EmbeddedCredentials)
         ));
+    }
+
+    #[test]
+    fn outbound_url_debug_omits_query_credentials() {
+        let parts = validate_outbound_url("https://example.com/hook?api_key=query-secret").unwrap();
+
+        let debug = format!("{parts:?}");
+
+        assert!(debug.contains("example.com"));
+        assert!(debug.contains("port: 443"));
+        assert!(!debug.contains("query-secret"));
     }
 
     #[test]

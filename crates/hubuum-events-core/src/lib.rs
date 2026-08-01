@@ -415,7 +415,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema", derive(ToSchema))]
 pub struct EventEnvelope {
     pub id: i64,
@@ -436,6 +436,32 @@ pub struct EventEnvelope {
     pub after: Option<serde_json::Value>,
     pub metadata: serde_json::Value,
     pub schema_version: i32,
+}
+
+impl fmt::Debug for EventEnvelope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EventEnvelope")
+            .field("id", &self.id)
+            .field("event_id", &self.event_id)
+            .field("occurred_at", &self.occurred_at)
+            .field("entity_type", &self.entity_type)
+            .field("entity_id", &self.entity_id)
+            .field("entity_name", &self.entity_name)
+            .field("collection_id", &self.collection_id)
+            .field("action", &self.action)
+            .field("actor_user_id", &self.actor_user_id)
+            .field("actor_kind", &self.actor_kind)
+            .field("provenance", &self.provenance)
+            .field("request_id", &self.request_id)
+            .field("correlation_id", &self.correlation_id)
+            .field("summary", &self.summary)
+            .field("before", &self.before.as_ref().map(|_| "<redacted>"))
+            .field("after", &self.after.as_ref().map(|_| "<redacted>"))
+            .field("metadata", &"<redacted>")
+            .field("schema_version", &self.schema_version)
+            .finish()
+    }
 }
 
 impl EventEnvelope {
@@ -993,5 +1019,20 @@ mod tests {
             metadata: serde_json::json!({"related_collection_ids": [20, "21"]}),
             schema_version: 1,
         }
+    }
+
+    #[test]
+    fn event_envelope_debug_redacts_payload_snapshots() {
+        let mut event = envelope();
+        event.before = Some(serde_json::json!({"token": "before-secret"}));
+        event.after = Some(serde_json::json!({"token": "after-secret"}));
+        event.metadata = serde_json::json!({"token": "metadata-secret"});
+
+        let debug = format!("{event:?}");
+
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("before-secret"));
+        assert!(!debug.contains("after-secret"));
+        assert!(!debug.contains("metadata-secret"));
     }
 }

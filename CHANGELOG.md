@@ -43,10 +43,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   missing stages from capability mismatches without recording the capability.
 - Response debug logs no longer include custom HTTP header values, preventing
   pagination cursors and future secret-bearing headers from leaking into logs.
-- Redacted passwords, raw logout bearer tokens, stored token digests, task
-  request payloads, idempotency keys, task lease tokens, outbound HTTP headers
-  and response previews, event-sink delivery fields, and credential-bearing
-  event-sink connection keys from debug output.
+- Debug formatting now redacts authentication credentials, including raw
+  logout bearer tokens and stored token digests, along with task request and
+  lease data, worker claim tokens, audit-event payloads, outbound HTTP headers,
+  URLs and response previews, remote-target configuration and results,
+  event-sink configuration and routing, full backup contents, restore
+  capabilities and errors, and credential-bearing connection cache keys.
 
 ## [0.0.8] - 2026-08-01
 

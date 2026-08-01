@@ -15,7 +15,8 @@ use crate::models::remote_target::validate_target_parts;
 use crate::models::{
     EventSinkKind, ExportContentType, ExportInclude, ExportLimits, ExportMissingDataPolicy,
     ExportRelationContext, ExportScopeKind, ExportTemplateKind, ObjectRelationLimit, Permissions,
-    RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType, redacted_debug_option,
+    REDACTED_DEBUG_VALUE, RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType,
+    redacted_debug_option,
 };
 
 pub const CURRENT_IMPORT_VERSION: i32 = 1;
@@ -466,7 +467,7 @@ pub struct ImportRemoteTargetInput {
     pub timestamps: Option<RestoreTimestamps>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ImportEventSinkInput {
     #[serde(rename = "ref")]
     pub ref_: Option<String>,
@@ -479,7 +480,21 @@ pub struct ImportEventSinkInput {
     pub timestamps: Option<RestoreTimestamps>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl fmt::Debug for ImportEventSinkInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportEventSinkInput")
+            .field("ref_", &self.ref_)
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("configuration", &REDACTED_DEBUG_VALUE)
+            .field("enabled", &self.enabled)
+            .field("timestamps", &self.timestamps)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ImportEventSubscriptionInput {
     #[serde(rename = "ref")]
     pub ref_: Option<String>,
@@ -497,6 +512,27 @@ pub struct ImportEventSubscriptionInput {
     pub routing: serde_json::Value,
     pub enabled: bool,
     pub timestamps: Option<RestoreTimestamps>,
+}
+
+impl fmt::Debug for ImportEventSubscriptionInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportEventSubscriptionInput")
+            .field("ref_", &self.ref_)
+            .field("collection_ref", &self.collection_ref)
+            .field("collection_key", &self.collection_key)
+            .field("sink_ref", &self.sink_ref)
+            .field("sink_key", &self.sink_key)
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("entity_types", &self.entity_types)
+            .field("actions", &self.actions)
+            .field("filter", &self.filter)
+            .field("routing", &REDACTED_DEBUG_VALUE)
+            .field("enabled", &self.enabled)
+            .field("timestamps", &self.timestamps)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, ToSchema)]
@@ -780,9 +816,10 @@ mod tests {
 
     use super::{
         IdentityScopeKey, ImportAtomicity, ImportCollisionPolicy, ImportEventSinkInput,
-        ImportExportTemplateInput, ImportGraph, ImportMode, ImportPermissionPolicy,
-        ImportPrincipalInput, ImportPrincipalSubtype, ImportRemoteTargetInput, ImportRequest,
-        RestoreTimestamps, validate_optional_selector, validate_required_selector,
+        ImportEventSubscriptionInput, ImportExportTemplateInput, ImportGraph, ImportMode,
+        ImportPermissionPolicy, ImportPrincipalInput, ImportPrincipalSubtype,
+        ImportRemoteTargetInput, ImportRequest, RestoreTimestamps, validate_optional_selector,
+        validate_required_selector,
     };
     use crate::models::{
         CollectionKey, EventSinkKind, ExportContentType, ExportTemplateKind, REDACTED_DEBUG_VALUE,
@@ -1098,5 +1135,47 @@ mod tests {
         });
 
         assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn import_debug_redacts_event_sink_configuration_and_routing() {
+        let request = request_with_graph(ImportGraph {
+            event_sinks: vec![ImportEventSinkInput {
+                ref_: Some("sink:1".to_string()),
+                name: "webhook".to_string(),
+                kind: EventSinkKind::Webhook,
+                config: serde_json::json!({
+                    "headers": {"authorization": "import-config-secret"}
+                }),
+                secret_ref: Some("import-secret-reference".to_string()),
+                enabled: true,
+                timestamps: None,
+            }],
+            event_subscriptions: vec![ImportEventSubscriptionInput {
+                ref_: Some("subscription:1".to_string()),
+                collection_ref: Some("collection:1".to_string()),
+                collection_key: None,
+                sink_ref: Some("sink:1".to_string()),
+                sink_key: None,
+                name: "subscription".to_string(),
+                description: String::new(),
+                entity_types: vec!["object".to_string()],
+                actions: vec!["updated".to_string()],
+                filter: serde_json::json!({}),
+                routing: serde_json::json!({
+                    "url": "https://example.invalid/hook?key=import-routing-secret"
+                }),
+                enabled: true,
+                timestamps: None,
+            }],
+            ..ImportGraph::default()
+        });
+
+        let debug = format!("{request:?}");
+
+        assert!(debug.contains(REDACTED_DEBUG_VALUE));
+        assert!(!debug.contains("import-config-secret"));
+        assert!(!debug.contains("import-secret-reference"));
+        assert!(!debug.contains("import-routing-secret"));
     }
 }

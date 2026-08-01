@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::str::FromStr;
 
 use chrono::NaiveDateTime;
@@ -8,6 +9,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::errors::ApiError;
+use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 use crate::schema::{backup_task_outputs, restore_jobs, server_instances};
 
 use super::principal::Principal;
@@ -167,20 +169,46 @@ pub struct BackupManifest {
 /// Privileged, restore-only table snapshots. In backup version 3, each section
 /// name and row shape corresponds to the PostgreSQL table restored from it.
 /// These are versioned disaster-recovery internals, not portable import data.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema, Default)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema, Default)]
 pub struct BackupHistory {
     #[schema(value_type = Object)]
     pub sections: BTreeMap<String, Vec<serde_json::Value>>,
 }
 
+impl fmt::Debug for BackupHistory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BackupHistory")
+            .field("section_count", &self.sections.len())
+            .field(
+                "row_count",
+                &self.sections.values().map(Vec::len).sum::<usize>(),
+            )
+            .finish()
+    }
+}
+
 /// Exact logical rows used by the destructive full-system restore path.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema, Default)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema, Default)]
 pub struct BackupState {
     #[schema(value_type = Object)]
     pub sections: BTreeMap<String, Vec<serde_json::Value>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+impl fmt::Debug for BackupState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BackupState")
+            .field("section_count", &self.sections.len())
+            .field(
+                "row_count",
+                &self.sections.values().map(Vec::len).sum::<usize>(),
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BackupDocument {
     pub backup_version: i32,
@@ -189,6 +217,20 @@ pub struct BackupDocument {
     pub state: BackupState,
     pub history: Option<BackupHistory>,
     pub manifest: BackupManifest,
+}
+
+impl fmt::Debug for BackupDocument {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BackupDocument")
+            .field("backup_version", &self.backup_version)
+            .field("created_at", &self.created_at)
+            .field("source_version", &self.source_version)
+            .field("state", &self.state)
+            .field("history", &self.history)
+            .field("manifest", &self.manifest)
+            .finish()
+    }
 }
 
 impl BackupDocument {
@@ -368,7 +410,7 @@ pub struct RestoreValidationSummary {
     pub total_items: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct RestoreStageResponse {
     pub id: i64,
     pub status: RestoreJobStatus,
@@ -391,12 +433,53 @@ pub struct RestoreStageResponse {
     pub restore_capability: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl fmt::Debug for RestoreStageResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RestoreStageResponse")
+            .field("id", &self.id)
+            .field("status", &self.status)
+            .field("requested_by", &self.requested_by)
+            .field(
+                "requested_by_identity_scope",
+                &self.requested_by_identity_scope,
+            )
+            .field("requested_by_name", &self.requested_by_name)
+            .field("sha256", &self.sha256)
+            .field("byte_size", &self.byte_size)
+            .field("expires_at", &self.expires_at)
+            .field("error", &redacted_debug_option(&self.error))
+            .field("confirmed_at", &self.confirmed_at)
+            .field("started_at", &self.started_at)
+            .field("finished_at", &self.finished_at)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("validation", &self.validation)
+            .field(
+                "restore_capability",
+                &redacted_debug_option(&self.restore_capability),
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RestoreConfirmRequest {
     pub restore_capability: String,
     pub sha256: String,
     pub confirmation: String,
+}
+
+impl fmt::Debug for RestoreConfirmRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RestoreConfirmRequest")
+            .field("restore_capability", &REDACTED_DEBUG_VALUE)
+            .field("sha256", &self.sha256)
+            .field("confirmation", &self.confirmation)
+            .finish()
+    }
 }
 
 pub const RESTORE_CONFIRMATION_PHRASE: &str = "REPLACE ALL HUBUUM DATA";
@@ -409,4 +492,85 @@ pub struct ServerInstanceRecord {
     pub drained: bool,
     pub last_heartbeat_at: NaiveDateTime,
     pub started_at: NaiveDateTime,
+}
+
+#[cfg(test)]
+mod sensitive_debug_tests {
+    use super::*;
+
+    fn timestamp() -> NaiveDateTime {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc()
+    }
+
+    #[test]
+    fn backup_debug_reports_shape_without_snapshot_rows() {
+        let document = BackupDocument {
+            backup_version: CURRENT_BACKUP_VERSION,
+            created_at: timestamp(),
+            source_version: "test".to_string(),
+            state: BackupState {
+                sections: BTreeMap::from([(
+                    "users".to_string(),
+                    vec![serde_json::json!({"password": "backup-state-secret"})],
+                )]),
+            },
+            history: Some(BackupHistory {
+                sections: BTreeMap::from([(
+                    "remote_call_results".to_string(),
+                    vec![serde_json::json!({"body": "backup-history-secret"})],
+                )]),
+            }),
+            manifest: BackupManifest::default(),
+        };
+
+        let debug = format!("{document:?}");
+
+        assert!(debug.contains("section_count: 1"));
+        assert!(debug.contains("row_count: 1"));
+        assert!(!debug.contains("backup-state-secret"));
+        assert!(!debug.contains("backup-history-secret"));
+    }
+
+    #[test]
+    fn restore_debug_redacts_capabilities_and_persisted_errors() {
+        let response = RestoreStageResponse {
+            id: 1,
+            status: RestoreJobStatus::Validated,
+            requested_by: Some(2),
+            requested_by_identity_scope: "local".to_string(),
+            requested_by_name: "admin".to_string(),
+            sha256: "document-sha".to_string(),
+            byte_size: 42,
+            expires_at: timestamp(),
+            error: Some("restore-internal-secret".to_string()),
+            confirmed_at: None,
+            started_at: None,
+            finished_at: None,
+            created_at: timestamp(),
+            updated_at: timestamp(),
+            validation: RestoreValidationSummary {
+                backup_version: CURRENT_BACKUP_VERSION,
+                source_version: "test".to_string(),
+                includes_history: true,
+                total_items: 1,
+            },
+            restore_capability: Some("restore-capability-secret".to_string()),
+        };
+        let confirmation = RestoreConfirmRequest {
+            restore_capability: "confirm-capability-secret".to_string(),
+            sha256: "document-sha".to_string(),
+            confirmation: RESTORE_CONFIRMATION_PHRASE.to_string(),
+        };
+
+        let response_debug = format!("{response:?}");
+        let confirmation_debug = format!("{confirmation:?}");
+
+        assert!(response_debug.contains(REDACTED_DEBUG_VALUE));
+        assert!(!response_debug.contains("restore-internal-secret"));
+        assert!(!response_debug.contains("restore-capability-secret"));
+        assert!(confirmation_debug.contains(REDACTED_DEBUG_VALUE));
+        assert!(!confirmation_debug.contains("confirm-capability-secret"));
+    }
 }

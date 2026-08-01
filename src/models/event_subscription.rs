@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 use crate::db::prelude::*;
 use chrono::NaiveDateTime;
@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize, Serializer};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
-use crate::models::CollectionID;
 use crate::models::search::{FilterField, SortParam};
+use crate::models::{CollectionID, REDACTED_DEBUG_VALUE};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -75,7 +75,35 @@ impl FromStr for EventSinkKind {
     }
 }
 
-#[derive(Debug, Clone, Queryable, Selectable)]
+macro_rules! impl_redacted_event_sink_debug {
+    ($target:ty, $($field:ident),+ $(,)?) => {
+        impl fmt::Debug for $target {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let mut debug = formatter.debug_struct(stringify!($target));
+                $(debug.field(stringify!($field), &self.$field);)+
+                debug
+                    .field("configuration", &REDACTED_DEBUG_VALUE)
+                    .finish()
+            }
+        }
+    };
+}
+
+macro_rules! impl_redacted_event_subscription_debug {
+    ($target:ty, $($field:ident),+ $(,)?) => {
+        impl fmt::Debug for $target {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let mut debug = formatter.debug_struct(stringify!($target));
+                $(debug.field(stringify!($field), &self.$field);)+
+                debug
+                    .field("routing", &REDACTED_DEBUG_VALUE)
+                    .finish()
+            }
+        }
+    };
+}
+
+#[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = event_sinks)]
 pub(crate) struct EventSinkRow {
     pub id: i32,
@@ -88,7 +116,17 @@ pub(crate) struct EventSinkRow {
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl_redacted_event_sink_debug!(
+    EventSinkRow,
+    id,
+    name,
+    kind,
+    enabled,
+    created_at,
+    updated_at,
+);
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventSink {
     pub id: i32,
     pub name: String,
@@ -101,7 +139,9 @@ pub struct EventSink {
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl_redacted_event_sink_debug!(EventSink, id, name, kind, enabled, created_at, updated_at,);
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct NewEventSink {
     pub name: String,
     pub kind: EventSinkKind,
@@ -112,7 +152,9 @@ pub struct NewEventSink {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl_redacted_event_sink_debug!(NewEventSink, name, kind, enabled);
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct UpdateEventSink {
     pub name: Option<String>,
     pub kind: Option<EventSinkKind>,
@@ -127,7 +169,9 @@ pub struct UpdateEventSink {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Insertable)]
+impl_redacted_event_sink_debug!(UpdateEventSink, name, kind, enabled);
+
+#[derive(Clone, Insertable)]
 #[diesel(table_name = event_sinks)]
 pub(crate) struct NewEventSinkRow {
     pub name: String,
@@ -137,7 +181,9 @@ pub(crate) struct NewEventSinkRow {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, AsChangeset)]
+impl_redacted_event_sink_debug!(NewEventSinkRow, name, kind, enabled);
+
+#[derive(Clone, AsChangeset)]
 #[diesel(table_name = event_sinks)]
 pub(crate) struct UpdateEventSinkRow {
     pub name: Option<String>,
@@ -146,6 +192,8 @@ pub(crate) struct UpdateEventSinkRow {
     pub secret_ref: Option<Option<String>>,
     pub enabled: Option<bool>,
 }
+
+impl_redacted_event_sink_debug!(UpdateEventSinkRow, name, kind, enabled);
 
 impl UpdateEventSinkRow {
     pub(crate) fn has_changes(&self, current: &EventSinkRow) -> bool {
@@ -168,7 +216,7 @@ impl UpdateEventSinkRow {
     }
 }
 
-#[derive(Debug, Clone, Queryable, Selectable)]
+#[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = event_subscriptions)]
 pub(crate) struct EventSubscriptionRow {
     pub id: i32,
@@ -185,7 +233,22 @@ pub(crate) struct EventSubscriptionRow {
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl_redacted_event_subscription_debug!(
+    EventSubscriptionRow,
+    id,
+    collection_id,
+    sink_id,
+    name,
+    description,
+    entity_types,
+    actions,
+    filter,
+    enabled,
+    created_at,
+    updated_at,
+);
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventSubscription {
     pub id: i32,
     pub collection_id: i32,
@@ -203,7 +266,22 @@ pub struct EventSubscription {
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl_redacted_event_subscription_debug!(
+    EventSubscription,
+    id,
+    collection_id,
+    sink_id,
+    name,
+    description,
+    entity_types,
+    actions,
+    filter,
+    enabled,
+    created_at,
+    updated_at,
+);
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct NewEventSubscription {
     pub sink_id: EventSinkID,
     pub name: String,
@@ -219,7 +297,18 @@ pub struct NewEventSubscription {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl_redacted_event_subscription_debug!(
+    NewEventSubscription,
+    sink_id,
+    name,
+    description,
+    entity_types,
+    actions,
+    filter,
+    enabled,
+);
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct UpdateEventSubscription {
     pub sink_id: Option<EventSinkID>,
     pub name: Option<String>,
@@ -231,7 +320,18 @@ pub struct UpdateEventSubscription {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Insertable)]
+impl_redacted_event_subscription_debug!(
+    UpdateEventSubscription,
+    sink_id,
+    name,
+    description,
+    entity_types,
+    actions,
+    filter,
+    enabled,
+);
+
+#[derive(Clone, Insertable)]
 #[diesel(table_name = event_subscriptions)]
 pub(crate) struct NewEventSubscriptionRow {
     pub collection_id: i32,
@@ -245,7 +345,19 @@ pub(crate) struct NewEventSubscriptionRow {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, AsChangeset)]
+impl_redacted_event_subscription_debug!(
+    NewEventSubscriptionRow,
+    collection_id,
+    sink_id,
+    name,
+    description,
+    entity_types,
+    actions,
+    filter,
+    enabled,
+);
+
+#[derive(Clone, AsChangeset)]
 #[diesel(table_name = event_subscriptions)]
 pub(crate) struct UpdateEventSubscriptionRow {
     pub sink_id: Option<i32>,
@@ -257,6 +369,17 @@ pub(crate) struct UpdateEventSubscriptionRow {
     pub routing: Option<serde_json::Value>,
     pub enabled: Option<bool>,
 }
+
+impl_redacted_event_subscription_debug!(
+    UpdateEventSubscriptionRow,
+    sink_id,
+    name,
+    description,
+    entity_types,
+    actions,
+    filter,
+    enabled,
+);
 
 impl UpdateEventSubscriptionRow {
     pub(crate) fn has_changes(&self, current: &EventSubscriptionRow) -> bool {
@@ -855,5 +978,87 @@ mod tests {
         );
         assert!(!serialized.to_string().contains(credential));
         assert!(!serialized.to_string().contains(api_key));
+    }
+
+    fn timestamp() -> NaiveDateTime {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc()
+    }
+
+    fn assert_omits(debug: &str, secrets: &[&str]) {
+        assert!(debug.contains(REDACTED_DEBUG_VALUE));
+        for secret in secrets {
+            assert!(!debug.contains(secret));
+        }
+    }
+
+    #[test]
+    fn event_sink_debug_redacts_request_and_persisted_configuration() {
+        let request = NewEventSink {
+            name: "webhook".to_string(),
+            kind: EventSinkKind::Webhook,
+            config: serde_json::json!({
+                "headers": {"authorization": "request-config-secret"}
+            }),
+            secret_ref: Some("request-secret-reference".to_string()),
+            enabled: true,
+        };
+        let row = EventSinkRow {
+            id: 1,
+            name: "webhook".to_string(),
+            kind: "webhook".to_string(),
+            config: serde_json::json!({
+                "headers": {"authorization": "stored-config-secret"}
+            }),
+            secret_ref: Some("stored-secret-reference".to_string()),
+            enabled: true,
+            created_at: timestamp(),
+            updated_at: timestamp(),
+        };
+
+        assert_omits(
+            &format!("{request:?}"),
+            &["request-config-secret", "request-secret-reference"],
+        );
+        assert_omits(
+            &format!("{row:?}"),
+            &["stored-config-secret", "stored-secret-reference"],
+        );
+    }
+
+    #[test]
+    fn event_subscription_debug_redacts_request_and_persisted_routing() {
+        let request = NewEventSubscription {
+            sink_id: EventSinkID::new(1).unwrap(),
+            name: "subscription".to_string(),
+            description: String::new(),
+            entity_types: vec!["object".to_string()],
+            actions: vec!["updated".to_string()],
+            filter: EventSubscriptionFilter::default(),
+            routing: serde_json::json!({
+                "url": "https://example.invalid/hook?key=request-routing-secret"
+            }),
+            enabled: true,
+        };
+        let row = EventSubscriptionRow {
+            id: 2,
+            collection_id: 3,
+            sink_id: 1,
+            name: "subscription".to_string(),
+            description: String::new(),
+            entity_types: serde_json::json!(["object"]),
+            actions: serde_json::json!(["updated"]),
+            filter: serde_json::json!({}),
+            routing: serde_json::json!({
+                "url": "https://example.invalid/hook?key=stored-routing-secret"
+            }),
+            enabled: true,
+            created_at: timestamp(),
+            updated_at: timestamp(),
+        };
+
+        assert_omits(&format!("{request:?}"), &["request-routing-secret"]);
+        assert_omits(&format!("{row:?}"), &["stored-routing-secret"]);
     }
 }
