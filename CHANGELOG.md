@@ -168,6 +168,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Export, backup, and staged-restore retention horizons now reject durations or
   expiry timestamps outside the supported range instead of panicking during
   startup or artifact creation.
+- Concurrent first deliveries to the same AMQP, email, or Valkey endpoint now
+  share one connection initializer instead of opening duplicate connections
+  and discarding all but one.
 
 ## [0.0.8] - 2026-08-01
 

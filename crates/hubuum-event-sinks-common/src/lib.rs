@@ -1,10 +1,11 @@
 use std::fmt;
 use std::future::Future;
 use std::hash::Hash;
+use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
 
 pub use hubuum_events_core::{
     EventEnvelope, EventSinkSecretError, resolve_event_sink_secret, resolve_event_sink_secret_uri,
@@ -178,7 +179,7 @@ fn uri_userinfo(uri: &str) -> Option<&str> {
 }
 
 pub struct UriConnectionPool<K, V> {
-    entries: Mutex<std::collections::HashMap<K, V>>,
+    entries: Mutex<std::collections::HashMap<K, Arc<OnceCell<V>>>>,
 }
 
 impl<K, V> fmt::Debug for UriConnectionPool<K, V> {
@@ -205,25 +206,64 @@ where
         F: FnOnce(K) -> Fut,
         Fut: Future<Output = Result<V, SinkError>>,
     {
-        {
-            let entries = self.entries.lock().await;
-            if let Some(value) = entries.get(&key) {
-                return Ok(value.clone());
+        let entry = {
+            let mut entries = self.entries.lock().await;
+            entries
+                .entry(key.clone())
+                .or_insert_with(|| Arc::new(OnceCell::new()))
+                .clone()
+        };
+
+        let result = entry.get_or_try_init(|| create(key.clone())).await.cloned();
+        if result.is_err() {
+            let mut entries = self.entries.lock().await;
+            let remove_failed_entry = entries.get(&key).is_some_and(|current| {
+                Arc::ptr_eq(current, &entry)
+                    && current.get().is_none()
+                    && Arc::strong_count(current) == 2
+            });
+            if remove_failed_entry {
+                entries.remove(&key);
             }
         }
-
-        let created = create(key.clone()).await?;
-
-        let mut entries = self.entries.lock().await;
-        if let Some(value) = entries.get(&key) {
-            Ok(value.clone())
-        } else {
-            entries.insert(key, created.clone());
-            Ok(created)
-        }
+        result
     }
 
     pub async fn remove(&self, key: &K) {
         self.entries.lock().await.remove(key);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    use super::{SinkError, UriConnectionPool};
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let mut context = Context::from_waker(Waker::noop());
+        let mut future = std::pin::pin!(future);
+
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
+
+    #[test]
+    fn failed_initializer_is_removed_from_the_pool() {
+        let pool = UriConnectionPool::<String, usize>::default();
+
+        let result = block_on(
+            pool.get_or_try_insert_with("failed-uri".to_string(), |_| async move {
+                Err(SinkError::new("initialization failed"))
+            }),
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "initialization failed");
+        assert!(block_on(pool.entries.lock()).is_empty());
     }
 }
