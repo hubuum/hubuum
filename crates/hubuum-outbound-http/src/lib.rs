@@ -54,10 +54,10 @@ pub enum OutboundHttpError {
     EmptyDnsResolution { host: String },
     DisallowedAddress { host: String, address: IpAddr },
     ClientBuild(String),
-    ResponseRead(String),
+    ResponseRead,
     Timeout,
     Connect,
-    Request(String),
+    Request,
     InvalidHeaderName { name: String },
     TransportControlledHeader { name: String },
     InvalidHeaderValue { name: String },
@@ -82,10 +82,10 @@ impl fmt::Display for OutboundHttpError {
                 "outbound host '{host}' resolves to a disallowed address ({address})"
             ),
             Self::ClientBuild(error) => write!(f, "HTTP client error: {error}"),
-            Self::ResponseRead(error) => write!(f, "failed reading outbound response: {error}"),
+            Self::ResponseRead => write!(f, "failed reading outbound response"),
             Self::Timeout => write!(f, "outbound call timed out"),
             Self::Connect => write!(f, "outbound connection failed"),
-            Self::Request(error) => write!(f, "outbound call failed: {error}"),
+            Self::Request => write!(f, "outbound call failed"),
             Self::InvalidHeaderName { name } => write!(f, "invalid outbound header name: {name}"),
             Self::TransportControlledHeader { name } => {
                 write!(
@@ -535,7 +535,7 @@ async fn read_capped_body(
         match response
             .chunk()
             .await
-            .map_err(|error| OutboundHttpError::ResponseRead(error.to_string()))?
+            .map_err(|_| OutboundHttpError::ResponseRead)?
         {
             Some(chunk) => {
                 let remaining = limit - buffer.len();
@@ -584,7 +584,7 @@ fn map_reqwest_error(error: reqwest::Error) -> OutboundHttpError {
     } else if error.is_connect() {
         OutboundHttpError::Connect
     } else {
-        OutboundHttpError::Request(error.to_string())
+        OutboundHttpError::Request
     }
 }
 
@@ -655,6 +655,18 @@ mod tests {
         let json = headers_to_json(&headers);
         assert_eq!(json["set-cookie"], "[redacted]");
         assert_eq!(json["x-request-id"], "abc");
+    }
+
+    #[test]
+    fn transport_errors_cannot_embed_endpoint_details() {
+        assert_eq!(
+            OutboundHttpError::ResponseRead.to_string(),
+            "failed reading outbound response"
+        );
+        assert_eq!(
+            OutboundHttpError::Request.to_string(),
+            "outbound call failed"
+        );
     }
 
     #[test]

@@ -118,7 +118,7 @@ impl AmqpSink {
                 Connection::connect(&uri, ConnectionProperties::default().enable_auto_recover())
                     .await
                     .map(Arc::new)
-                    .map_err(|error| SinkError::new(format!("AMQP connection failed: {error}")))
+                    .map_err(|_| SinkError::new("AMQP connection failed"))
             })
             .await?;
 

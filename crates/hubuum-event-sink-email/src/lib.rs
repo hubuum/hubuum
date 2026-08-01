@@ -70,7 +70,7 @@ impl EmailSink {
             .await?
             .send(message)
             .await
-            .map_err(|error| SinkError::new(format!("Email SMTP delivery failed: {error}")))?;
+            .map_err(|_| SinkError::new("Email SMTP delivery failed"))?;
         Ok(())
     }
 
@@ -78,7 +78,7 @@ impl EmailSink {
         self.transports
             .get_or_try_insert_with(uri.to_string(), |uri| async move {
                 AsyncSmtpTransport::<Tokio1Executor>::from_url(&uri)
-                    .map_err(|error| SinkError::new(format!("Invalid email config: {error}")))
+                    .map_err(|_| SinkError::new("Invalid email config"))
                     .map(|builder| builder.build())
             })
             .await
