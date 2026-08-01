@@ -98,8 +98,47 @@ pub struct EventDelivery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventDeliveryResponse {
+    pub id: i64,
+    pub event_id: i64,
+    pub subscription_id: i32,
+    pub status: String,
+    pub attempts: i32,
+    pub next_attempt_at: NaiveDateTime,
+    pub last_error: Option<String>,
+    pub locked_until: Option<NaiveDateTime>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+impl From<EventDelivery> for EventDeliveryResponse {
+    fn from(delivery: EventDelivery) -> Self {
+        Self {
+            id: delivery.id,
+            event_id: delivery.event_id,
+            subscription_id: delivery.subscription_id,
+            status: delivery.status,
+            attempts: delivery.attempts,
+            next_attempt_at: delivery.next_attempt_at,
+            last_error: delivery.last_error,
+            locked_until: delivery.locked_until,
+            created_at: delivery.created_at,
+            updated_at: delivery.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventDeliveryUpdateResponse {
-    pub delivery: EventDelivery,
+    pub delivery: EventDeliveryResponse,
+}
+
+impl From<EventDelivery> for EventDeliveryUpdateResponse {
+    fn from(delivery: EventDelivery) -> Self {
+        Self {
+            delivery: delivery.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
@@ -257,5 +296,36 @@ impl CursorSqlMapping for EventDelivery {
                 )));
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_delivery_response_omits_internal_claim_token() {
+        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let claim_token = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
+        let delivery = EventDelivery {
+            id: 1,
+            event_id: 2,
+            subscription_id: 3,
+            status: EventDeliveryStatus::InFlight.as_str().to_string(),
+            attempts: 1,
+            next_attempt_at: timestamp,
+            last_error: None,
+            locked_until: Some(timestamp),
+            claim_token: Some(claim_token),
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+
+        let serialized = serde_json::to_value(EventDeliveryResponse::from(delivery)).unwrap();
+
+        assert!(serialized.get("claim_token").is_none());
+        assert!(!serialized.to_string().contains(&claim_token.to_string()));
     }
 }

@@ -17,6 +17,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- **Breaking:** Event-delivery API responses no longer expose the internal
+  `claim_token` worker lease capability. API clients must stop deserializing or
+  depending on this field.
 - Local password changes and administrative password resets now atomically
   revoke all active bearer tokens for the affected user.
 - Redacted embedded URL credentials and common secret-header spellings from
