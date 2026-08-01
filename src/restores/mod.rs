@@ -583,8 +583,13 @@ async fn fail_restore_and_resume(
     job_id: i64,
     error: &ApiError,
 ) -> Result<(), ApiError> {
-    let stored_error = error.to_string();
+    tracing::error!(message = "Restore failed", error = %error);
+    let stored_error = restore_error_for_storage(error);
     fail_restore_and_resume_db(pool, job_id, &stored_error).await
+}
+
+fn restore_error_for_storage(error: &ApiError) -> String {
+    error.public_message().to_string()
 }
 
 pub async fn confirm_restore(
@@ -913,9 +918,11 @@ mod tests {
 
     use super::{
         MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
-        RestoreSettings, confirmation_is_stale, restore_capability_matches, sha256,
+        RestoreSettings, confirmation_is_stale, restore_error_for_storage,
+        restore_capability_matches, sha256,
         validate_computed_field_definitions,
     };
+    use crate::errors::ApiError;
     use crate::models::{BackupDocument, BackupManifest, BackupState, CURRENT_BACKUP_VERSION};
 
     fn computed_definition(class_id: i32, owner_id: Option<i32>, key: String) -> serde_json::Value {
@@ -1025,5 +1032,21 @@ mod tests {
                 .unwrap_err();
 
         assert!(error.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn restore_status_errors_do_not_expose_internal_details() {
+        for error in [
+            ApiError::InternalServerError("secret internal path".to_string()),
+            ApiError::DatabaseError("password=database-secret".to_string()),
+            ApiError::DbConnectionError("postgres://user:secret@db/app".to_string()),
+            ApiError::HashError("hash implementation detail".to_string()),
+        ] {
+            let stored = restore_error_for_storage(&error);
+
+            assert_eq!(stored, "An internal error occurred");
+            assert!(!stored.contains("secret"));
+            assert!(!stored.contains("implementation detail"));
+        }
     }
 }
