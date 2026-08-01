@@ -191,12 +191,27 @@ fn append_event_archive(path: &Path, events: &[Event]) -> Result<(), ApiError> {
     let mut options = OpenOptions::new();
     options.create(true).append(true);
     #[cfg(unix)]
-    options.mode(0o600);
+    options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     let mut file = options.open(path).map_err(|error| {
         ApiError::InternalServerError(format!("Failed to open event archive: {error}"))
     })?;
+    secure_event_archive_file(&file).map_err(|error| {
+        ApiError::InternalServerError(format!("Failed to secure event archive: {error}"))
+    })?;
 
     write_event_archive(&mut file, archived_at, events)
+}
+
+#[cfg(unix)]
+fn secure_event_archive_file(file: &File) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn secure_event_archive_file(_file: &File) -> io::Result<()> {
+    Ok(())
 }
 
 fn write_event_archive(
@@ -328,6 +343,48 @@ mod tests {
         assert!(archived.contains("\"initiator_user_id\":17"));
         assert!(archived.contains("\"task_id\":18"));
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn append_event_archive_restricts_existing_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path =
+            std::env::temp_dir().join(format!("hubuum-event-archive-{}.jsonl", Uuid::new_v4()));
+        std::fs::write(&path, b"").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        append_event_archive(&path, &[event()]).unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn append_event_archive_rejects_symbolic_link_path() {
+        use std::os::unix::fs::symlink;
+
+        let suffix = Uuid::new_v4();
+        let target = std::env::temp_dir().join(format!("hubuum-event-archive-{suffix}.jsonl"));
+        let link = std::env::temp_dir().join(format!("hubuum-event-archive-{suffix}.link"));
+        std::fs::write(&target, b"existing\n").unwrap();
+        symlink(&target, &link).unwrap();
+
+        let result = append_event_archive(&link, &[event()]);
+
+        assert!(matches!(
+            result,
+            Err(ApiError::InternalServerError(message))
+                if message.starts_with("Failed to open event archive:")
+        ));
+        assert_eq!(std::fs::read(&target).unwrap(), b"existing\n");
+        std::fs::remove_file(link).unwrap();
+        std::fs::remove_file(target).unwrap();
     }
 
     #[test]

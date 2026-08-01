@@ -102,6 +102,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   are also rejected. Clients must keep queries within those limits and send one
   value for each sort field and history `at` parameter before upgrading. This
   bounds query-parser allocation and quadratic cursor-predicate growth.
+- Event retention archives now restrict existing Unix files to owner-only
+  permissions before appending and reject archive paths whose final component
+  is a symbolic link.
 - **Breaking (HTTP and Rust API):** Event-delivery API responses no longer
   expose the internal `claim_token` worker lease capability. API clients must
   stop deserializing or depending on this field. The persistence-only
