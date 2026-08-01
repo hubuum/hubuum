@@ -43,7 +43,11 @@ Set the following environment variables to enable Treetop mode:
 - `HUBUUM_TREETOP_CONNECT_TIMEOUT_MS` — optional; connection timeout in milliseconds (default: 5000).
 - `HUBUUM_TREETOP_REQUEST_TIMEOUT_MS` — optional; request timeout in milliseconds (default: 30000).
 - `HUBUUM_TREETOP_ACCEPT_INVALID_CERTS` — optional; set to `true` to accept invalid TLS certificates (development only; DO NOT use in production).
-- `HUBUUM_TREETOP_CA_CERT` — reserved but not yet wired. If you need custom CA certificate loading, see the comment in `src/permissions/treetop/mod.rs::connect`. Setting this variable currently returns a fatal error on startup.
+- `HUBUUM_TREETOP_CA_CERT` — optional path to a PEM-encoded CA certificate
+  bundle in a regular file no larger than 4 MiB. Every certificate in the
+  bundle is added to the Treetop client's trust store, allowing private PKI
+  without disabling certificate validation. Startup fails if the file cannot
+  be read, is too large, cannot be parsed, or contains no certificates.
 
 ## Bootstrap workflow
 
