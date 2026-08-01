@@ -48,7 +48,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   lease data, worker claim tokens, audit-event payloads, outbound HTTP headers,
   URLs and response previews, remote-target configuration and results,
   event-sink configuration and routing, full backup contents, restore
-  capabilities and errors, and credential-bearing connection cache keys.
+  capabilities and errors, login-limiter connection URLs, and
+  credential-bearing connection cache keys.
 
 ## [0.0.8] - 2026-08-01
 
