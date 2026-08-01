@@ -3,26 +3,16 @@ use std::time::Duration as StdDuration;
 
 use crate::db::prelude::*;
 use crate::db::traits::maintenance::maintenance_state_conn;
-use chrono::{Duration, NaiveDateTime, Utc};
+use chrono::{NaiveDateTime, Utc};
 use diesel::sql_types::{Nullable, Timestamp};
 use uuid::Uuid;
 
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
-use crate::events::Event;
+use crate::events::{Event, EventDeliverySettings};
 use crate::models::event_subscription::{EventSinkRow, EventSubscriptionRow};
 use crate::models::search::{FilterField, Operator, ParsedQueryParamExt, QueryOptions};
 use crate::models::{EventDelivery, EventDeliveryID, EventDeliveryStatus};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EventDeliverySettings {
-    pub batch_size: usize,
-    pub lock_timeout_ms: u64,
-    pub transport_timeout_ms: u64,
-    pub retry_backoff_base_ms: u64,
-    pub retry_backoff_max_ms: u64,
-    pub max_attempts: i32,
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClaimedEventDelivery {
@@ -103,13 +93,6 @@ pub(crate) async fn claim_event_delivery_batch(
         claim_token, event_deliveries, id, locked_until, next_attempt_at, status,
     };
 
-    if settings.batch_size == 0 {
-        return Ok(EventDeliveryClaimBatch {
-            deliveries: Vec::new(),
-            next_wakeup_in: None,
-        });
-    }
-
     with_transaction(
         pool,
         async |conn| -> Result<EventDeliveryClaimBatch, ApiError> {
@@ -135,7 +118,7 @@ pub(crate) async fn claim_event_delivery_batch(
                 .order((next_attempt_at.asc(), id.asc()))
                 .for_update()
                 .skip_locked()
-                .limit(settings.batch_size as i64)
+                .limit(settings.database_batch_size())
                 .select(id)
                 .load::<i64>(conn)
                 .await?;
@@ -148,14 +131,17 @@ pub(crate) async fn claim_event_delivery_batch(
             }
 
             let now = Utc::now().naive_utc();
+            let lock_deadline = settings.lock_deadline(now).ok_or_else(|| {
+                ApiError::InternalServerError(
+                    "event delivery lock timeout exceeds the database timestamp range".to_string(),
+                )
+            })?;
             let claim = Uuid::new_v4();
             let claimed_deliveries =
                 diesel::update(event_deliveries.filter(id.eq_any(delivery_ids)))
                     .set((
                         status.eq(EventDeliveryStatus::InFlight.as_str()),
-                        locked_until.eq(Some(
-                            now + Duration::milliseconds(settings.lock_timeout_ms as i64),
-                        )),
+                        locked_until.eq(Some(lock_deadline)),
                         claim_token.eq(Some(claim)),
                     ))
                     .get_results::<EventDelivery>(conn)
@@ -195,6 +181,11 @@ pub(crate) async fn claim_event_delivery_by_id(
         pool,
         async |conn| -> Result<ClaimedEventDelivery, ApiError> {
             let now = Utc::now().naive_utc();
+            let lock_deadline = settings.lock_deadline(now).ok_or_else(|| {
+                ApiError::InternalServerError(
+                    "event delivery lock timeout exceeds the database timestamp range".to_string(),
+                )
+            })?;
             let claim = Uuid::new_v4();
             let delivery = diesel::update(
                 event_deliveries.filter(id.eq(delivery_id)).filter(
@@ -210,9 +201,7 @@ pub(crate) async fn claim_event_delivery_by_id(
             )
             .set((
                 status.eq(EventDeliveryStatus::InFlight.as_str()),
-                locked_until.eq(Some(
-                    now + Duration::milliseconds(settings.lock_timeout_ms as i64),
-                )),
+                locked_until.eq(Some(lock_deadline)),
                 claim_token.eq(Some(claim)),
             ))
             .get_result::<EventDelivery>(conn)
@@ -310,7 +299,7 @@ async fn load_claimed_delivery_contexts(
         .collect()
 }
 
-pub async fn mark_event_delivery_succeeded(
+pub(crate) async fn mark_event_delivery_succeeded(
     pool: &DbPool,
     delivery_id_value: i64,
     claim_token_value: Uuid,
@@ -338,7 +327,7 @@ pub async fn mark_event_delivery_succeeded(
     .await
 }
 
-pub async fn mark_event_delivery_failed(
+pub(crate) async fn mark_event_delivery_failed(
     pool: &DbPool,
     delivery: &EventDelivery,
     settings: EventDeliverySettings,
@@ -350,17 +339,18 @@ pub async fn mark_event_delivery_failed(
     };
 
     let next_attempts = delivery.attempts + 1;
-    let next_status = if next_attempts >= settings.max_attempts {
+    let next_status = if next_attempts >= settings.max_attempts() {
         EventDeliveryStatus::Dead
     } else {
         EventDeliveryStatus::Failed
     };
-    let next_attempt = Utc::now().naive_utc()
-        + Duration::milliseconds(retry_backoff_ms(
-            next_attempts,
-            settings.retry_backoff_base_ms,
-            settings.retry_backoff_max_ms,
-        ) as i64);
+    let next_attempt = settings
+        .retry_deadline(Utc::now().naive_utc(), next_attempts)
+        .ok_or_else(|| {
+            ApiError::InternalServerError(
+                "event delivery retry backoff exceeds the database timestamp range".to_string(),
+            )
+        })?;
     let error = truncate_delivery_error(error);
 
     with_connection(pool, async |conn| {
@@ -382,13 +372,6 @@ pub async fn mark_event_delivery_failed(
         .await
     })
     .await
-}
-
-pub fn retry_backoff_ms(attempts: i32, base_ms: u64, max_ms: u64) -> u64 {
-    let exponent = attempts.saturating_sub(1).min(31) as u32;
-    base_ms
-        .saturating_mul(2_u64.saturating_pow(exponent))
-        .min(max_ms)
 }
 
 fn truncate_delivery_error(error: &str) -> String {

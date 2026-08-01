@@ -14,8 +14,8 @@ use crate::config::{
     DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_WORKERS, get_config,
 };
 use crate::db::traits::event_delivery::{
-    ClaimedEventDelivery, EventDeliverySettings, claim_event_delivery_batch,
-    mark_event_delivery_failed, mark_event_delivery_succeeded,
+    ClaimedEventDelivery, claim_event_delivery_batch, mark_event_delivery_failed,
+    mark_event_delivery_succeeded,
 };
 use crate::db::traits::events::load_queued_task_initiators;
 use crate::db::traits::history::resolve_principal_names;
@@ -24,7 +24,7 @@ use crate::errors::ApiError;
 use crate::events::sink::{
     DefaultSinkResolver, EventEnvelope, SinkError, SinkResolver, event_envelope_with_names,
 };
-use crate::events::{EntityType, PrincipalNames};
+use crate::events::{EntityType, EventDeliverySettings, PrincipalNames};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
 use crate::observability::metrics;
@@ -72,24 +72,19 @@ fn configured_event_delivery_poll_interval() -> Duration {
     Duration::from_millis(interval_ms)
 }
 
-fn configured_event_delivery_settings() -> EventDeliverySettings {
-    get_config()
-        .map(|config| EventDeliverySettings {
-            batch_size: config.event_delivery_batch_size,
-            lock_timeout_ms: config.event_delivery_lock_timeout_ms,
-            transport_timeout_ms: config.event_delivery_transport_timeout_ms,
-            retry_backoff_base_ms: config.event_delivery_retry_backoff_base_ms,
-            retry_backoff_max_ms: config.event_delivery_retry_backoff_max_ms,
-            max_attempts: config.event_delivery_max_attempts,
-        })
-        .unwrap_or(EventDeliverySettings {
-            batch_size: DEFAULT_EVENT_DELIVERY_BATCH_SIZE,
-            lock_timeout_ms: DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS,
-            transport_timeout_ms: DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS,
-            retry_backoff_base_ms: DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS,
-            retry_backoff_max_ms: DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS,
-            max_attempts: DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS,
-        })
+fn configured_event_delivery_settings() -> Result<EventDeliverySettings, ApiError> {
+    match get_config() {
+        Ok(config) => config.event_delivery_settings(),
+        Err(_) => EventDeliverySettings::builder()
+            .batch_size(DEFAULT_EVENT_DELIVERY_BATCH_SIZE)
+            .lock_timeout_ms(DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS)
+            .transport_timeout_ms(DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS)
+            .retry_backoff_base_ms(DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS)
+            .retry_backoff_max_ms(DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS)
+            .max_attempts(DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS)
+            .build()
+            .map_err(ApiError::BadRequest),
+    }
 }
 
 async fn process_event_delivery_batch_with_schedule(
@@ -193,14 +188,14 @@ async fn process_claimed_event_delivery_with_names(
     let subscription = EventSubscription::try_from(claimed.subscription)?;
     let sink = EventSink::try_from(claimed.sink)?;
     let result = tokio::time::timeout(
-        Duration::from_millis(settings.transport_timeout_ms),
+        settings.transport_timeout(),
         deliver_one(resolver, &envelope, &subscription, &sink),
     )
     .await
     .map_err(|_| {
         SinkError::new(format!(
             "Event delivery transport timed out after {} ms",
-            settings.transport_timeout_ms
+            settings.transport_timeout_ms()
         ))
     })
     .and_then(|result| result);
@@ -330,11 +325,11 @@ fn spawn_event_delivery_worker_loop(
             info!(
                 message = "Starting event delivery worker loop",
                 worker_index = worker_index,
-                batch_size = settings.batch_size,
-                lock_timeout_ms = settings.lock_timeout_ms,
-                retry_backoff_base_ms = settings.retry_backoff_base_ms,
-                retry_backoff_max_ms = settings.retry_backoff_max_ms,
-                max_attempts = settings.max_attempts,
+                batch_size = settings.batch_size(),
+                lock_timeout_ms = settings.lock_timeout_ms(),
+                retry_backoff_base_ms = settings.retry_backoff_base_ms(),
+                retry_backoff_max_ms = settings.retry_backoff_max_ms(),
+                max_attempts = settings.max_attempts(),
                 poll_interval = ?poll_interval
             );
             let system = actix_rt::System::new();
@@ -356,7 +351,13 @@ pub fn ensure_event_delivery_worker_running(pool: DbPool) {
     }
 
     let poll_interval = configured_event_delivery_poll_interval();
-    let settings = configured_event_delivery_settings();
+    let settings = match configured_event_delivery_settings() {
+        Ok(settings) => settings,
+        Err(error) => {
+            error!(message = "Event delivery settings are invalid", error = %error);
+            return;
+        }
+    };
 
     EVENT_DELIVERY_LISTENER.call_once(|| {
         super::pg_notify::spawn_postgres_notification_listener(
@@ -370,8 +371,8 @@ pub fn ensure_event_delivery_worker_running(pool: DbPool) {
         info!(
             message = "Initializing event delivery workers",
             worker_count = worker_count,
-            batch_size = settings.batch_size,
-            lock_timeout_ms = settings.lock_timeout_ms,
+            batch_size = settings.batch_size(),
+            lock_timeout_ms = settings.lock_timeout_ms(),
             poll_interval = ?poll_interval
         );
         for worker_index in 0..worker_count {

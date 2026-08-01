@@ -18,6 +18,7 @@ mod fanout;
 mod model;
 mod pg_notify;
 mod retention;
+mod settings;
 mod sink;
 
 pub use context::RequestProvenance;
@@ -31,6 +32,7 @@ pub use fanout::{
 pub use model::{Event, EventId, EventResponse, NewEvent};
 pub(crate) use model::{PrincipalNames, StoredProvenance};
 pub use retention::ensure_event_retention_worker_running;
+pub(crate) use settings::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 pub use sink::{
     DefaultSinkResolver, EventEnvelope, NoopSinkResolver, Sink, SinkError, SinkResolver,
 };

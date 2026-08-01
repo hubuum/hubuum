@@ -2,23 +2,17 @@ use std::collections::HashSet;
 
 use crate::db::prelude::*;
 use crate::db::traits::maintenance::maintenance_state_conn;
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use uuid::Uuid;
 
 #[cfg(test)]
 use crate::db::with_connection;
 use crate::db::{DbPool, with_transaction};
 use crate::errors::ApiError;
-use crate::events::{Event, EventEnvelope};
+use crate::events::{Event, EventEnvelope, EventFanoutSettings};
 use crate::models::EventDeliveryStatus;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EventFanoutSettings {
-    pub batch_size: usize,
-    pub lock_timeout_ms: u64,
-}
-
-pub async fn process_event_fanout_batch(
+pub(crate) async fn process_event_fanout_batch(
     pool: &DbPool,
     settings: EventFanoutSettings,
 ) -> Result<usize, ApiError> {
@@ -27,17 +21,13 @@ pub async fn process_event_fanout_batch(
     fanout_events(pool, &event_ids).await
 }
 
-pub async fn claim_events_for_fanout(
+pub(crate) async fn claim_events_for_fanout(
     pool: &DbPool,
     settings: EventFanoutSettings,
 ) -> Result<Vec<Event>, ApiError> {
     use crate::schema::events::dsl::{
         dispatched_at, events, fanout_claim_token, fanout_locked_until, id, occurred_at,
     };
-
-    if settings.batch_size == 0 {
-        return Ok(Vec::new());
-    }
 
     with_transaction(pool, async |conn| -> Result<Vec<Event>, ApiError> {
         if !maintenance_state_conn(conn).await?.is_normal() {
@@ -55,7 +45,7 @@ pub async fn claim_events_for_fanout(
             .order(occurred_at.asc())
             .for_update()
             .skip_locked()
-            .limit(settings.batch_size as i64)
+            .limit(settings.database_batch_size())
             .select(id)
             .load::<i64>(conn)
             .await?;
@@ -64,11 +54,15 @@ pub async fn claim_events_for_fanout(
             return Ok(Vec::new());
         }
 
-        let lock_timeout = Duration::milliseconds(settings.lock_timeout_ms as i64);
+        let lock_deadline = settings.lock_deadline(now).ok_or_else(|| {
+            ApiError::InternalServerError(
+                "event fan-out lock timeout exceeds the database timestamp range".to_string(),
+            )
+        })?;
         let claim_token = Uuid::new_v4();
         let claimed = diesel::update(events.filter(id.eq_any(event_ids)))
             .set((
-                fanout_locked_until.eq(Some(now + lock_timeout)),
+                fanout_locked_until.eq(Some(lock_deadline)),
                 fanout_claim_token.eq(Some(claim_token)),
             ))
             .get_results::<Event>(conn)

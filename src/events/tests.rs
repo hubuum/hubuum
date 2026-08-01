@@ -13,15 +13,14 @@ use uuid::Uuid;
 
 use super::delivery::process_claimed_event_delivery;
 use crate::db::traits::event_delivery::{
-    EventDeliverySettings, claim_event_deliveries, claim_event_delivery_by_id,
-    mark_event_delivery_dead, mark_event_delivery_failed, next_event_delivery_wakeup_in_db,
+    claim_event_deliveries, claim_event_delivery_by_id, mark_event_delivery_dead,
+    mark_event_delivery_failed, next_event_delivery_wakeup_in_db,
 };
 use crate::db::traits::event_fanout::{
-    EventFanoutSettings, claim_events_for_fanout, count_event_deliveries_for_event, fanout_event,
-    fanout_events,
+    claim_events_for_fanout, count_event_deliveries_for_event, fanout_event, fanout_events,
 };
 use crate::db::traits::event_retention::{
-    EventRetentionSettings, purge_event_retention_without_archive, try_acquire_event_retention_lock,
+    purge_event_retention_without_archive, try_acquire_event_retention_lock,
 };
 use crate::db::traits::event_subscription::{SaveEventSinkRecord, SaveEventSubscriptionRecord};
 use crate::db::traits::events::{EventListFilters, list_events_with_total_count};
@@ -33,7 +32,8 @@ use crate::db::{capture_queries, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::retention::process_event_retention_batch;
 use crate::events::{
-    Action, ActorKind, EntityType, Event, EventContext, NewEvent, RequestProvenance, emit_event,
+    Action, ActorKind, EntityType, Event, EventContext, EventDeliverySettings, EventFanoutSettings,
+    EventRetentionSettings, NewEvent, RequestProvenance, emit_event,
 };
 use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::collection::{NewCollectionWithAssignee, UpdateCollection, move_collection};
@@ -458,22 +458,19 @@ async fn expire_delivery_claim(scope: &TestScope, delivery_id: i64) {
 }
 
 fn make_delivery_settings(max_attempts: i32) -> EventDeliverySettings {
-    EventDeliverySettings {
-        batch_size: 100_000,
-        lock_timeout_ms: 30_000,
-        transport_timeout_ms: 25_000,
-        retry_backoff_base_ms: 1_000,
-        retry_backoff_max_ms: 10_000,
-        max_attempts,
-    }
+    EventDeliverySettings::builder()
+        .batch_size(100_000)
+        .lock_timeout_ms(30_000)
+        .transport_timeout_ms(25_000)
+        .retry_backoff_base_ms(1_000)
+        .retry_backoff_max_ms(10_000)
+        .max_attempts(max_attempts)
+        .build()
+        .unwrap()
 }
 
 fn make_retention_settings() -> EventRetentionSettings {
-    EventRetentionSettings {
-        event_retention_days: 365,
-        delivery_retention_days: 30,
-        batch_size: 100,
-    }
+    EventRetentionSettings::new(365, 30, 100).unwrap()
 }
 
 struct StaticSinkResolver<'a> {
@@ -676,10 +673,7 @@ async fn event_fanout_reclaims_expired_claims() {
     let scope = test_scope();
     let fixture = scope.with_collection().await;
     let event = emit_collection_created_event(&scope, fixture.collection.id).await;
-    let settings = EventFanoutSettings {
-        batch_size: 100_000,
-        lock_timeout_ms: 30_000,
-    };
+    let settings = EventFanoutSettings::new(100_000, 30_000).unwrap();
 
     let claimed = claim_events_for_fanout(&scope.pool, settings)
         .await
@@ -955,10 +949,7 @@ async fn event_retention_bounds_terminal_delivery_deletes_to_the_batch_size() {
     )
     .await
     .unwrap();
-    let settings = EventRetentionSettings {
-        batch_size: 2,
-        ..make_retention_settings()
-    };
+    let settings = EventRetentionSettings::new(365, 30, 2).unwrap();
 
     let first = purge_event_retention_without_archive(&scope.pool, settings)
         .await

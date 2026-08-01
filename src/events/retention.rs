@@ -16,14 +16,14 @@ use crate::config::{
     get_config,
 };
 use crate::db::traits::event_retention::{
-    EventRetentionPurgeSummary, EventRetentionSettings, purge_event_retention_batch_conn,
+    EventRetentionPurgeSummary, purge_event_retention_batch_conn,
     select_events_for_retention_purge_conn, try_acquire_event_retention_lock,
 };
 use crate::db::traits::maintenance::maintenance_state_conn;
 use crate::db::with_transaction;
 use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
-use crate::events::Event;
+use crate::events::{Event, EventRetentionSettings};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::restores::MaintenanceActivityGuard;
 
@@ -54,30 +54,28 @@ impl EventArchiveOutput for File {
     }
 }
 
-fn configured_event_retention_worker() -> EventRetentionWorkerConfig {
-    get_config()
-        .map(|config| EventRetentionWorkerConfig {
+fn configured_event_retention_worker() -> Result<EventRetentionWorkerConfig, ApiError> {
+    match get_config() {
+        Ok(config) => Ok(EventRetentionWorkerConfig {
             enabled: config.event_retention_purge_enabled,
-            settings: EventRetentionSettings {
-                event_retention_days: config.event_retention_days,
-                delivery_retention_days: config.event_delivery_retention_days,
-                batch_size: config.event_retention_purge_batch_size,
-            },
+            settings: config.event_retention_settings()?,
             interval: Duration::from_secs(config.event_retention_purge_interval_seconds),
             file_archive_enabled: config.event_retention_file_archive_enabled,
             archive_path: config.event_retention_archive_path.clone(),
-        })
-        .unwrap_or(EventRetentionWorkerConfig {
+        }),
+        Err(_) => Ok(EventRetentionWorkerConfig {
             enabled: DEFAULT_EVENT_RETENTION_PURGE_ENABLED,
-            settings: EventRetentionSettings {
-                event_retention_days: DEFAULT_EVENT_RETENTION_DAYS,
-                delivery_retention_days: DEFAULT_EVENT_DELIVERY_RETENTION_DAYS,
-                batch_size: DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE,
-            },
+            settings: EventRetentionSettings::new(
+                DEFAULT_EVENT_RETENTION_DAYS,
+                DEFAULT_EVENT_DELIVERY_RETENTION_DAYS,
+                DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE,
+            )
+            .map_err(ApiError::BadRequest)?,
             interval: Duration::from_secs(DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS),
             file_archive_enabled: DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED,
             archive_path: None,
-        })
+        }),
+    }
 }
 
 pub async fn process_event_retention_batch(
@@ -147,9 +145,9 @@ fn spawn_event_retention_worker_loop(pool: DbPool, config: EventRetentionWorkerC
     spawn_background_worker("event-retention-worker", move |shutdown| {
         info!(
             message = "Starting event retention worker loop",
-            event_retention_days = config.settings.event_retention_days,
-            delivery_retention_days = config.settings.delivery_retention_days,
-            batch_size = config.settings.batch_size,
+            event_retention_days = config.settings.event_retention_days(),
+            delivery_retention_days = config.settings.delivery_retention_days(),
+            batch_size = config.settings.batch_size(),
             interval = ?config.interval,
             file_archive_enabled = config.file_archive_enabled,
             archive_path_configured = config.archive_path.is_some()
@@ -163,7 +161,13 @@ pub fn ensure_event_retention_worker_running(pool: DbPool) {
     if get_config().is_ok_and(|config| !config.runtime_role.runs_background_workers()) {
         return;
     }
-    let config = configured_event_retention_worker();
+    let config = match configured_event_retention_worker() {
+        Ok(config) => config,
+        Err(error) => {
+            error!(message = "Event retention settings are invalid", error = %error);
+            return;
+        }
+    };
     if !config.enabled {
         return;
     }
@@ -171,9 +175,9 @@ pub fn ensure_event_retention_worker_running(pool: DbPool) {
     EVENT_RETENTION_WORKER.call_once(move || {
         info!(
             message = "Initializing event retention worker",
-            event_retention_days = config.settings.event_retention_days,
-            delivery_retention_days = config.settings.delivery_retention_days,
-            batch_size = config.settings.batch_size,
+            event_retention_days = config.settings.event_retention_days(),
+            delivery_retention_days = config.settings.delivery_retention_days(),
+            batch_size = config.settings.batch_size(),
             interval = ?config.interval,
             file_archive_enabled = config.file_archive_enabled,
             archive_path_configured = config.archive_path.is_some()

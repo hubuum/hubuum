@@ -1,19 +1,12 @@
 use crate::db::prelude::*;
-use chrono::{Duration, NaiveDateTime, Utc};
+use chrono::{NaiveDateTime, Utc};
 use diesel::sql_types::{Array, BigInt, Bool, Timestamp};
 
 use crate::db::DbConnection;
 #[cfg(test)]
 use crate::db::{DbPool, with_transaction};
 use crate::errors::ApiError;
-use crate::events::Event;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EventRetentionSettings {
-    pub event_retention_days: i64,
-    pub delivery_retention_days: i64,
-    pub batch_size: usize,
-}
+use crate::events::{Event, EventRetentionSettings};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EventRetentionPurgeSummary {
@@ -56,13 +49,14 @@ pub(crate) async fn select_events_for_retention_purge_conn(
     conn: &mut DbConnection,
     settings: EventRetentionSettings,
 ) -> Result<Vec<Event>, ApiError> {
-    if settings.batch_size == 0 {
-        return Ok(Vec::new());
-    }
-
-    let cutoff = Utc::now().naive_utc() - Duration::days(settings.event_retention_days);
-    let batch_size = i64::try_from(settings.batch_size)
-        .map_err(|_| ApiError::BadRequest("event retention batch size is too large".to_string()))?;
+    let cutoff = settings
+        .event_cutoff(Utc::now().naive_utc())
+        .ok_or_else(|| {
+            ApiError::InternalServerError(
+                "event retention exceeds the database timestamp range".to_string(),
+            )
+        })?;
+    let batch_size = settings.database_batch_size();
     let ids = select_event_ids_for_retention_purge(conn, cutoff, batch_size).await?;
 
     if ids.is_empty() {
@@ -82,9 +76,14 @@ pub(crate) async fn purge_event_retention_batch_conn(
     settings: EventRetentionSettings,
     event_ids: &[i64],
 ) -> Result<EventRetentionPurgeSummary, ApiError> {
-    let delivery_cutoff = Utc::now().naive_utc() - Duration::days(settings.delivery_retention_days);
-    let batch_size = i64::try_from(settings.batch_size)
-        .map_err(|_| ApiError::BadRequest("event retention batch size is too large".to_string()))?;
+    let delivery_cutoff = settings
+        .delivery_cutoff(Utc::now().naive_utc())
+        .ok_or_else(|| {
+            ApiError::InternalServerError(
+                "event delivery retention exceeds the database timestamp range".to_string(),
+            )
+        })?;
+    let batch_size = settings.database_batch_size();
     let purged_terminal_deliveries =
         purge_terminal_event_deliveries(conn, delivery_cutoff, batch_size).await?;
     let purged_events = purge_events_by_id(conn, event_ids).await?;
@@ -96,7 +95,7 @@ pub(crate) async fn purge_event_retention_batch_conn(
 }
 
 #[cfg(test)]
-pub async fn purge_event_retention_without_archive(
+pub(crate) async fn purge_event_retention_without_archive(
     pool: &DbPool,
     settings: EventRetentionSettings,
 ) -> Result<EventRetentionPurgeSummary, ApiError> {

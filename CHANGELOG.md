@@ -30,6 +30,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (Rust API):** `PermissionsList` is now a permission-specific,
   non-generic domain type that canonicalizes duplicate values. Rust callers
   should replace `PermissionsList<Permissions>` with `PermissionsList`.
+- **Breaking (Rust API):** event delivery, fan-out, and retention worker
+  settings and low-level claim helpers are now crate-private, validated event
+  subsystem APIs instead of public database-layer field bags. Downstream
+  callers must migrate to the validated APIs and stop invoking the private
+  claim helpers. Operators must correct zero, inconsistent, or unrepresentable
+  worker-duration values before upgrading; those values now fail startup.
 
 ### Security
 
