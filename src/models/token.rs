@@ -1,3 +1,5 @@
+use std::fmt;
+
 use chrono::NaiveDateTime;
 
 use crate::db::prelude::*;
@@ -11,7 +13,9 @@ use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{PrincipalID, TokenLifetime, TokenScope, TokenScopeDetails};
+use crate::models::{
+    PrincipalID, REDACTED_DEBUG_VALUE, TokenLifetime, TokenScope, TokenScopeDetails,
+};
 use crate::schema::tokens;
 use crate::traits::{
     BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -19,7 +23,7 @@ use crate::traits::{
 
 /// A persisted bearer token, keyed to a principal, with a full lifecycle. The
 /// `token` field stores the HMAC hash, never the raw value.
-#[derive(Serialize, Deserialize, Queryable, Insertable, Selectable, Clone, Debug, ToSchema)]
+#[derive(Serialize, Deserialize, Queryable, Insertable, Selectable, Clone, ToSchema)]
 #[diesel(table_name = tokens)]
 pub struct PrincipalToken {
     pub id: i32,
@@ -33,6 +37,25 @@ pub struct PrincipalToken {
     pub revoked_at: Option<NaiveDateTime>,
     pub permission_scoped: bool,
     pub resource_scoped: bool,
+}
+
+impl fmt::Debug for PrincipalToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrincipalToken")
+            .field("id", &self.id)
+            .field("token", &REDACTED_DEBUG_VALUE)
+            .field("principal_id", &self.principal_id)
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("issued", &self.issued)
+            .field("expires_at", &self.expires_at)
+            .field("last_used_at", &self.last_used_at)
+            .field("revoked_at", &self.revoked_at)
+            .field("permission_scoped", &self.permission_scoped)
+            .field("resource_scoped", &self.resource_scoped)
+            .finish()
+    }
 }
 
 crate::int_id_newtype! {
@@ -487,5 +510,35 @@ impl CursorSqlMapping for PrincipalToken {
                 )));
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn principal_token_debug_redacts_stored_digest() {
+        let token_digest = "keyed-token-digest";
+        let token = PrincipalToken {
+            id: 1,
+            token: token_digest.to_string(),
+            principal_id: 2,
+            name: Some("automation".to_string()),
+            description: None,
+            issued: chrono::DateTime::from_timestamp(1_700_000_000, 0)
+                .unwrap()
+                .naive_utc(),
+            expires_at: None,
+            last_used_at: None,
+            revoked_at: None,
+            permission_scoped: false,
+            resource_scoped: false,
+        };
+
+        let output = format!("{token:?}");
+
+        assert!(output.contains(REDACTED_DEBUG_VALUE));
+        assert!(!output.contains(token_digest));
     }
 }

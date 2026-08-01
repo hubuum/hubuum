@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::db::prelude::*;
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
@@ -8,9 +10,9 @@ use crate::db::DbPool;
 use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
 use crate::events::{Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance};
-use crate::models::BackupOutputLookup;
 use crate::models::principal::PrincipalID;
 use crate::models::search::{FilterField, SortParam};
+use crate::models::{BackupOutputLookup, redacted_debug_option};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::{backup_task_outputs, export_task_outputs, import_task_results, tasks};
 use crate::traits::SelfAccessors;
@@ -212,7 +214,7 @@ crate::int_id_newtype! {
     noun = "task id";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable)]
+#[derive(Clone, Serialize, Deserialize, Queryable, Selectable)]
 #[diesel(table_name = tasks)]
 pub struct TaskRecord {
     pub id: i32,
@@ -245,6 +247,46 @@ pub struct TaskRecord {
     pub initiator_user_id: Option<i32>,
 }
 
+impl fmt::Debug for TaskRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TaskRecord")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("status", &self.status)
+            .field("submitted_by", &self.submitted_by)
+            .field(
+                "idempotency_key",
+                &redacted_debug_option(&self.idempotency_key),
+            )
+            .field("request_hash", &self.request_hash)
+            .field(
+                "request_payload",
+                &redacted_debug_option(&self.request_payload),
+            )
+            .field("summary", &self.summary)
+            .field("total_items", &self.total_items)
+            .field("processed_items", &self.processed_items)
+            .field("success_items", &self.success_items)
+            .field("failed_items", &self.failed_items)
+            .field("submitted_token_id", &self.submitted_token_id)
+            .field("submitted_token_scoped", &self.submitted_token_scoped)
+            .field("submitted_token_scopes", &self.submitted_token_scopes)
+            .field("request_redacted_at", &self.request_redacted_at)
+            .field("started_at", &self.started_at)
+            .field("finished_at", &self.finished_at)
+            .field("deleted_at", &self.deleted_at)
+            .field("deleted_by", &self.deleted_by)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("lease_token", &redacted_debug_option(&self.lease_token))
+            .field("lease_expires_at", &self.lease_expires_at)
+            .field("attempt_count", &self.attempt_count)
+            .field("initiator_user_id", &self.initiator_user_id)
+            .finish()
+    }
+}
+
 impl TaskRecord {
     pub(crate) fn worker_provenance(&self) -> MutationProvenance {
         MutationProvenance::worker(self.initiator_user_id, self.id)
@@ -259,7 +301,7 @@ impl TaskRecord {
     }
 }
 
-#[derive(Debug, Insertable)]
+#[derive(Insertable)]
 #[diesel(table_name = tasks)]
 pub struct NewTaskRecord {
     pub kind: String,
@@ -282,6 +324,37 @@ pub struct NewTaskRecord {
     pub request_redacted_at: Option<NaiveDateTime>,
     pub started_at: Option<NaiveDateTime>,
     pub finished_at: Option<NaiveDateTime>,
+}
+
+impl fmt::Debug for NewTaskRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NewTaskRecord")
+            .field("kind", &self.kind)
+            .field("status", &self.status)
+            .field("submitted_by", &self.submitted_by)
+            .field(
+                "idempotency_key",
+                &redacted_debug_option(&self.idempotency_key),
+            )
+            .field("request_hash", &self.request_hash)
+            .field(
+                "request_payload",
+                &redacted_debug_option(&self.request_payload),
+            )
+            .field("summary", &self.summary)
+            .field("total_items", &self.total_items)
+            .field("processed_items", &self.processed_items)
+            .field("success_items", &self.success_items)
+            .field("failed_items", &self.failed_items)
+            .field("submitted_token_id", &self.submitted_token_id)
+            .field("submitted_token_scoped", &self.submitted_token_scoped)
+            .field("submitted_token_scopes", &self.submitted_token_scopes)
+            .field("request_redacted_at", &self.request_redacted_at)
+            .field("started_at", &self.started_at)
+            .field("finished_at", &self.finished_at)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -969,11 +1042,86 @@ impl AuthzTarget for TaskID {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::REDACTED_DEBUG_VALUE;
 
     fn test_timestamp() -> NaiveDateTime {
         chrono::DateTime::from_timestamp(1_700_000_000, 0)
             .unwrap()
             .naive_utc()
+    }
+
+    #[test]
+    fn task_record_debug_redacts_sensitive_execution_fields() {
+        let idempotency_key = "idempotency-secret";
+        let payload_secret = "task-payload-secret";
+        let lease_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        let timestamp = test_timestamp();
+        let task = TaskRecord {
+            id: 7,
+            kind: TaskKind::Import.as_str().to_string(),
+            status: TaskStatus::Running.as_str().to_string(),
+            submitted_by: Some(1),
+            idempotency_key: Some(idempotency_key.to_string()),
+            request_hash: Some("request-hash".to_string()),
+            request_payload: Some(serde_json::json!({"password": payload_secret})),
+            summary: None,
+            total_items: 1,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            submitted_token_id: Some(2),
+            submitted_token_scoped: true,
+            submitted_token_scopes: serde_json::json!([]),
+            request_redacted_at: None,
+            started_at: Some(timestamp),
+            finished_at: None,
+            deleted_at: None,
+            deleted_by: None,
+            created_at: timestamp,
+            updated_at: timestamp,
+            lease_token: Some(uuid::Uuid::parse_str(lease_token).unwrap()),
+            lease_expires_at: Some(timestamp),
+            attempt_count: 1,
+            initiator_user_id: Some(1),
+        };
+
+        let output = format!("{task:?}");
+
+        assert!(output.contains(REDACTED_DEBUG_VALUE));
+        assert!(!output.contains(idempotency_key));
+        assert!(!output.contains(payload_secret));
+        assert!(!output.contains(lease_token));
+    }
+
+    #[test]
+    fn new_task_record_debug_redacts_sensitive_request_fields() {
+        let idempotency_key = "idempotency-secret";
+        let payload_secret = "task-payload-secret";
+        let task = NewTaskRecord {
+            kind: TaskKind::Import.as_str().to_string(),
+            status: TaskStatus::Queued.as_str().to_string(),
+            submitted_by: Some(1),
+            idempotency_key: Some(idempotency_key.to_string()),
+            request_hash: Some("request-hash".to_string()),
+            request_payload: Some(serde_json::json!({"password": payload_secret})),
+            summary: None,
+            total_items: 1,
+            processed_items: 0,
+            success_items: 0,
+            failed_items: 0,
+            submitted_token_id: Some(2),
+            submitted_token_scoped: true,
+            submitted_token_scopes: serde_json::json!([]),
+            request_redacted_at: None,
+            started_at: None,
+            finished_at: None,
+        };
+
+        let output = format!("{task:?}");
+
+        assert!(output.contains(REDACTED_DEBUG_VALUE));
+        assert!(!output.contains(idempotency_key));
+        assert!(!output.contains(payload_secret));
     }
 
     #[test]

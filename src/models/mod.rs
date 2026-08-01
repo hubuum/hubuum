@@ -1,4 +1,11 @@
 #![allow(ambiguous_glob_reexports)] // We have several test modules, should be fine
+
+pub(crate) const REDACTED_DEBUG_VALUE: &str = "<redacted>";
+
+pub(crate) fn redacted_debug_option<T>(value: &Option<T>) -> Option<&'static str> {
+    value.as_ref().map(|_| REDACTED_DEBUG_VALUE)
+}
+
 pub mod backup;
 pub mod class;
 pub mod collection;

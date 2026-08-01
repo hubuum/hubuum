@@ -1,3 +1,5 @@
+use std::fmt;
+
 use chrono::NaiveDateTime;
 use hubuum_events_core::EventSubscriptionFilter;
 use serde::{Deserialize, Serialize};
@@ -13,7 +15,7 @@ use crate::models::remote_target::validate_target_parts;
 use crate::models::{
     EventSinkKind, ExportContentType, ExportInclude, ExportLimits, ExportMissingDataPolicy,
     ExportRelationContext, ExportScopeKind, ExportTemplateKind, ObjectRelationLimit, Permissions,
-    RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType,
+    RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType, redacted_debug_option,
 };
 
 pub const CURRENT_IMPORT_VERSION: i32 = 1;
@@ -186,7 +188,7 @@ pub struct ImportGroupInput {
     pub timestamps: Option<RestoreTimestamps>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ImportPrincipalSubtype {
     Human {
@@ -204,6 +206,43 @@ pub enum ImportPrincipalSubtype {
         created_by_key: Option<PrincipalKey>,
         disabled_at: Option<NaiveDateTime>,
     },
+}
+
+impl fmt::Debug for ImportPrincipalSubtype {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Human {
+                password,
+                password_hash,
+                proper_name,
+                email,
+                anonymized_at,
+            } => formatter
+                .debug_struct("Human")
+                .field("password", &redacted_debug_option(password))
+                .field("password_hash", &redacted_debug_option(password_hash))
+                .field("proper_name", proper_name)
+                .field("email", email)
+                .field("anonymized_at", anonymized_at)
+                .finish(),
+            Self::ServiceAccount {
+                description,
+                owner_group_ref,
+                owner_group_key,
+                created_by_ref,
+                created_by_key,
+                disabled_at,
+            } => formatter
+                .debug_struct("ServiceAccount")
+                .field("description", description)
+                .field("owner_group_ref", owner_group_ref)
+                .field("owner_group_key", owner_group_key)
+                .field("created_by_ref", created_by_ref)
+                .field("created_by_key", created_by_key)
+                .field("disabled_at", disabled_at)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -746,8 +785,8 @@ mod tests {
         RestoreTimestamps, validate_optional_selector, validate_required_selector,
     };
     use crate::models::{
-        CollectionKey, EventSinkKind, ExportContentType, ExportTemplateKind, RemoteAuthConfig,
-        RemoteHttpMethod, RemoteTargetSubjectType,
+        CollectionKey, EventSinkKind, ExportContentType, ExportTemplateKind, REDACTED_DEBUG_VALUE,
+        RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType,
     };
 
     #[test]
@@ -815,6 +854,26 @@ mod tests {
                 .is_ok(),
             expected_valid
         );
+    }
+
+    #[rstest]
+    #[case::plaintext(Some("import-password"), None, "import-password")]
+    #[case::hash(
+        None,
+        Some("$argon2id$imported-password-hash"),
+        "$argon2id$imported-password-hash"
+    )]
+    fn imported_human_debug_redacts_credentials(
+        #[case] password: Option<&str>,
+        #[case] password_hash: Option<&str>,
+        #[case] credential: &str,
+    ) {
+        let principal = human_principal(password, password_hash);
+
+        let output = format!("{principal:?}");
+
+        assert!(output.contains(REDACTED_DEBUG_VALUE));
+        assert!(!output.contains(credential));
     }
 
     #[rstest]
