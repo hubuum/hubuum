@@ -1059,6 +1059,10 @@ fn capitalize(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::user::{
+        MAX_LOGIN_IDENTITY_SCOPE_CHARACTERS, MAX_LOGIN_NAME_CHARACTERS,
+        MAX_LOGIN_PASSWORD_CHARACTERS,
+    };
     use actix_web::{
         App,
         http::{Method, StatusCode},
@@ -1290,6 +1294,25 @@ mod tests {
                 )),
                 Some(&Value::from(1)),
                 "restore job path should document its positive-ID invariant"
+            );
+        }
+    }
+
+    #[test]
+    fn login_schema_documents_credential_length_limits() {
+        let json = openapi_json();
+
+        for (field, maximum) in [
+            ("identity_scope", MAX_LOGIN_IDENTITY_SCOPE_CHARACTERS),
+            ("name", MAX_LOGIN_NAME_CHARACTERS),
+            ("password", MAX_LOGIN_PASSWORD_CHARACTERS),
+        ] {
+            assert_eq!(
+                json.pointer(&format!(
+                    "/components/schemas/LoginUser/properties/{field}/maxLength"
+                )),
+                Some(&Value::from(maximum)),
+                "LoginUser.{field} should document its enforced length limit"
             );
         }
     }

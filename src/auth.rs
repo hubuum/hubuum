@@ -316,6 +316,7 @@ impl AuthProviderBackend for LdapAuthProvider {
 }
 
 pub async fn login(pool: &DbPool, login: LoginUser) -> Result<User, ApiError> {
+    login.validate()?;
     let scope = login
         .identity_scope
         .as_deref()

@@ -82,6 +82,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   certificate and 1 MiB key limits; malformed rustls certificate entries are
   rejected instead of skipped. Before upgrading, replace non-regular TLS files,
   reduce oversized PEM material, and correct malformed certificate entries.
+- **Breaking (HTTP API):** Login identity scopes and names are now limited to
+  255 characters, and login passwords to 4096 characters. Clients must keep
+  those fields within the new limits before upgrading. Oversized requests are
+  rejected before rate-limit state or password workers are used, bounding
+  unauthenticated limiter-key memory and password-processing work.
 - **Breaking (HTTP and Rust API):** Event-delivery API responses no longer
   expose the internal `claim_token` worker lease capability. API clients must
   stop deserializing or depending on this field. The persistence-only

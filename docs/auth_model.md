@@ -440,6 +440,9 @@ IAM/credential-management surfaces.
   password and receive a generic `401`. Failed attempts are rate-limited by
   `name` + client IP (see [login_rate_limiting.md](login_rate_limiting.md)). A
   successful response returns the raw token and its authoritative `expires_at`.
+  Login `identity_scope` and `name` values are limited to 255 Unicode characters,
+  and passwords to 4096. Larger fields are rejected before rate-limit
+  bookkeeping, directory/database lookup, or password verification.
 - `GET /api/v0/auth/validate` and current-token logout use `Authenticated`, so a
   valid scoped service-account token validates as valid.
 - All-token logout / revoke-all are unscoped human/IAM management operations.
