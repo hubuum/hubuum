@@ -1,7 +1,9 @@
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::future::Future;
 use std::hash::Hash;
-use std::sync::Arc;
+use std::num::NonZeroUsize;
+use std::sync::{Arc, Weak};
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -39,6 +41,7 @@ impl From<EventSinkSecretError> for SinkError {
 }
 
 pub const DEFAULT_MAX_ENVELOPE_BYTES: usize = 1_000_000;
+pub const DEFAULT_URI_CONNECTION_POOL_CAPACITY: usize = 64;
 
 pub fn serialize_envelope_to_string(
     envelope: &EventEnvelope,
@@ -179,7 +182,14 @@ fn uri_userinfo(uri: &str) -> Option<&str> {
 }
 
 pub struct UriConnectionPool<K, V> {
-    entries: Mutex<std::collections::HashMap<K, Arc<OnceCell<V>>>>,
+    capacity: NonZeroUsize,
+    state: Mutex<UriConnectionPoolState<K, V>>,
+}
+
+#[derive(Debug)]
+struct UriConnectionPoolState<K, V> {
+    entries: HashMap<K, Arc<OnceCell<V>>>,
+    recency: VecDeque<K>,
 }
 
 impl<K, V> fmt::Debug for UriConnectionPool<K, V> {
@@ -190,8 +200,21 @@ impl<K, V> fmt::Debug for UriConnectionPool<K, V> {
 
 impl<K, V> Default for UriConnectionPool<K, V> {
     fn default() -> Self {
+        Self::new(
+            NonZeroUsize::new(DEFAULT_URI_CONNECTION_POOL_CAPACITY)
+                .expect("the default URI connection pool capacity is non-zero"),
+        )
+    }
+}
+
+impl<K, V> UriConnectionPool<K, V> {
+    pub fn new(capacity: NonZeroUsize) -> Self {
         Self {
-            entries: Mutex::new(std::collections::HashMap::new()),
+            capacity,
+            state: Mutex::new(UriConnectionPoolState {
+                entries: HashMap::new(),
+                recency: VecDeque::new(),
+            }),
         }
     }
 }
@@ -207,30 +230,84 @@ where
         Fut: Future<Output = Result<V, SinkError>>,
     {
         let entry = {
-            let mut entries = self.entries.lock().await;
-            entries
-                .entry(key.clone())
-                .or_insert_with(|| Arc::new(OnceCell::new()))
-                .clone()
+            let mut state = self.state.lock().await;
+            if let Some(entry) = state.entries.get(&key).cloned() {
+                state.touch(&key);
+                entry
+            } else {
+                state.evict_idle_to(self.capacity.get() - 1);
+                let entry = Arc::new(OnceCell::new());
+                state.entries.insert(key.clone(), Arc::clone(&entry));
+                state.recency.push_back(key.clone());
+                entry
+            }
         };
 
+        let entry_identity = Arc::downgrade(&entry);
         let result = entry.get_or_try_init(|| create(key.clone())).await.cloned();
+        drop(entry);
+
+        let mut state = self.state.lock().await;
         if result.is_err() {
-            let mut entries = self.entries.lock().await;
-            let remove_failed_entry = entries.get(&key).is_some_and(|current| {
-                Arc::ptr_eq(current, &entry)
-                    && current.get().is_none()
-                    && Arc::strong_count(current) == 2
-            });
-            if remove_failed_entry {
-                entries.remove(&key);
-            }
+            state.remove_failed(&key, &entry_identity);
         }
+        state.evict_idle_to(self.capacity.get());
         result
     }
 
     pub async fn remove(&self, key: &K) {
-        self.entries.lock().await.remove(key);
+        self.state.lock().await.remove(key);
+    }
+}
+
+impl<K, V> UriConnectionPoolState<K, V>
+where
+    K: Eq + Hash + Clone,
+{
+    fn touch(&mut self, key: &K) {
+        self.remove_recency(key);
+        self.recency.push_back(key.clone());
+    }
+
+    fn evict_idle_to(&mut self, maximum_entries: usize) {
+        let mut candidates = self.recency.len();
+        while self.entries.len() > maximum_entries && candidates > 0 {
+            candidates -= 1;
+            let Some(key) = self.recency.pop_front() else {
+                break;
+            };
+            let is_idle = self
+                .entries
+                .get(&key)
+                .is_some_and(|entry| Arc::strong_count(entry) == 1);
+            if is_idle {
+                self.entries.remove(&key);
+            } else {
+                self.recency.push_back(key);
+            }
+        }
+    }
+
+    fn remove_failed(&mut self, key: &K, expected: &Weak<OnceCell<V>>) {
+        let remove_failed_entry = self.entries.get(key).is_some_and(|current| {
+            Weak::ptr_eq(&Arc::downgrade(current), expected)
+                && current.get().is_none()
+                && Arc::strong_count(current) == 1
+        });
+        if remove_failed_entry {
+            self.remove(key);
+        }
+    }
+
+    fn remove(&mut self, key: &K) {
+        self.entries.remove(key);
+        self.remove_recency(key);
+    }
+
+    fn remove_recency(&mut self, key: &K) {
+        if let Some(position) = self.recency.iter().position(|candidate| candidate == key) {
+            self.recency.remove(position);
+        }
     }
 }
 
@@ -264,6 +341,6 @@ mod tests {
         );
 
         assert_eq!(result.unwrap_err().to_string(), "initialization failed");
-        assert!(block_on(pool.entries.lock()).is_empty());
+        assert!(block_on(pool.state.lock()).entries.is_empty());
     }
 }

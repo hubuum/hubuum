@@ -202,6 +202,7 @@ impl Sink for hubuum_event_sink_valkey::ValkeySink {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -368,6 +369,83 @@ mod tests {
         assert_eq!(second, Ok(42));
         assert_eq!(cached, Ok(42));
         assert_eq!(initializations.load(Ordering::SeqCst), 2);
+    }
+
+    #[actix_rt::test]
+    async fn uri_connection_pool_evicts_the_least_recently_used_key_at_capacity() {
+        let pool = UriConnectionPool::<String, usize>::new(NonZeroUsize::new(2).unwrap());
+
+        pool.get_or_try_insert_with("old".to_string(), |_| async { Ok(1) })
+            .await
+            .unwrap();
+        pool.get_or_try_insert_with("recent".to_string(), |_| async { Ok(2) })
+            .await
+            .unwrap();
+        pool.get_or_try_insert_with("old".to_string(), |_| async { Ok(10) })
+            .await
+            .unwrap();
+        pool.get_or_try_insert_with("new".to_string(), |_| async { Ok(3) })
+            .await
+            .unwrap();
+
+        let old = pool
+            .get_or_try_insert_with("old".to_string(), |_| async { Ok(10) })
+            .await;
+        let recent = pool
+            .get_or_try_insert_with("recent".to_string(), |_| async { Ok(20) })
+            .await;
+
+        assert_eq!(old, Ok(1));
+        assert_eq!(recent, Ok(20));
+    }
+
+    #[actix_rt::test]
+    async fn uri_connection_pool_does_not_evict_an_initializer_in_flight() {
+        let pool = UriConnectionPool::<String, usize>::new(NonZeroUsize::new(1).unwrap());
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let initializations = Arc::new(AtomicUsize::new(0));
+
+        let first = pool.get_or_try_insert_with("shared".to_string(), {
+            let started = Arc::clone(&started);
+            let release = Arc::clone(&release);
+            let initializations = Arc::clone(&initializations);
+            move |_| async move {
+                initializations.fetch_add(1, Ordering::SeqCst);
+                started.notify_one();
+                release.notified().await;
+                Ok(1)
+            }
+        });
+        let overlap = async {
+            started.notified().await;
+            pool.get_or_try_insert_with("other".to_string(), |_| async { Ok(2) })
+                .await
+                .unwrap();
+
+            let shared = pool.get_or_try_insert_with("shared".to_string(), {
+                let initializations = Arc::clone(&initializations);
+                move |_| async move {
+                    initializations.fetch_add(1, Ordering::SeqCst);
+                    Ok(99)
+                }
+            });
+            tokio::pin!(shared);
+            tokio::select! {
+                unexpected = &mut shared => {
+                    panic!("in-flight initializer was evicted: {unexpected:?}");
+                }
+                () = tokio::time::sleep(Duration::from_millis(25)) => {}
+            }
+            release.notify_one();
+            shared.await
+        };
+
+        let (first, shared) = tokio::join!(first, overlap);
+
+        assert_eq!(first, Ok(1));
+        assert_eq!(shared, Ok(1));
+        assert_eq!(initializations.load(Ordering::SeqCst), 1);
     }
 
     #[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
