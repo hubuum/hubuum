@@ -103,7 +103,7 @@ impl PermissionBackend for ForceSlowPath {
         &self,
         collection_id: CollectionID,
         group_id: GroupID,
-        list: PermissionsList<Permissions>,
+        list: PermissionsList,
         replace_existing: bool,
     ) -> Result<Permission, ApiError> {
         self.inner
@@ -115,7 +115,7 @@ impl PermissionBackend for ForceSlowPath {
         &self,
         collection_id: CollectionID,
         group_id: GroupID,
-        list: PermissionsList<Permissions>,
+        list: PermissionsList,
     ) -> Result<Permission, ApiError> {
         self.inner
             .revoke_permissions(collection_id, group_id, list)

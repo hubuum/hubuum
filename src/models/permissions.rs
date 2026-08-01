@@ -1,7 +1,7 @@
 use crate::db::prelude::*;
 use std::{fmt, fmt::Display, slice};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 
 use crate::{errors::ApiError, schema::permissions};
@@ -238,45 +238,63 @@ impl Display for Permissions {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PermissionsList<T: Serialize + PartialEq + Clone>(Vec<T>);
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct PermissionsList(Vec<Permissions>);
 
-impl<T: Serialize + PartialEq + Clone> PermissionsList<T> {
-    // Constructor that accepts a generic IntoIterator so we can create a PermissionsList from any
-    // collection of items that can be converted into an iterator.
-    pub fn new<I: IntoIterator<Item = T>>(items: I) -> Self {
-        PermissionsList(items.into_iter().collect())
+impl PermissionsList {
+    /// Build a permission set, preserving the first occurrence of each value.
+    pub fn new<I: IntoIterator<Item = Permissions>>(items: I) -> Self {
+        let mut permissions = Vec::new();
+        for permission in items {
+            if !permissions.contains(&permission) {
+                permissions.push(permission);
+            }
+        }
+        Self(permissions)
     }
 
     pub fn from_query_params(
         query_params: Vec<ParsedQueryParam>,
-    ) -> Result<PermissionsList<Permissions>, ApiError> {
+    ) -> Result<PermissionsList, ApiError> {
         use crate::models::search::QueryParamsExt;
         query_params.permissions()
     }
 
-    pub fn contains(&self, item: &T) -> bool {
+    pub fn contains(&self, item: &Permissions) -> bool {
         self.0.contains(item)
     }
 
-    pub fn ensure_contains(&mut self, items: &[T]) {
+    pub fn ensure_contains(&mut self, items: &[Permissions]) {
         for item in items {
             if !self.contains(item) {
-                self.0.push(item.clone());
+                self.0.push(*item);
             }
         }
     }
-    // Method to get an iterator over references to the items in the Vec<T>
-    pub fn iter(&self) -> slice::Iter<'_, T> {
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> slice::Iter<'_, Permissions> {
         self.0.iter()
     }
 
-    pub fn as_slice(&self) -> &[T] {
+    pub fn as_slice(&self) -> &[Permissions] {
         &self.0
     }
 }
 
-impl<T: Serialize + PartialEq + Clone + Display> Display for PermissionsList<T> {
+impl<'de> Deserialize<'de> for PermissionsList {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::<Permissions>::deserialize(deserializer).map(Self::new)
+    }
+}
+
+impl Display for PermissionsList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let formatted = self
             .0
@@ -288,9 +306,9 @@ impl<T: Serialize + PartialEq + Clone + Display> Display for PermissionsList<T> 
     }
 }
 
-impl<'a, T: Serialize + PartialEq + Clone> IntoIterator for &'a PermissionsList<T> {
-    type Item = &'a T;
-    type IntoIter = slice::Iter<'a, T>;
+impl<'a> IntoIterator for &'a PermissionsList {
+    type Item = &'a Permissions;
+    type IntoIter = slice::Iter<'a, Permissions>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -544,7 +562,7 @@ pub struct UpdatePermission {
 mod tests {
     use crate::db::prelude::*;
 
-    use super::{PermissionFilter, Permissions};
+    use super::{PermissionFilter, Permissions, PermissionsList};
     use crate::schema::permissions::dsl::permissions;
 
     #[test]
@@ -560,6 +578,32 @@ mod tests {
             assert_eq!(Permissions::from_string(name).unwrap(), permission);
             assert_eq!(permission.to_string(), name);
         }
+    }
+
+    #[test]
+    fn permission_list_constructor_preserves_first_occurrences() {
+        let permission_list = PermissionsList::new([
+            Permissions::ReadCollection,
+            Permissions::UpdateCollection,
+            Permissions::ReadCollection,
+        ]);
+
+        assert_eq!(
+            permission_list.as_slice(),
+            &[Permissions::ReadCollection, Permissions::UpdateCollection]
+        );
+    }
+
+    #[test]
+    fn permission_list_deserialization_canonicalizes_duplicates() {
+        let permission_list: PermissionsList =
+            serde_json::from_str(r#"["ReadCollection","UpdateCollection","ReadCollection"]"#)
+                .unwrap();
+
+        assert_eq!(
+            permission_list.as_slice(),
+            &[Permissions::ReadCollection, Permissions::UpdateCollection]
+        );
     }
 
     #[test]

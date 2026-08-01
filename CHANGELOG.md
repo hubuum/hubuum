@@ -27,6 +27,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (Rust API):** Encapsulated event-sink delivery and webhook settings
   fields. Workspace-crate consumers must use `SinkDelivery` accessors and the
   validating `WebhookSinkSettings` constructor and configuration methods.
+- **Breaking (Rust API):** `PermissionsList` is now a permission-specific,
+  non-generic domain type that canonicalizes duplicate values. Rust callers
+  should replace `PermissionsList<Permissions>` with `PermissionsList`.
 
 ### Security
 

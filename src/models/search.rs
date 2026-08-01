@@ -1,7 +1,6 @@
 use chrono::NaiveDateTime;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::net::IpAddr;
 use std::str::FromStr;
 use tracing::debug;
@@ -787,7 +786,7 @@ pub trait QueryParamsExt {
     /// ### Returns    
     ///
     /// * A PermissionsList of Permissions or ApiError::BadRequest if the permissions are invalid
-    fn permissions(&self) -> Result<PermissionsList<Permissions>, ApiError>;
+    fn permissions(&self) -> Result<PermissionsList, ApiError>;
 
     /// ## Get a list of all JSON Schema elements in a list of parsed query parameters
     ///
@@ -859,13 +858,12 @@ impl QueryParamsExt for Vec<ParsedQueryParam> {
     /// Note that the list is not sorted and duplicates are removed.
     ///
     /// If any value is not a valid permission, return an ApiError::BadRequest.
-    fn permissions(&self) -> Result<PermissionsList<Permissions>, ApiError> {
-        let mut unique_permissions = HashSet::new();
-        for param in self.iter().filter(|p| p.is_permission()) {
-            let permission = param.value_as_permission()?;
-            unique_permissions.insert(permission);
-        }
-        Ok(PermissionsList::new(unique_permissions))
+    fn permissions(&self) -> Result<PermissionsList, ApiError> {
+        self.iter()
+            .filter(|param| param.is_permission())
+            .map(ParsedQueryParam::value_as_permission)
+            .collect::<Result<Vec<_>, _>>()
+            .map(PermissionsList::new)
     }
     /// ## Get a list of all JSON schema entries in a list of parsed query parameters
     ///

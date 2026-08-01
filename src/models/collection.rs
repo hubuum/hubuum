@@ -512,7 +512,7 @@ mod tests {
         pool: &DbPool,
         collection: &Collection,
         groups: &[Group],
-        permissions: PermissionsList<Permissions>,
+        permissions: PermissionsList,
     ) {
         let collection = collection.clone();
 
@@ -808,7 +808,7 @@ mod tests {
         let collection = scope.collection_fixture("test_list_groups").await;
 
         type NP = Permissions;
-        type PL = PermissionsList<Permissions>;
+        type PL = PermissionsList;
 
         // Note: Slicing is *NOT* inclusive, so this will assign to groups 0, 1, and 2
         assign_to_groups(
