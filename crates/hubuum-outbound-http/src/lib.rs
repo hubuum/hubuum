@@ -528,29 +528,48 @@ fn cached_client(
         addresses: addresses.to_vec(),
         accept_invalid_certs,
     };
-    let now = CLIENT_CACHE_CLOCK.fetch_add(1, Ordering::Relaxed);
+    cached_client_or_insert_with(key, || {
+        let mut builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve_to_addrs(host, addresses);
+        if accept_invalid_certs {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+        builder.build().map_err(|error| {
+            warn!(
+                message = "Failed building outbound HTTP client",
+                error = %error.without_url(),
+            );
+            OutboundHttpError::ClientBuild
+        })
+    })
+}
+
+fn cached_client_or_insert_with(
+    key: ClientCacheKey,
+    build_client: impl FnOnce() -> Result<reqwest::Client, OutboundHttpError>,
+) -> Result<reqwest::Client, OutboundHttpError> {
+    {
+        let mut cache = CLIENT_CACHE
+            .lock()
+            .map_err(|_| OutboundHttpError::ClientBuild)?;
+        if let Some(entry) = cache.get_mut(&key) {
+            entry.last_used = CLIENT_CACHE_CLOCK.fetch_add(1, Ordering::Relaxed);
+            return Ok(entry.client.clone());
+        }
+    }
+
+    let client = build_client()?;
     let mut cache = CLIENT_CACHE
         .lock()
         .map_err(|_| OutboundHttpError::ClientBuild)?;
+    let now = CLIENT_CACHE_CLOCK.fetch_add(1, Ordering::Relaxed);
 
+    // Another caller may have populated this key while the client was being built.
     if let Some(entry) = cache.get_mut(&key) {
         entry.last_used = now;
         return Ok(entry.client.clone());
     }
-
-    let mut builder = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .resolve_to_addrs(host, addresses);
-    if accept_invalid_certs {
-        builder = builder.danger_accept_invalid_certs(true);
-    }
-    let client = builder.build().map_err(|error| {
-        warn!(
-            message = "Failed building outbound HTTP client",
-            error = %error.without_url(),
-        );
-        OutboundHttpError::ClientBuild
-    })?;
 
     if cache.len() >= MAX_CACHED_CLIENTS
         && let Some(stalest) = cache
@@ -645,6 +664,8 @@ fn map_reqwest_error(error: reqwest::Error) -> OutboundHttpError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static CLIENT_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn outbound_urls_must_be_https() {
@@ -803,7 +824,27 @@ mod tests {
     }
 
     #[test]
+    fn client_construction_does_not_hold_the_cache_lock() {
+        let _test_guard = CLIENT_CACHE_TEST_LOCK.lock().unwrap();
+        CLIENT_CACHE.lock().unwrap().clear();
+        let lock_check_key = ClientCacheKey {
+            host: "lock-check.example".to_string(),
+            addresses: vec!["93.184.216.34:443".parse().unwrap()],
+            accept_invalid_certs: false,
+        };
+        cached_client_or_insert_with(lock_check_key, || {
+            assert!(
+                CLIENT_CACHE.try_lock().is_ok(),
+                "client construction must not hold the cache lock"
+            );
+            Ok(reqwest::Client::new())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn clients_are_reused_only_for_identical_dns_and_tls_policy() {
+        let _test_guard = CLIENT_CACHE_TEST_LOCK.lock().unwrap();
         CLIENT_CACHE.lock().unwrap().clear();
         let first_addresses = ["93.184.216.34:443".parse().unwrap()];
 
