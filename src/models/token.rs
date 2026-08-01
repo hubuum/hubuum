@@ -23,7 +23,7 @@ use crate::traits::{
 
 /// A persisted bearer token, keyed to a principal, with a full lifecycle. The
 /// `token` field stores the HMAC hash, never the raw value.
-#[derive(Serialize, Deserialize, Queryable, Insertable, Selectable, Clone, ToSchema)]
+#[derive(Queryable, Insertable, Selectable, Clone)]
 #[diesel(table_name = tokens)]
 pub struct PrincipalToken {
     pub id: i32,

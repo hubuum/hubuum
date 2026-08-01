@@ -44,18 +44,18 @@ use crate::models::{
     ObjectAggregateMeasureValue, ObjectAggregateRow, ObjectAggregateValueState,
     ObjectDataPatchDocument, ObjectKey, ObjectsByClass, Permission, Permissions,
     PersonalComputedFieldDefinitionRequest, PrincipalKey, PrincipalMemberResponse,
-    PrincipalSettings, PrincipalToken, PrincipalTokenMetadata, RelatedClassGraph,
-    RelatedObjectGraph, RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod,
-    RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteInvocationSubject,
-    RemoteTarget, RemoteTargetHistory, RemoteTargetID, RemoteTargetInvokeRequest,
-    RemoteTargetSubjectType, RestoreConfirmRequest, RestoreJobStatus, RestoreStageResponse,
-    RestoreTimestamps, RestoreValidationSummary, ServiceAccountResponse,
-    SharedComputedScopeResponse, TaskDetails, TaskEventResponse, TaskKind, TaskLinks, TaskProgress,
-    TaskResponse, TaskStatus, TokenResourceScope, TokenScopeDetails, UnifiedSearchBatchResponse,
-    UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse,
-    UnifiedSearchStartedEvent, UpdateCollection, UpdateEventSink, UpdateEventSubscription,
-    UpdateExportTemplate, UpdateGroup, UpdateHubuumClass, UpdateHubuumObject,
-    UpdateHubuumObjectRequest, UpdateRemoteTarget, UpdateServiceAccount, UpdateUser, UserResponse,
+    PrincipalSettings, PrincipalTokenMetadata, RelatedClassGraph, RelatedObjectGraph,
+    RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride,
+    RemoteInvocationParameters, RemoteInvocationSubject, RemoteTarget, RemoteTargetHistory,
+    RemoteTargetID, RemoteTargetInvokeRequest, RemoteTargetSubjectType, RestoreConfirmRequest,
+    RestoreJobStatus, RestoreStageResponse, RestoreTimestamps, RestoreValidationSummary,
+    ServiceAccountResponse, SharedComputedScopeResponse, TaskDetails, TaskEventResponse, TaskKind,
+    TaskLinks, TaskProgress, TaskResponse, TaskStatus, TokenResourceScope, TokenScopeDetails,
+    UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
+    UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateCollection, UpdateEventSink,
+    UpdateEventSubscription, UpdateExportTemplate, UpdateGroup, UpdateHubuumClass,
+    UpdateHubuumObject, UpdateHubuumObjectRequest, UpdateRemoteTarget, UpdateServiceAccount,
+    UpdateUser, UserResponse,
 };
 use crate::pagination::{
     NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults,
@@ -318,7 +318,6 @@ use utoipa::{Modify, OpenApi, ToSchema};
             LoginUser,
             auth::AuthProvidersResponse,
             auth::LogoutTokenRequest,
-            PrincipalToken,
             PrincipalTokenMetadata,
             PrincipalMemberResponse,
             PrincipalSettings,
@@ -1069,6 +1068,18 @@ mod tests {
 
     fn openapi_json() -> Value {
         serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI should serialize to JSON")
+    }
+
+    #[test]
+    fn openapi_excludes_persisted_token_storage_schema() {
+        let json = openapi_json();
+        let schemas = json
+            .pointer("/components/schemas")
+            .and_then(Value::as_object)
+            .expect("OpenAPI component schemas must be an object");
+
+        assert!(!schemas.contains_key("PrincipalToken"));
+        assert!(schemas.contains_key("PrincipalTokenMetadata"));
     }
 
     fn path_with_sample_params(path: &str) -> String {
