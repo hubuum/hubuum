@@ -397,26 +397,26 @@ impl UpdateGroup {
     /// change.
     pub async fn save_without_events<C>(
         &self,
-        group_id: i32,
+        group_id: GroupID,
         backend: &C,
     ) -> Result<Group, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.update_group_record_without_events(group_id, backend.db_pool())
+        self.update_group_record_without_events(group_id.id(), backend.db_pool())
             .await
     }
 
     pub async fn save<C>(
         &self,
-        group_id: i32,
+        group_id: GroupID,
         backend: &C,
         context: Option<&EventContext>,
     ) -> Result<Group, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.update_group_record(group_id, backend.db_pool(), context)
+        self.update_group_record(group_id.id(), backend.db_pool(), context)
             .await
     }
 }

@@ -163,7 +163,7 @@ pub async fn update_user(
     let event_context = requestor.event_context(&req);
     let user = updated_user
         .into_inner()
-        .save(target_id, &pool, Some(&event_context))
+        .save(user_id, &pool, Some(&event_context))
         .await?;
     Ok(ApiResponse::new(
         user.to_response(&pool).await?,

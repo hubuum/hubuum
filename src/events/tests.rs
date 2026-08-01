@@ -48,7 +48,7 @@ use crate::models::{
     NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow,
     NewUser, ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
     PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID, UpdateExportTemplate,
-    UpdateRemoteTargetRow, UpdateUser,
+    UpdateRemoteTargetRow, UpdateUser, UserID,
 };
 use crate::schema::events::dsl::events;
 use crate::tests::{
@@ -1585,14 +1585,14 @@ async fn group_writes_emit_lifecycle_events_in_transaction() {
     let updated = UpdateGroup {
         groupname: Some(scope.scoped_name("event_group_after")),
     }
-    .save(group.id, &scope.pool, Some(&context))
+    .save(GroupID::new(group.id).unwrap(), &scope.pool, Some(&context))
     .await
     .unwrap();
 
     let unchanged = UpdateGroup {
         groupname: Some(updated.groupname.clone()),
     }
-    .save(group.id, &scope.pool, Some(&context))
+    .save(GroupID::new(group.id).unwrap(), &scope.pool, Some(&context))
     .await
     .unwrap();
     assert_eq!(unchanged.updated_at, updated.updated_at);
@@ -1721,7 +1721,7 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
         proper_name: Some("After User".to_string()),
         email: Some("after@example.invalid".to_string()),
     }
-    .save(user.id, &scope.pool, Some(&context))
+    .save(UserID::new(user.id).unwrap(), &scope.pool, Some(&context))
     .await
     .unwrap();
 
@@ -1730,7 +1730,7 @@ async fn user_writes_emit_lifecycle_events_without_password_material() {
         proper_name: Some("After User".to_string()),
         email: Some("after@example.invalid".to_string()),
     }
-    .save(user.id, &scope.pool, Some(&context))
+    .save(UserID::new(user.id).unwrap(), &scope.pool, Some(&context))
     .await
     .unwrap();
     assert_eq!(unchanged.updated_at, updated.updated_at);

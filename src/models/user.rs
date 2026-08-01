@@ -458,19 +458,23 @@ impl UpdateUser {
     /// fixture construction, cleanup, and event-system tests. Normal application
     /// code should use [`UpdateUser::save`] so event subscribers observe the
     /// change.
-    pub async fn save_without_events<C>(self, user_id: i32, backend: &C) -> Result<User, ApiError>
+    pub async fn save_without_events<C>(
+        self,
+        user_id: UserID,
+        backend: &C,
+    ) -> Result<User, ApiError>
     where
         C: BackendContext + ?Sized,
     {
         let hashed = self.hash_password().await?;
         hashed
-            .update_user_record_without_events(user_id, backend.db_pool())
+            .update_user_record_without_events(user_id.id(), backend.db_pool())
             .await
     }
 
     pub async fn save<C>(
         self,
-        user_id: i32,
+        user_id: UserID,
         backend: &C,
         context: Option<&EventContext>,
     ) -> Result<User, ApiError>
@@ -479,7 +483,7 @@ impl UpdateUser {
     {
         let hashed = self.hash_password().await?;
         hashed
-            .update_user_record(user_id, backend.db_pool(), context)
+            .update_user_record(user_id.id(), backend.db_pool(), context)
             .await
     }
 }
