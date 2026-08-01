@@ -9,6 +9,7 @@ mod tests {
     };
     use serde_json::json;
     use std::{future::Future, str::FromStr};
+    use tokio::sync::Mutex;
     use tracing::instrument::WithSubscriber;
     use tracing_subscriber::layer::SubscriberExt;
 
@@ -23,6 +24,7 @@ mod tests {
     use crate::tests::{TestContext, test_context};
 
     const ENDPOINT: &str = "/api/v1/classes/";
+    static REQUEST_LOG_CAPTURE_LOCK: Mutex<()> = Mutex::const_new(());
 
     #[rstest]
     #[case::with_correlation_id(Some("test-correlation-id"), true)]
@@ -105,6 +107,10 @@ mod tests {
     }
 
     async fn capture_request_logs<T>(future: impl Future<Output = T>) -> (T, JsonLogWriter) {
+        // These tests install distinct task-local tracing subscribers around nested Actix
+        // middleware futures. Keep capture windows from overlapping: parallel capture has
+        // intermittently dropped the final middleware event on CI.
+        let _capture_guard = REQUEST_LOG_CAPTURE_LOCK.lock().await;
         let writer = JsonLogWriter::default();
         let subscriber = tracing_subscriber::registry().with(
             tracing_subscriber::fmt::layer()
