@@ -198,6 +198,7 @@ pub async fn update_collection(
     update_data: web::Json<UpdateCollection>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
+    let collection_id = collection_id.into_inner();
     debug!(
         message = "Collection update requested",
         requestor = requestor.principal.name,
@@ -217,7 +218,7 @@ pub async fn update_collection(
     let event_context = requestor.event_context(&req);
     let updated_collection = update_data
         .into_inner()
-        .update(&pool, collection.id, &event_context)
+        .update(&pool, collection_id, &event_context)
         .await?;
     Ok(ApiResponse::accepted(updated_collection))
 }

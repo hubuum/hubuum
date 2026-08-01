@@ -1,6 +1,6 @@
 use crate::db::prelude::*;
 use crate::db::with_connection;
-use crate::models::{NewHubuumClass, UpdateHubuumClass};
+use crate::models::{HubuumClassID, NewHubuumClass, UpdateHubuumClass};
 use crate::tests::TestScope;
 use crate::traits::{CanSave, CanUpdate};
 use chrono::{DateTime, Utc};
@@ -279,7 +279,7 @@ async fn unchanged_domain_update_is_noop() {
         validate_schema: Some(class.validate_schema),
         description: Some(class.description.clone()),
     }
-    .update_without_events(&pool, class.id)
+    .update_without_events(&pool, HubuumClassID::new(class.id).unwrap())
     .await
     .unwrap();
 

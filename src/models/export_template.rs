@@ -599,22 +599,23 @@ impl NewExportTemplate {
 
 impl UpdateAdapter for UpdateExportTemplate {
     type Output = ExportTemplate;
+    type Identifier = ExportTemplateID;
 
     async fn update_adapter_without_events(
         &self,
         pool: &DbPool,
-        entry_id: i32,
+        entry_id: ExportTemplateID,
     ) -> Result<ExportTemplate, ApiError> {
-        apply_export_template_update(pool, entry_id, self.clone(), None).await
+        apply_export_template_update(pool, entry_id.id(), self.clone(), None).await
     }
 
     async fn update_adapter(
         &self,
         pool: &DbPool,
-        entry_id: i32,
+        entry_id: ExportTemplateID,
         context: &EventContext,
     ) -> Result<ExportTemplate, ApiError> {
-        apply_export_template_update(pool, entry_id, self.clone(), Some(context)).await
+        apply_export_template_update(pool, entry_id.id(), self.clone(), Some(context)).await
     }
 }
 

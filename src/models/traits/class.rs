@@ -106,7 +106,9 @@ impl SaveAdapter for HubuumClass {
             description: Some(self.description.clone()),
         };
 
-        update.update_without_events(pool, self.id).await
+        update
+            .update_without_events(pool, HubuumClassID::new(self.id)?)
+            .await
     }
 
     async fn save_adapter(
@@ -158,23 +160,24 @@ impl SaveAdapter for NewHubuumClass {
 
 impl UpdateAdapter for UpdateHubuumClass {
     type Output = HubuumClass;
+    type Identifier = HubuumClassID;
 
     async fn update_adapter_without_events(
         &self,
         pool: &DbPool,
-        class_id: i32,
+        class_id: HubuumClassID,
     ) -> Result<HubuumClass, ApiError> {
-        self.update_class_record_without_events(pool, class_id)
+        self.update_class_record_without_events(pool, class_id.id())
             .await
     }
 
     async fn update_adapter(
         &self,
         pool: &DbPool,
-        class_id: i32,
+        class_id: HubuumClassID,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        self.update_class_record(pool, class_id, Some(context))
+        self.update_class_record(pool, class_id.id(), Some(context))
             .await
     }
 }

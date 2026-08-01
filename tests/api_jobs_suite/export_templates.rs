@@ -4,8 +4,8 @@ mod tests {
 
     use crate::models::{
         Collection, ExportContentType, ExportLimits, ExportMissingDataPolicy, ExportScopeKind,
-        ExportTemplate, ExportTemplateKind, GroupID, NewCollectionWithAssignee, NewExportTemplate,
-        NewHubuumClass, Permissions, PermissionsList, UpdateExportTemplate,
+        ExportTemplate, ExportTemplateID, ExportTemplateKind, GroupID, NewCollectionWithAssignee,
+        NewExportTemplate, NewHubuumClass, Permissions, PermissionsList, UpdateExportTemplate,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_paginated_collection_total_count, assert_response_status};
@@ -1244,7 +1244,11 @@ mod tests {
             default_missing_data_policy: None,
             default_limits: None,
         }
-        .update(&pool, created.id, &event_context)
+        .update(
+            &pool,
+            ExportTemplateID::new(created.id).unwrap(),
+            &event_context,
+        )
         .await
         .unwrap();
 

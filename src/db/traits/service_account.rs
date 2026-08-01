@@ -143,22 +143,24 @@ where
 
 impl UpdateAdapter for UpdateServiceAccount {
     type Output = ServiceAccount;
+    type Identifier = ServiceAccountID;
 
     async fn update_adapter_without_events(
         &self,
         pool: &DbPool,
-        service_account_id: i32,
+        service_account_id: ServiceAccountID,
     ) -> Result<ServiceAccount, ApiError> {
-        update_service_account_record(self, pool, service_account_id, None).await
+        update_service_account_record(self, pool, service_account_id.id(), None).await
     }
 
     async fn update_adapter(
         &self,
         pool: &DbPool,
-        service_account_id: i32,
+        service_account_id: ServiceAccountID,
         event_context: &EventContext,
     ) -> Result<ServiceAccount, ApiError> {
-        update_service_account_record(self, pool, service_account_id, Some(event_context)).await
+        update_service_account_record(self, pool, service_account_id.id(), Some(event_context))
+            .await
     }
 }
 

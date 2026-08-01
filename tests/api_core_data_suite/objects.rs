@@ -10,8 +10,8 @@ mod tests {
     use crate::events::EventContext;
     use crate::models::traits::{CreateObjectInResolvedClass, ResolveClassTarget};
     use crate::models::{
-        ClassSelector, HubuumClassID, HubuumObject, NewHubuumClass, NewHubuumObject,
-        UpdateHubuumObject,
+        ClassSelector, HubuumClassID, HubuumObject, HubuumObjectID, NewHubuumClass,
+        NewHubuumObject, UpdateHubuumObject,
     };
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
@@ -1688,7 +1688,11 @@ mod tests {
             data: None,
             description: Some("v2".to_string()),
         }
-        .update(&context.pool, created.id, &event_context)
+        .update(
+            &context.pool,
+            HubuumObjectID::new(created.id).unwrap(),
+            &event_context,
+        )
         .await
         .unwrap();
 

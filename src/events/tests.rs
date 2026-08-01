@@ -44,11 +44,11 @@ use crate::models::token::revoke_token_by_id_for_principal;
 use crate::models::{
     CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink as EventSinkModel,
     EventSinkID, EventSinkKind, EventSubscription, ExportContentType, ExportTemplateID,
-    ExportTemplateKind, GroupID, HubuumClassRelationID, NewEventSink, NewEventSubscription,
-    NewExportTemplate, NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow,
-    NewUser, ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
-    PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID, UpdateExportTemplate,
-    UpdateRemoteTargetRow, UpdateUser, UserID,
+    ExportTemplateKind, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
+    NewEventSink, NewEventSubscription, NewExportTemplate, NewHubuumClassRelation,
+    NewHubuumObjectRelation, NewRemoteTargetRow, NewUser, ObjectRelationLimit, Permissions,
+    PermissionsList, PrincipalID, PrincipalToken, PrincipalTokenCreateRequest, RemoteTargetID,
+    Token, TokenID, UpdateExportTemplate, UpdateRemoteTargetRow, UpdateUser, UserID,
 };
 use crate::schema::events::dsl::events;
 use crate::tests::{
@@ -1137,7 +1137,11 @@ async fn collection_writes_emit_lifecycle_events_in_transaction() {
         name: Some(collection_name.clone()),
         description: Some("after".to_string()),
     }
-    .update(&scope.pool, collection.id, &context)
+    .update(
+        &scope.pool,
+        CollectionID::new(collection.id).unwrap(),
+        &context,
+    )
     .await
     .unwrap();
 
@@ -1145,7 +1149,11 @@ async fn collection_writes_emit_lifecycle_events_in_transaction() {
         name: Some(collection_name.clone()),
         description: Some("after".to_string()),
     }
-    .update(&scope.pool, collection.id, &context)
+    .update(
+        &scope.pool,
+        CollectionID::new(collection.id).unwrap(),
+        &context,
+    )
     .await
     .unwrap();
     assert_eq!(unchanged.updated_at, updated.updated_at);
@@ -1226,7 +1234,7 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
         validate_schema: Some(false),
         description: Some("after".to_string()),
     }
-    .update(&scope.pool, class.id, &context)
+    .update(&scope.pool, HubuumClassID::new(class.id).unwrap(), &context)
     .await
     .unwrap();
 
@@ -1240,7 +1248,7 @@ async fn class_writes_emit_lifecycle_events_in_transaction() {
         validate_schema: Some(false),
         description: Some("after".to_string()),
     }
-    .update(&scope.pool, class.id, &context)
+    .update(&scope.pool, HubuumClassID::new(class.id).unwrap(), &context)
     .await
     .unwrap();
     assert_eq!(unchanged.updated_at, updated.updated_at);
@@ -1307,7 +1315,11 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
         data: Some(serde_json::json!({"state": "after"})),
         description: Some("after".to_string()),
     }
-    .update(&scope.pool, object.id, &context)
+    .update(
+        &scope.pool,
+        HubuumObjectID::new(object.id).unwrap(),
+        &context,
+    )
     .await
     .unwrap();
 
@@ -1318,7 +1330,11 @@ async fn object_writes_emit_lifecycle_events_in_transaction() {
         data: Some(serde_json::json!({"state": "after"})),
         description: Some("after".to_string()),
     }
-    .update(&scope.pool, object.id, &context)
+    .update(
+        &scope.pool,
+        HubuumObjectID::new(object.id).unwrap(),
+        &context,
+    )
     .await
     .unwrap();
     assert_eq!(unchanged.updated_at, updated.updated_at);
@@ -2005,7 +2021,11 @@ async fn export_template_writes_emit_lifecycle_events() {
         default_missing_data_policy: None,
         default_limits: None,
     }
-    .update(&scope.pool, template.id, &context)
+    .update(
+        &scope.pool,
+        ExportTemplateID::new(template.id).unwrap(),
+        &context,
+    )
     .await
     .unwrap();
 
@@ -2023,7 +2043,11 @@ async fn export_template_writes_emit_lifecycle_events() {
         default_missing_data_policy: None,
         default_limits: None,
     }
-    .update(&scope.pool, template.id, &context)
+    .update(
+        &scope.pool,
+        ExportTemplateID::new(template.id).unwrap(),
+        &context,
+    )
     .await
     .unwrap();
 

@@ -26,7 +26,7 @@ impl SaveAdapter for Collection {
             description: Some(self.description.clone()),
         };
         updated_collection
-            .update_without_events(pool, self.id)
+            .update_without_events(pool, CollectionID::new(self.id)?)
             .await
     }
 
@@ -67,23 +67,24 @@ impl DeleteAdapter for CollectionID {
 
 impl UpdateAdapter for UpdateCollection {
     type Output = Collection;
+    type Identifier = CollectionID;
 
     async fn update_adapter_without_events(
         &self,
         pool: &DbPool,
-        target_collection_id: i32,
+        target_collection_id: CollectionID,
     ) -> Result<Self::Output, ApiError> {
-        self.update_collection_record_without_events(pool, target_collection_id)
+        self.update_collection_record_without_events(pool, target_collection_id.id())
             .await
     }
 
     async fn update_adapter(
         &self,
         pool: &DbPool,
-        target_collection_id: i32,
+        target_collection_id: CollectionID,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        self.update_collection_record(pool, target_collection_id, Some(context))
+        self.update_collection_record(pool, target_collection_id.id(), Some(context))
             .await
     }
 }

@@ -355,7 +355,10 @@ pub mod tests {
             description: None,
         };
 
-        let updated_class = update.update_without_events(&pool, class.id).await.unwrap();
+        let updated_class = update
+            .update_without_events(&pool, HubuumClassID::new(class.id).unwrap())
+            .await
+            .unwrap();
 
         assert_eq!(updated_class.id, class.id);
         assert_eq!(updated_class.name, "test update 2");

@@ -222,7 +222,7 @@ pub async fn update_service_account(
     }
 
     let event_context = requestor.event_context(&req);
-    let updated = update.update(&pool, id.id(), &event_context).await?;
+    let updated = update.update(&pool, id, &event_context).await?;
     Ok(ApiResponse::new(
         response_for(&pool, &updated).await?,
         StatusCode::OK,

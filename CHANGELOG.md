@@ -47,6 +47,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `GroupID` values instead of raw `i32` identifiers. Library callers must
   construct the matching ID newtype before invoking these domain update
   methods.
+- **Breaking Rust API:** `CanUpdate` and its adapter now declare an associated
+  `Identifier` type. Built-in collection, class, object, export-template, and
+  service-account updates require their validated ID newtypes instead of raw
+  `i32` values. Downstream update adapters must declare the associated type,
+  and callers must construct the matching ID before invoking `update` or
+  `update_without_events`.
 
 ### Security
 

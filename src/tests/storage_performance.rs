@@ -347,9 +347,12 @@ async fn collection_no_op_update_does_not_write_or_emit_an_event() {
         description: Some(fixture.collection.description.clone()),
     };
 
-    let (updated, queries) =
-        capture_queries(update.update(&scope.pool, fixture.collection.id, &EventContext::system()))
-            .await;
+    let (updated, queries) = capture_queries(update.update(
+        &scope.pool,
+        CollectionID::new(fixture.collection.id).unwrap(),
+        &EventContext::system(),
+    ))
+    .await;
     assert_eq!(
         updated.expect("no-op update should return current row"),
         fixture.collection
@@ -507,9 +510,12 @@ async fn changed_collection_update_writes_once_and_emits_one_event() {
         description: Some("changed query budget description".to_string()),
     };
 
-    let (updated, queries) =
-        capture_queries(update.update(&scope.pool, fixture.collection.id, &EventContext::system()))
-            .await;
+    let (updated, queries) = capture_queries(update.update(
+        &scope.pool,
+        CollectionID::new(fixture.collection.id).unwrap(),
+        &EventContext::system(),
+    ))
+    .await;
     assert_eq!(
         updated.expect("changed update should succeed").description,
         "changed query budget description"
@@ -619,7 +625,10 @@ async fn collection_history_query_count_is_constant_with_page_size() {
                 name: None,
                 description: Some(format!("query budget history version {version}")),
             }
-            .update_without_events(&scope.pool, fixture.collection.id),
+            .update_without_events(
+                &scope.pool,
+                CollectionID::new(fixture.collection.id).unwrap(),
+            ),
         )
         .await
         .expect("history-generating update should succeed");
