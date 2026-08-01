@@ -40,11 +40,28 @@ pub struct LdapScopeConfig {
     pub group_rules: Vec<GroupMappingRuleConfig>,
 }
 
+struct LdapUrlDebug<'a>(&'a str);
+
+impl fmt::Debug for LdapUrlDebug<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Ok(url) = Url::parse(self.0) else {
+            return formatter.write_str("<invalid LDAP URL>");
+        };
+
+        formatter
+            .debug_struct("LdapUrl")
+            .field("scheme", &url.scheme())
+            .field("host", &url.host_str())
+            .field("port", &url.port_or_known_default())
+            .finish()
+    }
+}
+
 impl fmt::Debug for LdapScopeConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LdapScopeConfig")
             .field("scope", &self.scope)
-            .field("url", &self.url)
+            .field("url", &LdapUrlDebug(&self.url))
             .field("bind_dn", &self.bind_dn)
             .field(
                 "bind_password",
@@ -116,6 +133,12 @@ impl LdapIdentityProvider {
         if parsed_url.host_str().is_none() {
             return Err(AuthProviderError::Config(
                 "ldap url must include a host".to_string(),
+            ));
+        }
+        if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
+            return Err(AuthProviderError::Config(
+                "ldap url must not contain embedded credentials; configure bind_dn and bind_password instead"
+                    .to_string(),
             ));
         }
         let starttls = match parsed_url.scheme() {
@@ -518,6 +541,47 @@ mod tests {
             .err()
             .unwrap();
         assert!(matches!(&error, AuthProviderError::Config(_)));
+    }
+
+    #[test]
+    fn ldap_url_with_embedded_credentials_is_rejected() {
+        let error = LdapIdentityProvider::new(ldap_config(
+            "ldaps://service-account:embedded-secret@directory.example",
+        ))
+        .err()
+        .unwrap();
+
+        assert_eq!(
+            error.to_string(),
+            "provider configuration error: ldap url must not contain embedded credentials; configure bind_dn and bind_password instead"
+        );
+    }
+
+    #[test]
+    fn ldap_config_debug_redacts_url_details_and_bind_password() {
+        let config = LdapScopeConfig {
+            bind_dn: Some("cn=service,dc=example,dc=org".to_string()),
+            bind_password: Some("bind-password-secret".to_string()),
+            ..ldap_config(
+                "ldaps://service-account:url-password-secret@directory.example:1636/dc=private?token=query-secret#fragment-secret",
+            )
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(debug.contains("directory.example"));
+        assert!(debug.contains("1636"));
+        assert!(debug.contains("<redacted>"));
+        for secret in [
+            "service-account",
+            "url-password-secret",
+            "dc=private",
+            "query-secret",
+            "fragment-secret",
+            "bind-password-secret",
+        ] {
+            assert!(!debug.contains(secret));
+        }
     }
 
     #[test]

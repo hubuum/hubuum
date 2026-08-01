@@ -22,6 +22,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   stop deserializing or depending on this field. The persistence-only
   `EventDelivery` model no longer implements Serde or OpenAPI schema traits,
   and its claim token is crate-private.
+- **Breaking:** LDAP provider URLs now reject embedded user information. Move
+  service credentials into `bind_dn` and `bind_password`; configuration debug
+  output now shows only the LDAP URL scheme, host, and port.
 - Local password changes and administrative password resets now atomically
   revoke all active bearer tokens for the affected user.
 - Redacted embedded URL credentials and common secret-header spellings from
