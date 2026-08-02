@@ -93,7 +93,7 @@ pub struct EventSink {
     pub id: i32,
     pub name: String,
     pub kind: EventSinkKind,
-    #[serde(serialize_with = "serialize_redacted_event_sink_config")]
+    #[serde(serialize_with = "serialize_redacted_event_sink_value")]
     pub config: serde_json::Value,
     pub secret_ref: Option<String>,
     pub enabled: bool,
@@ -196,6 +196,7 @@ pub struct EventSubscription {
     pub actions: Vec<String>,
     #[serde(default)]
     pub filter: EventSubscriptionFilter,
+    #[serde(serialize_with = "serialize_redacted_event_sink_value")]
     pub routing: serde_json::Value,
     pub enabled: bool,
     pub created_at: NaiveDateTime,
@@ -565,22 +566,63 @@ pub fn redact_event_sink_config(config: &serde_json::Value) -> serde_json::Value
     }
 }
 
-fn serialize_redacted_event_sink_config<S>(
-    config: &serde_json::Value,
+fn serialize_redacted_event_sink_value<S>(
+    value: &serde_json::Value,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    redact_event_sink_config(config).serialize(serializer)
+    redact_event_sink_config(value).serialize(serializer)
 }
 
 fn is_sensitive_config_key(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "password" | "token" | "secret" | "authorization" | "auth" | "api_key" | "apikey"
-    )
+    let compact = lower
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect::<String>();
+    if [
+        "password",
+        "passwd",
+        "token",
+        "secret",
+        "authorization",
+        "auth",
+        "credential",
+        "credentials",
+        "apikey",
+        "privatekey",
+        "accesskey",
+    ]
+    .iter()
+    .any(|suffix| compact.ends_with(suffix))
+    {
+        return true;
+    }
+
+    let mut previous = None;
+    for segment in lower
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|segment| !segment.is_empty())
+    {
+        if matches!(
+            segment,
+            "password"
+                | "passwd"
+                | "token"
+                | "secret"
+                | "authorization"
+                | "credential"
+                | "credentials"
+                | "apikey"
+        ) || (segment == "key" && matches!(previous, Some("api" | "private" | "access")))
+        {
+            return true;
+        }
+        previous = Some(segment);
+    }
+    false
 }
 
 fn redact_uri_value(value: &serde_json::Value) -> serde_json::Value {
@@ -743,5 +785,75 @@ impl CursorSqlMapping for EventSubscription {
                 )));
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    #[rstest]
+    #[case::api_header("X-API-Key")]
+    #[case::compact_api_header("XApiKey")]
+    #[case::auth_token_header("X-Auth-Token")]
+    #[case::client_secret("client-secret")]
+    #[case::authorization_header("Proxy-Authorization")]
+    #[case::credentials("database_credentials")]
+    #[case::private_key("private_key")]
+    fn common_secret_key_spellings_are_sensitive(#[case] key: &str) {
+        assert!(is_sensitive_config_key(key));
+    }
+
+    #[rstest]
+    #[case::routing_key("routing_key")]
+    #[case::ordinary_key_suffix("monkey")]
+    #[case::public_key("public_key")]
+    fn non_secret_keys_remain_visible(#[case] key: &str) {
+        assert!(!is_sensitive_config_key(key));
+    }
+
+    #[test]
+    fn event_subscription_serialization_redacts_routing_credentials() {
+        let credential = "routing-password";
+        let api_key = "literal-api-key";
+        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let subscription = EventSubscription {
+            id: 1,
+            collection_id: 2,
+            sink_id: 3,
+            name: "webhook".to_string(),
+            description: String::new(),
+            entity_types: vec!["collection".to_string()],
+            actions: vec!["created".to_string()],
+            filter: EventSubscriptionFilter::default(),
+            routing: serde_json::json!({
+                "url": format!("https://user:{credential}@example.invalid/events"),
+                "headers": {
+                    "X-API-Key": api_key,
+                    "routing_key": "events.created"
+                }
+            }),
+            enabled: true,
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+
+        let serialized = serde_json::to_value(subscription).unwrap();
+
+        assert_eq!(
+            serialized["routing"]["url"],
+            "https://[redacted]@example.invalid/events"
+        );
+        assert_eq!(serialized["routing"]["headers"]["X-API-Key"], "[redacted]");
+        assert_eq!(
+            serialized["routing"]["headers"]["routing_key"],
+            "events.created"
+        );
+        assert!(!serialized.to_string().contains(credential));
+        assert!(!serialized.to_string().contains(api_key));
     }
 }
