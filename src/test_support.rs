@@ -5,6 +5,8 @@
 //! process-global reset and capture facilities.
 
 use hubuum_auth_core::AuthenticatedExternalUser;
+use tracing::Dispatch;
+use tracing_subscriber::layer::SubscriberExt;
 
 use crate::auth::ConfiguredLdapScope;
 use crate::db::DbPool;
@@ -15,6 +17,20 @@ use crate::models::{CollectionID, NewEventSink, NewEventSubscription, TaskKind};
 
 pub use crate::logger::test_support::JsonLogWriter;
 pub use crate::middlewares::rate_limit::LOGIN_RATE_LIMIT_TEST_LOCK;
+
+pub fn tracing_middleware_with_log_capture()
+-> (crate::middlewares::TracingMiddleware, JsonLogWriter) {
+    let writer = JsonLogWriter::default();
+    let subscriber = tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .json()
+            .with_writer(writer.clone())
+            .event_format(crate::logger::HubuumLoggingFormat),
+    );
+    let middleware =
+        crate::middlewares::TracingMiddleware::new_with_capture_dispatch(Dispatch::new(subscriber));
+    (middleware, writer)
+}
 
 #[cfg(not(test))]
 pub fn integration_test_config() -> Result<&'static crate::config::AppConfig, ApiError> {
