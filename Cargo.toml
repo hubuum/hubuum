@@ -109,7 +109,7 @@ lru = "0.18.0"
 treetop-client = { git = "https://github.com/terjekv/treetop-client", optional = true }
 toml = "1.1"
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]
