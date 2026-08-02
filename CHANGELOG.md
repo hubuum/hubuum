@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Security
+
+- Local password changes and administrative password resets now atomically
+  revoke all active bearer tokens for the affected user.
+
 ## [0.0.8] - 2026-08-01
 
 ### Fixed

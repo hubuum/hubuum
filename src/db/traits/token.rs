@@ -1,13 +1,13 @@
 use crate::db::prelude::*;
 
 use crate::db::traits::authz::load_token_scopes_for_tokens;
-use crate::db::{DbPool, with_connection, with_transaction};
+use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::principal::PrincipalKind;
 use crate::models::{
-    PrincipalToken, PrincipalTokenCreateParts, PrincipalTokenCreateRequest, PrincipalTokenMetadata,
-    Token, TokenLifetime, TokenScope,
+    PrincipalID, PrincipalToken, PrincipalTokenCreateParts, PrincipalTokenCreateRequest,
+    PrincipalTokenMetadata, Token, TokenLifetime, TokenScope,
 };
 use crate::schema::{
     principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
@@ -88,6 +88,26 @@ fn token_event(
                 "resource_scoped": token.resource_scoped,
             })),
     )
+}
+
+/// Soft-revoke every unrevoked token belonging to one principal.
+///
+/// Accepting an existing connection lets callers compose token revocation with
+/// security-sensitive principal changes in the same transaction.
+pub(crate) async fn revoke_all_tokens_for_principal_conn(
+    conn: &mut DbConnection,
+    principal: PrincipalID,
+) -> Result<usize, ApiError> {
+    use crate::schema::tokens::dsl::{principal_id, revoked_at, tokens};
+
+    Ok(diesel::update(
+        tokens
+            .filter(principal_id.eq(principal.id()))
+            .filter(revoked_at.is_null()),
+    )
+    .set(revoked_at.eq(diesel::dsl::now))
+    .execute(conn)
+    .await?)
 }
 
 pub async fn revoke_token_by_id_for_principal_without_events_db(
