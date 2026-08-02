@@ -9,6 +9,7 @@
 - `rustfmt` should pass for all Rust code. Keep formatting mechanical and avoid hand-formatting that fights `rustfmt`.
 - Regenerate OpenAPI after endpoint or schema changes before considering the change complete.
 - Markdown lint must pass for all `*.md` files. Run it locally with `npx markdownlint-cli2 --config .markdownlint.json "**/*.md" "!target"` before considering documentation changes complete. Every fenced code block must declare a language (use `text` for plain ASCII/diagrams), and tables must use a single, consistent column style (MD060).
+- When adding or moving build, test, lint, benchmark, or embedded-file inputs, verify that `scripts/classify-ci-changes.sh` selects the required CI targets and update `scripts/test-classify-ci-changes.sh` when needed. Unknown paths intentionally receive conservative validation. Direct literal `include_str!` and `include_bytes!` inputs are checked automatically; dynamically constructed paths still require manual review.
 
 ## Container Builds
 
