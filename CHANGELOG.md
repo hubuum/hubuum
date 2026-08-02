@@ -27,7 +27,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   endpoint details out of integration diagnostics and persisted event-delivery
   failures. Downstream matches and constructors must remove the former string
   payloads. Credential-resolved AMQP, email, and Valkey connection failures are
-  likewise reported without transport-library detail.
+  likewise reported without transport-library detail. The underlying failures
+  remain available to administrators in contextual server logs.
 
 ## [0.0.8] - 2026-08-01
 

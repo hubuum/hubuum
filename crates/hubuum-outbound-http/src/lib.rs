@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 use ipnet::IpNet;
 use reqwest::Url;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use tracing::warn;
 
 const MAX_CACHED_CLIENTS: usize = 128;
 
@@ -532,11 +533,13 @@ async fn read_capped_body(
 ) -> Result<String, OutboundHttpError> {
     let mut buffer: Vec<u8> = Vec::new();
     while buffer.len() < limit {
-        match response
-            .chunk()
-            .await
-            .map_err(|_| OutboundHttpError::ResponseRead)?
-        {
+        match response.chunk().await.map_err(|error| {
+            warn!(
+                message = "Failed reading outbound HTTP response",
+                error = %error.without_url(),
+            );
+            OutboundHttpError::ResponseRead
+        })? {
             Some(chunk) => {
                 let remaining = limit - buffer.len();
                 let take = remaining.min(chunk.len());
@@ -579,9 +582,17 @@ fn headers_to_json(headers: &HeaderMap) -> serde_json::Value {
 }
 
 fn map_reqwest_error(error: reqwest::Error) -> OutboundHttpError {
-    if error.is_timeout() {
+    let is_timeout = error.is_timeout();
+    let is_connect = error.is_connect();
+    warn!(
+        message = "Outbound HTTP request failed",
+        error = %error.without_url(),
+        is_timeout,
+        is_connect,
+    );
+    if is_timeout {
         OutboundHttpError::Timeout
-    } else if error.is_connect() {
+    } else if is_connect {
         OutboundHttpError::Connect
     } else {
         OutboundHttpError::Request

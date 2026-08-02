@@ -265,6 +265,16 @@ async fn record_remote_call_failure(
     error: OutboundHttpError,
 ) -> Result<RemoteExecutionOutcome, ApiError> {
     let metric_outcome = remote_error_outcome(&error);
+    warn!(
+        message = "Remote target call failed",
+        task_id = context.task_id,
+        target_id = context.target_id,
+        subject_type = context.subject_type,
+        subject_id = context.subject_id,
+        method = context.method,
+        outcome = metric_outcome,
+        error = %error,
+    );
     let api_error = outbound_error_to_api_error(error);
     let message = crate::tasks::helpers::sanitize_error_for_storage(&api_error);
     metrics::remote_call_finished(

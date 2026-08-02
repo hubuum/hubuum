@@ -2198,6 +2198,7 @@ dependencies = [
  "lettre",
  "serde",
  "serde_json",
+ "tracing",
  "uuid",
 ]
 
@@ -2213,6 +2214,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2264,6 +2266,7 @@ dependencies = [
  "reqwest",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

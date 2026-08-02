@@ -8,6 +8,7 @@ use hubuum_event_sinks_common::{
 };
 use redis::Client;
 use serde::Deserialize;
+use tracing::warn;
 
 const DEFAULT_VALKEY_IO_TIMEOUT_MS: u64 = 25_000;
 
@@ -70,7 +71,13 @@ impl ValkeySink {
     async fn client(&self, uri: &str) -> Result<Client, SinkError> {
         self.clients
             .get_or_try_insert_with(uri.to_string(), |uri| async move {
-                Client::open(uri).map_err(|_| SinkError::new("Invalid Valkey config"))
+                Client::open(uri).map_err(|error| {
+                    warn!(
+                        message = "Invalid Valkey transport configuration",
+                        error = %error,
+                    );
+                    SinkError::new("Invalid Valkey config")
+                })
             })
             .await
     }
@@ -79,7 +86,13 @@ impl ValkeySink {
 fn publish_stream_entry(client: Client, entry: StreamEntry) -> Result<(), SinkError> {
     let mut connection = client
         .get_connection_with_timeout(entry.io_timeout)
-        .map_err(|_| SinkError::new("Valkey connection failed"))?;
+        .map_err(|error| {
+            warn!(
+                message = "Valkey connection failed",
+                error = %error,
+            );
+            SinkError::new("Valkey connection failed")
+        })?;
     connection
         .set_read_timeout(Some(entry.io_timeout))
         .map_err(|error| SinkError::new(format!("Valkey read timeout setup failed: {error}")))?;

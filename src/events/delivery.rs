@@ -5,7 +5,7 @@ use std::time::Duration;
 use actix_rt::time::sleep;
 use futures_util::StreamExt;
 use tokio::sync::Notify;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::config::{
     DEFAULT_EVENT_DELIVERY_BATCH_SIZE, DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS,
@@ -215,6 +215,15 @@ async fn process_claimed_event_delivery_with_names(
             mark_event_delivery_succeeded(pool, delivery.id, claim_token).await?;
         }
         Err(error) => {
+            warn!(
+                message = "Event sink delivery failed",
+                event_delivery_id = delivery.id,
+                event_id = %envelope.event_id,
+                event_sink_id = sink.id,
+                event_subscription_id = subscription.id,
+                sink_kind = sink.kind.as_str(),
+                error = %error,
+            );
             mark_event_delivery_failed(pool, &delivery, settings, &error.to_string()).await?;
         }
     }
