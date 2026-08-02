@@ -1,6 +1,8 @@
 use super::*;
 use crate::db::traits::identity::identity_scope_by_name;
 use crate::db::traits::principal::InsertPrincipalRecord;
+use crate::db::traits::token::revoke_all_tokens_for_principal_conn;
+use crate::models::PrincipalID;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::{NewPrincipal, PrincipalKind};
 use diesel_async::RunQueryDsl;
@@ -102,28 +104,36 @@ impl User {
         })
         .await
     }
+}
 
-    /// Set a new password for a user.
-    ///
-    /// The password will be hashed before storing it in the database, so the input should be the
-    /// desired plaintext password.
-    pub async fn set_password(&self, pool: &DbPool, new_password: &str) -> Result<(), ApiError> {
-        use crate::schema::users::dsl::*;
-        debug!(message = "Setting new password", id = self.id());
-        let new_password = crate::utilities::auth::hash_password_async(new_password.to_string())
-            .await
-            .map_err(|e| ApiError::HashError(format!("Failed to hash password: {e}")))?;
+pub(crate) trait SetUserPasswordRecord {
+    /// Persist a pre-hashed password and revoke all active bearer tokens in one
+    /// transaction. Returns the number of tokens revoked.
+    async fn set_password_record(
+        &self,
+        pool: &DbPool,
+        password_hash: &str,
+    ) -> Result<usize, ApiError>;
+}
 
-        with_connection(pool, async |conn| -> Result<usize, ApiError> {
-            ensure_user_allows_local_write_conn(conn, self.id).await?;
-            Ok(diesel::update(users.filter(id.eq(self.id)))
-                .set(password.eq(Some(new_password)))
+impl SetUserPasswordRecord for User {
+    async fn set_password_record(
+        &self,
+        pool: &DbPool,
+        password_hash: &str,
+    ) -> Result<usize, ApiError> {
+        use crate::schema::users::dsl::{id, password, users};
+
+        let principal_id = PrincipalID::new(self.id)?;
+        with_transaction(pool, async |conn| -> Result<usize, ApiError> {
+            ensure_user_allows_local_write_conn(conn, principal_id.id()).await?;
+            diesel::update(users.filter(id.eq(principal_id.id())))
+                .set(password.eq(Some(password_hash)))
                 .execute(conn)
-                .await?)
+                .await?;
+            revoke_all_tokens_for_principal_conn(conn, principal_id).await
         })
-        .await?;
-
-        Ok(())
+        .await
     }
 }
 
@@ -236,17 +246,9 @@ impl OwnedUserTokenRecord for User {
     }
 
     async fn delete_all_user_tokens_record(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        use crate::schema::tokens::dsl::{principal_id, revoked_at, tokens};
-
+        let principal_id = PrincipalID::new(self.id)?;
         with_connection(pool, async |conn| {
-            diesel::update(
-                tokens
-                    .filter(principal_id.eq(self.id))
-                    .filter(revoked_at.is_null()),
-            )
-            .set(revoked_at.eq(diesel::dsl::now))
-            .execute(conn)
-            .await
+            revoke_all_tokens_for_principal_conn(conn, principal_id).await
         })
         .await
     }
@@ -495,12 +497,17 @@ impl UpdateUserRecord for UpdateUser {
     ) -> Result<User, ApiError> {
         use crate::schema::users::dsl::{id, users};
 
-        with_connection(pool, async |conn| -> Result<User, ApiError> {
-            ensure_user_allows_local_write_conn(conn, user_id).await?;
-            Ok(diesel::update(users.filter(id.eq(user_id)))
+        let principal_id = PrincipalID::new(user_id)?;
+        with_transaction(pool, async |conn| -> Result<User, ApiError> {
+            ensure_user_allows_local_write_conn(conn, principal_id.id()).await?;
+            let updated = diesel::update(users.filter(id.eq(principal_id.id())))
                 .set(self)
                 .get_result::<User>(conn)
-                .await?)
+                .await?;
+            if self.password.is_some() {
+                revoke_all_tokens_for_principal_conn(conn, principal_id).await?;
+            }
+            Ok(updated)
         })
         .await
     }
@@ -517,27 +524,31 @@ impl UpdateUserRecord for UpdateUser {
 
         use crate::schema::users::dsl::{id, users};
 
+        let principal_id = PrincipalID::new(user_id)?;
         with_transaction(pool, async |conn| -> Result<User, ApiError> {
             use crate::schema::principals;
 
             let before = users
-                .filter(id.eq(user_id))
+                .filter(id.eq(principal_id.id()))
                 .for_update()
                 .first::<User>(conn)
                 .await?;
             let name = principals::table
-                .filter(principals::id.eq(user_id))
+                .filter(principals::id.eq(principal_id.id()))
                 .select(principals::name)
                 .first::<String>(conn)
                 .await?;
-            ensure_user_allows_local_write_conn(conn, user_id).await?;
+            ensure_user_allows_local_write_conn(conn, principal_id.id()).await?;
             if !self.has_changes(&before) {
                 return Ok(before);
             }
-            let after = diesel::update(users.filter(id.eq(user_id)))
+            let after = diesel::update(users.filter(id.eq(principal_id.id())))
                 .set(self)
                 .get_result::<User>(conn)
                 .await?;
+            if self.password.is_some() {
+                revoke_all_tokens_for_principal_conn(conn, principal_id).await?;
+            }
             let event = user_event(
                 &after,
                 &name,
@@ -575,20 +586,20 @@ impl AnonymizeUserRecord for User {
 
 async fn anonymize_user_record(pool: &DbPool, target_id: i32) -> Result<(), ApiError> {
     use crate::schema::principals::dsl as p;
-    use crate::schema::tokens::dsl as t;
     use crate::schema::users::dsl as u;
 
+    let principal_id = PrincipalID::new(target_id)?;
     with_transaction(pool, async |conn| -> Result<(), ApiError> {
-        ensure_user_allows_local_write_conn(conn, target_id).await?;
+        ensure_user_allows_local_write_conn(conn, principal_id.id()).await?;
         use crate::schema::computed_field_definitions::dsl as computed;
         diesel::delete(
             computed::computed_field_definitions
-                .filter(computed::owner_user_id.eq(Some(target_id)))
+                .filter(computed::owner_user_id.eq(Some(principal_id.id())))
                 .filter(computed::visibility.eq("personal")),
         )
         .execute(conn)
         .await?;
-        let updated = diesel::update(u::users.filter(u::id.eq(target_id)))
+        let updated = diesel::update(u::users.filter(u::id.eq(principal_id.id())))
             .set((
                 u::proper_name.eq::<Option<String>>(None),
                 u::email.eq::<Option<String>>(None),
@@ -601,18 +612,11 @@ async fn anonymize_user_record(pool: &DbPool, target_id: i32) -> Result<(), ApiE
             return Err(ApiError::NotFound(format!("User {target_id} not found")));
         }
 
-        diesel::update(p::principals.filter(p::id.eq(target_id)))
+        diesel::update(p::principals.filter(p::id.eq(principal_id.id())))
             .set(p::name.eq(format!("anonymized-{target_id}")))
             .execute(conn)
             .await?;
-        diesel::update(
-            t::tokens
-                .filter(t::principal_id.eq(target_id))
-                .filter(t::revoked_at.is_null()),
-        )
-        .set(t::revoked_at.eq(diesel::dsl::now))
-        .execute(conn)
-        .await?;
+        revoke_all_tokens_for_principal_conn(conn, principal_id).await?;
         Ok(())
     })
     .await
@@ -661,5 +665,89 @@ impl LoadUserRecord for UserID {
             users.filter(id.eq(self.id())).first::<User>(conn).await
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::traits::Status;
+    use crate::tests::{TestScope, create_user_with_params};
+
+    async fn user_with_tokens(scope: &TestScope, label: &str) -> (User, Vec<Token>) {
+        let user =
+            create_user_with_params(&scope.pool, &scope.scoped_name(label), "initial-password")
+                .await;
+        let first = user.create_token(&scope.pool).await.unwrap();
+        let second = user.create_token(&scope.pool).await.unwrap();
+        (user, vec![first, second])
+    }
+
+    async fn assert_tokens_active(pool: &DbPool, tokens: &[Token]) {
+        for token in tokens {
+            token.is_valid(pool).await.expect("token should be active");
+        }
+    }
+
+    async fn assert_tokens_revoked(pool: &DbPool, tokens: &[Token]) {
+        for token in tokens {
+            assert!(matches!(
+                token.is_valid(pool).await,
+                Err(ApiError::Unauthorized(_))
+            ));
+        }
+    }
+
+    #[actix_web::test]
+    async fn setting_password_revokes_all_active_tokens() {
+        let scope = TestScope::new();
+        let (user, tokens) = user_with_tokens(&scope, "set_password_revokes").await;
+        assert_tokens_active(&scope.pool, &tokens).await;
+
+        user.set_password(&scope.pool, "replacement-password")
+            .await
+            .unwrap();
+
+        assert_tokens_revoked(&scope.pool, &tokens).await;
+        user.delete_without_events(&scope.pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn password_update_revokes_all_active_tokens() {
+        let scope = TestScope::new();
+        let (user, tokens) = user_with_tokens(&scope, "password_update_revokes").await;
+        assert_tokens_active(&scope.pool, &tokens).await;
+        let context = EventContext::user(user.id, None, None);
+
+        UpdateUser {
+            password: Some("replacement-password".to_string()),
+            proper_name: None,
+            email: None,
+        }
+        .save(user.id, &scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+        assert_tokens_revoked(&scope.pool, &tokens).await;
+        user.delete_without_events(&scope.pool).await.unwrap();
+    }
+
+    #[actix_web::test]
+    async fn profile_update_preserves_active_tokens() {
+        let scope = TestScope::new();
+        let (user, tokens) = user_with_tokens(&scope, "profile_update_preserves").await;
+        let context = EventContext::user(user.id, None, None);
+
+        UpdateUser {
+            password: None,
+            proper_name: Some("Updated Name".to_string()),
+            email: None,
+        }
+        .save(user.id, &scope.pool, Some(&context))
+        .await
+        .unwrap();
+
+        assert_tokens_active(&scope.pool, &tokens).await;
+        user.delete_without_events(&scope.pool).await.unwrap();
     }
 }

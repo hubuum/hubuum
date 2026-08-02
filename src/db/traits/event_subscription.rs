@@ -430,6 +430,7 @@ fn event_sink_snapshot(row: &EventSinkRow) -> serde_json::Value {
 }
 
 fn event_subscription_snapshot(row: &EventSubscriptionRow) -> serde_json::Value {
+    let routing = crate::models::event_subscription::redact_event_sink_config(&row.routing);
     json!({
         "id": row.id,
         "collection_id": row.collection_id,
@@ -439,7 +440,7 @@ fn event_subscription_snapshot(row: &EventSubscriptionRow) -> serde_json::Value 
         "entity_types": row.entity_types,
         "actions": row.actions,
         "filter": row.filter,
-        "routing": row.routing,
+        "routing": routing,
         "enabled": row.enabled,
     })
 }
@@ -591,5 +592,46 @@ impl EventSubscription {
             .map(EventSubscription::try_from)
             .collect::<Result<Vec<_>, _>>()?;
         Ok((subscriptions, total))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_subscription_audit_snapshot_redacts_routing_credentials() {
+        let credential = "audit-password";
+        let api_key = "audit-api-key";
+        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let row = EventSubscriptionRow {
+            id: 1,
+            collection_id: 2,
+            sink_id: 3,
+            name: "webhook".to_string(),
+            description: String::new(),
+            entity_types: serde_json::json!(["collection"]),
+            actions: serde_json::json!(["created"]),
+            filter: serde_json::json!({}),
+            routing: serde_json::json!({
+                "url": format!("https://user:{credential}@example.invalid/events"),
+                "headers": {"X-API-Key": api_key}
+            }),
+            enabled: true,
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+
+        let snapshot = event_subscription_snapshot(&row);
+
+        assert_eq!(
+            snapshot["routing"]["url"],
+            "https://[redacted]@example.invalid/events"
+        );
+        assert_eq!(snapshot["routing"]["headers"]["X-API-Key"], "[redacted]");
+        assert!(!snapshot.to_string().contains(credential));
+        assert!(!snapshot.to_string().contains(api_key));
     }
 }
