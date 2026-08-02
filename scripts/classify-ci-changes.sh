@@ -27,7 +27,13 @@ for path in "$@"; do
       container=true
       artifacts=true
       ;;
-    *.md | docs/* | LICENSE | .markdownlint.json | .gitattributes | .gitignore | \
+    docs/querying.md)
+      code=true
+      ;;
+    .markdownlint.json)
+      markdown=true
+      ;;
+    *.md | docs/* | LICENSE | .gitattributes | .gitignore | \
       .env.example | .env.*.example | .agents/* | .codex/* | \
       .github/ISSUE_TEMPLATE/* | .github/PULL_REQUEST_TEMPLATE*)
       ;;

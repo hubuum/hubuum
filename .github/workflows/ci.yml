@@ -17,7 +17,13 @@ on:
       - unlabeled
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    ${{ github.workflow }}-${{ github.ref }}-${{
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+      github.event.label.name != 'ci:full' &&
+      format('ignored-label-{0}', github.event.label.name) ||
+      'validation'
+    }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:

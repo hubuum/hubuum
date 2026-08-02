@@ -111,7 +111,8 @@ Pull request validation is selected from the complete base-to-head diff:
 - Ready-for-review documentation-only pull requests keep the smaller relevant
   checks. `docs/openapi.json` receives the OpenAPI contract check, while
   `docs/export_template_guide.md` is treated as code because it is embedded in
-  a binary.
+  a binary. `docs/querying.md` is treated as a test input because the API test
+  suite compiles and validates its documented operator lists.
 
 The `ci:full` pull request label forces the complete CI and benchmark suites,
 including on a draft or documentation-only pull request. The `ci:benchmarks`

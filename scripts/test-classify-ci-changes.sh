@@ -21,6 +21,15 @@ assert_flag "$docs_output" markdown true
 assert_flag "$docs_output" code false
 assert_flag "$docs_output" artifacts false
 
+querying_docs_output="$(bash "$classifier" docs/querying.md)"
+assert_flag "$querying_docs_output" markdown true
+assert_flag "$querying_docs_output" code true
+assert_flag "$querying_docs_output" artifacts false
+
+markdown_config_output="$(bash "$classifier" .markdownlint.json)"
+assert_flag "$markdown_config_output" markdown true
+assert_flag "$markdown_config_output" code false
+
 openapi_output="$(bash "$classifier" docs/openapi.json)"
 assert_flag "$openapi_output" openapi true
 assert_flag "$openapi_output" code false
