@@ -353,7 +353,11 @@ async fn service_accounts_cannot_manage_or_receive_personal_fields(
         fixture
             .collection
             .collection
-            .grant_one(&test_context.pool, group.id, permission)
+            .grant_one(
+                &test_context.pool,
+                GroupID::new(group.id).unwrap(),
+                permission,
+            )
             .await
             .unwrap();
     }

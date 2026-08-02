@@ -2,7 +2,9 @@ use async_trait::async_trait;
 
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
-use crate::models::{Collection, GroupPermission, Permission, Permissions, PermissionsList};
+use crate::models::{
+    Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
+};
 
 use super::types::{
     AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef,
@@ -116,7 +118,7 @@ pub trait PermissionBackend: Send + Sync {
     /// Returns `(rows, total_count)` so handlers can populate `X-Total-Count`.
     async fn groups_with_permissions_on(
         &self,
-        collection_id: i32,
+        collection_id: CollectionID,
         permissions_filter: &[Permissions],
         page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError>;
@@ -125,16 +127,16 @@ pub trait PermissionBackend: Send + Sync {
     /// In Treetop mode `id` / `created_at` / `updated_at` are synthetic.
     async fn group_permission_on(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionID,
+        group_id: GroupID,
     ) -> Result<Option<Permission>, ApiError>;
 
     /// Apply (grant or replace) a set of permissions to a group on a collection.
     /// Treetop returns `ApiError::NotImplemented`.
     async fn apply_permissions(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionID,
+        group_id: GroupID,
         list: PermissionsList<Permissions>,
         replace_existing: bool,
     ) -> Result<Permission, ApiError>;
@@ -143,14 +145,18 @@ pub trait PermissionBackend: Send + Sync {
     /// Treetop returns `ApiError::NotImplemented`.
     async fn revoke_permissions(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionID,
+        group_id: GroupID,
         list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError>;
 
     /// Revoke all permissions of a group on a collection.
     /// Treetop returns `ApiError::NotImplemented`.
-    async fn revoke_all(&self, collection_id: i32, group_id: i32) -> Result<(), ApiError>;
+    async fn revoke_all(
+        &self,
+        collection_id: CollectionID,
+        group_id: GroupID,
+    ) -> Result<(), ApiError>;
 
     /// Whether mutations are supported. Handlers can early-reject before
     /// calling the mutation methods if they want a cleaner error path.

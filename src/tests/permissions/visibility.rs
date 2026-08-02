@@ -13,7 +13,9 @@ use async_trait::async_trait;
 
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
-use crate::models::{Collection, GroupPermission, Permission, Permissions, PermissionsList};
+use crate::models::{
+    Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
+};
 use crate::permissions::backend::PermissionBackend;
 use crate::permissions::local::LocalPermissionBackend;
 use crate::permissions::types::{
@@ -78,7 +80,7 @@ impl PermissionBackend for ForceSlowPath {
 
     async fn groups_with_permissions_on(
         &self,
-        collection_id: i32,
+        collection_id: CollectionID,
         permissions_filter: &[Permissions],
         page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
@@ -89,8 +91,8 @@ impl PermissionBackend for ForceSlowPath {
 
     async fn group_permission_on(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionID,
+        group_id: GroupID,
     ) -> Result<Option<Permission>, ApiError> {
         self.inner
             .group_permission_on(collection_id, group_id)
@@ -99,8 +101,8 @@ impl PermissionBackend for ForceSlowPath {
 
     async fn apply_permissions(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionID,
+        group_id: GroupID,
         list: PermissionsList<Permissions>,
         replace_existing: bool,
     ) -> Result<Permission, ApiError> {
@@ -111,8 +113,8 @@ impl PermissionBackend for ForceSlowPath {
 
     async fn revoke_permissions(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionID,
+        group_id: GroupID,
         list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError> {
         self.inner
@@ -120,7 +122,11 @@ impl PermissionBackend for ForceSlowPath {
             .await
     }
 
-    async fn revoke_all(&self, collection_id: i32, group_id: i32) -> Result<(), ApiError> {
+    async fn revoke_all(
+        &self,
+        collection_id: CollectionID,
+        group_id: GroupID,
+    ) -> Result<(), ApiError> {
         self.inner.revoke_all(collection_id, group_id).await
     }
 
@@ -178,8 +184,8 @@ async fn paginate_authorized_filters_pages_correctly_under_slow_path() {
 
     backend
         .apply_permissions(
-            ns_a.collection.id,
-            group.id,
+            CollectionID::new(ns_a.collection.id).unwrap(),
+            GroupID::new(group.id).unwrap(),
             PermissionsList::new(vec![Permissions::ReadCollection]),
             false,
         )
@@ -187,8 +193,8 @@ async fn paginate_authorized_filters_pages_correctly_under_slow_path() {
         .expect("grant on a");
     backend
         .apply_permissions(
-            ns_c.collection.id,
-            group.id,
+            CollectionID::new(ns_c.collection.id).unwrap(),
+            GroupID::new(group.id).unwrap(),
             PermissionsList::new(vec![Permissions::ReadCollection]),
             false,
         )

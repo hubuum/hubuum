@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use actix_web::test as actix_test;
 
-use crate::models::{Permissions, PermissionsList};
+use crate::models::{CollectionID, GroupID, Permissions, PermissionsList};
 use crate::permissions::local::LocalPermissionBackend;
 use crate::permissions::{
     PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef,
@@ -68,8 +68,8 @@ async fn local_backend_grants_then_authorizes_collection_read() {
     // Grant ReadCollection on this collection to our group.
     backend
         .apply_permissions(
-            collection_id,
-            group.id,
+            CollectionID::new(collection_id).unwrap(),
+            GroupID::new(group.id).unwrap(),
             PermissionsList::new(vec![Permissions::ReadCollection]),
             false,
         )
@@ -123,8 +123,8 @@ async fn local_backend_authorize_many_returns_per_request_decisions() {
 
     backend
         .apply_permissions(
-            granted_ns.collection.id,
-            group.id,
+            CollectionID::new(granted_ns.collection.id).unwrap(),
+            GroupID::new(group.id).unwrap(),
             PermissionsList::new(vec![Permissions::ReadCollection]),
             false,
         )

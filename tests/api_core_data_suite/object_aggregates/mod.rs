@@ -10,9 +10,9 @@ use crate::db::traits::computed_field::{
 };
 use crate::events::EventContext;
 use crate::models::{
-    ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest, HubuumObject, HubuumObjectID,
-    MAX_OBJECT_AGGREGATE_CURSOR_LENGTH, NewHubuumClass, NewHubuumObject, Permissions,
-    ServiceAccountID, TaskID, TokenResourceScope, UpdateHubuumObject,
+    ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest, GroupID, HubuumObject,
+    HubuumObjectID, MAX_OBJECT_AGGREGATE_CURSOR_LENGTH, NewHubuumClass, NewHubuumObject,
+    Permissions, ServiceAccountID, TaskID, TokenResourceScope, UpdateHubuumObject,
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
 use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
@@ -225,7 +225,7 @@ async fn grant_normal_user_read_access(
         fixture
             .collection
             .collection
-            .grant_one(&context.pool, group.id, permission)
+            .grant_one(&context.pool, GroupID::new(group.id).unwrap(), permission)
             .await
             .unwrap();
     }

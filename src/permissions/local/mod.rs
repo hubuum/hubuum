@@ -9,7 +9,7 @@ use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{
-    Collection, CollectionID, GroupPermission, Permission, Permissions, PermissionsList,
+    Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
     PrincipalID,
 };
 use crate::traits::{AuthzSubject, PermissionController};
@@ -239,15 +239,14 @@ impl PermissionBackend for LocalPermissionBackend {
 
     async fn groups_with_permissions_on(
         &self,
-        collection_id: i32,
+        collection_id: CollectionID,
         permissions_filter: &[Permissions],
         page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
         let start = Instant::now();
-        let collection = CollectionID::new(collection_id)?;
         let (rows, total) = collection_backend::groups_on_paginated_with_total_count_from_backend(
             &self.pool,
-            collection,
+            collection_id,
             permissions_filter.to_vec(),
             page,
         )
@@ -264,18 +263,21 @@ impl PermissionBackend for LocalPermissionBackend {
 
     async fn group_permission_on(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionID,
+        group_id: GroupID,
     ) -> Result<Option<Permission>, ApiError> {
         let start = Instant::now();
-        let result =
-            match collection_backend::group_on_from_backend(&self.pool, collection_id, group_id)
-                .await
-            {
-                Ok(permission) => Ok(Some(permission)),
-                Err(ApiError::NotFound(_)) => Ok(None),
-                Err(error) => Err(error),
-            };
+        let result = match collection_backend::group_on_from_backend(
+            &self.pool,
+            collection_id.id(),
+            group_id.id(),
+        )
+        .await
+        {
+            Ok(permission) => Ok(Some(permission)),
+            Err(ApiError::NotFound(_)) => Ok(None),
+            Err(error) => Err(error),
+        };
         let result_count = result
             .as_ref()
             .map(|row| row.is_some() as usize)
@@ -292,31 +294,31 @@ impl PermissionBackend for LocalPermissionBackend {
 
     async fn apply_permissions(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionID,
+        group_id: GroupID,
         list: PermissionsList<Permissions>,
         replace_existing: bool,
     ) -> Result<Permission, ApiError> {
-        CollectionID::new(collection_id)?
+        collection_id
             .apply_permissions(&self.pool, group_id, list, replace_existing, None)
             .await
     }
 
     async fn revoke_permissions(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionID,
+        group_id: GroupID,
         list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError> {
-        CollectionID::new(collection_id)?
-            .revoke(&self.pool, group_id, list, None)
-            .await
+        collection_id.revoke(&self.pool, group_id, list, None).await
     }
 
-    async fn revoke_all(&self, collection_id: i32, group_id: i32) -> Result<(), ApiError> {
-        CollectionID::new(collection_id)?
-            .revoke_all(&self.pool, group_id, None)
-            .await
+    async fn revoke_all(
+        &self,
+        collection_id: CollectionID,
+        group_id: GroupID,
+    ) -> Result<(), ApiError> {
+        collection_id.revoke_all(&self.pool, group_id, None).await
     }
 
     fn supports_mutation(&self) -> bool {

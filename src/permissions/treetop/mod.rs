@@ -11,7 +11,10 @@ use crate::config::AppConfig;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
-use crate::models::{Collection, Group, GroupPermission, Permission, Permissions, PermissionsList};
+use crate::models::{
+    Collection, CollectionID, Group, GroupID, GroupPermission, Permission, Permissions,
+    PermissionsList,
+};
 use crate::pagination::{known_count_or_skipped, paginate_in_memory};
 use crate::schema::collections;
 
@@ -392,7 +395,7 @@ impl PermissionBackend for TreetopPermissionBackend {
 
     async fn groups_with_permissions_on(
         &self,
-        collection_id: i32,
+        collection_id: CollectionID,
         permissions_filter: &[Permissions],
         page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
@@ -402,6 +405,7 @@ impl PermissionBackend for TreetopPermissionBackend {
         use crate::{date_search, numeric_search, string_search};
 
         let start = Instant::now();
+        let collection_id = collection_id.id();
 
         let mut group_query = groups_dsl.into_boxed();
         for param in &page.filters {
@@ -500,10 +504,12 @@ impl PermissionBackend for TreetopPermissionBackend {
 
     async fn group_permission_on(
         &self,
-        collection_id: i32,
-        group_id: i32,
+        collection_id: CollectionID,
+        group_id: GroupID,
     ) -> Result<Option<Permission>, ApiError> {
         let start = Instant::now();
+        let collection_id = collection_id.id();
+        let group_id = group_id.id();
         let principal = PrincipalRef::new(0, vec![group_id]);
         let checks = Permissions::all()
             .iter()
@@ -538,8 +544,8 @@ impl PermissionBackend for TreetopPermissionBackend {
 
     async fn apply_permissions(
         &self,
-        _collection_id: i32,
-        _group_id: i32,
+        _collection_id: CollectionID,
+        _group_id: GroupID,
         _list: PermissionsList<Permissions>,
         _replace_existing: bool,
     ) -> Result<Permission, ApiError> {
@@ -551,8 +557,8 @@ impl PermissionBackend for TreetopPermissionBackend {
 
     async fn revoke_permissions(
         &self,
-        _collection_id: i32,
-        _group_id: i32,
+        _collection_id: CollectionID,
+        _group_id: GroupID,
         _list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError> {
         Err(ApiError::NotImplemented(
@@ -561,7 +567,11 @@ impl PermissionBackend for TreetopPermissionBackend {
         ))
     }
 
-    async fn revoke_all(&self, _collection_id: i32, _group_id: i32) -> Result<(), ApiError> {
+    async fn revoke_all(
+        &self,
+        _collection_id: CollectionID,
+        _group_id: GroupID,
+    ) -> Result<(), ApiError> {
         Err(ApiError::NotImplemented(
             "permission mutations are managed out-of-band when using the treetop backend"
                 .to_string(),

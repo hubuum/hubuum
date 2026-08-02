@@ -6,7 +6,8 @@ use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::{
-    NewPermission, Permission, PermissionFilter, Permissions, PermissionsList, UpdatePermission,
+    GroupID, NewPermission, Permission, PermissionFilter, Permissions, PermissionsList,
+    UpdatePermission,
 };
 use crate::traits::CollectionAccessors;
 
@@ -340,13 +341,14 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
     async fn apply_permissions_from_backend_without_events(
         &self,
         pool: &DbPool,
-        group_id_for_grant: i32,
+        group_id_for_grant: GroupID,
         permission_list: PermissionsList<Permissions>,
         replace_existing: bool,
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
 
         let target_collection_id = self.collection_id(pool).await?.id();
+        let group_id_for_grant = group_id_for_grant.id();
 
         with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
             let existing_entry = permissions
@@ -572,7 +574,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
     async fn apply_permissions_from_backend(
         &self,
         pool: &DbPool,
-        group_id_for_grant: i32,
+        group_id_for_grant: GroupID,
         permission_list: PermissionsList<Permissions>,
         replace_existing: bool,
         context: Option<&EventContext>,
@@ -591,6 +593,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         use crate::schema::permissions::dsl::*;
 
         let target_collection_id = self.collection_id(pool).await?.id();
+        let group_id_for_grant = group_id_for_grant.id();
         let requested = permission_list.iter().copied().collect::<Vec<_>>();
 
         with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
@@ -659,12 +662,13 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
     async fn revoke_permissions_from_backend_without_events(
         &self,
         pool: &DbPool,
-        group_id_for_revoke: i32,
+        group_id_for_revoke: GroupID,
         permission_list: PermissionsList<Permissions>,
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
 
         let target_collection_id = self.collection_id(pool).await?.id();
+        let group_id_for_revoke = group_id_for_revoke.id();
 
         with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
             let before = permissions
@@ -790,7 +794,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
     async fn revoke_permissions_from_backend(
         &self,
         pool: &DbPool,
-        group_id_for_revoke: i32,
+        group_id_for_revoke: GroupID,
         permission_list: PermissionsList<Permissions>,
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError> {
@@ -807,6 +811,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         use crate::schema::permissions::dsl::*;
 
         let target_collection_id = self.collection_id(pool).await?.id();
+        let group_id_for_revoke = group_id_for_revoke.id();
         let requested = permission_list.iter().copied().collect::<Vec<_>>();
 
         with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
@@ -851,11 +856,12 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
     async fn revoke_all_from_backend_without_events(
         &self,
         pool: &DbPool,
-        group_id_for_revoke: i32,
+        group_id_for_revoke: GroupID,
     ) -> Result<(), ApiError> {
         use crate::schema::permissions::dsl::*;
 
         let collection_id_for_revoke = self.collection_id(pool).await?.id();
+        let group_id_for_revoke = group_id_for_revoke.id();
         with_connection(pool, async |conn| {
             diesel::delete(permissions)
                 .filter(collection_id.eq(collection_id_for_revoke))
@@ -871,7 +877,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
     async fn revoke_all_from_backend(
         &self,
         pool: &DbPool,
-        group_id_for_revoke: i32,
+        group_id_for_revoke: GroupID,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
         let Some(context) = context else {
@@ -883,6 +889,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         use crate::schema::permissions::dsl::*;
 
         let collection_id_for_revoke = self.collection_id(pool).await?.id();
+        let group_id_for_revoke = group_id_for_revoke.id();
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
             let before = permissions
                 .filter(collection_id.eq(collection_id_for_revoke))

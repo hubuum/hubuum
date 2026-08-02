@@ -1860,7 +1860,7 @@ async fn permission_writes_emit_granted_revoked_events() {
         .collection
         .grant(
             &scope.pool,
-            group.id,
+            GroupID::new(group.id).unwrap(),
             PermissionsList::new([Permissions::ReadCollection, Permissions::CreateClass]),
             Some(&context),
         )
@@ -1871,7 +1871,7 @@ async fn permission_writes_emit_granted_revoked_events() {
         .collection
         .grant(
             &scope.pool,
-            group.id,
+            GroupID::new(group.id).unwrap(),
             PermissionsList::new([Permissions::ReadCollection, Permissions::CreateClass]),
             Some(&context),
         )
@@ -1882,7 +1882,7 @@ async fn permission_writes_emit_granted_revoked_events() {
         .collection
         .apply_permissions(
             &scope.pool,
-            group.id,
+            GroupID::new(group.id).unwrap(),
             PermissionsList::new([Permissions::ReadCollection, Permissions::CreateClass]),
             true,
             Some(&context),
@@ -1894,7 +1894,7 @@ async fn permission_writes_emit_granted_revoked_events() {
         .collection
         .revoke(
             &scope.pool,
-            group.id,
+            GroupID::new(group.id).unwrap(),
             PermissionsList::new([Permissions::CreateClass]),
             Some(&context),
         )
@@ -1905,7 +1905,7 @@ async fn permission_writes_emit_granted_revoked_events() {
         .collection
         .revoke(
             &scope.pool,
-            group.id,
+            GroupID::new(group.id).unwrap(),
             PermissionsList::new([Permissions::CreateClass]),
             Some(&context),
         )
@@ -1914,12 +1914,12 @@ async fn permission_writes_emit_granted_revoked_events() {
 
     fixture
         .collection
-        .revoke_all(&scope.pool, group.id, Some(&context))
+        .revoke_all(&scope.pool, GroupID::new(group.id).unwrap(), Some(&context))
         .await
         .unwrap();
     fixture
         .collection
-        .revoke_all(&scope.pool, group.id, Some(&context))
+        .revoke_all(&scope.pool, GroupID::new(group.id).unwrap(), Some(&context))
         .await
         .unwrap();
 

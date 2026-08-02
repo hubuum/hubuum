@@ -4,7 +4,7 @@ mod tests {
 
     use crate::models::{
         Collection, ExportContentType, ExportLimits, ExportMissingDataPolicy, ExportScopeKind,
-        ExportTemplate, ExportTemplateKind, NewCollectionWithAssignee, NewExportTemplate,
+        ExportTemplate, ExportTemplateKind, GroupID, NewCollectionWithAssignee, NewExportTemplate,
         NewHubuumClass, Permissions, PermissionsList, UpdateExportTemplate,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
@@ -409,7 +409,7 @@ mod tests {
         source_collection
             .grant_without_events(
                 &pool,
-                test_group.id,
+                GroupID::new(test_group.id).unwrap(),
                 PermissionsList::new([Permissions::UpdateTemplate]),
             )
             .await
@@ -435,7 +435,7 @@ mod tests {
         target_collection
             .grant_without_events(
                 &pool,
-                test_group.id,
+                GroupID::new(test_group.id).unwrap(),
                 PermissionsList::new([Permissions::CreateTemplate]),
             )
             .await
@@ -578,7 +578,7 @@ mod tests {
         target_collection
             .grant_without_events(
                 &pool,
-                test_group.id,
+                GroupID::new(test_group.id).unwrap(),
                 PermissionsList::new([Permissions::CreateTemplate]),
             )
             .await
@@ -641,7 +641,7 @@ mod tests {
         visible_collection
             .grant_without_events(
                 &pool,
-                test_group.id,
+                GroupID::new(test_group.id).unwrap(),
                 PermissionsList::new([Permissions::ReadTemplate]),
             )
             .await
@@ -688,7 +688,7 @@ mod tests {
         collection
             .revoke_without_events(
                 &pool,
-                admin_group.id,
+                GroupID::new(admin_group.id).unwrap(),
                 PermissionsList::new([
                     Permissions::ReadTemplate,
                     Permissions::CreateTemplate,
@@ -1093,7 +1093,7 @@ mod tests {
         collection
             .grant_without_events(
                 &pool,
-                test_group.id,
+                GroupID::new(test_group.id).unwrap(),
                 PermissionsList::new([Permissions::ReadTemplate]),
             )
             .await
@@ -1120,7 +1120,7 @@ mod tests {
         collection
             .grant_without_events(
                 &pool,
-                test_group.id,
+                GroupID::new(test_group.id).unwrap(),
                 PermissionsList::new([Permissions::UpdateTemplate]),
             )
             .await
@@ -1164,7 +1164,7 @@ mod tests {
         collection
             .grant_without_events(
                 &pool,
-                test_group.id,
+                GroupID::new(test_group.id).unwrap(),
                 PermissionsList::new([Permissions::ReadTemplate, Permissions::UpdateTemplate]),
             )
             .await
@@ -1182,7 +1182,7 @@ mod tests {
         collection
             .grant_without_events(
                 &pool,
-                test_group.id,
+                GroupID::new(test_group.id).unwrap(),
                 PermissionsList::new([Permissions::DeleteTemplate]),
             )
             .await

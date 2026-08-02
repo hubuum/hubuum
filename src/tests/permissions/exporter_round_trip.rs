@@ -17,7 +17,7 @@ mod tests {
 
     use actix_web::test as actix_test;
 
-    use crate::models::{Permissions, PermissionsList};
+    use crate::models::{CollectionID, GroupID, Permissions, PermissionsList};
     use crate::permissions::backend::PermissionBackend;
     use crate::permissions::export::export_cedar_to;
     use crate::permissions::local::LocalPermissionBackend;
@@ -63,8 +63,8 @@ mod tests {
         // Grants via the production path so the SQL row shape is correct.
         local
             .apply_permissions(
-                ns_one.collection.id,
-                g_alpha.id,
+                CollectionID::new(ns_one.collection.id).unwrap(),
+                GroupID::new(g_alpha.id).unwrap(),
                 PermissionsList::new(vec![Permissions::ReadCollection, Permissions::ReadClass]),
                 false,
             )
@@ -72,8 +72,8 @@ mod tests {
             .expect("grant alpha on one");
         local
             .apply_permissions(
-                ns_two.collection.id,
-                g_alpha.id,
+                CollectionID::new(ns_two.collection.id).unwrap(),
+                GroupID::new(g_alpha.id).unwrap(),
                 PermissionsList::new(vec![Permissions::ReadObject]),
                 false,
             )
@@ -81,8 +81,8 @@ mod tests {
             .expect("grant alpha on two");
         local
             .apply_permissions(
-                ns_one.collection.id,
-                g_beta.id,
+                CollectionID::new(ns_one.collection.id).unwrap(),
+                GroupID::new(g_beta.id).unwrap(),
                 PermissionsList::new(vec![Permissions::DelegateCollection]),
                 false,
             )
@@ -201,8 +201,8 @@ mod tests {
 
         local
             .apply_permissions(
-                ns_rel.collection.id,
-                g_rel.id,
+                CollectionID::new(ns_rel.collection.id).unwrap(),
+                GroupID::new(g_rel.id).unwrap(),
                 PermissionsList::new(vec![Permissions::ReadClassRelation]),
                 false,
             )
