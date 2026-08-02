@@ -86,3 +86,8 @@ The image runs pending embedded Diesel migrations during startup unless
 operators can run migrations explicitly with `hubuum-admin --migrate`.
 
 Publishing from `main` happens in the same workflow run and depends directly on the CI jobs passing.
+Documentation-only and repository-metadata pushes do not rebuild or replace
+`main-latest` archives or container images. The existing artifacts remain valid
+because their binary inputs are unchanged. Changes to Rust sources, embedded
+documentation, migrations, manifests, container inputs, or the publication
+workflow still run the complete validation and publishing path.

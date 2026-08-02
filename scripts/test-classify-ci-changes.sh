@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+classifier="$repo_root/scripts/classify-ci-changes.sh"
+
+assert_flag() {
+  local output="$1"
+  local flag="$2"
+  local expected="$3"
+
+  if ! grep --fixed-strings --line-regexp --quiet "$flag=$expected" <<< "$output"; then
+    echo "Expected $flag=$expected, got:" >&2
+    echo "$output" >&2
+    exit 1
+  fi
+}
+
+assert_literal_include_is_code() {
+  local source_path="$1"
+  local invocation="$2"
+  local relative_path="${invocation#*\"}"
+  relative_path="${relative_path%%\"*}"
+
+  local source_dir
+  source_dir="$repo_root/$(dirname "$source_path")"
+  local include_dir
+  include_dir="$(cd "$source_dir/$(dirname "$relative_path")" && pwd -P)"
+  local include_path
+  include_path="$include_dir/$(basename "$relative_path")"
+
+  case "$include_path" in
+    "$repo_root"/*)
+      include_path="${include_path#"$repo_root"/}"
+      ;;
+    *)
+      return
+      ;;
+  esac
+
+  local output
+  output="$(bash "$classifier" "$include_path")"
+  assert_flag "$output" code true
+}
+
+docs_output="$(bash "$classifier" README.md AGENTS.md docs/development.md)"
+assert_flag "$docs_output" markdown true
+assert_flag "$docs_output" code false
+assert_flag "$docs_output" artifacts false
+
+querying_docs_output="$(bash "$classifier" docs/querying.md)"
+assert_flag "$querying_docs_output" markdown true
+assert_flag "$querying_docs_output" code true
+assert_flag "$querying_docs_output" artifacts false
+
+markdown_config_output="$(bash "$classifier" .markdownlint.json)"
+assert_flag "$markdown_config_output" markdown true
+assert_flag "$markdown_config_output" code false
+
+openapi_output="$(bash "$classifier" docs/openapi.json)"
+assert_flag "$openapi_output" openapi true
+assert_flag "$openapi_output" code false
+
+embedded_doc_output="$(bash "$classifier" docs/export_template_guide.md)"
+assert_flag "$embedded_doc_output" markdown true
+assert_flag "$embedded_doc_output" code true
+assert_flag "$embedded_doc_output" container true
+assert_flag "$embedded_doc_output" artifacts true
+
+test_output="$(bash "$classifier" tests/api_core_data_suite/querying.rs)"
+assert_flag "$test_output" code true
+assert_flag "$test_output" container false
+assert_flag "$test_output" artifacts false
+assert_flag "$test_output" benchmarks false
+
+source_output="$(bash "$classifier" src/api/v1/mod.rs)"
+assert_flag "$source_output" code true
+assert_flag "$source_output" container true
+assert_flag "$source_output" artifacts true
+assert_flag "$source_output" benchmarks true
+assert_flag "$source_output" postgres_benchmark true
+assert_flag "$source_output" runtime_benchmark true
+
+benchmark_output="$(bash "$classifier" .github/workflows/benchmarks.yml)"
+assert_flag "$benchmark_output" benchmarks true
+assert_flag "$benchmark_output" postgres_benchmark true
+assert_flag "$benchmark_output" runtime_benchmark true
+assert_flag "$benchmark_output" artifacts false
+
+classifier_output="$(bash "$classifier" scripts/classify-ci-changes.sh)"
+assert_flag "$classifier_output" code true
+assert_flag "$classifier_output" benchmarks true
+assert_flag "$classifier_output" postgres_benchmark true
+assert_flag "$classifier_output" runtime_benchmark true
+assert_flag "$classifier_output" artifacts false
+
+docker_output="$(bash "$classifier" Dockerfile)"
+assert_flag "$docker_output" code true
+assert_flag "$docker_output" container true
+assert_flag "$docker_output" artifacts true
+
+unknown_output="$(bash "$classifier" future-build-input.conf)"
+assert_flag "$unknown_output" code true
+assert_flag "$unknown_output" container true
+assert_flag "$unknown_output" artifacts true
+assert_flag "$unknown_output" benchmarks true
+
+literal_include_count=0
+while IFS=: read -r source_path invocation; do
+  assert_literal_include_is_code "$source_path" "$invocation"
+  ((literal_include_count += 1))
+done < <(
+  cd "$repo_root"
+  rg --with-filename --no-line-number --only-matching \
+    'include_(str|bytes)!\s*\(\s*"[^"]+"\s*\)' \
+    --glob '*.rs' .
+)
+
+if ((literal_include_count == 0)); then
+  echo "Expected to find at least one direct include_str! or include_bytes! input." >&2
+  exit 1
+fi
+
+echo "CI change classifier tests passed."
