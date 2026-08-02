@@ -95,6 +95,37 @@ ancestor must satisfy all requested flags.
 See [Collection Hierarchy](collection_hierarchy.md) for user-facing behavior,
 move constraints, indexes, and the rationale for keeping this logic app-local.
 
+## Pull request CI tiers
+
+Pull request validation is selected from the complete base-to-head diff:
+
+- Draft documentation-only pull requests run Markdown lint when Markdown files
+  changed.
+- Draft code pull requests run Rust formatting and the complete default-feature
+  test suite on Linux with PostgreSQL. They do not run the other feature
+  combinations, cross-platform tests, production container build, release
+  build, or benchmarks.
+- Ready-for-review code pull requests run the complete CI suite. The
+  `ready_for_review` event starts that suite immediately, and later pushes keep
+  running it.
+- Ready-for-review documentation-only pull requests keep the smaller relevant
+  checks. `docs/openapi.json` receives the OpenAPI contract check, while
+  `docs/export_template_guide.md` is treated as code because it is embedded in
+  a binary.
+
+The `ci:full` pull request label forces the complete CI and benchmark suites,
+including on a draft or documentation-only pull request. The `ci:benchmarks`
+label forces all benchmark jobs without expanding the main CI tier. Adding or
+removing either label takes effect immediately; converting a pull request back
+to draft cancels superseded work unless a forcing label remains.
+
+The lightweight change classifier is implemented by
+`scripts/classify-ci-changes.sh`. Unknown file types are classified
+conservatively as code, container, artifact, and benchmark inputs. Keep its
+tests in `scripts/test-classify-ci-changes.sh` synchronized with any new build
+inputs. The stable `CI gate` job reports the combined result of every applicable
+PR job and is the check intended for branch protection.
+
 ## Benchmarks
 
 Benchmarking runs in a separate GitHub workflow, `.github/workflows/benchmarks.yml`, via `terjekv/github-action-iai-callgrind`.
@@ -198,6 +229,11 @@ query nondeterministically to the next operation.
 
 ### CI behavior
 
+- Draft pull requests skip benchmarks unless `ci:full` or `ci:benchmarks` is
+  present. Ready pull requests run only the benchmark jobs affected by their
+  base-to-head diff.
+- Change classification happens before PostgreSQL services or benchmark
+  runners are allocated. Superseded benchmark workflow runs are cancelled.
 - The self-contained benchmark job runs both backends in one combined
   `backend: all` job, so PRs get a single consolidated benchmark export.
 - Gungraun's Callgrind measurements remain the practical gating signal with a

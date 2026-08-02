@@ -7,6 +7,14 @@ on:
     tags:
       - "v*"
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - converted_to_draft
+      - labeled
+      - unlabeled
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -21,9 +29,137 @@ env:
   HUBUUM_DB_TEST_PASSWORD: postgres
 
 jobs:
+  changes:
+    name: Classify changes
+    if: >-
+      !startsWith(github.ref, 'refs/tags/') &&
+      (
+        github.event_name != 'pull_request' ||
+        (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+        github.event.label.name == 'ci:full'
+      )
+    runs-on: ubuntu-24.04
+    outputs:
+      markdown: ${{ steps.paths.outputs.markdown }}
+      code: ${{ steps.paths.outputs.code }}
+      openapi: ${{ steps.paths.outputs.openapi }}
+      container: ${{ steps.paths.outputs.container }}
+      artifacts: ${{ steps.paths.outputs.artifacts }}
+      run_format: ${{ steps.policy.outputs.run_format }}
+      run_markdown: ${{ steps.policy.outputs.run_markdown }}
+      run_default_suite: ${{ steps.policy.outputs.run_default_suite }}
+      run_full_ci: ${{ steps.policy.outputs.run_full_ci }}
+      run_openapi: ${{ steps.policy.outputs.run_openapi }}
+      run_container: ${{ steps.policy.outputs.run_container }}
+      feature_matrix: ${{ steps.policy.outputs.feature_matrix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Test change classifier
+        run: bash scripts/test-classify-ci-changes.sh
+      - name: Classify changed paths
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          changed_files=()
+          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
+            while IFS= read -r -d '' path; do
+              changed_files+=("$path")
+            done < <(git ls-files --cached --others --exclude-standard -z)
+          else
+            while IFS= read -r -d '' path; do
+              changed_files+=("$path")
+            done < <(git diff --name-only -z "$BASE_SHA" "$HEAD_SHA")
+          fi
+          bash scripts/classify-ci-changes.sh "${changed_files[@]}"
+      - name: Select CI tier
+        id: policy
+        env:
+          CODE_CHANGED: ${{ steps.paths.outputs.code }}
+          CONTAINER_CHANGED: ${{ steps.paths.outputs.container }}
+          OPENAPI_CHANGED: ${{ steps.paths.outputs.openapi }}
+          MARKDOWN_CHANGED: ${{ steps.paths.outputs.markdown }}
+          IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+          IS_DRAFT: ${{ github.event.pull_request.draft || false }}
+          FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+        run: |
+          full_requested=false
+          if [[ "$IS_PULL_REQUEST" != "true" || "$IS_DRAFT" != "true" || "$FORCE_FULL" == "true" ]]; then
+            full_requested=true
+          fi
+
+          run_full_ci=false
+          if [[ "$full_requested" == "true" && ("$CODE_CHANGED" == "true" || "$FORCE_FULL" == "true") ]]; then
+            run_full_ci=true
+          fi
+
+          run_default_suite=false
+          if [[ "$CODE_CHANGED" == "true" || "$FORCE_FULL" == "true" ]]; then
+            run_default_suite=true
+          fi
+
+          run_container=false
+          if [[ "$full_requested" == "true" && ("$CONTAINER_CHANGED" == "true" || "$FORCE_FULL" == "true") ]]; then
+            run_container=true
+          fi
+
+          run_openapi=false
+          if [[ "$run_full_ci" == "true" || "$OPENAPI_CHANGED" == "true" ]]; then
+            run_openapi=true
+          fi
+
+          run_format=false
+          if [[ "$CODE_CHANGED" == "true" || "$FORCE_FULL" == "true" ]]; then
+            run_format=true
+          fi
+
+          run_markdown=false
+          if [[ "$MARKDOWN_CHANGED" == "true" || "$FORCE_FULL" == "true" ]]; then
+            run_markdown=true
+          fi
+
+          if [[ "$run_full_ci" == "true" ]]; then
+            feature_matrix='[{"name":"default","args":""},{"name":"no-default-features","args":"--no-default-features"},{"name":"rustls-no-openssl","args":"--no-default-features -F tls-rustls"},{"name":"all-features","args":"--all-features"}]'
+          else
+            feature_matrix='[{"name":"default","args":""}]'
+          fi
+
+          {
+            echo "run_format=$run_format"
+            echo "run_markdown=$run_markdown"
+            echo "run_default_suite=$run_default_suite"
+            echo "run_full_ci=$run_full_ci"
+            echo "run_openapi=$run_openapi"
+            echo "run_container=$run_container"
+            echo "feature_matrix=$feature_matrix"
+          } >> "$GITHUB_OUTPUT"
+
+  static-checks:
+    name: Static checks
+    needs: changes
+    if: needs.changes.outputs.run_format == 'true' || needs.changes.outputs.run_markdown == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Check Rust formatting
+        if: needs.changes.outputs.run_format == 'true'
+        run: cargo fmt --all -- --check
+      - name: Markdown lint
+        if: needs.changes.outputs.run_markdown == 'true'
+        uses: DavidAnson/markdownlint-cli2-action@v24
+        with:
+          config: '.markdownlint.json'
+          globs: '**/*.md'
+
   lint:
     name: Lint
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    needs: changes
+    if: needs.changes.outputs.run_full_ci == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -44,15 +180,11 @@ jobs:
         run: bash scripts/test-install-script-refresh.sh
       - name: Test single-host rolling update
         run: bash scripts/test-single-host-rollout.sh
-      - name: Markdown lint
-        uses: DavidAnson/markdownlint-cli2-action@v24
-        with:
-          config: '.markdownlint.json'
-          globs: '**/*.md'
 
   release-metadata:
     name: Release metadata
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    needs: changes
+    if: needs.changes.outputs.run_full_ci == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -66,7 +198,8 @@ jobs:
 
   openapi-contract:
     name: OpenAPI contract
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    needs: changes
+    if: needs.changes.outputs.run_openapi == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -122,20 +255,13 @@ jobs:
 
   feature-permutations:
     name: Feature smoke (${{ matrix.feature.name }})
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    needs: changes
+    if: needs.changes.outputs.run_default_suite == 'true'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        feature:
-          - name: default
-            args: ""
-          - name: no-default-features
-            args: "--no-default-features"
-          - name: rustls-no-openssl
-            args: "--no-default-features -F tls-rustls"
-          - name: all-features
-            args: "--all-features"
+        feature: ${{ fromJSON(needs.changes.outputs.feature_matrix) }}
     services:
       postgres:
         image: postgres
@@ -191,7 +317,8 @@ jobs:
 
   valkey-rate-limit-contract:
     name: Valkey login limiter contract
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    needs: changes
+    if: needs.changes.outputs.run_full_ci == 'true'
     runs-on: ubuntu-24.04
     services:
       valkey:
@@ -215,7 +342,8 @@ jobs:
 
   test:
     name: ${{ matrix.platform.os_name }}, rust ${{ matrix.toolchain }}
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    needs: changes
+    if: needs.changes.outputs.run_full_ci == 'true'
     runs-on: ${{ matrix.platform.os }}
     env:
       # Production artifact jobs retain the exact fat-LTO release profile.
@@ -437,7 +565,8 @@ jobs:
 
   all-features-release-build:
     name: Release build with all production features
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    needs: changes
+    if: needs.changes.outputs.run_full_ci == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -453,7 +582,8 @@ jobs:
 
   container-build:
     name: Container build (production features)
-    if: github.event_name == 'pull_request'
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.run_container == 'true'
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -558,6 +688,36 @@ jobs:
           HUBUUM_TEST_IMAGE: hubuum-server:ci
           HUBUUM_OLD_TEST_IMAGE: ghcr.io/hubuum/hubuum-server:v0.0.1@sha256:061fc4cb3af57e2db06c33012db93e60834d4618815e30af4ebb4aa05a21f445
         run: bash scripts/test-single-host-zero-downtime.sh
+
+  ci-gate:
+    name: >-
+      ${{
+        (
+          (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+          github.event.label.name == 'ci:full'
+        ) && 'CI gate' || 'CI policy event ignored'
+      }}
+    if: always() && github.event_name == 'pull_request' && needs.changes.result != 'skipped'
+    needs:
+      - changes
+      - static-checks
+      - lint
+      - release-metadata
+      - openapi-contract
+      - feature-permutations
+      - valkey-rate-limit-contract
+      - test
+      - all-features-release-build
+      - container-build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all applicable CI jobs to pass
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq --exit-status \
+            'all(.[]; .result == "success" or .result == "skipped")' \
+            <<< "$JOB_RESULTS"
 
   verify-tag-main-ci-success:
     name: Verify tagged commit already passed CI on main
@@ -811,8 +971,9 @@ jobs:
 
   build-main-linux-artifacts:
     name: Build static main artifacts (${{ matrix.platform.os_name }}, ${{ matrix.feature.ext }})
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && needs.changes.outputs.artifacts == 'true'
     needs:
+      - changes
       - lint
       - release-metadata
       - openapi-contract
@@ -883,8 +1044,9 @@ jobs:
 
   build-main-native-artifacts:
     name: Build native main artifacts (${{ matrix.platform.os_name }}, ${{ matrix.feature.ext }})
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && needs.changes.outputs.artifacts == 'true'
     needs:
+      - changes
       - lint
       - release-metadata
       - openapi-contract
@@ -1012,8 +1174,9 @@ jobs:
 
   publish-main-container-images:
     name: Build main container (${{ matrix.platform.arch }})
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && needs.changes.outputs.artifacts == 'true'
     needs:
+      - changes
       - lint
       - release-metadata
       - openapi-contract
