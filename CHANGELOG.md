@@ -59,8 +59,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   paths reject non-positive stage IDs at the request boundary.
 - **Breaking (Rust API):** `NewCollectionWithAssignee::group_id` and
   `NewServiceAccount::owner_group_id` now use the validated `GroupID` newtype.
-  Collection and service-account creation reject non-positive group IDs at the
-  request boundary.
+  Library callers must construct `GroupID` values for those fields. Collection
+  and service-account creation reject non-positive group IDs at the request
+  boundary.
 
 ### Security
 
