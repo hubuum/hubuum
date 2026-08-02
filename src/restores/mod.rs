@@ -583,7 +583,7 @@ async fn fail_restore_and_resume(
     job_id: i64,
     error: &ApiError,
 ) -> Result<(), ApiError> {
-    tracing::error!(message = "Restore failed", error = %error);
+    tracing::error!(message = "Restore failed", restore_job_id = job_id, error = %error);
     let stored_error = restore_error_for_storage(error);
     fail_restore_and_resume_db(pool, job_id, &stored_error).await
 }
