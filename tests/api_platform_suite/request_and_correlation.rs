@@ -10,7 +10,6 @@ mod tests {
     use serde_json::json;
     use std::{future::Future, str::FromStr};
     use tokio::sync::Mutex;
-    use tracing::instrument::WithSubscriber;
     use tracing_subscriber::layer::SubscriberExt;
 
     use crate::config::ClientAllowlist;
@@ -107,9 +106,9 @@ mod tests {
     }
 
     async fn capture_request_logs<T>(future: impl Future<Output = T>) -> (T, JsonLogWriter) {
-        // These tests install distinct task-local tracing subscribers around nested Actix
-        // middleware futures. Keep capture windows from overlapping: parallel capture has
-        // intermittently dropped the final middleware event on CI.
+        // Actix test services may poll nested middleware work outside the immediate future's
+        // task-local dispatch. Keep one thread-default capture subscriber installed for the
+        // complete request and serialize capture windows so every middleware event reaches it.
         let _capture_guard = REQUEST_LOG_CAPTURE_LOCK.lock().await;
         let writer = JsonLogWriter::default();
         let subscriber = tracing_subscriber::registry().with(
@@ -118,7 +117,8 @@ mod tests {
                 .with_writer(writer.clone())
                 .event_format(HubuumLoggingFormat),
         );
-        let output = future.with_subscriber(subscriber).await;
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+        let output = future.await;
         (output, writer)
     }
 
