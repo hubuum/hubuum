@@ -124,8 +124,12 @@ The lightweight change classifier is implemented by
 `scripts/classify-ci-changes.sh`. Unknown file types are classified
 conservatively as code, container, artifact, and benchmark inputs. Keep its
 tests in `scripts/test-classify-ci-changes.sh` synchronized with any new build
-inputs. The stable `CI gate` job reports the combined result of every applicable
-PR job and is the check intended for branch protection.
+inputs. Direct literal `include_str!` and `include_bytes!` inputs are discovered
+by that test and must be classified as code automatically. Renames are evaluated
+as a deletion plus an addition so both the old and new paths affect the selected
+tier. The stable `CI gate` job reports the combined result of every applicable
+PR or `main` validation job, is the check intended for branch protection, and
+must pass before `main-latest` artifacts or container images are published.
 
 ## Benchmarks
 

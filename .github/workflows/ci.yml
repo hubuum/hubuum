@@ -79,7 +79,7 @@ jobs:
           else
             while IFS= read -r -d '' path; do
               changed_files+=("$path")
-            done < <(git diff --name-only -z "$BASE_SHA" "$HEAD_SHA")
+            done < <(git diff --no-renames --name-only -z "$BASE_SHA" "$HEAD_SHA")
           fi
           bash scripts/classify-ci-changes.sh "${changed_files[@]}"
       - name: Select CI tier
@@ -703,7 +703,10 @@ jobs:
           github.event.label.name == 'ci:full'
         ) && 'CI gate' || 'CI policy event ignored'
       }}
-    if: always() && github.event_name == 'pull_request' && needs.changes.result != 'skipped'
+    if: >-
+      always() &&
+      (github.event_name == 'pull_request' || github.ref == 'refs/heads/main') &&
+      needs.changes.result != 'skipped'
     needs:
       - changes
       - static-checks
@@ -980,12 +983,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && needs.changes.outputs.artifacts == 'true'
     needs:
       - changes
-      - lint
-      - release-metadata
-      - openapi-contract
-      - feature-permutations
-      - test
-      - all-features-release-build
+      - ci-gate
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
@@ -1053,12 +1051,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && needs.changes.outputs.artifacts == 'true'
     needs:
       - changes
-      - lint
-      - release-metadata
-      - openapi-contract
-      - feature-permutations
-      - test
-      - all-features-release-build
+      - ci-gate
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
@@ -1183,11 +1176,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && needs.changes.outputs.artifacts == 'true'
     needs:
       - changes
-      - lint
-      - release-metadata
-      - openapi-contract
-      - feature-permutations
-      - test
+      - ci-gate
     runs-on: ${{ matrix.platform.runner }}
     permissions:
       contents: read
