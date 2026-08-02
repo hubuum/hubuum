@@ -400,7 +400,7 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
     }
 
     let lock = REFRESH_LOCKS.lock_for(principal_id);
-    let refresh_result = {
+    {
         let _guard = lock.lock().await;
 
         match external_user_state(pool, principal_id).await {
@@ -447,9 +447,7 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
                 },
             },
         }
-    };
-
-    refresh_result
+    }
 }
 
 pub async fn ensure_configured_identity_scopes(pool: &DbPool) -> Result<(), ApiError> {
