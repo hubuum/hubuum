@@ -9,6 +9,7 @@ mod tests {
     };
     use serde_json::json;
     use std::{future::Future, str::FromStr};
+    use tokio::sync::Mutex;
 
     use crate::config::ClientAllowlist;
     use crate::events::RequestProvenance;
@@ -22,6 +23,7 @@ mod tests {
     use crate::tests::{TestContext, test_context};
 
     const ENDPOINT: &str = "/api/v1/classes/";
+    static REQUEST_LOG_CAPTURE_LOCK: Mutex<()> = Mutex::const_new(());
 
     #[rstest]
     #[case::with_correlation_id(Some("test-correlation-id"), true)]
@@ -109,6 +111,10 @@ mod tests {
     where
         F: Future<Output = T>,
     {
+        // Subscriber registration updates tracing's process-wide callsite interest cache.
+        // Keep capture subscribers alive one at a time so parallel request-log tests cannot
+        // invalidate another request's capture while its authenticated DB work is in flight.
+        let _capture_guard = REQUEST_LOG_CAPTURE_LOCK.lock().await;
         let (tracing_middleware, writer) = tracing_middleware_with_log_capture();
         let output = run(tracing_middleware).await;
         (output, writer)
