@@ -9,21 +9,19 @@ mod tests {
     };
     use serde_json::json;
     use std::{future::Future, str::FromStr};
-    use tokio::sync::Mutex;
-    use tracing_subscriber::layer::SubscriberExt;
 
     use crate::config::ClientAllowlist;
     use crate::events::RequestProvenance;
-    use crate::logger::HubuumLoggingFormat;
     use crate::middlewares::actor_context;
     use crate::middlewares::{ClientAllowlistMiddleware, TracingMiddleware};
-    use crate::test_support::{JsonLogWriter, record_principal_on_current_span};
+    use crate::test_support::{
+        JsonLogWriter, record_principal_on_current_span, tracing_middleware_with_log_capture,
+    };
     use crate::tests::api_operations::get_request_with_correlation;
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{TestContext, test_context};
 
     const ENDPOINT: &str = "/api/v1/classes/";
-    static REQUEST_LOG_CAPTURE_LOCK: Mutex<()> = Mutex::const_new(());
 
     #[rstest]
     #[case::with_correlation_id(Some("test-correlation-id"), true)]
@@ -105,20 +103,14 @@ mod tests {
         assert_eq!(body["correlation_id"], "context-correlation");
     }
 
-    async fn capture_request_logs<T>(future: impl Future<Output = T>) -> (T, JsonLogWriter) {
-        // Actix test services may poll nested middleware work outside the immediate future's
-        // task-local dispatch. Keep one thread-default capture subscriber installed for the
-        // complete request and serialize capture windows so every middleware event reaches it.
-        let _capture_guard = REQUEST_LOG_CAPTURE_LOCK.lock().await;
-        let writer = JsonLogWriter::default();
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_writer(writer.clone())
-                .event_format(HubuumLoggingFormat),
-        );
-        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
-        let output = future.await;
+    async fn capture_request_logs<T, F>(
+        run: impl FnOnce(TracingMiddleware) -> F,
+    ) -> (T, JsonLogWriter)
+    where
+        F: Future<Output = T>,
+    {
+        let (tracing_middleware, writer) = tracing_middleware_with_log_capture();
+        let output = run(tracing_middleware).await;
         (output, writer)
     }
 
@@ -153,10 +145,10 @@ mod tests {
         #[case] expected_status: StatusCode,
         #[case] expected_severity: &str,
     ) {
-        let (resp, writer) = capture_request_logs(async {
+        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
             let app = test::init_service(
                 App::new()
-                    .wrap(TracingMiddleware::new())
+                    .wrap(tracing_middleware)
                     .route("/ok", web::get().to(ok_handler))
                     .route("/bad-request", web::get().to(bad_request_handler))
                     .route("/server-error", web::get().to(server_error_handler)),
@@ -191,10 +183,10 @@ mod tests {
     #[case::readiness("/readyz")]
     #[actix_web::test]
     async fn tracing_middleware_logs_successful_probes_at_debug(#[case] path: &str) {
-        let (resp, writer) = capture_request_logs(async {
+        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
             let app = test::init_service(
                 App::new()
-                    .wrap(TracingMiddleware::new())
+                    .wrap(tracing_middleware)
                     .route("/healthz", web::get().to(ok_handler))
                     .route("/readyz", web::get().to(ok_handler)),
             )
@@ -216,10 +208,10 @@ mod tests {
 
     #[actix_web::test]
     async fn tracing_middleware_keeps_failed_readiness_probes_at_error() {
-        let (resp, writer) = capture_request_logs(async {
+        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
             let app = test::init_service(
                 App::new()
-                    .wrap(TracingMiddleware::new())
+                    .wrap(tracing_middleware)
                     .route("/readyz", web::get().to(service_unavailable_handler)),
             )
             .await;
@@ -243,10 +235,10 @@ mod tests {
 
     #[actix_web::test]
     async fn tracing_middleware_includes_recorded_principal_on_request_logs() {
-        let (resp, writer) = capture_request_logs(async {
+        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
             let app = test::init_service(
                 App::new()
-                    .wrap(TracingMiddleware::new())
+                    .wrap(tracing_middleware)
                     .route("/principal", web::get().to(principal_handler)),
             )
             .await;
@@ -270,11 +262,12 @@ mod tests {
     #[actix_web::test]
     async fn production_middleware_stack_records_authenticated_principal_on_request_logs() {
         let test_context = TestContext::new().await;
-        let (resp, writer) = capture_request_logs(async {
+        let expected_principal_id = test_context.admin_user.id;
+        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
             let app = test::init_service(
                 App::new()
                     .wrap(actix_web::middleware::from_fn(actor_context))
-                    .wrap(TracingMiddleware::new())
+                    .wrap(tracing_middleware)
                     .app_data(test_context.pool.clone())
                     .app_data(crate::tests::app_context(&test_context.pool))
                     .route("/principal", web::get().to(ok_handler)),
@@ -298,19 +291,19 @@ mod tests {
             .iter()
             .find(|event| event["message"] == "request complete")
             .expect("request completion log");
-        assert_eq!(event["principal_id"], test_context.admin_user.id);
+        assert_eq!(event["principal_id"], expected_principal_id);
     }
 
     #[actix_web::test]
     async fn production_middleware_stack_traces_allowlist_rejections() {
-        let (resp, writer) = capture_request_logs(async {
+        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
             let app = test::init_service(
                 App::new()
                     .wrap(actix_web::middleware::from_fn(actor_context))
                     .wrap(ClientAllowlistMiddleware::new(
                         ClientAllowlist::from_str("10.0.0.0/24").expect("allowlist"),
                     ))
-                    .wrap(TracingMiddleware::new())
+                    .wrap(tracing_middleware)
                     .route("/denied", web::get().to(ok_handler)),
             )
             .await;

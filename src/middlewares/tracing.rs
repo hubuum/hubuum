@@ -9,6 +9,8 @@ use actix_web::{
     http::header::{HeaderName, HeaderValue},
 };
 use futures_util::future::{self, LocalBoxFuture, Ready};
+#[cfg(feature = "integration-test-support")]
+use tracing::{Dispatch, instrument::WithSubscriber};
 use tracing::{Instrument, Level, Span, debug, error, field, info, span, warn};
 use uuid::Uuid;
 
@@ -65,6 +67,8 @@ fn elapsed_millis(start_time: Instant) -> u64 {
 #[derive(Clone)]
 pub struct TracingMiddleware {
     proxy_trust: ProxyTrust,
+    #[cfg(feature = "integration-test-support")]
+    capture_dispatch: Option<Dispatch>,
 }
 
 impl Default for TracingMiddleware {
@@ -77,11 +81,25 @@ impl TracingMiddleware {
     pub fn new() -> Self {
         Self {
             proxy_trust: ProxyTrust::peer_only(),
+            #[cfg(feature = "integration-test-support")]
+            capture_dispatch: None,
         }
     }
 
     pub fn new_with_trust(proxy_trust: ProxyTrust) -> Self {
-        Self { proxy_trust }
+        Self {
+            proxy_trust,
+            #[cfg(feature = "integration-test-support")]
+            capture_dispatch: None,
+        }
+    }
+
+    #[cfg(feature = "integration-test-support")]
+    pub(crate) fn new_with_capture_dispatch(capture_dispatch: Dispatch) -> Self {
+        Self {
+            proxy_trust: ProxyTrust::peer_only(),
+            capture_dispatch: Some(capture_dispatch),
+        }
     }
 }
 
@@ -101,6 +119,8 @@ where
         future::ready(Ok(TracingMiddlewareService {
             service,
             proxy_trust: self.proxy_trust.clone(),
+            #[cfg(feature = "integration-test-support")]
+            capture_dispatch: self.capture_dispatch.clone(),
         }))
     }
 }
@@ -108,6 +128,8 @@ where
 pub struct TracingMiddlewareService<S> {
     service: S,
     proxy_trust: ProxyTrust,
+    #[cfg(feature = "integration-test-support")]
+    capture_dispatch: Option<Dispatch>,
 }
 
 impl<S, B> Service<ServiceRequest> for TracingMiddlewareService<S>
@@ -124,6 +146,13 @@ where
     }
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
+        #[cfg(feature = "integration-test-support")]
+        let capture_dispatch = self.capture_dispatch.clone();
+        #[cfg(feature = "integration-test-support")]
+        let capture_guard = capture_dispatch
+            .as_ref()
+            .map(tracing::dispatcher::set_default);
+
         let request_id = Uuid::new_v4();
         let request_id_s = request_id.to_string();
 
@@ -168,7 +197,7 @@ where
         let in_flight_guard = metrics::http_request_started_for_route(&route);
         let fut = span.in_scope(|| self.service.call(req));
 
-        Box::pin(
+        let future = Box::pin(
             async move {
                 let _in_flight_guard = in_flight_guard;
                 let mut res = match fut.await {
@@ -277,7 +306,17 @@ where
                 Ok(res)
             }
             .instrument(span),
-        )
+        );
+
+        #[cfg(feature = "integration-test-support")]
+        {
+            drop(capture_guard);
+            if let Some(capture_dispatch) = capture_dispatch {
+                return Box::pin(future.with_subscriber(capture_dispatch));
+            }
+        }
+
+        future
     }
 }
 
