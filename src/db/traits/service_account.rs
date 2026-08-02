@@ -4,6 +4,7 @@ use crate::db::prelude::*;
 use crate::db::traits::identity::identity_scope_by_name;
 use crate::db::traits::principal::InsertPrincipalRecord;
 use crate::db::traits::task::{QueuedTaskCancellation, cancel_queued_tasks_conn};
+use crate::db::traits::token::revoke_all_tokens_for_principal_conn;
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
@@ -315,7 +316,7 @@ async fn disable_service_account_conn(
         disabled
     };
 
-    revoke_all_tokens_for_principal_conn(conn, service_account_id).await?;
+    revoke_all_tokens_for_principal_conn(conn, PrincipalID::new(service_account_id)?).await?;
     let actor = event_context
         .and_then(EventContext::actor_user_id)
         .map(PrincipalID::new)
@@ -447,25 +448,11 @@ pub async fn revoke_all_tokens_for_principal(
     pool: &DbPool,
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
+    let principal_id = PrincipalID::new(principal_id_value)?;
     with_connection(pool, async |conn| {
-        revoke_all_tokens_for_principal_conn(conn, principal_id_value).await
+        revoke_all_tokens_for_principal_conn(conn, principal_id).await
     })
     .await
-}
-
-async fn revoke_all_tokens_for_principal_conn(
-    conn: &mut DbConnection,
-    principal_id_value: i32,
-) -> Result<usize, ApiError> {
-    use crate::schema::tokens::dsl::{principal_id, revoked_at, tokens};
-    Ok(diesel::update(
-        tokens
-            .filter(principal_id.eq(principal_id_value))
-            .filter(revoked_at.is_null()),
-    )
-    .set(revoked_at.eq(diesel::dsl::now))
-    .execute(conn)
-    .await?)
 }
 
 pub async fn cancel_pending_tasks_for_principal(

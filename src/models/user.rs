@@ -1,6 +1,7 @@
 use crate::db::prelude::*;
 use crate::db::traits::user::{
-    AnonymizeUserRecord, CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord, UpdateUserRecord,
+    AnonymizeUserRecord, CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord,
+    SetUserPasswordRecord, UpdateUserRecord,
 };
 use crate::events::EventContext;
 use crate::models::PrincipalID;
@@ -17,7 +18,7 @@ use crate::traits::{
     BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 /// A human user. The id is the principal id; the login/display name lives on
 /// `principals.name`, not here.
@@ -298,6 +299,27 @@ impl User {
             last_sync_attempted_at,
             last_sync_success_at,
         ))
+    }
+
+    /// Set a new local password and revoke every active bearer token for this
+    /// user in the same database transaction.
+    pub async fn set_password<C>(&self, backend: &C, new_password: &str) -> Result<(), ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        debug!(message = "Setting new password", user_id = self.id);
+        let password_hash = crate::utilities::auth::hash_password_async(new_password.to_string())
+            .await
+            .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
+        let revoked_tokens = self
+            .set_password_record(backend.db_pool(), &password_hash)
+            .await?;
+        debug!(
+            message = "Password changed and active tokens revoked",
+            user_id = self.id,
+            revoked_tokens
+        );
+        Ok(())
     }
 
     pub async fn create_token<C>(&self, backend: &C) -> Result<Token, ApiError>
