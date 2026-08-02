@@ -119,6 +119,7 @@ jobs:
       regression_threshold_pct_gungraun: 3
       regression_threshold_pct_criterion: 50
       fail_on_regression: true
+      regression_override_label: performance-regression-approved
       feature_sets_json: >-
         [
           {"name":"default","features":""}

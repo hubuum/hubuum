@@ -369,6 +369,19 @@ fn self_contained_benchmark_autodiscovery_excludes_feature_gated_targets() {
 }
 
 #[test]
+fn self_contained_benchmark_regression_exceptions_require_review_label() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workflow = fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
+        .expect("benchmark workflow should be readable");
+    let self_contained_job = lines_between(&workflow, "  benchmarks:", "  postgres-storage:")
+        .expect("benchmark workflow should contain a bounded self-contained job");
+
+    assert!(self_contained_job.iter().any(|line| {
+        line.contains("regression_override_label: performance-regression-approved")
+    }));
+}
+
+#[test]
 fn postgres_benchmark_workflow_confirms_regressions_on_stable_base_runs() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workflow = fs::read_to_string(repository.join(".github/workflows/benchmarks.yml"))
