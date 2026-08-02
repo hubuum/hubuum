@@ -495,10 +495,22 @@ pub async fn restore_status(
     capability: &str,
 ) -> Result<RestoreStageResponse, ApiError> {
     let job = match load_restore_status_job_db(pool, job_id).await {
-        Err(ApiError::NotFound(_)) => return Err(invalid_restore_capability()),
+        Err(ApiError::NotFound(_)) => {
+            tracing::warn!(
+                message = "Restore capability rejected",
+                restore_job_id = job_id,
+                reason = "restore stage not found"
+            );
+            return Err(invalid_restore_capability());
+        }
         result => result?,
     };
     if !capability_matches(&job.capability_hash, capability) {
+        tracing::warn!(
+            message = "Restore capability rejected",
+            restore_job_id = job_id,
+            reason = "capability mismatch"
+        );
         return Err(invalid_restore_capability());
     }
     let status = job.status.parse::<RestoreJobStatus>()?;
