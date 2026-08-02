@@ -111,9 +111,9 @@ while IFS=: read -r source_path invocation; do
   ((literal_include_count += 1))
 done < <(
   cd "$repo_root"
-  rg --with-filename --no-line-number --only-matching \
-    'include_(str|bytes)!\s*\(\s*"[^"]+"\s*\)' \
-    --glob '*.rs' .
+  git grep --only-matching --extended-regexp \
+    'include_(str|bytes)![[:space:]]*\([[:space:]]*"[^"]+"[[:space:]]*\)' \
+    -- '*.rs'
 )
 
 if ((literal_include_count == 0)); then
