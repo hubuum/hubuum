@@ -259,3 +259,44 @@ impl ResponseLocation {
         &self.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logger::{HubuumLoggingFormat, test_support::JsonLogWriter};
+    use actix_web::test as actix_test;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    #[test]
+    fn response_header_debug_log_omits_the_value() {
+        let header_name = "x-sensitive-response-data";
+        let header_value = "secret-pagination-cursor";
+        let writer = JsonLogWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(writer.clone())
+                .event_format(HubuumLoggingFormat),
+        );
+        let request = actix_test::TestRequest::default().to_http_request();
+
+        let response = tracing::subscriber::with_default(subscriber, || {
+            ApiResponse::new_with_headers(
+                (),
+                StatusCode::OK,
+                HashMap::from([(header_name.to_string(), header_value.to_string())]),
+            )
+            .respond_to(&request)
+        });
+
+        assert_eq!(
+            response.headers().get(header_name),
+            Some(&HeaderValue::from_static(header_value))
+        );
+
+        let logs = writer.raw_output();
+        assert!(logs.contains("Adding response header"));
+        assert!(logs.contains(header_name));
+        assert!(!logs.contains(header_value));
+    }
+}
