@@ -81,7 +81,7 @@ impl FromStr for EventDeliveryStatus {
     }
 }
 
-#[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Queryable, Selectable, PartialEq, Eq)]
 #[diesel(table_name = event_deliveries)]
 pub struct EventDelivery {
     pub id: i64,
@@ -92,7 +92,7 @@ pub struct EventDelivery {
     pub next_attempt_at: NaiveDateTime,
     pub last_error: Option<String>,
     pub locked_until: Option<NaiveDateTime>,
-    pub claim_token: Option<Uuid>,
+    pub(crate) claim_token: Option<Uuid>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
