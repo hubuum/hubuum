@@ -500,7 +500,10 @@ fn source_position(source: &str, byte_offset: usize) -> (usize, usize) {
         .iter()
         .rposition(|byte| *byte == b'\n')
         .map_or(0, |newline| newline + 1);
-    (line, offset - line_start + 1)
+    let column = source
+        .get(line_start..offset)
+        .map_or(offset - line_start + 1, |prefix| prefix.chars().count() + 1);
+    (line, column)
 }
 
 fn provider_error(err: AuthProviderError) -> ApiError {
@@ -763,6 +766,14 @@ mod tests {
         assert!(message.contains(" at line "));
         assert!(message.contains(", column "));
         assert!(message.contains("source content omitted"));
+    }
+
+    #[test]
+    fn auth_config_source_positions_count_unicode_characters() {
+        let source = "øx = true";
+        let x_offset = source.find('x').unwrap();
+
+        assert_eq!(source_position(source, x_offset), (1, 2));
     }
 
     #[test]
