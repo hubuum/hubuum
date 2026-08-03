@@ -30,6 +30,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   AMQP, email, and Valkey transport failures are likewise reported without
   transport-library detail. The underlying failures remain available to
   administrators in contextual server logs.
+- Restore-status capability checks no longer disclose whether a restore stage
+  ID exists when the supplied capability is invalid. Server logs distinguish
+  missing stages from capability mismatches without recording the capability.
 
 ## [0.0.8] - 2026-08-01
 

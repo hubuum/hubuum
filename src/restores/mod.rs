@@ -37,6 +37,8 @@ static RESTORE_COORDINATOR: Once = Once::new();
 static ACTIVE_MAINTENANCE_WORK: AtomicUsize = AtomicUsize::new(0);
 const RESTORE_DRAIN_TIMEOUT_SECONDS: u64 = 30;
 const RESTORE_STAGE_EXPIRY_INTERVAL_SECONDS: u64 = 60;
+const MISSING_RESTORE_CAPABILITY_HASH: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 // Keep this longer than the bounded drain so normal confirmations enter the
 // advisory-lock-protected restore transaction before recovery is eligible.
 const RESTORE_RECONCILIATION_GRACE_SECONDS: i64 = 60;
@@ -115,6 +117,17 @@ fn capability_matches(capability_hash: &str, capability: &str) -> bool {
                 difference | (left ^ right)
             })
             == 0
+}
+
+fn restore_capability_matches(capability_hash: Option<&str>, capability: &str) -> bool {
+    capability_matches(
+        capability_hash.unwrap_or(MISSING_RESTORE_CAPABILITY_HASH),
+        capability,
+    )
+}
+
+fn invalid_restore_capability() -> ApiError {
+    ApiError::Forbidden("Restore capability is invalid".to_string())
 }
 
 fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSummary, ApiError> {
@@ -490,11 +503,30 @@ pub async fn restore_status(
     job_id: i64,
     capability: &str,
 ) -> Result<RestoreStageResponse, ApiError> {
-    let job = load_restore_status_job_db(pool, job_id).await?;
-    if !capability_matches(&job.capability_hash, capability) {
-        return Err(ApiError::Forbidden(
-            "Restore capability is invalid".to_string(),
-        ));
+    let job = match load_restore_status_job_db(pool, job_id).await {
+        Ok(job) => Some(job),
+        Err(ApiError::NotFound(_)) => None,
+        Err(error) => return Err(error),
+    };
+    let capability_valid = restore_capability_matches(
+        job.as_ref().map(|job| job.capability_hash.as_str()),
+        capability,
+    );
+    let Some(job) = job else {
+        tracing::warn!(
+            message = "Restore capability rejected",
+            restore_job_id = job_id,
+            reason = "restore stage not found"
+        );
+        return Err(invalid_restore_capability());
+    };
+    if !capability_valid {
+        tracing::warn!(
+            message = "Restore capability rejected",
+            restore_job_id = job_id,
+            reason = "capability mismatch"
+        );
+        return Err(invalid_restore_capability());
     }
     let status = job.status.parse::<RestoreJobStatus>()?;
     let validation = serde_json::from_value(job.validation_summary.clone())?;
@@ -560,11 +592,30 @@ pub async fn confirm_restore(
     job_id: i64,
     confirmation: &RestoreConfirmRequest,
 ) -> Result<RestoreStageResponse, ApiError> {
-    let job = load_restore_job(pool, job_id).await?;
-    if !capability_matches(&job.capability_hash, &confirmation.restore_capability) {
-        return Err(ApiError::Forbidden(
-            "Restore capability is invalid".to_string(),
-        ));
+    let job = match load_restore_job(pool, job_id).await {
+        Ok(job) => Some(job),
+        Err(ApiError::NotFound(_)) => None,
+        Err(error) => return Err(error),
+    };
+    let capability_valid = restore_capability_matches(
+        job.as_ref().map(|job| job.capability_hash.as_str()),
+        &confirmation.restore_capability,
+    );
+    let Some(job) = job else {
+        tracing::warn!(
+            message = "Restore capability rejected",
+            restore_job_id = job_id,
+            reason = "restore stage not found"
+        );
+        return Err(invalid_restore_capability());
+    };
+    if !capability_valid {
+        tracing::warn!(
+            message = "Restore capability rejected",
+            restore_job_id = job_id,
+            reason = "capability mismatch"
+        );
+        return Err(invalid_restore_capability());
     }
     if confirmation.sha256 != job.sha256 {
         return Err(ApiError::Conflict(
@@ -862,7 +913,8 @@ mod tests {
 
     use super::{
         MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
-        RestoreSettings, confirmation_is_stale, validate_computed_field_definitions,
+        RestoreSettings, confirmation_is_stale, restore_capability_matches, sha256,
+        validate_computed_field_definitions,
     };
     use crate::models::{BackupDocument, BackupManifest, BackupState, CURRENT_BACKUP_VERSION};
 
@@ -906,6 +958,23 @@ mod tests {
         #[case] upload_bytes: usize,
     ) {
         assert!(RestoreSettings::new(retention_minutes, upload_bytes).is_err());
+    }
+
+    #[rstest]
+    #[case::exact_match(Some("expected-capability"), "expected-capability", true)]
+    #[case::mismatch(Some("expected-capability"), "different-capability", false)]
+    #[case::missing_stage(None, "expected-capability", false)]
+    fn restore_capability_validation_handles_present_and_missing_stages(
+        #[case] stored_capability: Option<&str>,
+        #[case] supplied_capability: &str,
+        #[case] expected: bool,
+    ) {
+        let stored_hash = stored_capability.map(|capability| sha256(capability.as_bytes()));
+
+        assert_eq!(
+            restore_capability_matches(stored_hash.as_deref(), supplied_capability),
+            expected
+        );
     }
 
     #[rstest]

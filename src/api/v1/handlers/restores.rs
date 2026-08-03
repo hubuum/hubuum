@@ -107,8 +107,7 @@ pub async fn confirm_restore_stage(
             headers(("Cache-Control" = String, description = "Always no-store for restore metadata"))
         ),
         (status = 400, description = "Restore capability header is missing", body = ApiErrorResponse),
-        (status = 403, description = "Capability rejected", body = ApiErrorResponse),
-        (status = 404, description = "Restore stage not found", body = ApiErrorResponse)
+        (status = 403, description = "Capability rejected or restore stage unavailable", body = ApiErrorResponse)
     )
 )]
 #[get("/{restore_id}/status")]
