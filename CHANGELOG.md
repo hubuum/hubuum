@@ -41,6 +41,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Restore-status capability checks no longer disclose whether a restore stage
   ID exists when the supplied capability is invalid. Server logs distinguish
   missing stages from capability mismatches without recording the capability.
+- Response debug logs no longer include custom HTTP header values, preventing
+  pagination cursors and future secret-bearing headers from leaking into logs.
 
 ## [0.0.8] - 2026-08-01
 
