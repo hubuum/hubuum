@@ -235,7 +235,7 @@ where
 }
 
 fn paginate_in_memory_with_values<T>(
-    mut items: Vec<T>,
+    items: Vec<T>,
     query_options: &QueryOptions,
     sorts: &[SortParam],
     cursor_values: Option<&[CursorValue]>,
@@ -243,66 +243,48 @@ fn paginate_in_memory_with_values<T>(
 where
     T: CursorPaginated,
 {
-    items.sort_by(|left, right| {
-        compare_cursor_values(left, right, sorts).unwrap_or(Ordering::Equal)
-    });
+    let mut keyed_items = items
+        .into_iter()
+        .map(|item| {
+            let values = sorts
+                .iter()
+                .map(|sort| item.cursor_value(&sort.field))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((item, values))
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
+    keyed_items.sort_by(|(_, left), (_, right)| compare_cursor_values(left, right, sorts));
 
     if let Some(cursor_values) = cursor_values {
-        let mut filtered = Vec::with_capacity(items.len());
-        for item in items {
-            if compare_item_to_values(&item, cursor_values, sorts)? == Ordering::Greater {
-                filtered.push(item);
-            }
-        }
-        items = filtered;
+        keyed_items.retain(|(_, values)| {
+            compare_cursor_values(values, cursor_values, sorts) == Ordering::Greater
+        });
     }
 
     if let Some(limit) = query_options.limit {
-        items.truncate(limit);
+        keyed_items.truncate(limit);
     }
-    Ok(items)
+    Ok(keyed_items.into_iter().map(|(item, _)| item).collect())
 }
 
-fn compare_cursor_values<T>(left: &T, right: &T, sorts: &[SortParam]) -> Result<Ordering, ApiError>
-where
-    T: CursorPaginated,
-{
-    for sort in sorts {
-        let ordering = left
-            .cursor_value(&sort.field)?
-            .cmp(&right.cursor_value(&sort.field)?);
-        let ordering = if sort.descending {
-            ordering.reverse()
-        } else {
-            ordering
-        };
-        if ordering != Ordering::Equal {
-            return Ok(ordering);
-        }
-    }
-    Ok(Ordering::Equal)
-}
-
-fn compare_item_to_values<T>(
-    item: &T,
-    values: &[CursorValue],
+fn compare_cursor_values(
+    left: &[CursorValue],
+    right: &[CursorValue],
     sorts: &[SortParam],
-) -> Result<Ordering, ApiError>
-where
-    T: CursorPaginated,
-{
-    for (sort, cursor_value) in sorts.iter().zip(values) {
-        let ordering = item.cursor_value(&sort.field)?.cmp(cursor_value);
+) -> Ordering {
+    for ((left, right), sort) in left.iter().zip(right).zip(sorts) {
+        let ordering = left.cmp(right);
         let ordering = if sort.descending {
             ordering.reverse()
         } else {
             ordering
         };
         if ordering != Ordering::Equal {
-            return Ok(ordering);
+            return ordering;
         }
     }
-    Ok(Ordering::Equal)
+    Ordering::Equal
 }
 
 pub fn pagination_headers(

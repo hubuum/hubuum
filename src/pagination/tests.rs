@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
 use chrono::NaiveDate;
 use rstest::rstest;
 
@@ -671,4 +674,103 @@ fn page_limits_reject_a_zero_requested_limit() {
         .unwrap_err();
 
     assert_eq!(error.to_string(), "limit must be greater than 0");
+}
+
+#[derive(Clone, Debug)]
+struct InstrumentedCursorItem {
+    id: i64,
+    calls: Option<Arc<AtomicUsize>>,
+    fail: bool,
+}
+
+impl CursorPaginated for InstrumentedCursorItem {
+    fn supports_sort(field: &FilterField) -> bool {
+        field == &FilterField::Id
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        match field {
+            FilterField::Id if self.fail => Err(ApiError::InternalServerError(
+                "failed to extract test cursor value".to_string(),
+            )),
+            FilterField::Id => {
+                if let Some(calls) = &self.calls {
+                    calls.fetch_add(1, AtomicOrdering::Relaxed);
+                }
+                Ok(CursorValue::Integer(self.id))
+            }
+            _ => Err(ApiError::InternalServerError(
+                "unsupported instrumented cursor field".to_string(),
+            )),
+        }
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+#[test]
+fn in_memory_pagination_extracts_each_sort_key_once() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let items = (0..128)
+        .rev()
+        .map(|id| InstrumentedCursorItem {
+            id,
+            calls: Some(Arc::clone(&calls)),
+            fail: false,
+        })
+        .collect();
+
+    paginate_in_memory(
+        items,
+        &QueryOptions {
+            filters: Vec::new(),
+            sort: Vec::new(),
+            limit: None,
+            cursor: None,
+            include_total: false,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(calls.load(AtomicOrdering::Relaxed), 128);
+}
+
+#[test]
+fn in_memory_pagination_propagates_sort_key_errors() {
+    let error = paginate_in_memory(
+        vec![
+            InstrumentedCursorItem {
+                id: 2,
+                calls: None,
+                fail: false,
+            },
+            InstrumentedCursorItem {
+                id: 1,
+                calls: None,
+                fail: true,
+            },
+        ],
+        &QueryOptions {
+            filters: Vec::new(),
+            sort: Vec::new(),
+            limit: None,
+            cursor: None,
+            include_total: false,
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        ApiError::InternalServerError("failed to extract test cursor value".to_string())
+    );
 }
