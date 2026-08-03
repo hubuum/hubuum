@@ -328,7 +328,10 @@ containing `permissions` and `resources`. If `expires_at` is omitted, Hubuum
 materializes `issued + HUBUUM_TOKEN_LIFETIME_HOURS`; the response returns the raw
 token and authoritative `expires_at`. Clients can discover the configured
 default without authentication from `GET /api/v1/config` at
-`authentication.default_token_lifetime_hours`.
+`authentication.default_token_lifetime_hours`. A requested expiry must be later
+than the database issuance timestamp and cannot exceed `issued +
+HUBUUM_MAX_TOKEN_LIFETIME_HOURS` (default 8760 hours). The public config exposes
+that bound as `authentication.max_token_lifetime_hours`.
 
 `GET /api/v1/iam/me` returns the scope object for the current token. Both
 token-list endpoints return the same object for every visible token;

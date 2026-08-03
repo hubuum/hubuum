@@ -14,7 +14,8 @@ use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
-    PrincipalID, REDACTED_DEBUG_VALUE, TokenLifetime, TokenScope, TokenScopeDetails,
+    PrincipalID, REDACTED_DEBUG_VALUE, TokenIssuancePolicy, TokenLifetime, TokenScope,
+    TokenScopeDetails,
 };
 use crate::schema::tokens;
 use crate::traits::{
@@ -146,11 +147,11 @@ impl PrincipalTokenCreateRequest {
     where
         C: BackendContext + ?Sized,
     {
-        let default_lifetime = configured_token_lifetime()?;
+        let issuance_policy = configured_token_issuance_policy()?;
         let (token, persisted) = crate::db::traits::token::create_principal_token_request_db(
             backend.db_pool(),
             self,
-            default_lifetime,
+            issuance_policy,
             context,
         )
         .await?;
@@ -330,8 +331,12 @@ impl IssuedToken {
     }
 }
 
+pub(crate) fn configured_token_issuance_policy() -> Result<TokenIssuancePolicy, ApiError> {
+    get_config()?.token_issuance_policy()
+}
+
 pub(crate) fn configured_token_lifetime() -> Result<TokenLifetime, ApiError> {
-    TokenLifetime::from_hours(get_config()?.token_lifetime_hours)
+    Ok(configured_token_issuance_policy()?.default_lifetime())
 }
 
 impl Token {

@@ -7,7 +7,7 @@ use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::principal::PrincipalKind;
 use crate::models::{
     PrincipalID, PrincipalToken, PrincipalTokenCreateParts, PrincipalTokenCreateRequest,
-    PrincipalTokenMetadata, Token, TokenLifetime, TokenScope,
+    PrincipalTokenMetadata, Token, TokenIssuancePolicy, TokenScope,
 };
 use crate::schema::{
     principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
@@ -185,7 +185,7 @@ pub async fn revoke_token_by_id_for_principal_db(
 pub(crate) async fn create_principal_token_request_db(
     pool: &DbPool,
     request: PrincipalTokenCreateRequest,
-    default_lifetime: TokenLifetime,
+    issuance_policy: TokenIssuancePolicy,
     context: Option<&EventContext>,
 ) -> Result<(Token, PrincipalToken), ApiError> {
     let PrincipalTokenCreateParts {
@@ -221,6 +221,13 @@ pub(crate) async fn create_principal_token_request_db(
         .map(|ids| ids.object_ids().to_vec())
         .unwrap_or_default();
     let persisted = with_transaction(pool, async |conn| -> Result<PrincipalToken, ApiError> {
+        let issued_at = diesel::select(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+            "statement_timestamp() AT TIME ZONE 'UTC'",
+        ))
+        .get_result::<chrono::NaiveDateTime>(conn)
+        .await?;
+        let effective_expiry = issuance_policy.resolve_expiry(issued_at, expires_at)?;
+
         let principal_kind = principals::table
             .filter(principals::id.eq(principal))
             .select(principals::kind)
@@ -278,16 +285,6 @@ pub(crate) async fn create_principal_token_request_db(
             }
         }
 
-        let issued_at = diesel::dsl::sql::<diesel::sql_types::Timestamp>(
-            "statement_timestamp() AT TIME ZONE 'UTC'",
-        );
-        let effective_expiry = diesel::dsl::sql::<
-            diesel::sql_types::Nullable<diesel::sql_types::Timestamp>,
-        >("COALESCE(")
-        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Timestamp>, _>(expires_at)
-        .sql(", (statement_timestamp() AT TIME ZONE 'UTC') + (")
-        .bind::<diesel::sql_types::BigInt, _>(default_lifetime.hours())
-        .sql(" * INTERVAL '1 hour'))");
         let token = diesel::insert_into(tokens::table)
             .values((
                 tokens::token.eq(&hash),
@@ -295,7 +292,7 @@ pub(crate) async fn create_principal_token_request_db(
                 tokens::name.eq(&name),
                 tokens::description.eq(&description),
                 tokens::issued.eq(issued_at),
-                tokens::expires_at.eq(effective_expiry),
+                tokens::expires_at.eq(Some(effective_expiry)),
                 tokens::permission_scoped.eq(permission_scoped),
                 tokens::resource_scoped.eq(resource_scoped),
             ))

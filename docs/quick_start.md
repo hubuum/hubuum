@@ -194,6 +194,7 @@ Paginated responses include `X-Page-Limit` with the effective page size.
 | `HUBUUM_ADMIN_IDENTITY_SCOPE` | `local` | Identity scope containing the admin group |
 | `HUBUUM_AUTH_CONFIG_PATH` | *(empty)* | Optional TOML file for external auth providers such as LDAP |
 | `HUBUUM_TOKEN_LIFETIME_HOURS` | `24` | Token lifetime in hours |
+| `HUBUUM_MAX_TOKEN_LIFETIME_HOURS` | `8760` | Maximum lifetime in hours for an explicitly requested token expiry |
 | `HUBUUM_TOKEN_RETENTION_PURGE_ENABLED` | `true` | Delete expired token rows after the retention period |
 | `HUBUUM_TOKEN_RETENTION_DAYS` | `30` | Days to retain a token after its effective expiry |
 | `HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS` | `3600` | Delay between token-retention purge runs |
@@ -220,7 +221,9 @@ See [External Authentication](external_auth.md) for LDAP scopes.
 `HUBUUM_TOKEN_LIFETIME_HOURS`. Clients can read the effective default without
 authentication from `GET /api/v1/config` at
 `authentication.default_token_lifetime_hours`; issuance responses return the
-authoritative `expires_at`.
+authoritative `expires_at`. Explicit expirations must be in the future and no
+later than issuance plus `HUBUUM_MAX_TOKEN_LIFETIME_HOURS`; the public config
+also exposes this limit as `authentication.max_token_lifetime_hours`.
 
 **Login rate-limit note**: These settings throttle failed logins across layered scopes with exponential backoff. For the full model, client-IP resolution behind proxies, and the admin endpoints for inspecting and releasing throttled scopes, see [login_rate_limiting.md](login_rate_limiting.md).
 

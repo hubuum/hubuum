@@ -14,6 +14,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `CollectionID` and `GroupID` values instead of raw integers. Downstream
   callers and backend implementations must construct the newtypes at their
   input boundaries and update their method signatures.
+- **Breaking (HTTP API):** token mint requests now reject expirations that are
+  not in the future or exceed the new `HUBUUM_MAX_TOKEN_LIFETIME_HOURS` policy
+  (default 8760 hours). The client-safe configuration endpoint exposes the
+  effective maximum alongside the default lifetime. Before upgrading, clients
+  that request longer expirations must shorten them, or operators must raise
+  the new limit; no database migration is required.
 
 ### Security
 

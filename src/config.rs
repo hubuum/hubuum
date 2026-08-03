@@ -12,7 +12,7 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use crate::errors::ApiError;
-use crate::models::TokenRetentionSettings;
+use crate::models::{TokenIssuancePolicy, TokenRetentionSettings};
 
 mod client_network;
 mod defaults;
@@ -607,6 +607,14 @@ pub struct AppConfig {
     )]
     pub token_lifetime_hours: i64,
 
+    /// Maximum lifetime accepted for an explicitly requested token expiry.
+    #[clap(
+        long,
+        env = "HUBUUM_MAX_TOKEN_LIFETIME_HOURS",
+        default_value_t = DEFAULT_MAX_TOKEN_LIFETIME_HOURS
+    )]
+    pub max_token_lifetime_hours: i64,
+
     /// Enable removal of token rows after expiry plus the retention window.
     #[clap(
         long,
@@ -901,6 +909,10 @@ impl std::fmt::Debug for AppConfig {
 }
 
 impl AppConfig {
+    pub(crate) fn token_issuance_policy(&self) -> Result<TokenIssuancePolicy, ApiError> {
+        TokenIssuancePolicy::from_hours(self.token_lifetime_hours, self.max_token_lifetime_hours)
+    }
+
     pub fn token_retention_settings(&self) -> Result<TokenRetentionSettings, ApiError> {
         TokenRetentionSettings::builder()
             .retention_days(self.token_retention_days)
@@ -1154,6 +1166,7 @@ impl AppConfig {
             ));
         }
 
+        self.token_issuance_policy()?;
         self.token_retention_settings()?;
 
         if self.token_retention_purge_interval_seconds == 0 {
@@ -1734,6 +1747,9 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         token_lifetime_hours: env_or_default("HUBUUM_TOKEN_LIFETIME_HOURS", "24")
             .parse()
             .unwrap_or(DEFAULT_TOKEN_LIFETIME_HOURS),
+        max_token_lifetime_hours: env_or_default("HUBUUM_MAX_TOKEN_LIFETIME_HOURS", "8760")
+            .parse()
+            .unwrap_or(DEFAULT_MAX_TOKEN_LIFETIME_HOURS),
         token_retention_purge_enabled: env_or_default(
             "HUBUUM_TOKEN_RETENTION_PURGE_ENABLED",
             "true",
@@ -1898,8 +1914,9 @@ mod tests {
         DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS, DEFAULT_EXPORT_MAX_ACTIVE_TASKS_PER_USER,
         DEFAULT_EXPORT_MAX_OUTPUT_BYTES, DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER,
         DEFAULT_LOGIN_RATE_LIMIT_MAX_ATTEMPTS, DEFAULT_LOGIN_RATE_LIMIT_WINDOW_SECONDS,
-        DEFAULT_PAGE_LIMIT, DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER,
-        DEFAULT_TASK_POLL_INTERVAL_MS, DEFAULT_TOKEN_LIFETIME_HOURS, DEFAULT_TOKEN_RETENTION_DAYS,
+        DEFAULT_MAX_TOKEN_LIFETIME_HOURS, DEFAULT_PAGE_LIMIT,
+        DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, DEFAULT_TASK_POLL_INTERVAL_MS,
+        DEFAULT_TOKEN_LIFETIME_HOURS, DEFAULT_TOKEN_RETENTION_DAYS,
         DEFAULT_TOKEN_RETENTION_PURGE_BATCH_SIZE, DEFAULT_TOKEN_RETENTION_PURGE_ENABLED,
         DEFAULT_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS, MAX_PAGE_LIMIT, RuntimeRole, TEST_ENV_LOCK,
         TlsBackend, default_actix_workers, default_task_workers, get_config_from_env,
@@ -2668,6 +2685,63 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "token_lifetime_hours must not exceed 2147483647"
+        );
+    }
+
+    #[test]
+    fn max_token_lifetime_hours_are_parsed_from_env() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_MAX_TOKEN_LIFETIME_HOURS", Some("720"));
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(parsed.max_token_lifetime_hours, 720);
+        assert_eq!(loaded.max_token_lifetime_hours, 720);
+    }
+
+    #[test]
+    fn max_token_lifetime_hours_default_when_env_var_is_unset() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_MAX_TOKEN_LIFETIME_HOURS", None);
+
+        let parsed = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        let loaded = get_config_from_env().unwrap();
+
+        assert_eq!(
+            parsed.max_token_lifetime_hours,
+            DEFAULT_MAX_TOKEN_LIFETIME_HOURS
+        );
+        assert_eq!(
+            loaded.max_token_lifetime_hours,
+            DEFAULT_MAX_TOKEN_LIFETIME_HOURS
+        );
+    }
+
+    #[test]
+    fn max_token_lifetime_hours_must_cover_the_default_lifetime() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _default_guard = EnvVarGuard::set("HUBUUM_TOKEN_LIFETIME_HOURS", Some("48"));
+        let _maximum_guard = EnvVarGuard::set("HUBUUM_MAX_TOKEN_LIFETIME_HOURS", Some("24"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "token_lifetime_hours must not exceed max_token_lifetime_hours"
+        );
+    }
+
+    #[test]
+    fn max_token_lifetime_hours_are_validated() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set("HUBUUM_MAX_TOKEN_LIFETIME_HOURS", Some("0"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "max_token_lifetime_hours must be greater than 0"
         );
     }
 

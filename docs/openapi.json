@@ -17256,6 +17256,7 @@
         "type": "object",
         "required": [
           "token_lifetime_hours",
+          "max_token_lifetime_hours",
           "token_retention_purge_enabled",
           "token_retention_days",
           "token_retention_purge_interval_seconds",
@@ -17277,6 +17278,10 @@
           },
           "login_rate_limit": {
             "$ref": "#/components/schemas/LoginRateLimitConfig"
+          },
+          "max_token_lifetime_hours": {
+            "type": "integer",
+            "format": "int64"
           },
           "provider_config_path": {
             "$ref": "#/components/schemas/SecretStatus"
@@ -17561,13 +17566,20 @@
       "ClientAuthenticationConfig": {
         "type": "object",
         "required": [
-          "default_token_lifetime_hours"
+          "default_token_lifetime_hours",
+          "max_token_lifetime_hours"
         ],
         "properties": {
           "default_token_lifetime_hours": {
             "type": "integer",
             "format": "int64",
             "description": "Lifetime applied to newly issued tokens when the mint request omits an\nexplicit expiry.",
+            "minimum": 1
+          },
+          "max_token_lifetime_hours": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Largest lifetime accepted for an explicitly requested token expiry.",
             "minimum": 1
           }
         }
@@ -23595,7 +23607,7 @@
               "null"
             ],
             "format": "date-time",
-            "description": "Requested expiry. When omitted, the server applies the public default\ntoken lifetime and returns the resulting timestamp in the response."
+            "description": "Requested expiry. It must be in the future and no farther from issuance\nthan the server's public maximum token lifetime. When omitted, the\nserver applies the public default lifetime."
           },
           "name": {
             "type": [
