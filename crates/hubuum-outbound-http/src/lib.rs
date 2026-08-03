@@ -122,11 +122,22 @@ impl OutboundMethod {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OutboundUrlParts {
     url: Url,
     host: String,
     port: u16,
+}
+
+impl fmt::Debug for OutboundUrlParts {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OutboundUrlParts")
+            .field("url", &"[REDACTED]")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .finish()
+    }
 }
 
 impl OutboundUrlParts {
@@ -307,9 +318,23 @@ fn transport_controls_header(name: &HeaderName) -> bool {
     )
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct OutboundHeaders {
     inner: HeaderMap,
+}
+
+impl fmt::Debug for OutboundHeaders {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names = self
+            .inner
+            .keys()
+            .map(HeaderName::as_str)
+            .collect::<Vec<_>>();
+        formatter
+            .debug_struct("OutboundHeaders")
+            .field("names", &names)
+            .finish()
+    }
 }
 
 impl OutboundHeaders {
@@ -394,7 +419,6 @@ impl OutboundRequest {
     }
 }
 
-#[derive(Debug)]
 pub struct OutboundResponse {
     status_code: u16,
     status_display: String,
@@ -403,6 +427,21 @@ pub struct OutboundResponse {
     body_preview: String,
     duration_ms: i32,
     url: String,
+}
+
+impl fmt::Debug for OutboundResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OutboundResponse")
+            .field("status_code", &self.status_code)
+            .field("status_display", &self.status_display)
+            .field("success", &self.success)
+            .field("headers", &"[REDACTED]")
+            .field("body_preview", &"[REDACTED]")
+            .field("duration_ms", &self.duration_ms)
+            .field("url", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl OutboundResponse {
@@ -644,6 +683,17 @@ mod tests {
     }
 
     #[test]
+    fn outbound_url_debug_omits_query_credentials() {
+        let parts = validate_outbound_url("https://example.com/hook?api_key=query-secret").unwrap();
+
+        let debug = format!("{parts:?}");
+
+        assert!(debug.contains("example.com"));
+        assert!(debug.contains("port: 443"));
+        assert!(!debug.contains("query-secret"));
+    }
+
+    #[test]
     fn private_and_internal_ips_are_blocked() {
         use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -686,6 +736,41 @@ mod tests {
             OutboundHttpError::Request.to_string(),
             "outbound call failed"
         );
+    }
+
+    #[test]
+    fn outbound_headers_debug_omits_header_values() {
+        let raw_authorization = "Bearer outbound-secret";
+        let mut headers = OutboundHeaders::new();
+        headers.insert("authorization", raw_authorization).unwrap();
+        headers.insert("x-request-id", "request-1").unwrap();
+
+        let debug = format!("{headers:?}");
+
+        assert!(debug.contains("authorization"));
+        assert!(debug.contains("x-request-id"));
+        assert!(!debug.contains(raw_authorization));
+    }
+
+    #[test]
+    fn outbound_response_debug_omits_payload_headers_and_url() {
+        let response = OutboundResponse {
+            status_code: 200,
+            status_display: "200 OK".to_string(),
+            success: true,
+            headers: serde_json::json!({"set-cookie": "response-header-secret"}),
+            body_preview: "response-body-secret".to_string(),
+            duration_ms: 12,
+            url: "https://example.invalid/hook?token=url-secret".to_string(),
+        };
+
+        let debug = format!("{response:?}");
+
+        assert!(debug.contains("status_code: 200"));
+        assert!(debug.contains("duration_ms: 12"));
+        assert!(!debug.contains("response-header-secret"));
+        assert!(!debug.contains("response-body-secret"));
+        assert!(!debug.contains("url-secret"));
     }
 
     #[test]

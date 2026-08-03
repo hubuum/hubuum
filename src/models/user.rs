@@ -1,13 +1,15 @@
+use std::fmt;
+
 use crate::db::prelude::*;
 use crate::db::traits::user::{
     AnonymizeUserRecord, CreateUserRecord, DeleteUserRecord, OwnedUserTokenRecord,
     SetUserPasswordRecord, UpdateUserRecord,
 };
 use crate::events::EventContext;
-use crate::models::PrincipalID;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::load_principal_by_id;
 use crate::models::token::{IssuedToken, PrincipalToken, PrincipalTokenCreateRequest, Token};
+use crate::models::{PrincipalID, REDACTED_DEBUG_VALUE, redacted_debug_option};
 use crate::schema::users;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -22,9 +24,7 @@ use tracing::{debug, error, warn};
 
 /// A human user. The id is the principal id; the login/display name lives on
 /// `principals.name`, not here.
-#[derive(
-    Serialize, Deserialize, Queryable, Selectable, Insertable, PartialEq, Debug, Clone, ToSchema,
-)]
+#[derive(Serialize, Deserialize, Queryable, Selectable, Insertable, PartialEq, Clone, ToSchema)]
 #[diesel(table_name = users)]
 pub struct User {
     pub id: i32,
@@ -37,6 +37,22 @@ pub struct User {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub anonymized_at: Option<chrono::NaiveDateTime>,
+}
+
+impl fmt::Debug for User {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("User")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("password", &redacted_debug_option(&self.password))
+            .field("proper_name", &self.proper_name)
+            .field("email", &self.email)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("anonymized_at", &self.anonymized_at)
+            .finish()
+    }
 }
 
 /// Public representation of a user, including the name resolved from the
@@ -471,7 +487,7 @@ impl UpdateUser {
 /// Struct to create a new user.
 ///
 /// The password is expected to be plaintext. `name` is the principal name.
-#[derive(Serialize, Deserialize, Debug, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 #[schema(example = new_user_example)]
 pub struct NewUser {
     pub identity_scope: Option<String>,
@@ -479,6 +495,19 @@ pub struct NewUser {
     pub password: String,
     pub proper_name: Option<String>,
     pub email: Option<String>,
+}
+
+impl fmt::Debug for NewUser {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NewUser")
+            .field("identity_scope", &self.identity_scope)
+            .field("name", &self.name)
+            .field("password", &REDACTED_DEBUG_VALUE)
+            .field("proper_name", &self.proper_name)
+            .field("email", &self.email)
+            .finish()
+    }
 }
 
 impl NewUser {
@@ -653,5 +682,53 @@ fn login_user_example() -> LoginUser {
         identity_scope: None,
         name: "alice".to_string(),
         password: "correct-horse-battery-staple".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_timestamp() -> chrono::NaiveDateTime {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc()
+    }
+
+    #[test]
+    fn user_debug_redacts_stored_password_hash() {
+        let password_hash = "$argon2id$stored-password-hash";
+        let user = User {
+            id: 1,
+            kind: "human".to_string(),
+            password: Some(password_hash.to_string()),
+            proper_name: Some("Alice".to_string()),
+            email: Some("alice@example.com".to_string()),
+            created_at: test_timestamp(),
+            updated_at: test_timestamp(),
+            anonymized_at: None,
+        };
+
+        let output = format!("{user:?}");
+
+        assert!(output.contains(REDACTED_DEBUG_VALUE));
+        assert!(!output.contains(password_hash));
+    }
+
+    #[test]
+    fn new_user_debug_redacts_plaintext_password() {
+        let password = "correct-horse-battery-staple";
+        let user = NewUser {
+            identity_scope: None,
+            name: "alice".to_string(),
+            password: password.to_string(),
+            proper_name: Some("Alice".to_string()),
+            email: Some("alice@example.com".to_string()),
+        };
+
+        let output = format!("{user:?}");
+
+        assert!(output.contains(REDACTED_DEBUG_VALUE));
+        assert!(!output.contains(password));
     }
 }

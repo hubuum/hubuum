@@ -23,7 +23,7 @@ impl fmt::Debug for ValkeySink {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct ValkeyConfig {
     uri: String,
     #[serde(default)]
@@ -36,18 +36,41 @@ struct ValkeyConfig {
     io_timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+impl fmt::Debug for ValkeyConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ValkeyConfig")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Deserialize)]
 struct ValkeyRouting {
     stream: String,
 }
 
-#[derive(Debug)]
+impl fmt::Debug for ValkeyRouting {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ValkeyRouting")
+            .finish_non_exhaustive()
+    }
+}
+
 struct StreamEntry {
     stream: String,
     max_len: Option<usize>,
     approximate_trim: bool,
     io_timeout: Duration,
     fields: Vec<(&'static str, String)>,
+}
+
+impl fmt::Debug for StreamEntry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StreamEntry")
+            .finish_non_exhaustive()
+    }
 }
 
 impl ValkeySink {
@@ -197,6 +220,38 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+
+    #[test]
+    fn parsed_valkey_debug_omits_connection_routing_and_payload_fields() {
+        let config = ValkeyConfig {
+            uri: "rediss://user:connection-secret@example.invalid/0".to_string(),
+            max_len: Some(100),
+            approximate_trim: true,
+            max_payload_bytes: Some(1024),
+            io_timeout_ms: Some(2000),
+        };
+        let routing = ValkeyRouting {
+            stream: "private-stream".to_string(),
+        };
+        let entry = StreamEntry {
+            stream: "private-stream".to_string(),
+            max_len: Some(100),
+            approximate_trim: true,
+            io_timeout: Duration::from_secs(2),
+            fields: vec![("event", "payload-secret".to_string())],
+        };
+
+        let config_debug = format!("{config:?}");
+        let routing_debug = format!("{routing:?}");
+        let entry_debug = format!("{entry:?}");
+
+        assert_eq!(config_debug, "ValkeyConfig { .. }");
+        assert_eq!(routing_debug, "ValkeyRouting { .. }");
+        assert_eq!(entry_debug, "StreamEntry { .. }");
+        assert!(!config_debug.contains("connection-secret"));
+        assert!(!routing_debug.contains("private-stream"));
+        assert!(!entry_debug.contains("payload-secret"));
+    }
     fn envelope() -> EventEnvelope {
         EventEnvelope {
             id: 42,

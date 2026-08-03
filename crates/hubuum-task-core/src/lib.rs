@@ -14,8 +14,17 @@ use std::str::FromStr;
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 255;
 
 /// A non-empty, storage-safe task idempotency key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct IdempotencyKey(String);
+
+impl fmt::Debug for IdempotencyKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("IdempotencyKey")
+            .field(&"[REDACTED]")
+            .finish()
+    }
+}
 
 impl IdempotencyKey {
     pub fn new(value: impl Into<String>) -> Result<Self, IdempotencyKeyError> {
@@ -92,6 +101,17 @@ mod tests {
         let key = IdempotencyKey::new("x".repeat(MAX_IDEMPOTENCY_KEY_BYTES)).unwrap();
 
         assert_eq!(key.as_str().len(), MAX_IDEMPOTENCY_KEY_BYTES);
+    }
+
+    #[test]
+    fn debug_redacts_the_key_value() {
+        let raw_key = "customer-supplied-idempotency-secret";
+        let key = IdempotencyKey::new(raw_key).unwrap();
+
+        let debug = format!("{key:?}");
+
+        assert_eq!(debug, "IdempotencyKey(\"[REDACTED]\")");
+        assert!(!debug.contains(raw_key));
     }
 
     #[test]

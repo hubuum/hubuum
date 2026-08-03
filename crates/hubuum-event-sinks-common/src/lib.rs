@@ -76,11 +76,17 @@ pub fn ensure_payload_within_limit(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct SinkDelivery<'a> {
     pub config: &'a Value,
     pub routing: &'a Value,
     pub secret_ref: Option<&'a str>,
+}
+
+impl fmt::Debug for SinkDelivery<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SinkDelivery").finish_non_exhaustive()
+    }
 }
 
 impl<'a> SinkDelivery<'a> {
@@ -159,9 +165,14 @@ fn uri_userinfo(uri: &str) -> Option<&str> {
     (!userinfo.is_empty() && !host.is_empty()).then_some(userinfo)
 }
 
-#[derive(Debug)]
 pub struct UriConnectionPool<K, V> {
     entries: Mutex<std::collections::HashMap<K, V>>,
+}
+
+impl<K, V> fmt::Debug for UriConnectionPool<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UriConnectionPool").finish_non_exhaustive()
+    }
 }
 
 impl<K, V> Default for UriConnectionPool<K, V> {

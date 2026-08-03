@@ -1,3 +1,5 @@
+use std::fmt;
+
 use chrono::NaiveDateTime;
 use hubuum_events_core::EventSubscriptionFilter;
 use serde::{Deserialize, Serialize};
@@ -13,7 +15,8 @@ use crate::models::remote_target::validate_target_parts;
 use crate::models::{
     EventSinkKind, ExportContentType, ExportInclude, ExportLimits, ExportMissingDataPolicy,
     ExportRelationContext, ExportScopeKind, ExportTemplateKind, ObjectRelationLimit, Permissions,
-    RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType,
+    REDACTED_DEBUG_VALUE, RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType,
+    redacted_debug_option,
 };
 
 pub const CURRENT_IMPORT_VERSION: i32 = 1;
@@ -186,7 +189,7 @@ pub struct ImportGroupInput {
     pub timestamps: Option<RestoreTimestamps>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ImportPrincipalSubtype {
     Human {
@@ -204,6 +207,43 @@ pub enum ImportPrincipalSubtype {
         created_by_key: Option<PrincipalKey>,
         disabled_at: Option<NaiveDateTime>,
     },
+}
+
+impl fmt::Debug for ImportPrincipalSubtype {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Human {
+                password,
+                password_hash,
+                proper_name,
+                email,
+                anonymized_at,
+            } => formatter
+                .debug_struct("Human")
+                .field("password", &redacted_debug_option(password))
+                .field("password_hash", &redacted_debug_option(password_hash))
+                .field("proper_name", proper_name)
+                .field("email", email)
+                .field("anonymized_at", anonymized_at)
+                .finish(),
+            Self::ServiceAccount {
+                description,
+                owner_group_ref,
+                owner_group_key,
+                created_by_ref,
+                created_by_key,
+                disabled_at,
+            } => formatter
+                .debug_struct("ServiceAccount")
+                .field("description", description)
+                .field("owner_group_ref", owner_group_ref)
+                .field("owner_group_key", owner_group_key)
+                .field("created_by_ref", created_by_ref)
+                .field("created_by_key", created_by_key)
+                .field("disabled_at", disabled_at)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -404,7 +444,7 @@ impl ImportExportTemplateInput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ImportRemoteTargetInput {
     #[serde(rename = "ref")]
     pub ref_: Option<String>,
@@ -427,7 +467,28 @@ pub struct ImportRemoteTargetInput {
     pub timestamps: Option<RestoreTimestamps>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl fmt::Debug for ImportRemoteTargetInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportRemoteTargetInput")
+            .field("ref_", &self.ref_)
+            .field("collection_ref", &self.collection_ref)
+            .field("collection_key", &self.collection_key)
+            .field("class_ref", &self.class_ref)
+            .field("class_key", &self.class_key)
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("method", &self.method)
+            .field("configuration", &REDACTED_DEBUG_VALUE)
+            .field("allowed_subject_types", &self.allowed_subject_types)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("enabled", &self.enabled)
+            .field("timestamps", &self.timestamps)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ImportEventSinkInput {
     #[serde(rename = "ref")]
     pub ref_: Option<String>,
@@ -440,7 +501,21 @@ pub struct ImportEventSinkInput {
     pub timestamps: Option<RestoreTimestamps>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl fmt::Debug for ImportEventSinkInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportEventSinkInput")
+            .field("ref_", &self.ref_)
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("configuration", &REDACTED_DEBUG_VALUE)
+            .field("enabled", &self.enabled)
+            .field("timestamps", &self.timestamps)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ImportEventSubscriptionInput {
     #[serde(rename = "ref")]
     pub ref_: Option<String>,
@@ -460,7 +535,28 @@ pub struct ImportEventSubscriptionInput {
     pub timestamps: Option<RestoreTimestamps>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, ToSchema)]
+impl fmt::Debug for ImportEventSubscriptionInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportEventSubscriptionInput")
+            .field("ref_", &self.ref_)
+            .field("collection_ref", &self.collection_ref)
+            .field("collection_key", &self.collection_key)
+            .field("sink_ref", &self.sink_ref)
+            .field("sink_key", &self.sink_key)
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("entity_types", &self.entity_types)
+            .field("actions", &self.actions)
+            .field("filter", &self.filter)
+            .field("routing", &REDACTED_DEBUG_VALUE)
+            .field("enabled", &self.enabled)
+            .field("timestamps", &self.timestamps)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Default, ToSchema)]
 pub struct ImportGraph {
     #[serde(default)]
     pub identity_scopes: Vec<ImportIdentityScopeInput>,
@@ -490,6 +586,29 @@ pub struct ImportGraph {
     pub event_sinks: Vec<ImportEventSinkInput>,
     #[serde(default)]
     pub event_subscriptions: Vec<ImportEventSubscriptionInput>,
+}
+
+impl fmt::Debug for ImportGraph {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportGraph")
+            .field("identity_scopes", &self.identity_scopes.len())
+            .field("groups", &self.groups.len())
+            .field("principals", &self.principals.len())
+            .field("group_memberships", &self.group_memberships.len())
+            .field("collections", &self.collections.len())
+            .field("classes", &self.classes.len())
+            .field("objects", &self.objects.len())
+            .field("class_relations", &self.class_relations.len())
+            .field("object_relations", &self.object_relations.len())
+            .field("collection_permissions", &self.collection_permissions.len())
+            .field("export_templates", &self.export_templates.len())
+            .field("remote_targets", &self.remote_targets.len())
+            .field("event_sinks", &self.event_sinks.len())
+            .field("event_subscriptions", &self.event_subscriptions.len())
+            .field("contents", &REDACTED_DEBUG_VALUE)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -741,13 +860,14 @@ mod tests {
 
     use super::{
         IdentityScopeKey, ImportAtomicity, ImportCollisionPolicy, ImportEventSinkInput,
-        ImportExportTemplateInput, ImportGraph, ImportMode, ImportPermissionPolicy,
-        ImportPrincipalInput, ImportPrincipalSubtype, ImportRemoteTargetInput, ImportRequest,
-        RestoreTimestamps, validate_optional_selector, validate_required_selector,
+        ImportEventSubscriptionInput, ImportExportTemplateInput, ImportGraph, ImportMode,
+        ImportPermissionPolicy, ImportPrincipalInput, ImportPrincipalSubtype,
+        ImportRemoteTargetInput, ImportRequest, RestoreTimestamps, validate_optional_selector,
+        validate_required_selector,
     };
     use crate::models::{
-        CollectionKey, EventSinkKind, ExportContentType, ExportTemplateKind, RemoteAuthConfig,
-        RemoteHttpMethod, RemoteTargetSubjectType,
+        CollectionKey, EventSinkKind, ExportContentType, ExportTemplateKind, REDACTED_DEBUG_VALUE,
+        RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType,
     };
 
     #[test]
@@ -815,6 +935,26 @@ mod tests {
                 .is_ok(),
             expected_valid
         );
+    }
+
+    #[rstest]
+    #[case::plaintext(Some("import-password"), None, "import-password")]
+    #[case::hash(
+        None,
+        Some("$argon2id$imported-password-hash"),
+        "$argon2id$imported-password-hash"
+    )]
+    fn imported_human_debug_redacts_credentials(
+        #[case] password: Option<&str>,
+        #[case] password_hash: Option<&str>,
+        #[case] credential: &str,
+    ) {
+        let principal = human_principal(password, password_hash);
+
+        let output = format!("{principal:?}");
+
+        assert!(output.contains(REDACTED_DEBUG_VALUE));
+        assert!(!output.contains(credential));
     }
 
     #[rstest]
@@ -1039,5 +1179,83 @@ mod tests {
         });
 
         assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn import_debug_redacts_graph_and_integration_configuration() {
+        let graph = ImportGraph {
+            remote_targets: vec![ImportRemoteTargetInput {
+                ref_: Some("target:1".to_string()),
+                collection_ref: Some("collection:1".to_string()),
+                collection_key: None,
+                class_ref: None,
+                class_key: None,
+                name: "remote-target".to_string(),
+                description: String::new(),
+                method: RemoteHttpMethod::Post,
+                url_template: "https://example.invalid/hook?key=import-target-url-secret"
+                    .to_string(),
+                headers_template: serde_json::json!({
+                    "authorization": "import-target-header-secret"
+                }),
+                body_template: Some("import-target-body-secret".to_string()),
+                auth_config: RemoteAuthConfig::BearerSecret {
+                    secret: "import-target-auth-secret".to_string(),
+                },
+                allowed_subject_types: vec![RemoteTargetSubjectType::Collection],
+                timeout_ms: 1_000,
+                enabled: true,
+                timestamps: None,
+            }],
+            event_sinks: vec![ImportEventSinkInput {
+                ref_: Some("sink:1".to_string()),
+                name: "webhook".to_string(),
+                kind: EventSinkKind::Webhook,
+                config: serde_json::json!({
+                    "headers": {"authorization": "import-config-secret"}
+                }),
+                secret_ref: Some("import-secret-reference".to_string()),
+                enabled: true,
+                timestamps: None,
+            }],
+            event_subscriptions: vec![ImportEventSubscriptionInput {
+                ref_: Some("subscription:1".to_string()),
+                collection_ref: Some("collection:1".to_string()),
+                collection_key: None,
+                sink_ref: Some("sink:1".to_string()),
+                sink_key: None,
+                name: "subscription".to_string(),
+                description: String::new(),
+                entity_types: vec!["object".to_string()],
+                actions: vec!["updated".to_string()],
+                filter: serde_json::json!({}),
+                routing: serde_json::json!({
+                    "url": "https://example.invalid/hook?key=import-routing-secret"
+                }),
+                enabled: true,
+                timestamps: None,
+            }],
+            ..ImportGraph::default()
+        };
+
+        let target_debug = format!("{:?}", graph.remote_targets[0]);
+        let sink_debug = format!("{:?}", graph.event_sinks[0]);
+        let subscription_debug = format!("{:?}", graph.event_subscriptions[0]);
+        let request = request_with_graph(graph);
+
+        let debug = format!("{request:?}");
+
+        assert!(debug.contains(REDACTED_DEBUG_VALUE));
+        assert!(debug.contains("remote_targets: 1"));
+        for output in [target_debug, sink_debug, subscription_debug, debug] {
+            assert!(output.contains(REDACTED_DEBUG_VALUE));
+            assert!(!output.contains("import-config-secret"));
+            assert!(!output.contains("import-secret-reference"));
+            assert!(!output.contains("import-routing-secret"));
+            assert!(!output.contains("import-target-url-secret"));
+            assert!(!output.contains("import-target-header-secret"));
+            assert!(!output.contains("import-target-body-secret"));
+            assert!(!output.contains("import-target-auth-secret"));
+        }
     }
 }

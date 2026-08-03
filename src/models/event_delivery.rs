@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 use crate::db::prelude::*;
 use chrono::NaiveDateTime;
@@ -7,6 +7,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::errors::ApiError;
+use crate::models::redacted_debug_option;
 use crate::models::search::{FilterField, SortParam};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -81,7 +82,7 @@ impl FromStr for EventDeliveryStatus {
     }
 }
 
-#[derive(Debug, Clone, Queryable, Selectable, PartialEq, Eq)]
+#[derive(Clone, Queryable, Selectable, PartialEq, Eq)]
 #[diesel(table_name = event_deliveries)]
 pub struct EventDelivery {
     pub id: i64,
@@ -95,6 +96,25 @@ pub struct EventDelivery {
     pub(crate) claim_token: Option<Uuid>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+}
+
+impl fmt::Debug for EventDelivery {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EventDelivery")
+            .field("id", &self.id)
+            .field("event_id", &self.event_id)
+            .field("subscription_id", &self.subscription_id)
+            .field("status", &self.status)
+            .field("attempts", &self.attempts)
+            .field("next_attempt_at", &self.next_attempt_at)
+            .field("last_error", &redacted_debug_option(&self.last_error))
+            .field("locked_until", &self.locked_until)
+            .field("claim_token", &redacted_debug_option(&self.claim_token))
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -302,6 +322,7 @@ impl CursorSqlMapping for EventDelivery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::REDACTED_DEBUG_VALUE;
 
     #[test]
     fn event_delivery_response_omits_internal_claim_token() {
@@ -327,5 +348,32 @@ mod tests {
 
         assert!(serialized.get("claim_token").is_none());
         assert!(!serialized.to_string().contains(&claim_token.to_string()));
+    }
+
+    #[test]
+    fn event_delivery_debug_redacts_claim_token_and_error() {
+        let timestamp = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let claim_token = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
+        let delivery = EventDelivery {
+            id: 1,
+            event_id: 2,
+            subscription_id: 3,
+            status: EventDeliveryStatus::InFlight.as_str().to_string(),
+            attempts: 1,
+            next_attempt_at: timestamp,
+            last_error: Some("delivery-error-secret".to_string()),
+            locked_until: Some(timestamp),
+            claim_token: Some(claim_token),
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+
+        let debug = format!("{delivery:?}");
+
+        assert!(debug.contains(REDACTED_DEBUG_VALUE));
+        assert!(!debug.contains("delivery-error-secret"));
+        assert!(!debug.contains(&claim_token.to_string()));
     }
 }

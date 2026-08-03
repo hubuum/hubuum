@@ -4,8 +4,10 @@ use ipnet::{Ipv4Net, Ipv6Net};
 use crate::config::{LoginRateLimitConfig, login_rate_limit_config};
 use crate::errors::ApiError;
 use crate::middlewares::client_allowlist::{ProxyTrust, extract_client_ip_from_http_request};
+use crate::models::REDACTED_DEBUG_VALUE;
 
 use std::collections::{HashMap, VecDeque};
+use std::fmt;
 use std::net::IpAddr;
 #[cfg(feature = "login-rate-limit-valkey")]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -117,7 +119,7 @@ pub struct LoginRateLimitStoreSettings {
     backend: LoginRateLimitStoreBackend,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 enum LoginRateLimitStoreBackend {
     Memory,
     #[cfg(feature = "login-rate-limit-valkey")]
@@ -126,6 +128,23 @@ enum LoginRateLimitStoreBackend {
         prefix: String,
         io_timeout: Duration,
     },
+}
+
+impl fmt::Debug for LoginRateLimitStoreBackend {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Memory => formatter.write_str("Memory"),
+            #[cfg(feature = "login-rate-limit-valkey")]
+            Self::Valkey {
+                prefix, io_timeout, ..
+            } => formatter
+                .debug_struct("Valkey")
+                .field("url", &REDACTED_DEBUG_VALUE)
+                .field("prefix", prefix)
+                .field("io_timeout", io_timeout)
+                .finish(),
+        }
+    }
 }
 
 impl LoginRateLimitStoreSettings {
@@ -768,6 +787,26 @@ mod tests {
     use super::*;
     use rstest::rstest;
     use std::net::Ipv4Addr;
+
+    #[cfg(feature = "login-rate-limit-valkey")]
+    #[test]
+    fn valkey_store_settings_debug_redacts_connection_url() {
+        let settings = LoginRateLimitStoreSettings::valkey(
+            "redis://limiter-user:limiter-secret@valkey.example/7",
+            "hubuum-login",
+            Duration::from_secs(2),
+        )
+        .unwrap();
+
+        let debug = format!("{settings:?}");
+
+        assert!(debug.contains(REDACTED_DEBUG_VALUE));
+        assert!(debug.contains("hubuum-login"));
+        assert!(debug.contains("2s"));
+        assert!(!debug.contains("limiter-user"));
+        assert!(!debug.contains("limiter-secret"));
+        assert!(!debug.contains("valkey.example"));
+    }
 
     #[rstest]
     #[case("u:local/alice|192.0.2.1", "principal_ip")]

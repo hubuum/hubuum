@@ -11,11 +11,13 @@ use crate::db::prelude::*;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
+use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -146,7 +148,7 @@ impl From<EventId> for Uuid {
 }
 
 /// A committed event row — the read model for the audit log (#74) and delivery.
-#[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable)]
+#[derive(Clone, Serialize, Deserialize, Queryable, Selectable)]
 #[diesel(table_name = events)]
 pub struct Event {
     pub id: i64,
@@ -173,7 +175,40 @@ pub struct Event {
     pub task_id: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+impl fmt::Debug for Event {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Event")
+            .field("id", &self.id)
+            .field("event_id", &self.event_id)
+            .field("occurred_at", &self.occurred_at)
+            .field("entity_type", &self.entity_type)
+            .field("entity_id", &self.entity_id)
+            .field("entity_name", &self.entity_name)
+            .field("collection_id", &self.collection_id)
+            .field("action", &self.action)
+            .field("actor_user_id", &self.actor_user_id)
+            .field("actor_kind", &self.actor_kind)
+            .field("request_id", &self.request_id)
+            .field("correlation_id", &self.correlation_id)
+            .field("summary", &self.summary)
+            .field("before", &redacted_debug_option(&self.before))
+            .field("after", &redacted_debug_option(&self.after))
+            .field("metadata", &REDACTED_DEBUG_VALUE)
+            .field("schema_version", &self.schema_version)
+            .field("dispatched_at", &self.dispatched_at)
+            .field("fanout_locked_until", &self.fanout_locked_until)
+            .field(
+                "fanout_claim_token",
+                &redacted_debug_option(&self.fanout_claim_token),
+            )
+            .field("initiator_user_id", &self.initiator_user_id)
+            .field("task_id", &self.task_id)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct EventResponse {
     pub id: i64,
     pub event_id: Uuid,
@@ -193,6 +228,32 @@ pub struct EventResponse {
     pub after: Option<serde_json::Value>,
     pub metadata: serde_json::Value,
     pub schema_version: i32,
+}
+
+impl fmt::Debug for EventResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EventResponse")
+            .field("id", &self.id)
+            .field("event_id", &self.event_id)
+            .field("occurred_at", &self.occurred_at)
+            .field("entity_type", &self.entity_type)
+            .field("entity_id", &self.entity_id)
+            .field("entity_name", &self.entity_name)
+            .field("collection_id", &self.collection_id)
+            .field("action", &self.action)
+            .field("actor_user_id", &self.actor_user_id)
+            .field("actor_kind", &self.actor_kind)
+            .field("provenance", &self.provenance)
+            .field("request_id", &self.request_id)
+            .field("correlation_id", &self.correlation_id)
+            .field("summary", &self.summary)
+            .field("before", &redacted_debug_option(&self.before))
+            .field("after", &redacted_debug_option(&self.after))
+            .field("metadata", &REDACTED_DEBUG_VALUE)
+            .field("schema_version", &self.schema_version)
+            .finish()
+    }
 }
 
 impl Event {
@@ -322,7 +383,7 @@ impl CursorSqlMapping for EventResponse {
 /// snapshot fields are added with the `with_*` builders. Columns owned by the
 /// database (`id`, `occurred_at`, `dispatched_at`, fan-out claim fields) are
 /// intentionally absent so the row uses their defaults on insert.
-#[derive(Debug, Insertable)]
+#[derive(Insertable)]
 #[diesel(table_name = events)]
 pub struct NewEvent {
     event_id: Uuid,
@@ -342,6 +403,31 @@ pub struct NewEvent {
     after: Option<serde_json::Value>,
     metadata: serde_json::Value,
     schema_version: i32,
+}
+
+impl fmt::Debug for NewEvent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NewEvent")
+            .field("event_id", &self.event_id)
+            .field("entity_type", &self.entity_type)
+            .field("entity_id", &self.entity_id)
+            .field("entity_name", &self.entity_name)
+            .field("collection_id", &self.collection_id)
+            .field("action", &self.action)
+            .field("actor_user_id", &self.actor_user_id)
+            .field("actor_kind", &self.actor_kind)
+            .field("initiator_user_id", &self.initiator_user_id)
+            .field("task_id", &self.task_id)
+            .field("request_id", &self.request_id)
+            .field("correlation_id", &self.correlation_id)
+            .field("summary", &self.summary)
+            .field("before", &redacted_debug_option(&self.before))
+            .field("after", &redacted_debug_option(&self.after))
+            .field("metadata", &REDACTED_DEBUG_VALUE)
+            .field("schema_version", &self.schema_version)
+            .finish()
+    }
 }
 
 impl NewEvent {
@@ -490,5 +576,74 @@ impl NewEvent {
     /// The caller-provided correlation id, if any.
     pub fn correlation_id(&self) -> Option<&str> {
         self.correlation_id.as_deref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn timestamp() -> NaiveDateTime {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc()
+    }
+
+    #[test]
+    fn new_event_debug_redacts_payload_snapshots() {
+        let event = NewEvent::new(
+            EntityType::Collection,
+            Action::Created,
+            ActorKind::User,
+            "created",
+        )
+        .unwrap()
+        .with_before(serde_json::json!({"token": "before-secret"}))
+        .with_after(serde_json::json!({"token": "after-secret"}))
+        .with_metadata(serde_json::json!({"token": "metadata-secret"}));
+
+        let debug = format!("{event:?}");
+
+        assert!(debug.contains(REDACTED_DEBUG_VALUE));
+        assert!(!debug.contains("before-secret"));
+        assert!(!debug.contains("after-secret"));
+        assert!(!debug.contains("metadata-secret"));
+    }
+
+    #[test]
+    fn stored_event_debug_redacts_payloads_and_fanout_claim_token() {
+        let claim_token = Uuid::parse_str("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
+        let event = Event {
+            id: 1,
+            event_id: Uuid::new_v4(),
+            occurred_at: timestamp(),
+            entity_type: EntityType::Collection.as_str().to_string(),
+            entity_id: Some(2),
+            entity_name: Some("collection".to_string()),
+            collection_id: Some(2),
+            action: Action::Created.as_str().to_string(),
+            actor_user_id: Some(3),
+            actor_kind: ActorKind::User.as_str().to_string(),
+            request_id: None,
+            correlation_id: None,
+            summary: "created".to_string(),
+            before: Some(serde_json::json!({"token": "stored-before-secret"})),
+            after: Some(serde_json::json!({"token": "stored-after-secret"})),
+            metadata: serde_json::json!({"token": "stored-metadata-secret"}),
+            schema_version: 1,
+            dispatched_at: None,
+            fanout_locked_until: Some(timestamp()),
+            fanout_claim_token: Some(claim_token),
+            initiator_user_id: Some(3),
+            task_id: None,
+        };
+
+        let debug = format!("{event:?}");
+
+        assert!(debug.contains(REDACTED_DEBUG_VALUE));
+        assert!(!debug.contains("stored-before-secret"));
+        assert!(!debug.contains("stored-after-secret"));
+        assert!(!debug.contains("stored-metadata-secret"));
+        assert!(!debug.contains(&claim_token.to_string()));
     }
 }

@@ -434,7 +434,6 @@ async fn process_one_task_with_settings(
                 warn!(
                     message = "Task failure finalization stopped because its worker lease was lost",
                     task_id = task.id,
-                    claim_token = ?task.lease_token,
                 );
             }
         }
@@ -526,7 +525,6 @@ fn start_task_lease_heartbeat(
     let task_id = task.id;
     Some(spawn_task_lease_monitor(
         task_id,
-        claim_token,
         settings,
         initial_confirmed_expiry,
         move || {
@@ -544,7 +542,6 @@ fn start_task_lease_heartbeat(
 
 fn spawn_task_lease_monitor<F, Fut>(
     task_id: i32,
-    claim_token: uuid::Uuid,
     settings: TaskWorkerSettings,
     initial_confirmed_expiry: TokioInstant,
     renew: F,
@@ -561,7 +558,6 @@ where
     let handle = TASK_LEASE_RUNTIME.spawn(async move {
         let lost = monitor_task_lease(
             task_id,
-            claim_token,
             settings,
             initial_confirmed_expiry,
             renew,
@@ -581,7 +577,6 @@ where
 
 async fn monitor_task_lease<F, Fut>(
     task_id: i32,
-    claim_token: uuid::Uuid,
     settings: TaskWorkerSettings,
     mut confirmed_expiry: TokioInstant,
     mut renew: F,
@@ -600,7 +595,6 @@ where
                 warn!(
                     message = "Task lease renewal deadline expired",
                     task_id,
-                    claim_token = %claim_token,
                 );
                 return true;
             }
@@ -614,7 +608,6 @@ where
                         warn!(
                             message = "Task lease renewal did not complete before the lease expired",
                             task_id,
-                            claim_token = %claim_token,
                         );
                         return true;
                     }
@@ -631,7 +624,6 @@ where
                         warn!(
                             message = "Task lease is no longer owned by this worker",
                             task_id,
-                            claim_token = %claim_token,
                         );
                         return true;
                     }
@@ -639,7 +631,6 @@ where
                         warn!(
                             message = "Failed to renew task worker lease",
                             task_id,
-                            claim_token = %claim_token,
                             error = %error,
                         );
                     }
@@ -930,6 +921,16 @@ mod lease_heartbeat_tests {
 
     use super::*;
 
+    #[test]
+    fn lease_diagnostics_do_not_log_claim_tokens() {
+        let source = include_str!("worker.rs");
+        let direct_token_field = ["claim_", "token = %"].concat();
+        let optional_token_field = ["claim_", "token = ?task.lease_token"].concat();
+
+        assert!(!source.contains(&direct_token_field));
+        assert!(!source.contains(&optional_token_field));
+    }
+
     fn new_single_connection_execution_pool() -> DbPool {
         let config = get_config().expect("test requires database configuration");
         let settings = DatabasePoolSettings::builder(config.database_url.clone())
@@ -958,7 +959,6 @@ mod lease_heartbeat_tests {
         actix_rt::System::new().block_on(async move {
             let heartbeat = spawn_task_lease_monitor(
                 1,
-                uuid::Uuid::new_v4(),
                 settings,
                 TokioInstant::now() + settings.lease_duration,
                 move || {
@@ -992,7 +992,6 @@ mod lease_heartbeat_tests {
         actix_rt::System::new().block_on(async move {
             let mut heartbeat = spawn_task_lease_monitor(
                 1,
-                uuid::Uuid::new_v4(),
                 settings,
                 TokioInstant::now() + settings.lease_duration,
                 || async {
@@ -1072,7 +1071,6 @@ mod lease_heartbeat_tests {
             Duration::from_millis(250),
             monitor_task_lease(
                 1,
-                uuid::Uuid::new_v4(),
                 settings,
                 confirmed_expiry,
                 || {

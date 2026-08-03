@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::api::openapi::{ApiErrorResponse, LoginResponse, MessageResponse};
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
@@ -6,16 +8,25 @@ use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
 use crate::middlewares::rate_limit::{
     LoginAttemptOutcome, begin_login_attempt, client_ip_for_request, finish_login_attempt,
 };
-use crate::models::{LOCAL_IDENTITY_SCOPE, LoginUser, Token, UserID};
+use crate::models::{LOCAL_IDENTITY_SCOPE, LoginUser, REDACTED_DEBUG_VALUE, Token, UserID};
 use crate::observability::metrics;
 use actix_web::{HttpRequest, Responder, get, post, web};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct LogoutTokenRequest {
     pub token: String,
+}
+
+impl fmt::Debug for LogoutTokenRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LogoutTokenRequest")
+            .field("token", &REDACTED_DEBUG_VALUE)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -302,4 +313,23 @@ pub async fn validate_token(user_access: Authenticated) -> Result<impl Responder
     );
 
     Ok(ApiResponse::message("Token is valid."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logout_token_request_debug_redacts_raw_bearer_token() {
+        let raw_token = "raw-logout-bearer-token";
+        let debug = format!(
+            "{:?}",
+            LogoutTokenRequest {
+                token: raw_token.to_string(),
+            }
+        );
+
+        assert!(!debug.contains(raw_token));
+        assert!(debug.contains(REDACTED_DEBUG_VALUE));
+    }
 }

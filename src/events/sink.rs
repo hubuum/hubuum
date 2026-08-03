@@ -206,6 +206,7 @@ impl Sink for hubuum_event_sink_valkey::ValkeySink {
 #[cfg(test)]
 mod tests {
     use futures::FutureExt;
+    use hubuum_event_sinks_common::UriConnectionPool;
     use uuid::Uuid;
 
     use super::*;
@@ -280,6 +281,39 @@ mod tests {
             .deliver(&envelope, &subscription, &sink)
             .await
             .unwrap();
+    }
+
+    #[actix_rt::test]
+    async fn uri_connection_pool_debug_omits_credential_bearing_keys() {
+        let pool = UriConnectionPool::<String, String>::default();
+        pool.get_or_try_insert_with(
+            "rediss://user:secret@example.invalid/0".to_string(),
+            |_| async { Ok("client with secret state".to_string()) },
+        )
+        .await
+        .unwrap();
+
+        let debug = format!("{pool:?}");
+        assert_eq!(debug, "UriConnectionPool { .. }");
+        assert!(!debug.contains("secret"));
+        assert!(!debug.contains("example.invalid"));
+    }
+
+    #[test]
+    fn sink_delivery_debug_omits_config_routing_and_secret_reference() {
+        let config = serde_json::json!({
+            "headers": {"authorization": "Bearer config-secret"}
+        });
+        let routing = serde_json::json!({
+            "url": "https://user:routing-secret@example.invalid/events"
+        });
+        let delivery = SinkDelivery::new(&config, &routing, Some("secret-reference"));
+
+        let debug = format!("{delivery:?}");
+        assert_eq!(debug, "SinkDelivery { .. }");
+        assert!(!debug.contains("config-secret"));
+        assert!(!debug.contains("routing-secret"));
+        assert!(!debug.contains("secret-reference"));
     }
 
     #[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
