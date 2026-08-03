@@ -107,7 +107,15 @@ impl TokenIssuancePolicy {
             Some(expires_at) => expires_at,
             None => self.default_lifetime.expiry_from(issued_at)?,
         };
-        if expires_at <= issued_at {
+        // PostgreSQL timestamps have microsecond precision. Reject a value
+        // that is only later at Chrono's finer nanosecond precision because
+        // persisting it would truncate it back to the issuance timestamp.
+        let earliest_persisted_expiry = issued_at
+            .checked_add_signed(Duration::microseconds(1))
+            .ok_or_else(|| {
+                ApiError::BadRequest("token expiry is outside the supported range".to_string())
+            })?;
+        if expires_at < earliest_persisted_expiry {
             return Err(ApiError::BadRequest(
                 "expires_at must be later than the token issuance time".to_string(),
             ));
@@ -343,6 +351,7 @@ mod tests {
 
     #[rstest]
     #[case::equal(Duration::zero())]
+    #[case::below_database_precision(Duration::nanoseconds(1))]
     #[case::past(Duration::hours(-1))]
     fn token_issuance_policy_rejects_non_future_expiry(#[case] offset: Duration) {
         let issued_at = NaiveDate::from_ymd_opt(2026, 8, 1)
