@@ -1,4 +1,5 @@
 use chrono::NaiveDateTime;
+use diesel::dsl::not;
 use hubuum_auth_core::AuthenticatedExternalUser;
 
 use crate::db::prelude::*;
@@ -274,9 +275,7 @@ pub async fn sync_external_user(
         diesel::delete(
             group_memberships::table
                 .filter(group_memberships::principal_id.eq(user.id))
-                .filter(diesel::dsl::not(
-                    group_memberships::group_id.eq_any(retained_group_ids),
-                )),
+                .filter(not(group_memberships::group_id.eq_any(retained_group_ids))),
         )
         .execute(conn)
         .await?;
