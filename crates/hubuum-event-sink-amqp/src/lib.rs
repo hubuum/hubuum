@@ -54,7 +54,7 @@ impl AmqpSink {
         delivery: SinkDelivery<'_>,
     ) -> Result<(), SinkError> {
         let config = parse_config(&delivery)?;
-        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref, "AMQP")?;
+        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref(), "AMQP")?;
         require_tls_uri_scheme(&uri, "AMQP", &["amqps"])?;
         let channel = self.channel(&uri).await?;
 

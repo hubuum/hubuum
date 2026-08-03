@@ -81,7 +81,7 @@ impl ValkeySink {
     ) -> Result<(), SinkError> {
         let config = parse_config(&delivery)?;
         let routing = parse_routing(&delivery)?;
-        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref, "Valkey")?;
+        let uri = resolve_event_sink_secret_uri(&config.uri, delivery.secret_ref(), "Valkey")?;
         require_tls_uri_scheme(&uri, "Valkey", &["rediss"])?;
         let client = self.client(&uri).await?;
         let entry = stream_entry(envelope, routing, config)?;

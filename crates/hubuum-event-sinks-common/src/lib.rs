@@ -78,9 +78,9 @@ pub fn ensure_payload_within_limit(
 
 #[derive(Clone, Copy)]
 pub struct SinkDelivery<'a> {
-    pub config: &'a Value,
-    pub routing: &'a Value,
-    pub secret_ref: Option<&'a str>,
+    config: &'a Value,
+    routing: &'a Value,
+    secret_ref: Option<&'a str>,
 }
 
 impl fmt::Debug for SinkDelivery<'_> {
@@ -97,13 +97,25 @@ impl<'a> SinkDelivery<'a> {
             secret_ref,
         }
     }
+
+    pub fn config(&self) -> &'a Value {
+        self.config
+    }
+
+    pub fn routing(&self) -> &'a Value {
+        self.routing
+    }
+
+    pub fn secret_ref(&self) -> Option<&'a str> {
+        self.secret_ref
+    }
 }
 
 pub fn parse_sink_config<T: DeserializeOwned>(
     delivery: &SinkDelivery<'_>,
     sink_label: &str,
 ) -> Result<T, SinkError> {
-    serde_json::from_value(delivery.config.clone())
+    serde_json::from_value(delivery.config().clone())
         .map_err(|error| SinkError::new(format!("Invalid {sink_label} config: {error}")))
 }
 
@@ -111,7 +123,7 @@ pub fn parse_sink_routing<T: DeserializeOwned>(
     delivery: &SinkDelivery<'_>,
     sink_label: &str,
 ) -> Result<T, SinkError> {
-    serde_json::from_value(delivery.routing.clone())
+    serde_json::from_value(delivery.routing().clone())
         .map_err(|error| SinkError::new(format!("Invalid {sink_label} routing: {error}")))
 }
 
