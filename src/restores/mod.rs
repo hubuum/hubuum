@@ -918,9 +918,8 @@ mod tests {
 
     use super::{
         MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
-        RestoreSettings, confirmation_is_stale, restore_error_for_storage,
-        restore_capability_matches, sha256,
-        validate_computed_field_definitions,
+        RestoreSettings, confirmation_is_stale, restore_capability_matches,
+        restore_error_for_storage, sha256, validate_computed_field_definitions,
     };
     use crate::errors::ApiError;
     use crate::models::{BackupDocument, BackupManifest, BackupState, CURRENT_BACKUP_VERSION};
@@ -1034,19 +1033,46 @@ mod tests {
         assert!(error.to_string().contains("duplicate"));
     }
 
-    #[test]
-    fn restore_status_errors_do_not_expose_internal_details() {
-        for error in [
-            ApiError::InternalServerError("secret internal path".to_string()),
-            ApiError::DatabaseError("password=database-secret".to_string()),
-            ApiError::DbConnectionError("postgres://user:secret@db/app".to_string()),
-            ApiError::HashError("hash implementation detail".to_string()),
-        ] {
-            let stored = restore_error_for_storage(&error);
+    #[rstest]
+    #[case::internal_server(
+        ApiError::InternalServerError("secret internal path".to_string()),
+        "secret internal path"
+    )]
+    #[case::database(
+        ApiError::DatabaseError("password=database-secret".to_string()),
+        "database-secret"
+    )]
+    #[case::connection(
+        ApiError::DbConnectionError("postgres://user:secret@db/app".to_string()),
+        "user:secret"
+    )]
+    #[case::hash(
+        ApiError::HashError("hash implementation detail".to_string()),
+        "implementation detail"
+    )]
+    fn restore_status_internal_errors_do_not_expose_details(
+        #[case] error: ApiError,
+        #[case] private_detail: &str,
+    ) {
+        let stored = restore_error_for_storage(&error);
 
-            assert_eq!(stored, "An internal error occurred");
-            assert!(!stored.contains("secret"));
-            assert!(!stored.contains("implementation detail"));
-        }
+        assert_eq!(stored, "An internal error occurred");
+        assert!(!stored.contains(private_detail));
+    }
+
+    #[rstest]
+    #[case::validation(
+        ApiError::ValidationError("Backup manifest is invalid".to_string()),
+        "Backup manifest is invalid"
+    )]
+    #[case::conflict(
+        ApiError::Conflict("Restore stage changed status concurrently".to_string()),
+        "Restore stage changed status concurrently"
+    )]
+    fn restore_status_preserves_public_safe_errors(
+        #[case] error: ApiError,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(restore_error_for_storage(&error), expected);
     }
 }
