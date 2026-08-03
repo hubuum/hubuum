@@ -224,6 +224,63 @@ mod tests {
     }
 
     #[rstest]
+    #[case::existing_stage(true)]
+    #[case::missing_stage(false)]
+    #[actix_web::test]
+    async fn invalid_confirmation_capability_does_not_disclose_stage_existence(
+        #[future(awt)] test_context: TestContext,
+        #[case] stage_exists: bool,
+    ) {
+        let context = test_context;
+        let staged = if stage_exists {
+            let response = post_request(
+                &context.pool,
+                &context.admin_token,
+                "/api/v1/restores",
+                &minimally_valid_full_backup_document(),
+            )
+            .await;
+            let response = assert_response_status(response, StatusCode::CREATED).await;
+            Some(test::read_body_json::<RestoreStageResponse, _>(response).await)
+        } else {
+            None
+        };
+        let restore_id = staged.as_ref().map(|stage| stage.id).unwrap_or(i64::MAX);
+
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/restores/{restore_id}/confirm"),
+            &RestoreConfirmRequest {
+                restore_capability: "invalid-restore-capability".to_string(),
+                sha256: "irrelevant-sha256".to_string(),
+                confirmation: RESTORE_CONFIRMATION_PHRASE.to_string(),
+            },
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::FORBIDDEN).await;
+        let body = test::read_body_json::<serde_json::Value, _>(response).await;
+
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "error": "Forbidden",
+                "message": "Restore capability is invalid"
+            })
+        );
+
+        if let Some(staged) = staged {
+            with_connection(&context.pool, async |conn| {
+                diesel::delete(restore_jobs.filter(id.eq(staged.id)))
+                    .execute(conn)
+                    .await
+            })
+            .await
+            .unwrap();
+        }
+    }
+
+    #[rstest]
     #[case::local_identity_scope(MissingRestoreSeed::LocalIdentityScope)]
     #[case::root_collection(MissingRestoreSeed::RootCollection)]
     #[case::root_closure(MissingRestoreSeed::RootClosure)]
