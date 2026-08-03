@@ -8,8 +8,8 @@ mod tests {
     use crate::db::with_connection;
     use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
     use crate::models::{
-        CollectionID, EventDelivery, EventDeliveryHealthResponse, EventDeliveryStatus,
-        EventDeliveryUpdateResponse, EventSinkID, EventSinkKind, NewEventSink,
+        CollectionID, EventDelivery, EventDeliveryHealthResponse, EventDeliveryResponse,
+        EventDeliveryStatus, EventDeliveryUpdateResponse, EventSinkID, EventSinkKind, NewEventSink,
         NewEventSubscription,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
@@ -121,12 +121,12 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let fetched: EventDelivery = test::read_body_json(resp).await;
+        let fetched: EventDeliveryResponse = test::read_body_json(resp).await;
         assert_eq!(fetched.id, delivery.id);
 
         let resp = get_request(&context.pool, &context.admin_token, DELIVERIES_ENDPOINT).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let deliveries: Vec<EventDelivery> = test::read_body_json(resp).await;
+        let deliveries: Vec<EventDeliveryResponse> = test::read_body_json(resp).await;
         assert!(deliveries.iter().any(|row| row.id == delivery.id));
 
         let resp = get_request(
@@ -165,7 +165,6 @@ mod tests {
         let body: EventDeliveryUpdateResponse = test::read_body_json(resp).await;
         assert_eq!(body.delivery.status, EventDeliveryStatus::Pending.as_str());
         assert!(body.delivery.last_error.is_none());
-        assert!(body.delivery.claim_token.is_none());
     }
 
     #[actix_web::test]
@@ -223,7 +222,7 @@ mod tests {
             .unwrap()
             .parse::<usize>()
             .unwrap();
-        let deliveries: Vec<EventDelivery> = test::read_body_json(resp).await;
+        let deliveries: Vec<EventDeliveryResponse> = test::read_body_json(resp).await;
 
         assert_eq!(total_count, deliveries.len());
         assert!(deliveries.iter().any(|delivery| delivery.id == dead.id));
@@ -232,6 +231,37 @@ mod tests {
                 .iter()
                 .all(|delivery| delivery.status == EventDeliveryStatus::Dead.as_str())
         );
+    }
+
+    #[actix_web::test]
+    async fn test_event_delivery_response_omits_internal_claim_token() {
+        let context = TestContext::new().await;
+        let delivery = create_delivery(&context).await.delivery;
+        let claim_token = uuid::Uuid::new_v4();
+        with_connection(&context.pool, async |conn| {
+            use crate::schema::event_deliveries::dsl::{
+                claim_token as token, event_deliveries, id,
+            };
+
+            diesel::update(event_deliveries.filter(id.eq(delivery.id)))
+                .set(token.eq(Some(claim_token)))
+                .execute(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{DELIVERIES_ENDPOINT}/{}", delivery.id),
+        )
+        .await;
+        let resp = assert_response_status(resp, StatusCode::OK).await;
+        let response: serde_json::Value = test::read_body_json(resp).await;
+
+        assert!(response.get("claim_token").is_none());
+        assert!(!response.to_string().contains(&claim_token.to_string()));
     }
 
     #[actix_web::test]

@@ -5,6 +5,7 @@
 //! process-global reset and capture facilities.
 
 use hubuum_auth_core::AuthenticatedExternalUser;
+use std::sync::OnceLock;
 use tracing::Dispatch;
 use tracing_subscriber::layer::SubscriberExt;
 
@@ -18,8 +19,17 @@ use crate::models::{CollectionID, NewEventSink, NewEventSubscription, TaskKind};
 pub use crate::logger::test_support::JsonLogWriter;
 pub use crate::middlewares::rate_limit::LOGIN_RATE_LIMIT_TEST_LOCK;
 
+static TEST_TRACING_BASELINE: OnceLock<()> = OnceLock::new();
+
+fn ensure_test_tracing_baseline() {
+    TEST_TRACING_BASELINE.get_or_init(|| {
+        let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry());
+    });
+}
+
 pub fn tracing_middleware_with_log_capture()
 -> (crate::middlewares::TracingMiddleware, JsonLogWriter) {
+    ensure_test_tracing_baseline();
     let writer = JsonLogWriter::default();
     let subscriber = tracing_subscriber::registry().with(
         tracing_subscriber::fmt::layer()
@@ -27,8 +37,9 @@ pub fn tracing_middleware_with_log_capture()
             .with_writer(writer.clone())
             .event_format(crate::logger::HubuumLoggingFormat),
     );
+    let dispatch = Dispatch::new(subscriber);
     let middleware =
-        crate::middlewares::TracingMiddleware::new_with_capture_dispatch(Dispatch::new(subscriber));
+        crate::middlewares::TracingMiddleware::new_with_capture_dispatch(dispatch.clone());
     (middleware, writer)
 }
 

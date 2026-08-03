@@ -8977,7 +8977,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/EventDelivery"
+                    "$ref": "#/components/schemas/EventDeliveryResponse"
                   }
                 }
               }
@@ -9094,7 +9094,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EventDelivery"
+                  "$ref": "#/components/schemas/EventDeliveryResponse"
                 }
               }
             }
@@ -18520,72 +18520,6 @@
           }
         }
       },
-      "EventDelivery": {
-        "type": "object",
-        "required": [
-          "id",
-          "event_id",
-          "subscription_id",
-          "status",
-          "attempts",
-          "next_attempt_at",
-          "created_at",
-          "updated_at"
-        ],
-        "properties": {
-          "attempts": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "claim_token": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "event_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "last_error": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "locked_until": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "next_attempt_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "status": {
-            "type": "string"
-          },
-          "subscription_id": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
       "EventDeliveryHealthResponse": {
         "type": "object",
         "required": [
@@ -18639,6 +18573,65 @@
           },
           "worker": {
             "$ref": "#/components/schemas/EventWorkerHealth"
+          }
+        }
+      },
+      "EventDeliveryResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "event_id",
+          "subscription_id",
+          "status",
+          "attempts",
+          "next_attempt_at",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locked_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "next_attempt_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subscription_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -18701,7 +18694,7 @@
         ],
         "properties": {
           "delivery": {
-            "$ref": "#/components/schemas/EventDelivery"
+            "$ref": "#/components/schemas/EventDeliveryResponse"
           }
         }
       },

@@ -8,22 +8,45 @@ mod tests {
         test, web,
     };
     use serde_json::json;
-    use std::{future::Future, str::FromStr};
-    use tokio::sync::Mutex;
+    use std::{
+        future::Future,
+        str::FromStr,
+        sync::atomic::{AtomicBool, Ordering},
+    };
 
     use crate::config::ClientAllowlist;
     use crate::events::RequestProvenance;
     use crate::middlewares::actor_context;
     use crate::middlewares::{ClientAllowlistMiddleware, TracingMiddleware};
     use crate::test_support::{
-        JsonLogWriter, record_principal_on_current_span, tracing_middleware_with_log_capture,
+        record_principal_on_current_span, tracing_middleware_with_log_capture,
     };
     use crate::tests::api_operations::get_request_with_correlation;
     use crate::tests::asserts::assert_response_status;
     use crate::tests::{TestContext, test_context};
 
     const ENDPOINT: &str = "/api/v1/classes/";
-    static REQUEST_LOG_CAPTURE_LOCK: Mutex<()> = Mutex::const_new(());
+    static REQUEST_LOG_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+    struct RequestLogCaptureGuard;
+
+    impl Drop for RequestLogCaptureGuard {
+        fn drop(&mut self) {
+            REQUEST_LOG_CAPTURE_ACTIVE.store(false, Ordering::Release);
+        }
+    }
+
+    async fn acquire_request_log_capture() -> RequestLogCaptureGuard {
+        loop {
+            if REQUEST_LOG_CAPTURE_ACTIVE
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                return RequestLogCaptureGuard;
+            }
+            tokio::task::yield_now().await;
+        }
+    }
 
     #[rstest]
     #[case::with_correlation_id(Some("test-correlation-id"), true)]
@@ -107,17 +130,18 @@ mod tests {
 
     async fn capture_request_logs<T, F>(
         run: impl FnOnce(TracingMiddleware) -> F,
-    ) -> (T, JsonLogWriter)
+    ) -> (T, Vec<serde_json::Value>)
     where
         F: Future<Output = T>,
     {
         // Subscriber registration updates tracing's process-wide callsite interest cache.
-        // Keep capture subscribers alive one at a time so parallel request-log tests cannot
-        // invalidate another request's capture while its authenticated DB work is in flight.
-        let _capture_guard = REQUEST_LOG_CAPTURE_LOCK.lock().await;
+        // Actix tests use independent runtimes, so gate dispatch registration with a
+        // runtime-independent atomic and snapshot output before releasing it.
+        let _capture_guard = acquire_request_log_capture().await;
         let (tracing_middleware, writer) = tracing_middleware_with_log_capture();
+        tracing::callsite::rebuild_interest_cache();
         let output = run(tracing_middleware).await;
-        (output, writer)
+        (output, writer.output())
     }
 
     async fn ok_handler() -> HttpResponse {
@@ -151,7 +175,7 @@ mod tests {
         #[case] expected_status: StatusCode,
         #[case] expected_severity: &str,
     ) {
-        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
+        let (status, logs) = capture_request_logs(|tracing_middleware| async move {
             let app = test::init_service(
                 App::new()
                     .wrap(tracing_middleware)
@@ -161,16 +185,16 @@ mod tests {
             )
             .await;
 
-            test::TestRequest::get()
+            let resp = test::TestRequest::get()
                 .insert_header(("x-correlation-id", "request-log-correlation"))
                 .uri(path)
                 .send_request(&app)
-                .await
+                .await;
+            resp.status()
         })
         .await;
-        assert_eq!(resp.status(), expected_status);
+        assert_eq!(status, expected_status);
 
-        let logs = writer.output();
         let event = logs
             .iter()
             .find(|event| event["message"] == "request complete")
@@ -189,7 +213,7 @@ mod tests {
     #[case::readiness("/readyz")]
     #[actix_web::test]
     async fn tracing_middleware_logs_successful_probes_at_debug(#[case] path: &str) {
-        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
+        let (status, logs) = capture_request_logs(|tracing_middleware| async move {
             let app = test::init_service(
                 App::new()
                     .wrap(tracing_middleware)
@@ -198,13 +222,13 @@ mod tests {
             )
             .await;
 
-            test::TestRequest::get().uri(path).send_request(&app).await
+            let resp = test::TestRequest::get().uri(path).send_request(&app).await;
+            resp.status()
         })
         .await;
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(status, StatusCode::OK);
 
-        let event = writer
-            .output()
+        let event = logs
             .into_iter()
             .find(|event| event["message"] == "request complete")
             .expect("request completion log");
@@ -214,7 +238,7 @@ mod tests {
 
     #[actix_web::test]
     async fn tracing_middleware_keeps_failed_readiness_probes_at_error() {
-        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
+        let (status, logs) = capture_request_logs(|tracing_middleware| async move {
             let app = test::init_service(
                 App::new()
                     .wrap(tracing_middleware)
@@ -222,16 +246,16 @@ mod tests {
             )
             .await;
 
-            test::TestRequest::get()
+            let resp = test::TestRequest::get()
                 .uri("/readyz")
                 .send_request(&app)
-                .await
+                .await;
+            resp.status()
         })
         .await;
-        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 
-        let event = writer
-            .output()
+        let event = logs
             .into_iter()
             .find(|event| event["message"] == "request complete")
             .expect("request completion log");
@@ -241,7 +265,7 @@ mod tests {
 
     #[actix_web::test]
     async fn tracing_middleware_includes_recorded_principal_on_request_logs() {
-        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
+        let (status, logs) = capture_request_logs(|tracing_middleware| async move {
             let app = test::init_service(
                 App::new()
                     .wrap(tracing_middleware)
@@ -249,15 +273,15 @@ mod tests {
             )
             .await;
 
-            test::TestRequest::get()
+            let resp = test::TestRequest::get()
                 .uri("/principal")
                 .send_request(&app)
-                .await
+                .await;
+            resp.status()
         })
         .await;
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(status, StatusCode::OK);
 
-        let logs = writer.output();
         let event = logs
             .iter()
             .find(|event| event["message"] == "request complete")
@@ -269,7 +293,7 @@ mod tests {
     async fn production_middleware_stack_records_authenticated_principal_on_request_logs() {
         let test_context = TestContext::new().await;
         let expected_principal_id = test_context.admin_user.id;
-        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
+        let (status, logs) = capture_request_logs(|tracing_middleware| async move {
             let app = test::init_service(
                 App::new()
                     .wrap(actix_web::middleware::from_fn(actor_context))
@@ -280,19 +304,19 @@ mod tests {
             )
             .await;
 
-            test::TestRequest::get()
+            let resp = test::TestRequest::get()
                 .insert_header((
                     actix_web::http::header::AUTHORIZATION,
                     format!("Bearer {}", test_context.admin_token),
                 ))
                 .uri("/principal")
                 .send_request(&app)
-                .await
+                .await;
+            resp.status()
         })
         .await;
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(status, StatusCode::OK);
 
-        let logs = writer.output();
         let event = logs
             .iter()
             .find(|event| event["message"] == "request complete")
@@ -302,31 +326,32 @@ mod tests {
 
     #[actix_web::test]
     async fn production_middleware_stack_traces_allowlist_rejections() {
-        let (resp, writer) = capture_request_logs(|tracing_middleware| async move {
-            let app = test::init_service(
-                App::new()
-                    .wrap(actix_web::middleware::from_fn(actor_context))
-                    .wrap(ClientAllowlistMiddleware::new(
-                        ClientAllowlist::from_str("10.0.0.0/24").expect("allowlist"),
-                    ))
-                    .wrap(tracing_middleware)
-                    .route("/denied", web::get().to(ok_handler)),
-            )
+        let ((status, has_request_id), logs) =
+            capture_request_logs(|tracing_middleware| async move {
+                let app = test::init_service(
+                    App::new()
+                        .wrap(actix_web::middleware::from_fn(actor_context))
+                        .wrap(ClientAllowlistMiddleware::new(
+                            ClientAllowlist::from_str("10.0.0.0/24").expect("allowlist"),
+                        ))
+                        .wrap(tracing_middleware)
+                        .route("/denied", web::get().to(ok_handler)),
+                )
+                .await;
+
+                let resp = test::TestRequest::get()
+                    .uri("/denied")
+                    .peer_addr("192.0.2.10:8000".parse().expect("peer address"))
+                    .send_request(&app)
+                    .await;
+                (resp.status(), resp.headers().get("x-request-id").is_some())
+            })
             .await;
 
-            test::TestRequest::get()
-                .uri("/denied")
-                .peer_addr("192.0.2.10:8000".parse().expect("peer address"))
-                .send_request(&app)
-                .await
-        })
-        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(has_request_id);
 
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-        assert!(resp.headers().get("x-request-id").is_some());
-
-        let event = writer
-            .output()
+        let event = logs
             .into_iter()
             .find(|event| event["message"] == "request complete")
             .expect("request completion log");

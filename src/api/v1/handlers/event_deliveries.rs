@@ -13,7 +13,8 @@ use crate::events::kick_event_delivery_worker;
 use crate::extractors::AdminAccess;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    EventDelivery, EventDeliveryHealthResponse, EventDeliveryID, EventDeliveryUpdateResponse,
+    EventDelivery, EventDeliveryHealthResponse, EventDeliveryID, EventDeliveryResponse,
+    EventDeliveryUpdateResponse,
 };
 use crate::pagination::prepare_db_pagination;
 
@@ -28,7 +29,7 @@ use crate::pagination::prepare_db_pagination;
         ("cursor" = String, Query, description = "Cursor token from X-Next-Cursor")
     ),
     responses(
-        (status = 200, description = "Event deliveries", body = [EventDelivery]),
+        (status = 200, description = "Event deliveries", body = [EventDeliveryResponse]),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse)
@@ -46,7 +47,12 @@ pub async fn get_event_deliveries(
     let query_options = prepare_db_pagination::<EventDelivery>(&params)?;
     let (deliveries, total_count) =
         list_event_deliveries_with_total_count(&pool, &query_options).await?;
-    ApiResponse::paginated(deliveries, total_count, &params)
+    ApiResponse::mapped_paginated(deliveries, total_count, &params, |deliveries| {
+        deliveries
+            .into_iter()
+            .map(EventDeliveryResponse::from)
+            .collect()
+    })
 }
 
 #[utoipa::path(
@@ -78,7 +84,7 @@ pub async fn get_event_delivery_health(
     security(("bearer_auth" = [])),
     params(("delivery_id" = i64, Path, description = "Event delivery ID")),
     responses(
-        (status = 200, description = "Event delivery", body = EventDelivery),
+        (status = 200, description = "Event delivery", body = EventDeliveryResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Event delivery not found", body = ApiErrorResponse)
@@ -91,7 +97,7 @@ pub async fn get_event_delivery(
     delivery_id: web::Path<EventDeliveryID>,
 ) -> Result<impl Responder, ApiError> {
     Ok(ApiResponse::new(
-        load_event_delivery(&pool, delivery_id.into_inner()).await?,
+        EventDeliveryResponse::from(load_event_delivery(&pool, delivery_id.into_inner()).await?),
         StatusCode::OK,
     ))
 }
@@ -119,7 +125,7 @@ pub async fn retry_event_delivery(
     let delivery = release_event_delivery_for_retry(&pool, delivery_id.into_inner()).await?;
     kick_event_delivery_worker(pool.get_ref().clone());
     Ok(ApiResponse::new(
-        EventDeliveryUpdateResponse { delivery },
+        EventDeliveryUpdateResponse::from(delivery),
         StatusCode::OK,
     ))
 }
@@ -145,7 +151,7 @@ pub async fn dead_letter_event_delivery(
 ) -> Result<impl Responder, ApiError> {
     let delivery = mark_event_delivery_dead(&pool, delivery_id.into_inner()).await?;
     Ok(ApiResponse::new(
-        EventDeliveryUpdateResponse { delivery },
+        EventDeliveryUpdateResponse::from(delivery),
         StatusCode::OK,
     ))
 }
