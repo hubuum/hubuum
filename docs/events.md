@@ -528,5 +528,5 @@ remains `1` because these nullable fields are additive. If archive writing or
 durable file synchronization fails, the worker does not delete that batch. On
 Unix, newly created archive files are created with mode `0600`; existing file
 permissions are restricted to `0600` before every append. An archive path whose
-final Unix path component is a symbolic link is rejected so the worker cannot
-be redirected to another file at that boundary.
+final Unix path component is a symbolic link or another non-regular file is
+rejected so the worker cannot be redirected at that boundary.

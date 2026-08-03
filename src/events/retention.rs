@@ -206,6 +206,12 @@ fn append_event_archive(path: &Path, events: &[Event]) -> Result<(), ApiError> {
 fn secure_event_archive_file(file: &File) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
+    if !file.metadata()?.file_type().is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "event archive must be a regular file",
+        ));
+    }
     file.set_permissions(std::fs::Permissions::from_mode(0o600))
 }
 
@@ -385,6 +391,19 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"existing\n");
         std::fs::remove_file(link).unwrap();
         std::fs::remove_file(target).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn secure_event_archive_rejects_non_regular_file() {
+        let path = std::env::temp_dir().join(format!("hubuum-event-archive-{}", Uuid::new_v4()));
+        std::fs::create_dir(&path).unwrap();
+        let directory = File::open(&path).unwrap();
+
+        let error = secure_event_archive_file(&directory).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        std::fs::remove_dir(path).unwrap();
     }
 
     #[test]
