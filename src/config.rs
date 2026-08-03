@@ -12,6 +12,7 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use crate::errors::ApiError;
+use crate::models::retention::FutureRetention;
 use crate::models::{TokenIssuancePolicy, TokenRetentionSettings};
 
 mod client_network;
@@ -1052,7 +1053,7 @@ impl AppConfig {
             ));
         }
 
-        crate::models::retention::FutureRetention::from_hours(
+        FutureRetention::from_hours(
             self.export_output_retention_hours,
             "export_output_retention_hours",
         )
@@ -1064,7 +1065,7 @@ impl AppConfig {
             ));
         }
 
-        crate::models::retention::FutureRetention::from_hours(
+        FutureRetention::from_hours(
             self.backup_output_retention_hours,
             "backup_output_retention_hours",
         )
@@ -1082,7 +1083,7 @@ impl AppConfig {
             ));
         }
 
-        crate::models::retention::FutureRetention::from_minutes(
+        FutureRetention::from_minutes(
             self.restore_stage_retention_minutes,
             "restore_stage_retention_minutes",
         )

@@ -21,6 +21,7 @@ use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot,
 use crate::db::traits::user::UserSearchBackend;
 use crate::db::{DbPool, with_statement_timeout_scope};
 use crate::errors::ApiError;
+use crate::models::retention::FutureRetention;
 use crate::models::search::{
     FilterField, ParsedQueryParam, QueryOptions, QueryParamsExt, SearchOperator,
     StatementTimeoutMs, parse_query_parameter,
@@ -1342,12 +1343,10 @@ fn artifact_to_output_record(
     let retention_hours = get_config()
         .map(|config| config.export_output_retention_hours)
         .unwrap_or(DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS);
-    let output_expires_at = crate::models::retention::FutureRetention::from_hours(
-        retention_hours,
-        "export_output_retention_hours",
-    )
-    .and_then(|retention| retention.expires_at(chrono::Utc::now().naive_utc()))
-    .map_err(ApiError::BadRequest)?;
+    let output_expires_at =
+        FutureRetention::from_hours(retention_hours, "export_output_retention_hours")
+            .and_then(|retention| retention.expires_at(chrono::Utc::now().naive_utc()))
+            .map_err(ApiError::BadRequest)?;
     Ok(NewExportTaskOutputRecord {
         task_id,
         template_name: artifact.template_name,
