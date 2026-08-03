@@ -583,8 +583,13 @@ async fn fail_restore_and_resume(
     job_id: i64,
     error: &ApiError,
 ) -> Result<(), ApiError> {
-    let stored_error = error.to_string();
+    tracing::error!(message = "Restore failed", restore_job_id = job_id, error = %error);
+    let stored_error = restore_error_for_storage(error);
     fail_restore_and_resume_db(pool, job_id, &stored_error).await
+}
+
+fn restore_error_for_storage(error: &ApiError) -> String {
+    error.public_message().to_string()
 }
 
 pub async fn confirm_restore(
@@ -913,9 +918,10 @@ mod tests {
 
     use super::{
         MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
-        RestoreSettings, confirmation_is_stale, restore_capability_matches, sha256,
-        validate_computed_field_definitions,
+        RestoreSettings, confirmation_is_stale, restore_capability_matches,
+        restore_error_for_storage, sha256, validate_computed_field_definitions,
     };
+    use crate::errors::ApiError;
     use crate::models::{BackupDocument, BackupManifest, BackupState, CURRENT_BACKUP_VERSION};
 
     fn computed_definition(class_id: i32, owner_id: Option<i32>, key: String) -> serde_json::Value {
@@ -1025,5 +1031,48 @@ mod tests {
                 .unwrap_err();
 
         assert!(error.to_string().contains("duplicate"));
+    }
+
+    #[rstest]
+    #[case::internal_server(
+        ApiError::InternalServerError("secret internal path".to_string()),
+        "secret internal path"
+    )]
+    #[case::database(
+        ApiError::DatabaseError("password=database-secret".to_string()),
+        "database-secret"
+    )]
+    #[case::connection(
+        ApiError::DbConnectionError("postgres://user:secret@db/app".to_string()),
+        "user:secret"
+    )]
+    #[case::hash(
+        ApiError::HashError("hash implementation detail".to_string()),
+        "implementation detail"
+    )]
+    fn restore_status_internal_errors_do_not_expose_details(
+        #[case] error: ApiError,
+        #[case] private_detail: &str,
+    ) {
+        let stored = restore_error_for_storage(&error);
+
+        assert_eq!(stored, "An internal error occurred");
+        assert!(!stored.contains(private_detail));
+    }
+
+    #[rstest]
+    #[case::validation(
+        ApiError::ValidationError("Backup manifest is invalid".to_string()),
+        "Backup manifest is invalid"
+    )]
+    #[case::conflict(
+        ApiError::Conflict("Restore stage changed status concurrently".to_string()),
+        "Restore stage changed status concurrently"
+    )]
+    fn restore_status_preserves_public_safe_errors(
+        #[case] error: ApiError,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(restore_error_for_storage(&error), expected);
     }
 }
