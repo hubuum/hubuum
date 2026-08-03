@@ -37,6 +37,56 @@ impl CursorPaginated for JsonCursorItem {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct NonCloneCursorItem(i64);
+
+impl CursorPaginated for NonCloneCursorItem {
+    fn supports_sort(field: &FilterField) -> bool {
+        field == &FilterField::Id
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        match field {
+            FilterField::Id => Ok(CursorValue::Integer(self.0)),
+            _ => Err(ApiError::InternalServerError(
+                "unsupported non-clone cursor field".to_string(),
+            )),
+        }
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        Self::default_sort()
+    }
+}
+
+#[test]
+fn in_memory_pagination_accepts_non_clone_rows() {
+    let rows = paginate_in_memory(
+        vec![
+            NonCloneCursorItem(3),
+            NonCloneCursorItem(1),
+            NonCloneCursorItem(2),
+        ],
+        &QueryOptions {
+            filters: Vec::new(),
+            sort: Vec::new(),
+            limit: Some(2),
+            cursor: None,
+            include_total: false,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(rows, vec![NonCloneCursorItem(1), NonCloneCursorItem(2)]);
+}
+
 fn collection(id: i32, name: &str) -> Collection {
     Collection {
         id,

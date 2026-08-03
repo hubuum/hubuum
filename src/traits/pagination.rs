@@ -121,7 +121,7 @@ fn compare_jsonb_sequences(left: &[serde_json::Value], right: &[serde_json::Valu
         .unwrap_or(Ordering::Equal)
 }
 
-pub trait CursorPaginated: Clone {
+pub trait CursorPaginated {
     fn supports_sort(field: &FilterField) -> bool;
     fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError>;
     fn default_sort() -> Vec<SortParam>;
