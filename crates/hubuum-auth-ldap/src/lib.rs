@@ -543,18 +543,29 @@ mod tests {
         assert!(matches!(&error, AuthProviderError::Config(_)));
     }
 
-    #[test]
-    fn ldap_url_with_embedded_credentials_is_rejected() {
-        let error = LdapIdentityProvider::new(ldap_config(
-            "ldaps://service-account:embedded-secret@directory.example",
-        ))
-        .err()
-        .unwrap();
-
+    fn assert_embedded_credentials_rejected(url: &str) {
+        let error = LdapIdentityProvider::new(ldap_config(url)).err().unwrap();
         assert_eq!(
             error.to_string(),
             "provider configuration error: ldap url must not contain embedded credentials; configure bind_dn and bind_password instead"
         );
+    }
+
+    #[test]
+    fn ldap_url_with_embedded_username_and_password_is_rejected() {
+        assert_embedded_credentials_rejected(
+            "ldaps://service-account:embedded-secret@directory.example",
+        );
+    }
+
+    #[test]
+    fn ldap_url_with_embedded_username_is_rejected() {
+        assert_embedded_credentials_rejected("ldaps://service-account@directory.example");
+    }
+
+    #[test]
+    fn ldap_url_with_embedded_password_is_rejected() {
+        assert_embedded_credentials_rejected("ldaps://:embedded-secret@directory.example");
     }
 
     #[test]
