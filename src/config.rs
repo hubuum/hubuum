@@ -12,6 +12,7 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use crate::errors::ApiError;
+use crate::models::retention::FutureRetention;
 use crate::models::{TokenIssuancePolicy, TokenRetentionSettings};
 
 mod client_network;
@@ -1052,11 +1053,11 @@ impl AppConfig {
             ));
         }
 
-        if self.export_output_retention_hours <= 0 {
-            return Err(ApiError::BadRequest(
-                "export_output_retention_hours must be greater than 0".to_string(),
-            ));
-        }
+        FutureRetention::from_hours(
+            self.export_output_retention_hours,
+            "export_output_retention_hours",
+        )
+        .map_err(ApiError::BadRequest)?;
 
         if self.export_output_cleanup_interval_seconds == 0 {
             return Err(ApiError::BadRequest(
@@ -1064,11 +1065,11 @@ impl AppConfig {
             ));
         }
 
-        if self.backup_output_retention_hours <= 0 {
-            return Err(ApiError::BadRequest(
-                "backup_output_retention_hours must be greater than 0".to_string(),
-            ));
-        }
+        FutureRetention::from_hours(
+            self.backup_output_retention_hours,
+            "backup_output_retention_hours",
+        )
+        .map_err(ApiError::BadRequest)?;
 
         if self.backup_max_active_tasks_per_user == 0 {
             return Err(ApiError::BadRequest(
@@ -1082,11 +1083,11 @@ impl AppConfig {
             ));
         }
 
-        if self.restore_stage_retention_minutes <= 0 {
-            return Err(ApiError::BadRequest(
-                "restore_stage_retention_minutes must be greater than 0".to_string(),
-            ));
-        }
+        FutureRetention::from_minutes(
+            self.restore_stage_retention_minutes,
+            "restore_stage_retention_minutes",
+        )
+        .map_err(ApiError::BadRequest)?;
 
         if self.restore_max_upload_bytes == 0 {
             return Err(ApiError::BadRequest(
@@ -2484,6 +2485,34 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "export_max_output_bytes must be greater than 0"
+        );
+    }
+
+    #[rstest]
+    #[case(
+        "HUBUUM_EXPORT_OUTPUT_RETENTION_HOURS",
+        "export_output_retention_hours"
+    )]
+    #[case(
+        "HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS",
+        "backup_output_retention_hours"
+    )]
+    #[case(
+        "HUBUUM_RESTORE_STAGE_RETENTION_MINUTES",
+        "restore_stage_retention_minutes"
+    )]
+    fn artifact_retention_horizons_must_be_representable(
+        #[case] key: &'static str,
+        #[case] field: &str,
+    ) {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set(key, Some("9223372036854775807"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!("{field} is outside the supported duration range")
         );
     }
 

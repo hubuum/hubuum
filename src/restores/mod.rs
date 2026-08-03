@@ -26,6 +26,7 @@ use crate::models::backup::{
     BACKUP_STATE_SECTIONS, backup_history_sections, is_backup_history_section,
 };
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
+use crate::models::retention::FutureRetention;
 use crate::models::{
     BackupDocument, COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED,
     ComputedFieldDefinitionRequest, ComputedResultType, MaintenanceState, NewRestoreJobRecord,
@@ -71,30 +72,35 @@ fn confirmation_is_stale(confirmed_at: NaiveDateTime, now: NaiveDateTime) -> boo
 
 #[derive(Clone, Debug)]
 pub struct RestoreSettings {
-    stage_retention_minutes: i64,
+    stage_retention: FutureRetention,
     max_upload_bytes: usize,
 }
 
 impl RestoreSettings {
     pub fn new(stage_retention_minutes: i64, max_upload_bytes: usize) -> Result<Self, String> {
-        if stage_retention_minutes <= 0 {
-            return Err("restore stage retention must be greater than zero".to_string());
-        }
+        let stage_retention =
+            FutureRetention::from_minutes(stage_retention_minutes, "restore stage retention")?;
         if max_upload_bytes == 0 {
             return Err("restore upload size limit must be greater than zero".to_string());
         }
         Ok(Self {
-            stage_retention_minutes,
+            stage_retention,
             max_upload_bytes,
         })
     }
 
-    pub fn stage_retention_minutes(&self) -> i64 {
-        self.stage_retention_minutes
+    fn stage_expires_at(&self, now: NaiveDateTime) -> Result<NaiveDateTime, ApiError> {
+        self.stage_retention
+            .expires_at(now)
+            .map_err(ApiError::BadRequest)
     }
 
     pub fn max_upload_bytes(&self) -> usize {
         self.max_upload_bytes
+    }
+
+    pub fn stage_retention_minutes(&self) -> i64 {
+        self.stage_retention.minutes()
     }
 }
 
@@ -453,7 +459,7 @@ pub async fn stage_restore(
     let document_sha = sha256(&document_bytes);
     let capability = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let capability_hash = sha256(capability.as_bytes());
-    let expires_at = Utc::now().naive_utc() + Duration::minutes(settings.stage_retention_minutes());
+    let expires_at = settings.stage_expires_at(Utc::now().naive_utc())?;
     let validation_json = serde_json::to_value(&validation)?;
     let byte_size = i64::try_from(document_bytes.len()).unwrap_or(i64::MAX);
     let (requested_by, requested_by_identity_scope, requested_by_name) = initiator.into_parts();
@@ -964,6 +970,16 @@ mod tests {
         #[case] upload_bytes: usize,
     ) {
         assert!(RestoreSettings::new(retention_minutes, upload_bytes).is_err());
+    }
+
+    #[test]
+    fn restore_settings_reject_unrepresentable_retention() {
+        let error = RestoreSettings::new(i64::MAX, 1024).unwrap_err();
+
+        assert_eq!(
+            error,
+            "restore stage retention is outside the supported duration range"
+        );
     }
 
     #[rstest]
