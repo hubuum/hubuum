@@ -444,7 +444,7 @@ impl ImportExportTemplateInput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct ImportRemoteTargetInput {
     #[serde(rename = "ref")]
     pub ref_: Option<String>,
@@ -465,6 +465,27 @@ pub struct ImportRemoteTargetInput {
     pub timeout_ms: i32,
     pub enabled: bool,
     pub timestamps: Option<RestoreTimestamps>,
+}
+
+impl fmt::Debug for ImportRemoteTargetInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportRemoteTargetInput")
+            .field("ref_", &self.ref_)
+            .field("collection_ref", &self.collection_ref)
+            .field("collection_key", &self.collection_key)
+            .field("class_ref", &self.class_ref)
+            .field("class_key", &self.class_key)
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("method", &self.method)
+            .field("configuration", &REDACTED_DEBUG_VALUE)
+            .field("allowed_subject_types", &self.allowed_subject_types)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("enabled", &self.enabled)
+            .field("timestamps", &self.timestamps)
+            .finish()
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -535,7 +556,7 @@ impl fmt::Debug for ImportEventSubscriptionInput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Default, ToSchema)]
 pub struct ImportGraph {
     #[serde(default)]
     pub identity_scopes: Vec<ImportIdentityScopeInput>,
@@ -565,6 +586,29 @@ pub struct ImportGraph {
     pub event_sinks: Vec<ImportEventSinkInput>,
     #[serde(default)]
     pub event_subscriptions: Vec<ImportEventSubscriptionInput>,
+}
+
+impl fmt::Debug for ImportGraph {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImportGraph")
+            .field("identity_scopes", &self.identity_scopes.len())
+            .field("groups", &self.groups.len())
+            .field("principals", &self.principals.len())
+            .field("group_memberships", &self.group_memberships.len())
+            .field("collections", &self.collections.len())
+            .field("classes", &self.classes.len())
+            .field("objects", &self.objects.len())
+            .field("class_relations", &self.class_relations.len())
+            .field("object_relations", &self.object_relations.len())
+            .field("collection_permissions", &self.collection_permissions.len())
+            .field("export_templates", &self.export_templates.len())
+            .field("remote_targets", &self.remote_targets.len())
+            .field("event_sinks", &self.event_sinks.len())
+            .field("event_subscriptions", &self.event_subscriptions.len())
+            .field("contents", &REDACTED_DEBUG_VALUE)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
@@ -1138,8 +1182,31 @@ mod tests {
     }
 
     #[test]
-    fn import_debug_redacts_event_sink_configuration_and_routing() {
-        let request = request_with_graph(ImportGraph {
+    fn import_debug_redacts_graph_and_integration_configuration() {
+        let graph = ImportGraph {
+            remote_targets: vec![ImportRemoteTargetInput {
+                ref_: Some("target:1".to_string()),
+                collection_ref: Some("collection:1".to_string()),
+                collection_key: None,
+                class_ref: None,
+                class_key: None,
+                name: "remote-target".to_string(),
+                description: String::new(),
+                method: RemoteHttpMethod::Post,
+                url_template: "https://example.invalid/hook?key=import-target-url-secret"
+                    .to_string(),
+                headers_template: serde_json::json!({
+                    "authorization": "import-target-header-secret"
+                }),
+                body_template: Some("import-target-body-secret".to_string()),
+                auth_config: RemoteAuthConfig::BearerSecret {
+                    secret: "import-target-auth-secret".to_string(),
+                },
+                allowed_subject_types: vec![RemoteTargetSubjectType::Collection],
+                timeout_ms: 1_000,
+                enabled: true,
+                timestamps: None,
+            }],
             event_sinks: vec![ImportEventSinkInput {
                 ref_: Some("sink:1".to_string()),
                 name: "webhook".to_string(),
@@ -1169,13 +1236,26 @@ mod tests {
                 timestamps: None,
             }],
             ..ImportGraph::default()
-        });
+        };
+
+        let target_debug = format!("{:?}", graph.remote_targets[0]);
+        let sink_debug = format!("{:?}", graph.event_sinks[0]);
+        let subscription_debug = format!("{:?}", graph.event_subscriptions[0]);
+        let request = request_with_graph(graph);
 
         let debug = format!("{request:?}");
 
         assert!(debug.contains(REDACTED_DEBUG_VALUE));
-        assert!(!debug.contains("import-config-secret"));
-        assert!(!debug.contains("import-secret-reference"));
-        assert!(!debug.contains("import-routing-secret"));
+        assert!(debug.contains("remote_targets: 1"));
+        for output in [target_debug, sink_debug, subscription_debug, debug] {
+            assert!(output.contains(REDACTED_DEBUG_VALUE));
+            assert!(!output.contains("import-config-secret"));
+            assert!(!output.contains("import-secret-reference"));
+            assert!(!output.contains("import-routing-secret"));
+            assert!(!output.contains("import-target-url-secret"));
+            assert!(!output.contains("import-target-header-secret"));
+            assert!(!output.contains("import-target-body-secret"));
+            assert!(!output.contains("import-target-auth-secret"));
+        }
     }
 }

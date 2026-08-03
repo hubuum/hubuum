@@ -25,7 +25,7 @@ impl fmt::Debug for AmqpSink {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct AmqpConfig {
     uri: String,
     exchange: String,
@@ -39,6 +39,12 @@ struct AmqpConfig {
     mandatory: bool,
     #[serde(default)]
     max_payload_bytes: Option<usize>,
+}
+
+impl fmt::Debug for AmqpConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("AmqpConfig").finish_non_exhaustive()
+    }
 }
 
 impl AmqpSink {
@@ -184,6 +190,25 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+
+    #[test]
+    fn parsed_amqp_debug_omits_connection_configuration() {
+        let config = AmqpConfig {
+            uri: "amqps://user:connection-secret@example.invalid/%2f".to_string(),
+            exchange: "private-exchange".to_string(),
+            exchange_type: "topic".to_string(),
+            declare_exchange: true,
+            durable: true,
+            mandatory: false,
+            max_payload_bytes: Some(1024),
+        };
+
+        let debug = format!("{config:?}");
+
+        assert_eq!(debug, "AmqpConfig { .. }");
+        assert!(!debug.contains("connection-secret"));
+        assert!(!debug.contains("private-exchange"));
+    }
     fn envelope() -> EventEnvelope {
         EventEnvelope {
             id: 42,

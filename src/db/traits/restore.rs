@@ -92,7 +92,7 @@ const HISTORY_SEQUENCE_TABLES: &[&str] = &[
 
 const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
 
-#[derive(Debug, Queryable, Selectable)]
+#[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::restore_jobs)]
 pub(crate) struct RestoreJobStatusRecord {
     pub(crate) id: i64,

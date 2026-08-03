@@ -24,7 +24,7 @@ impl fmt::Debug for EmailSink {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct EmailConfig {
     uri: String,
     from: String,
@@ -38,7 +38,15 @@ struct EmailConfig {
     max_payload_bytes: Option<usize>,
 }
 
-#[derive(Debug, Deserialize)]
+impl fmt::Debug for EmailConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmailConfig")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Deserialize)]
 struct EmailRouting {
     #[serde(default, alias = "to")]
     recipients: Vec<String>,
@@ -48,10 +56,25 @@ struct EmailRouting {
     bcc: Vec<String>,
 }
 
-#[derive(Debug)]
+impl fmt::Debug for EmailRouting {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmailRouting")
+            .finish_non_exhaustive()
+    }
+}
+
 struct RenderedEmail {
     subject: String,
     body: String,
+}
+
+impl fmt::Debug for RenderedEmail {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RenderedEmail")
+            .finish_non_exhaustive()
+    }
 }
 
 impl EmailSink {
@@ -264,6 +287,38 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+
+    #[test]
+    fn parsed_email_debug_omits_configuration_routing_and_content() {
+        let config = EmailConfig {
+            uri: "smtps://user:connection-secret@example.invalid".to_string(),
+            from: "sender@example.invalid".to_string(),
+            reply_to: None,
+            subject_template: "subject-template-secret".to_string(),
+            body_template: "body-template-secret".to_string(),
+            max_payload_bytes: Some(1024),
+        };
+        let routing = EmailRouting {
+            recipients: vec!["recipient@example.invalid".to_string()],
+            cc: Vec::new(),
+            bcc: vec!["hidden@example.invalid".to_string()],
+        };
+        let rendered = RenderedEmail {
+            subject: "rendered-subject-secret".to_string(),
+            body: "rendered-body-secret".to_string(),
+        };
+
+        let config_debug = format!("{config:?}");
+        let routing_debug = format!("{routing:?}");
+        let rendered_debug = format!("{rendered:?}");
+
+        assert_eq!(config_debug, "EmailConfig { .. }");
+        assert_eq!(routing_debug, "EmailRouting { .. }");
+        assert_eq!(rendered_debug, "RenderedEmail { .. }");
+        assert!(!config_debug.contains("connection-secret"));
+        assert!(!routing_debug.contains("hidden@example.invalid"));
+        assert!(!rendered_debug.contains("rendered-body-secret"));
+    }
     fn envelope() -> EventEnvelope {
         EventEnvelope {
             id: 42,
