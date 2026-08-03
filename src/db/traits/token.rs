@@ -1,13 +1,13 @@
 use crate::db::prelude::*;
 
-use crate::db::traits::authz::load_token_scopes_for_tokens;
+use crate::db::traits::authz::{load_token_scope_conn, load_token_scopes_for_tokens};
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::principal::PrincipalKind;
 use crate::models::{
     PrincipalID, PrincipalToken, PrincipalTokenCreateParts, PrincipalTokenCreateRequest,
-    PrincipalTokenMetadata, Token, TokenIssuancePolicy, TokenScope,
+    PrincipalTokenMetadata, Token, TokenIssuancePolicy, TokenScope, TokenScopeDetails,
 };
 use crate::schema::{
     principals, service_accounts, token_class_scopes, token_collection_scopes, token_object_scopes,
@@ -46,16 +46,44 @@ pub(crate) async fn principal_token_metadata_db(
     pool: &DbPool,
     tokens: &[PrincipalToken],
 ) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
+    let now = chrono::Utc::now().naive_utc();
+    let active_after = crate::models::configured_token_lifetime()?.cutoff_from(now)?;
     let scopes = load_token_scopes_for_tokens(pool, tokens).await?;
     tokens
         .iter()
         .zip(scopes)
-        .map(|(token, scope)| PrincipalTokenMetadata::from_token_and_scope(token, scope))
+        .map(|(token, scope)| {
+            PrincipalTokenMetadata::from_token_and_scope(token, scope, now, active_after)
+        })
         .collect()
 }
 
-fn token_snapshot(token: &PrincipalToken) -> serde_json::Value {
-    serde_json::json!({
+pub async fn principal_token_by_id_for_principal_db(
+    pool: &DbPool,
+    token_id_value: i32,
+    principal_id_value: i32,
+) -> Result<PrincipalToken, ApiError> {
+    use crate::schema::tokens::dsl::{id, principal_id, tokens};
+
+    with_connection(pool, async |conn| {
+        tokens
+            .filter(id.eq(token_id_value))
+            .filter(principal_id.eq(principal_id_value))
+            .first::<PrincipalToken>(conn)
+            .await
+    })
+    .await
+}
+
+fn token_snapshot(
+    token: &PrincipalToken,
+    scope: Option<&TokenScope>,
+) -> Result<serde_json::Value, ApiError> {
+    let scope = scope
+        .cloned()
+        .map(TokenScopeDetails::from_scope)
+        .transpose()?;
+    Ok(serde_json::json!({
         "id": token.id,
         "principal_id": token.principal_id,
         "name": token.name,
@@ -67,7 +95,8 @@ fn token_snapshot(token: &PrincipalToken) -> serde_json::Value {
         "scoped": token.is_scoped(),
         "permission_scoped": token.permission_scoped,
         "resource_scoped": token.resource_scoped,
-    })
+        "scope": scope,
+    }))
 }
 
 fn token_event(
@@ -75,18 +104,24 @@ fn token_event(
     action: Action,
     context: &EventContext,
     summary: impl Into<String>,
+    renewed_from_token_id: Option<i32>,
 ) -> Result<NewEvent, ApiError> {
+    let mut metadata = serde_json::json!({
+        "principal_id": token.principal_id,
+        "scoped": token.is_scoped(),
+        "permission_scoped": token.permission_scoped,
+        "resource_scoped": token.resource_scoped,
+    });
+    if let Some(source_id) = renewed_from_token_id {
+        metadata["renewed_from_token_id"] = serde_json::json!(source_id);
+    }
+
     Ok(
         NewEvent::new(EntityType::Token, action, context.actor_kind(), summary)?
             .with_context(context)
             .with_entity_id(token.id)
             .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string()))
-            .with_metadata(serde_json::json!({
-                "principal_id": token.principal_id,
-                "scoped": token.is_scoped(),
-                "permission_scoped": token.permission_scoped,
-                "resource_scoped": token.resource_scoped,
-            })),
+            .with_metadata(metadata),
     )
 }
 
@@ -146,9 +181,15 @@ pub async fn revoke_token_by_id_for_principal_db(
             .filter(id.eq(token_id))
             .filter(principal_id.eq(principal))
             .filter(revoked_at.is_null())
+            .for_update()
             .first::<PrincipalToken>(conn)
             .await
             .optional()?;
+
+        let before_scope = match before.as_ref() {
+            Some(token) => load_token_scope_conn(conn, token).await?,
+            None => None,
+        };
 
         let updated = diesel::update(
             tokens
@@ -170,9 +211,10 @@ pub async fn revoke_token_by_id_for_principal_db(
                     "Token {} revoked for principal {}",
                     after.id, after.principal_id
                 ),
+                None,
             )?
-            .with_before(token_snapshot(&before))
-            .with_after(token_snapshot(&after));
+            .with_before(token_snapshot(&before, before_scope.as_ref())?)
+            .with_after(token_snapshot(&after, before_scope.as_ref())?);
             emit_event(conn, &event).await?;
             Ok(1)
         } else {
@@ -188,13 +230,109 @@ pub(crate) async fn create_principal_token_request_db(
     issuance_policy: TokenIssuancePolicy,
     context: Option<&EventContext>,
 ) -> Result<(Token, PrincipalToken), ApiError> {
+    with_transaction(pool, async |conn| {
+        create_principal_token_parts_conn(
+            conn,
+            request.into_parts(),
+            issuance_policy,
+            context,
+            None,
+            false,
+        )
+        .await
+    })
+    .await
+}
+
+pub(crate) async fn renew_principal_token_db(
+    pool: &DbPool,
+    source_token_id: i32,
+    principal: i32,
+    expires_at: Option<chrono::NaiveDateTime>,
+    issuance_policy: TokenIssuancePolicy,
+    context: Option<&EventContext>,
+) -> Result<(Token, PrincipalToken), ApiError> {
+    with_transaction(pool, async |conn| {
+        // Service-account disable takes the same row lock before revoking its
+        // tokens. Keeping that lock order here prevents renewal from racing a
+        // disable into a newly usable credential.
+        ensure_principal_can_mint_conn(conn, principal).await?;
+
+        let source = tokens::table
+            .filter(tokens::id.eq(source_token_id))
+            .filter(tokens::principal_id.eq(principal))
+            .for_update()
+            .first::<PrincipalToken>(conn)
+            .await?;
+        if source.revoked_at.is_some() {
+            return Err(ApiError::Conflict(
+                "Revoked tokens cannot be renewed".to_string(),
+            ));
+        }
+        let scope = load_token_scope_conn(conn, &source).await?;
+        let principal_id = PrincipalID::new(principal)?;
+        let request = PrincipalTokenCreateParts {
+            principal_id,
+            name: source.name.clone(),
+            description: source.description.clone(),
+            expires_at,
+            scope,
+        };
+
+        create_principal_token_parts_conn(
+            conn,
+            request,
+            issuance_policy,
+            context,
+            Some(source.id),
+            true,
+        )
+        .await
+    })
+    .await
+}
+
+async fn ensure_principal_can_mint_conn(
+    conn: &mut DbConnection,
+    principal: i32,
+) -> Result<(), ApiError> {
+    let principal_kind = principals::table
+        .filter(principals::id.eq(principal))
+        .select(principals::kind)
+        .first::<String>(conn)
+        .await?;
+
+    if principal_kind == PrincipalKind::ServiceAccount.as_str() {
+        let disabled_at = service_accounts::table
+            .filter(service_accounts::id.eq(principal))
+            .for_update()
+            .select(service_accounts::disabled_at)
+            .first::<Option<chrono::NaiveDateTime>>(conn)
+            .await?;
+        if disabled_at.is_some() {
+            return Err(ApiError::Conflict(
+                "Service account is disabled".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn create_principal_token_parts_conn(
+    conn: &mut DbConnection,
+    request: PrincipalTokenCreateParts,
+    issuance_policy: TokenIssuancePolicy,
+    context: Option<&EventContext>,
+    renewed_from_token_id: Option<i32>,
+    principal_already_checked: bool,
+) -> Result<(Token, PrincipalToken), ApiError> {
     let PrincipalTokenCreateParts {
         principal_id,
         name,
         description,
         expires_at,
         scope,
-    } = request.into_parts();
+    } = request;
     let principal = principal_id.id();
     let scope = scope.as_ref();
     let raw = crate::utilities::auth::generate_token();
@@ -220,155 +358,136 @@ pub(crate) async fn create_principal_token_request_db(
     let object_scope_ids = resource_ids
         .map(|ids| ids.object_ids().to_vec())
         .unwrap_or_default();
-    let persisted = with_transaction(pool, async |conn| -> Result<PrincipalToken, ApiError> {
-        let issued_at = diesel::select(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
-            "statement_timestamp() AT TIME ZONE 'UTC'",
-        ))
-        .get_result::<chrono::NaiveDateTime>(conn)
-        .await?;
-        let effective_expiry = issuance_policy.resolve_expiry(issued_at, expires_at)?;
-
-        let principal_kind = principals::table
-            .filter(principals::id.eq(principal))
-            .select(principals::kind)
-            .first::<String>(conn)
-            .await?;
-
-        if principal_kind == PrincipalKind::ServiceAccount.as_str() {
-            let disabled_at = service_accounts::table
-                .filter(service_accounts::id.eq(principal))
-                .for_update()
-                .select(service_accounts::disabled_at)
-                .first::<Option<chrono::NaiveDateTime>>(conn)
-                .await?;
-            if disabled_at.is_some() {
-                return Err(ApiError::Conflict(
-                    "Service account is disabled".to_string(),
-                ));
-            }
-        }
-
-        if !collection_scope_ids.is_empty() {
-            let found = crate::schema::collections::table
-                .filter(crate::schema::collections::id.eq_any(&collection_scope_ids))
-                .count()
-                .get_result::<i64>(conn)
-                .await?;
-            if found != collection_scope_ids.len() as i64 {
-                return Err(ApiError::BadRequest(
-                    "scope.resources contains an unknown collection id".to_string(),
-                ));
-            }
-        }
-        if !class_scope_ids.is_empty() {
-            let found = crate::schema::hubuumclass::table
-                .filter(crate::schema::hubuumclass::id.eq_any(&class_scope_ids))
-                .count()
-                .get_result::<i64>(conn)
-                .await?;
-            if found != class_scope_ids.len() as i64 {
-                return Err(ApiError::BadRequest(
-                    "scope.resources contains an unknown class id".to_string(),
-                ));
-            }
-        }
-        if !object_scope_ids.is_empty() {
-            let found = crate::schema::hubuumobject::table
-                .filter(crate::schema::hubuumobject::id.eq_any(&object_scope_ids))
-                .count()
-                .get_result::<i64>(conn)
-                .await?;
-            if found != object_scope_ids.len() as i64 {
-                return Err(ApiError::BadRequest(
-                    "scope.resources contains an unknown object id".to_string(),
-                ));
-            }
-        }
-
-        let token = diesel::insert_into(tokens::table)
-            .values((
-                tokens::token.eq(&hash),
-                tokens::principal_id.eq(principal),
-                tokens::name.eq(&name),
-                tokens::description.eq(&description),
-                tokens::issued.eq(issued_at),
-                tokens::expires_at.eq(Some(effective_expiry)),
-                tokens::permission_scoped.eq(permission_scoped),
-                tokens::resource_scoped.eq(resource_scoped),
-            ))
-            .get_result::<PrincipalToken>(conn)
-            .await?;
-
-        if !scope_strings.is_empty() {
-            let rows = scope_strings
-                .iter()
-                .map(|permission| NewTokenScope {
-                    token_id: token.id,
-                    permission,
-                })
-                .collect::<Vec<_>>();
-            diesel::insert_into(token_scopes::table)
-                .values(&rows)
-                .execute(conn)
-                .await?;
-        }
-
-        if !collection_scope_ids.is_empty() {
-            let rows = collection_scope_ids
-                .iter()
-                .map(|collection_id| NewTokenCollectionScope {
-                    token_id: token.id,
-                    collection_id: *collection_id,
-                })
-                .collect::<Vec<_>>();
-            diesel::insert_into(token_collection_scopes::table)
-                .values(&rows)
-                .execute(conn)
-                .await?;
-        }
-        if !class_scope_ids.is_empty() {
-            let rows = class_scope_ids
-                .iter()
-                .map(|class_id| NewTokenClassScope {
-                    token_id: token.id,
-                    class_id: *class_id,
-                })
-                .collect::<Vec<_>>();
-            diesel::insert_into(token_class_scopes::table)
-                .values(&rows)
-                .execute(conn)
-                .await?;
-        }
-        if !object_scope_ids.is_empty() {
-            let rows = object_scope_ids
-                .iter()
-                .map(|object_id| NewTokenObjectScope {
-                    token_id: token.id,
-                    object_id: *object_id,
-                })
-                .collect::<Vec<_>>();
-            diesel::insert_into(token_object_scopes::table)
-                .values(&rows)
-                .execute(conn)
-                .await?;
-        }
-
-        if let Some(context) = context {
-            let event = token_event(
-                &token,
-                Action::Created,
-                context,
-                format!(
-                    "Token {} created for principal {}",
-                    token.id, token.principal_id
-                ),
-            )?
-            .with_after(token_snapshot(&token));
-            emit_event(conn, &event).await?;
-        }
-        Ok(token)
-    })
+    let issued_at = diesel::select(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+        "statement_timestamp() AT TIME ZONE 'UTC'",
+    ))
+    .get_result::<chrono::NaiveDateTime>(conn)
     .await?;
+    let effective_expiry = issuance_policy.resolve_expiry(issued_at, expires_at)?;
 
-    Ok((raw, persisted))
+    if !principal_already_checked {
+        ensure_principal_can_mint_conn(conn, principal).await?;
+    }
+
+    if !collection_scope_ids.is_empty() {
+        let found = crate::schema::collections::table
+            .filter(crate::schema::collections::id.eq_any(&collection_scope_ids))
+            .count()
+            .get_result::<i64>(conn)
+            .await?;
+        if found != collection_scope_ids.len() as i64 {
+            return Err(ApiError::BadRequest(
+                "scope.resources contains an unknown collection id".to_string(),
+            ));
+        }
+    }
+    if !class_scope_ids.is_empty() {
+        let found = crate::schema::hubuumclass::table
+            .filter(crate::schema::hubuumclass::id.eq_any(&class_scope_ids))
+            .count()
+            .get_result::<i64>(conn)
+            .await?;
+        if found != class_scope_ids.len() as i64 {
+            return Err(ApiError::BadRequest(
+                "scope.resources contains an unknown class id".to_string(),
+            ));
+        }
+    }
+    if !object_scope_ids.is_empty() {
+        let found = crate::schema::hubuumobject::table
+            .filter(crate::schema::hubuumobject::id.eq_any(&object_scope_ids))
+            .count()
+            .get_result::<i64>(conn)
+            .await?;
+        if found != object_scope_ids.len() as i64 {
+            return Err(ApiError::BadRequest(
+                "scope.resources contains an unknown object id".to_string(),
+            ));
+        }
+    }
+
+    let token = diesel::insert_into(tokens::table)
+        .values((
+            tokens::token.eq(&hash),
+            tokens::principal_id.eq(principal),
+            tokens::name.eq(&name),
+            tokens::description.eq(&description),
+            tokens::issued.eq(issued_at),
+            tokens::expires_at.eq(Some(effective_expiry)),
+            tokens::permission_scoped.eq(permission_scoped),
+            tokens::resource_scoped.eq(resource_scoped),
+        ))
+        .get_result::<PrincipalToken>(conn)
+        .await?;
+
+    if !scope_strings.is_empty() {
+        let rows = scope_strings
+            .iter()
+            .map(|permission| NewTokenScope {
+                token_id: token.id,
+                permission,
+            })
+            .collect::<Vec<_>>();
+        diesel::insert_into(token_scopes::table)
+            .values(&rows)
+            .execute(conn)
+            .await?;
+    }
+
+    if !collection_scope_ids.is_empty() {
+        let rows = collection_scope_ids
+            .iter()
+            .map(|collection_id| NewTokenCollectionScope {
+                token_id: token.id,
+                collection_id: *collection_id,
+            })
+            .collect::<Vec<_>>();
+        diesel::insert_into(token_collection_scopes::table)
+            .values(&rows)
+            .execute(conn)
+            .await?;
+    }
+    if !class_scope_ids.is_empty() {
+        let rows = class_scope_ids
+            .iter()
+            .map(|class_id| NewTokenClassScope {
+                token_id: token.id,
+                class_id: *class_id,
+            })
+            .collect::<Vec<_>>();
+        diesel::insert_into(token_class_scopes::table)
+            .values(&rows)
+            .execute(conn)
+            .await?;
+    }
+    if !object_scope_ids.is_empty() {
+        let rows = object_scope_ids
+            .iter()
+            .map(|object_id| NewTokenObjectScope {
+                token_id: token.id,
+                object_id: *object_id,
+            })
+            .collect::<Vec<_>>();
+        diesel::insert_into(token_object_scopes::table)
+            .values(&rows)
+            .execute(conn)
+            .await?;
+    }
+
+    if let Some(context) = context {
+        let event = token_event(
+            &token,
+            Action::Created,
+            context,
+            format!(
+                "Token {} created for principal {}",
+                token.id, token.principal_id
+            ),
+            renewed_from_token_id,
+        )?
+        .with_after(token_snapshot(&token, scope)?);
+        emit_event(conn, &event).await?;
+    }
+
+    Ok((raw, token))
 }

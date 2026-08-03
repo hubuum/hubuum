@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 use crate::api::openapi::{ApiErrorResponse, LoginResponse};
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
-use crate::db::traits::ActiveTokens;
+use crate::db::traits::RetainedTokens;
 use crate::db::traits::service_account::{
     is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
 };
@@ -14,11 +14,13 @@ use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
 use crate::models::collection::principal_all_permissions;
 use crate::models::principal::{Principal, PrincipalKind, PrincipalSettings};
-use crate::models::search::parse_query_parameter;
-use crate::models::token::revoke_token_by_id_for_principal;
+use crate::models::search::{
+    QueryOptions, parse_query_parameter, parse_query_parameter_with_passthrough,
+};
+use crate::models::token::{renew_token_by_id_for_principal, revoke_token_by_id_for_principal};
 use crate::models::{
     Group, GroupResponse, Permissions, PrincipalID, PrincipalToken, PrincipalTokenCreateRequest,
-    PrincipalTokenMetadata, TokenID, TokenScopeDetails,
+    PrincipalTokenMetadata, TokenID, TokenListState, TokenScopeDetails,
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::traits::{AuthzSubject, GroupAccessors};
@@ -27,6 +29,8 @@ use std::collections::BTreeMap;
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(create_token)
         .service(list_tokens)
+        .service(get_token)
+        .service(renew_token)
         .service(revoke_token)
         .service(list_principal_groups)
         .service(list_principal_permissions)
@@ -90,6 +94,32 @@ impl NewTokenRequest {
 struct TokenPath {
     principal_id: PrincipalID,
     token_id: TokenID,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RenewTokenRequest {
+    /// Optional expiry for the new token. When omitted, the server applies its
+    /// public default token lifetime. The source token's expiry is never
+    /// copied.
+    pub expires_at: Option<chrono::NaiveDateTime>,
+}
+
+pub(crate) fn parse_token_list_query(
+    query_string: &str,
+) -> Result<(QueryOptions, TokenListState), ApiError> {
+    let (params, mut passthrough) =
+        parse_query_parameter_with_passthrough(query_string, &["state"])?;
+    let state = match passthrough.remove("state") {
+        None => TokenListState::default(),
+        Some(values) if values.len() == 1 => values[0].parse()?,
+        Some(_) => {
+            return Err(ApiError::BadRequest(
+                "Query parameter 'state' must be provided at most once".to_string(),
+            ));
+        }
+    };
+    Ok((params, state))
 }
 
 /// Management authz for a principal's credentials/membership:
@@ -210,9 +240,12 @@ pub async fn create_token(
     path = "/api/v1/iam/principals/{principal_id}/tokens",
     tag = "principals",
     security(("bearer_auth" = [])),
-    params(("principal_id" = i32, Path, description = "Principal id")),
+    params(
+        ("principal_id" = i32, Path, description = "Principal id"),
+        ("state" = Option<TokenListState>, Query, description = "Retained-token lifecycle subset. Defaults to active. Expired and revoked subsets may overlap.")
+    ),
     responses(
-        (status = 200, description = "Active token metadata", body = [PrincipalTokenMetadata]),
+        (status = 200, description = "Selected retained token metadata; active tokens by default", body = [PrincipalTokenMetadata]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse)
     )
@@ -228,10 +261,10 @@ pub async fn list_tokens(
     let principal = pid.principal(&pool).await?;
     ensure_can_manage_principal(&pool, &requestor, &principal).await?;
 
-    let params = parse_query_parameter(req.query_string())?;
+    let (params, state) = parse_token_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<PrincipalToken>(&params)?;
     let (tokens, total_count) = pid
-        .tokens_paginated_with_total_count(&pool, &search_params)
+        .tokens_paginated_with_total_count_for_state(&pool, &search_params, state)
         .await?;
     let page = finalize_page(tokens, &params)?;
     let metadata = PrincipalTokenMetadata::load_for_tokens(&pool, &page.items).await?;
@@ -242,6 +275,84 @@ pub async fn list_tokens(
         total_count,
         effective_page_limit(&params)?,
         false,
+    ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/iam/principals/{principal_id}/tokens/{token_id}",
+    tag = "principals",
+    security(("bearer_auth" = [])),
+    params(
+        ("principal_id" = i32, Path, description = "Principal id"),
+        ("token_id" = i32, Path, description = "Token id")
+    ),
+    responses(
+        (status = 200, description = "Retained token metadata", body = PrincipalTokenMetadata),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Token not found, not owned by this principal, or already purged", body = ApiErrorResponse)
+    )
+)]
+#[get("/{principal_id}/tokens/{token_id}")]
+pub async fn get_token(
+    pool: web::Data<DbPool>,
+    requestor: ManagementAccess,
+    path: web::Path<TokenPath>,
+) -> Result<impl Responder, ApiError> {
+    let path = path.into_inner();
+    let principal = path.principal_id.principal(&pool).await?;
+    ensure_can_manage_principal(&pool, &requestor, &principal).await?;
+    let token =
+        PrincipalTokenMetadata::load_for_principal_token(&pool, path.principal_id, path.token_id)
+            .await?;
+    Ok(ApiResponse::ok(token))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/renew",
+    tag = "principals",
+    security(("bearer_auth" = [])),
+    params(
+        ("principal_id" = i32, Path, description = "Principal id"),
+        ("token_id" = i32, Path, description = "Source token id")
+    ),
+    request_body = RenewTokenRequest,
+    responses(
+        (status = 201, description = "Fresh raw token and authoritative expiry (shown once)", body = LoginResponse),
+        (status = 400, description = "Bad request", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Forbidden", body = ApiErrorResponse),
+        (status = 404, description = "Source token not found, not owned by this principal, or already purged", body = ApiErrorResponse),
+        (status = 409, description = "Source token revoked or service account disabled", body = ApiErrorResponse)
+    )
+)]
+#[post("/{principal_id}/tokens/{token_id}/renew")]
+pub async fn renew_token(
+    pool: web::Data<DbPool>,
+    requestor: ManagementAccess,
+    path: web::Path<TokenPath>,
+    body: web::Json<RenewTokenRequest>,
+    req: HttpRequest,
+) -> Result<impl Responder, ApiError> {
+    let path = path.into_inner();
+    let principal = path.principal_id.principal(&pool).await?;
+    ensure_can_manage_principal(&pool, &requestor, &principal).await?;
+
+    let event_context = requestor.event_context(&req);
+    let issued = renew_token_by_id_for_principal(
+        &pool,
+        path.token_id,
+        path.principal_id,
+        body.into_inner().expires_at,
+        Some(&event_context),
+    )
+    .await?;
+
+    Ok(ApiResponse::new(
+        LoginResponse::from_issued(&issued),
+        StatusCode::CREATED,
     ))
 }
 

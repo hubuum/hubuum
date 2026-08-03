@@ -1,9 +1,9 @@
 use crate::db::prelude::*;
-use crate::db::traits::ActiveTokens;
+use crate::db::traits::{ActiveTokens, RetainedTokens};
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions};
-use crate::models::{PrincipalToken, configured_token_lifetime};
+use crate::models::{PrincipalToken, TokenListState, configured_token_lifetime};
 use crate::traits::PrincipalIdAccessor;
 use diesel::pg::Pg;
 use diesel::sql_types::{Bool, Nullable};
@@ -21,10 +21,31 @@ where
         pool: &DbPool,
         query_options: &QueryOptions,
     ) -> Result<(Vec<PrincipalToken>, i64), ApiError> {
-        active_tokens_by_principal_id_paginated_with_total_count(
+        tokens_by_principal_id_paginated_with_total_count(
             self.principal_id(),
             pool,
             query_options,
+            TokenListState::Active,
+        )
+        .await
+    }
+}
+
+impl<S> RetainedTokens for S
+where
+    S: PrincipalIdAccessor,
+{
+    async fn tokens_paginated_with_total_count_for_state(
+        &self,
+        pool: &DbPool,
+        query_options: &QueryOptions,
+        state: TokenListState,
+    ) -> Result<(Vec<PrincipalToken>, i64), ApiError> {
+        tokens_by_principal_id_paginated_with_total_count(
+            self.principal_id(),
+            pool,
+            query_options,
+            state,
         )
         .await
     }
@@ -83,24 +104,33 @@ async fn active_tokens_by_principal_id(
     .await
 }
 
-async fn active_tokens_by_principal_id_paginated_with_total_count(
+async fn tokens_by_principal_id_paginated_with_total_count(
     principal: i32,
     pool: &DbPool,
     query_options: &QueryOptions,
+    state: TokenListState,
 ) -> Result<(Vec<PrincipalToken>, i64), ApiError> {
     use crate::schema::tokens::dsl::{
         expires_at, issued, last_used_at, name as token_name, principal_id as token_principal_id,
-        tokens,
+        revoked_at, tokens,
     };
     use crate::{date_search, string_search};
 
     let active_after = active_tokens_cutoff()?;
     let now = chrono::Utc::now().naive_utc();
     let build_query = || -> Result<_, ApiError> {
-        let mut base_query = tokens
-            .into_boxed()
-            .filter(token_principal_id.eq(principal))
-            .filter(active_token_predicate(now, active_after));
+        let mut base_query = tokens.into_boxed().filter(token_principal_id.eq(principal));
+
+        base_query = match state {
+            TokenListState::Active => base_query.filter(active_token_predicate(now, active_after)),
+            TokenListState::Expired => base_query.filter(
+                expires_at
+                    .le(now)
+                    .or(expires_at.is_null().and(issued.le(active_after))),
+            ),
+            TokenListState::Revoked => base_query.filter(revoked_at.is_not_null()),
+            TokenListState::All => base_query,
+        };
 
         for param in &query_options.filters {
             let operator = param.operator.clone();

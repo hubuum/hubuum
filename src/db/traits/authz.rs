@@ -18,7 +18,7 @@ use crate::db::prelude::*;
 use diesel::pg::Pg;
 use diesel::sql_types::Integer;
 
-use crate::db::{DbPool, with_connection, with_connection_async};
+use crate::db::{DbConnection, DbPool, with_connection, with_connection_async};
 use crate::errors::ApiError;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::permissions::Permissions;
@@ -240,6 +240,69 @@ impl StoredTokenScopeRows {
 
         TokenScope::from_stored_parts(permissions, resources)
     }
+}
+
+/// Load one token's complete boundary on an existing connection.
+///
+/// This is used by transactional credential operations that must lock a token
+/// and copy or audit its scope without releasing the transaction in between.
+pub(crate) async fn load_token_scope_conn(
+    conn: &mut DbConnection,
+    token: &PrincipalToken,
+) -> Result<Option<TokenScope>, ApiError> {
+    if !token.is_scoped() {
+        return Ok(None);
+    }
+
+    let permissions = if token.permission_scoped {
+        token_scopes::table
+            .filter(token_scopes::token_id.eq(token.id))
+            .order_by(token_scopes::permission.asc())
+            .select(token_scopes::permission)
+            .load::<String>(conn)
+            .await?
+    } else {
+        Vec::new()
+    };
+    let collection_ids = if token.resource_scoped {
+        token_collection_scopes::table
+            .filter(token_collection_scopes::token_id.eq(token.id))
+            .order_by(token_collection_scopes::collection_id.asc())
+            .select(token_collection_scopes::collection_id)
+            .load::<i32>(conn)
+            .await?
+    } else {
+        Vec::new()
+    };
+    let class_ids = if token.resource_scoped {
+        token_class_scopes::table
+            .filter(token_class_scopes::token_id.eq(token.id))
+            .order_by(token_class_scopes::class_id.asc())
+            .select(token_class_scopes::class_id)
+            .load::<i32>(conn)
+            .await?
+    } else {
+        Vec::new()
+    };
+    let object_ids = if token.resource_scoped {
+        token_object_scopes::table
+            .filter(token_object_scopes::token_id.eq(token.id))
+            .order_by(token_object_scopes::object_id.asc())
+            .select(token_object_scopes::object_id)
+            .load::<i32>(conn)
+            .await?
+    } else {
+        Vec::new()
+    };
+
+    StoredTokenScopeRows {
+        permissions,
+        collection_ids,
+        class_ids,
+        object_ids,
+    }
+    .into_scope(token)
+    .map(Some)
 }
 
 /// Load all narrowing dimensions for a set of tokens in a bounded number of

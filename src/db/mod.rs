@@ -102,7 +102,7 @@ impl DbCallSite {
 /// Latest migration required by this binary. The test below keeps this value
 /// synchronized with the migration directory so readiness cannot silently lag
 /// behind a newly added schema change.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260730000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260804000001";
 
 #[derive(diesel::QueryableByName)]
 struct DatabaseSchemaReadiness {

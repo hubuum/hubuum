@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
 
@@ -186,6 +186,12 @@ pub struct PrincipalTokenMetadata {
     pub expires_at: Option<NaiveDateTime>,
     pub last_used_at: Option<NaiveDateTime>,
     pub revoked_at: Option<NaiveDateTime>,
+    /// Whether this token can currently authenticate. This uses the same
+    /// expiry and revocation rules as bearer-token validation.
+    pub active: bool,
+    /// Whether this token's effective expiry has elapsed. A revoked token may
+    /// also be expired, so this is independent of `revoked_at`.
+    pub expired: bool,
     /// Exact permission and resource boundaries. `None` means that this token
     /// is unscoped.
     pub scope: Option<TokenScopeDetails>,
@@ -221,10 +227,42 @@ impl PrincipalTokenMetadata {
         crate::db::traits::token::principal_token_metadata_db(backend.db_pool(), tokens).await
     }
 
+    /// Load one retained token by id, constrained to its owning principal.
+    ///
+    /// Unlike authentication and the default token list, this lookup does not
+    /// exclude expired or revoked rows. It remains available until retention
+    /// purges the token.
+    pub async fn load_for_principal_token<C>(
+        backend: &C,
+        principal_id: PrincipalID,
+        token_id: TokenID,
+    ) -> Result<Self, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let token = crate::db::traits::token::principal_token_by_id_for_principal_db(
+            backend.db_pool(),
+            token_id.id(),
+            principal_id.id(),
+        )
+        .await?;
+        Self::load_for_tokens(backend, std::slice::from_ref(&token))
+            .await?
+            .pop()
+            .ok_or_else(|| {
+                ApiError::InternalServerError(
+                    "Token metadata projection returned no token".to_string(),
+                )
+            })
+    }
+
     pub(crate) fn from_token_and_scope(
         value: &PrincipalToken,
         scope: Option<TokenScope>,
+        now: NaiveDateTime,
+        active_after: NaiveDateTime,
     ) -> Result<Self, ApiError> {
+        let expired = value.is_expired_at(now, active_after);
         Ok(Self {
             id: value.metadata_id()?,
             principal_id: value.metadata_principal_id()?,
@@ -234,6 +272,8 @@ impl PrincipalTokenMetadata {
             expires_at: value.expires_at,
             last_used_at: value.last_used_at,
             revoked_at: value.revoked_at,
+            active: value.revoked_at.is_none() && !expired,
+            expired,
             scope: value.scope_details(scope)?,
         })
     }
@@ -260,6 +300,11 @@ impl CurrentTokenMetadata {
 impl PrincipalToken {
     pub fn is_scoped(&self) -> bool {
         self.permission_scoped || self.resource_scoped
+    }
+
+    pub(crate) fn is_expired_at(&self, now: NaiveDateTime, active_after: NaiveDateTime) -> bool {
+        self.expires_at
+            .map_or(self.issued <= active_after, |expires_at| expires_at <= now)
     }
 
     fn metadata_id(&self) -> Result<TokenID, ApiError> {
@@ -294,6 +339,37 @@ impl PrincipalToken {
             (true, None) => Err(ApiError::InternalServerError(format!(
                 "Scoped token {} has no stored scope",
                 self.id
+            ))),
+        }
+    }
+}
+
+/// Lifecycle subset selected by a token-management list endpoint.
+///
+/// `Expired` and `Revoked` intentionally overlap: a revoked token remains
+/// expired once its effective expiry elapses. `Active` is the validation
+/// predicate, while `All` returns every retained row.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenListState {
+    #[default]
+    Active,
+    Expired,
+    Revoked,
+    All,
+}
+
+impl FromStr for TokenListState {
+    type Err = ApiError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "active" => Ok(Self::Active),
+            "expired" => Ok(Self::Expired),
+            "revoked" => Ok(Self::Revoked),
+            "all" => Ok(Self::All),
+            _ => Err(ApiError::BadRequest(format!(
+                "Invalid token state '{value}'; expected active, expired, revoked, or all"
             ))),
         }
     }
@@ -417,6 +493,39 @@ where
         context,
     )
     .await
+}
+
+/// Mint a fresh token by copying one retained token's descriptive metadata and
+/// exact permission/resource boundary.
+///
+/// The source token is never reactivated or modified. Explicitly revoked
+/// sources are rejected; active and expired sources may be renewed.
+pub async fn renew_token_by_id_for_principal<C>(
+    backend: &C,
+    token_id: TokenID,
+    principal_id: PrincipalID,
+    expires_at: Option<NaiveDateTime>,
+    context: Option<&EventContext>,
+) -> Result<IssuedToken, ApiError>
+where
+    C: BackendContext + ?Sized,
+{
+    let issuance_policy = configured_token_issuance_policy()?;
+    let (token, persisted) = crate::db::traits::token::renew_principal_token_db(
+        backend.db_pool(),
+        token_id.id(),
+        principal_id.id(),
+        expires_at,
+        issuance_policy,
+        context,
+    )
+    .await?;
+    let expires_at = persisted.expires_at.ok_or_else(|| {
+        ApiError::InternalServerError(
+            "newly renewed token is missing its persisted expiry".to_string(),
+        )
+    })?;
+    Ok(IssuedToken::new(token, expires_at))
 }
 
 impl CursorPaginated for PrincipalToken {

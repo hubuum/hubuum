@@ -41,7 +41,7 @@ fn retention_worker_should_continue(result: &Result<usize, ApiError>) -> bool {
     match result {
         Ok(deleted) if *deleted > 0 => {
             info!(
-                message = "Expired token retention batch completed",
+                message = "Terminal token retention batch completed",
                 deleted_tokens = deleted
             );
             true

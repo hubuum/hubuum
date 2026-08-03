@@ -12581,6 +12581,15 @@
         "operationId": "getApiV1IamMeTokens",
         "parameters": [
           {
+            "name": "state",
+            "in": "query",
+            "description": "Retained-token lifecycle subset. Defaults to active. Expired and revoked subsets may overlap.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TokenListState"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
@@ -12622,7 +12631,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Current human user's active token metadata The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Current human user's selected retained token metadata; active tokens by default The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
@@ -13163,6 +13172,15 @@
             }
           },
           {
+            "name": "state",
+            "in": "query",
+            "description": "Retained-token lifecycle subset. Defaults to active. Expired and revoked subsets may overlap.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TokenListState"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "Maximum number of items to return. Defaults to 100. The server clamps values above 250.",
@@ -13204,7 +13222,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Active token metadata The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Selected retained token metadata; active tokens by default The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
@@ -13335,6 +13353,194 @@
           },
           "409": {
             "description": "Service account disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/principals/{principal_id}/tokens/{token_id}": {
+      "get": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Get Api V1 Iam Principals By Principal Id Tokens By Token Id",
+        "description": "Auto-generated documentation for GET /api/v1/iam/principals/{principal_id}/tokens/{token_id}.",
+        "operationId": "getApiV1IamPrincipalsByPrincipalIdTokensByTokenId",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "token_id",
+            "in": "path",
+            "description": "Token id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retained token metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalTokenMetadata"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Token not found, not owned by this principal, or already purged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/renew": {
+      "post": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Post Api V1 Iam Principals By Principal Id Tokens By Token Id Renew",
+        "description": "Auto-generated documentation for POST /api/v1/iam/principals/{principal_id}/tokens/{token_id}/renew.",
+        "operationId": "postApiV1IamPrincipalsByPrincipalIdTokensByTokenIdRenew",
+        "parameters": [
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "token_id",
+            "in": "path",
+            "description": "Source token id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenewTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Fresh raw token and authoritative expiry (shown once)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Source token not found, not owned by this principal, or already purged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Source token revoked or service account disabled",
             "content": {
               "application/json": {
                 "schema": {
@@ -24494,14 +24700,24 @@
         "required": [
           "id",
           "principal_id",
-          "issued"
+          "issued",
+          "active",
+          "expired"
         ],
         "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "Whether this token can currently authenticate. This uses the same\nexpiry and revocation rules as bearer-token validation."
+          },
           "description": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "expired": {
+            "type": "boolean",
+            "description": "Whether this token's effective expiry has elapsed. A revoked token may\nalso be expired, so this is independent of `revoked_at`."
           },
           "expires_at": {
             "type": [
@@ -25214,6 +25430,20 @@
             "description": "JSON-Pointer value [RFC6901](https://tools.ietf.org/html/rfc6901) that references a location\nwithin the target document where the operation is performed."
           }
         }
+      },
+      "RenewTokenRequest": {
+        "type": "object",
+        "properties": {
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Optional expiry for the new token. When omitted, the server applies its\npublic default token lifetime. The source token's expiry is never\ncopied."
+          }
+        },
+        "additionalProperties": false
       },
       "ReplaceOperation": {
         "type": "object",
@@ -26069,6 +26299,16 @@
         "type": "integer",
         "format": "int32",
         "description": "Identifier wrapper for a [`PrincipalToken`]."
+      },
+      "TokenListState": {
+        "type": "string",
+        "description": "Lifecycle subset selected by a token-management list endpoint.\n\n`Expired` and `Revoked` intentionally overlap: a revoked token remains\nexpired once its effective expiry elapses. `Active` is the validation\npredicate, while `All` returns every retained row.",
+        "enum": [
+          "active",
+          "expired",
+          "revoked",
+          "all"
+        ]
       },
       "TokenResourceScope": {
         "oneOf": [

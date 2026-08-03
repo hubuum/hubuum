@@ -619,7 +619,7 @@ pub struct AppConfig {
     )]
     pub max_token_lifetime_hours: i64,
 
-    /// Enable removal of token rows after expiry plus the retention window.
+    /// Enable removal of token rows after terminal time plus the retention window.
     #[clap(
         long,
         env = "HUBUUM_TOKEN_RETENTION_PURGE_ENABLED",
@@ -627,7 +627,7 @@ pub struct AppConfig {
     )]
     pub token_retention_purge_enabled: bool,
 
-    /// Days to retain expired token metadata before permanent deletion.
+    /// Days to retain terminal token metadata before permanent deletion.
     #[clap(
         long,
         env = "HUBUUM_TOKEN_RETENTION_DAYS",
@@ -643,7 +643,7 @@ pub struct AppConfig {
     )]
     pub token_retention_purge_interval_seconds: u64,
 
-    /// Maximum expired tokens deleted in one transaction. Must be at least 10.
+    /// Maximum terminal tokens deleted in one transaction. Must be at least 10.
     #[clap(
         long,
         env = "HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE",

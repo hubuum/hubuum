@@ -27,13 +27,14 @@ pub(crate) async fn try_acquire_token_retention_lock(
     )
 }
 
-/// Delete one bounded batch of tokens whose expiry is older than the configured
-/// retention window.
+/// Delete one bounded batch of tokens whose terminal time is older than the
+/// configured retention window.
 ///
-/// Explicit `expires_at` values remain authoritative. Tokens without one use
-/// `issued + token_lifetime_hours` as their effective expiry, matching the
-/// authentication predicate. Foreign keys cascade scope-row deletion and set
-/// task `submitted_token_id` provenance to null.
+/// Terminal time is the earlier of revocation and effective expiry. Explicit
+/// `expires_at` values remain authoritative; tokens without one use `issued +
+/// token_lifetime_hours`, matching the authentication predicate. Foreign keys
+/// cascade scope-row deletion and set task `submitted_token_id` provenance to
+/// null.
 pub async fn purge_expired_token_batch(
     pool: &DbPool,
     settings: TokenRetentionSettings,
@@ -74,18 +75,60 @@ async fn purge_expired_token_batch_conn(
     implicit_issue_cutoff: NaiveDateTime,
     batch_size: i64,
 ) -> Result<usize, diesel::result::Error> {
-    // Give both partial-index streams an initial share of the batch. Any
-    // unused implicit share is then filled from the explicit stream so a
+    // Give revoked, explicit-expiry, and implicit-expiry index streams an
+    // initial share. Then offer every stream the remaining capacity so a
     // one-sided backlog still uses the configured batch size.
-    let explicit_share = batch_size / 2 + batch_size % 2;
-    let mut deleted =
-        purge_explicit_expired_tokens(conn, explicit_expiry_cutoff, explicit_share).await?;
+    let revoked_share = batch_size / 3 + i64::from(batch_size % 3 > 0);
+    let explicit_share = batch_size / 3 + i64::from(batch_size % 3 > 1);
+    let implicit_share = batch_size / 3;
+
+    let mut deleted = purge_revoked_tokens(conn, explicit_expiry_cutoff, revoked_share).await?;
     let remaining = batch_size.saturating_sub(deleted as i64);
-    deleted += purge_implicit_expired_tokens(conn, implicit_issue_cutoff, remaining).await?;
+    deleted +=
+        purge_explicit_expired_tokens(conn, explicit_expiry_cutoff, explicit_share.min(remaining))
+            .await?;
+    let remaining = batch_size.saturating_sub(deleted as i64);
+    deleted +=
+        purge_implicit_expired_tokens(conn, implicit_issue_cutoff, implicit_share.min(remaining))
+            .await?;
+
+    let remaining = batch_size.saturating_sub(deleted as i64);
+    deleted += purge_revoked_tokens(conn, explicit_expiry_cutoff, remaining).await?;
     let remaining = batch_size.saturating_sub(deleted as i64);
     deleted += purge_explicit_expired_tokens(conn, explicit_expiry_cutoff, remaining).await?;
+    let remaining = batch_size.saturating_sub(deleted as i64);
+    deleted += purge_implicit_expired_tokens(conn, implicit_issue_cutoff, remaining).await?;
 
     Ok(deleted)
+}
+
+async fn purge_revoked_tokens(
+    conn: &mut DbConnection,
+    revocation_cutoff: NaiveDateTime,
+    limit: i64,
+) -> Result<usize, diesel::result::Error> {
+    if limit == 0 {
+        return Ok(0);
+    }
+
+    diesel::sql_query(
+        "WITH candidates AS (
+             SELECT id
+             FROM tokens
+             WHERE revoked_at IS NOT NULL
+               AND revoked_at <= $1
+             ORDER BY revoked_at ASC, id ASC
+             LIMIT $2
+             FOR UPDATE SKIP LOCKED
+         )
+         DELETE FROM tokens AS terminal
+         USING candidates
+         WHERE terminal.id = candidates.id",
+    )
+    .bind::<Timestamp, _>(revocation_cutoff)
+    .bind::<BigInt, _>(limit)
+    .execute(conn)
+    .await
 }
 
 async fn purge_explicit_expired_tokens(
@@ -209,6 +252,18 @@ mod tests {
         .unwrap();
     }
 
+    async fn set_revoked_at(pool: &DbPool, token_value: &Token, revoked_at: NaiveDateTime) {
+        let token_hash = token_value.storage_hash();
+        with_connection(pool, async |conn| {
+            diesel::update(tokens::table.filter(tokens::token.eq(token_hash)))
+                .set(tokens::revoked_at.eq(Some(revoked_at)))
+                .execute(conn)
+                .await
+        })
+        .await
+        .unwrap();
+    }
+
     async fn token_exists(pool: &DbPool, token_value: &Token) -> bool {
         let token_hash = token_value.storage_hash();
         with_connection(pool, async |conn| {
@@ -235,6 +290,7 @@ mod tests {
             Some(now - Duration::days(TEST_RETENTION_DAYS + 1)),
         )
         .await;
+        set_revoked_at(&pool, &token, now - Duration::days(1)).await;
 
         let deleted = purge_expired_token_batch_at(&pool, settings(100), now)
             .await
@@ -242,6 +298,42 @@ mod tests {
 
         assert_eq!(deleted, 1);
         assert!(!token_exists(&pool, &token).await);
+        user.delete_user_record_without_events(&pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn purge_deletes_revoked_token_before_its_future_expiry() {
+        let _lock = lock_test_mutex(&TOKEN_RETENTION_TEST_LOCK).await;
+        let pool = crate::tests::get_test_pool();
+        let user = create_test_user(&pool).await;
+        let now = Utc::now().naive_utc();
+        let token = create_token(&pool, user.id, Some(now + Duration::days(1))).await;
+        set_revoked_at(&pool, &token, now - Duration::days(TEST_RETENTION_DAYS + 1)).await;
+
+        let deleted = purge_expired_token_batch_at(&pool, settings(100), now)
+            .await
+            .unwrap();
+
+        assert_eq!(deleted, 1);
+        assert!(!token_exists(&pool, &token).await);
+        user.delete_user_record_without_events(&pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn purge_retains_recently_revoked_token_before_expiry() {
+        let _lock = lock_test_mutex(&TOKEN_RETENTION_TEST_LOCK).await;
+        let pool = crate::tests::get_test_pool();
+        let user = create_test_user(&pool).await;
+        let now = Utc::now().naive_utc();
+        let token = create_token(&pool, user.id, Some(now + Duration::days(1))).await;
+        set_revoked_at(&pool, &token, now - Duration::days(1)).await;
+
+        let deleted = purge_expired_token_batch_at(&pool, settings(100), now)
+            .await
+            .unwrap();
+
+        assert_eq!(deleted, 0);
+        assert!(token_exists(&pool, &token).await);
         user.delete_user_record_without_events(&pool).await.unwrap();
     }
 
@@ -326,7 +418,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn purge_batch_advances_both_indexed_expiry_streams() {
+    async fn purge_batch_advances_all_indexed_terminal_streams() {
         let _lock = lock_test_mutex(&TOKEN_RETENTION_TEST_LOCK).await;
         let pool = crate::tests::get_test_pool();
         let user = create_test_user(&pool).await;
@@ -351,6 +443,13 @@ mod tests {
         })
         .await
         .unwrap();
+        let revoked = create_token(&pool, user.id, Some(now + Duration::days(1))).await;
+        set_revoked_at(
+            &pool,
+            &revoked,
+            now - Duration::days(TEST_RETENTION_DAYS + 1),
+        )
+        .await;
 
         let deleted = purge_expired_token_batch_at(
             &pool,
@@ -360,9 +459,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(deleted, 2);
+        assert_eq!(deleted, 3);
         assert!(!token_exists(&pool, &explicit).await);
         assert!(!token_exists(&pool, &implicit).await);
+        assert!(!token_exists(&pool, &revoked).await);
         user.delete_user_record_without_events(&pool).await.unwrap();
     }
 
@@ -420,6 +520,12 @@ mod tests {
         "tokens",
         "%(issued, id)%",
         "%WHERE (expires_at IS NULL)%"
+    )]
+    #[case(
+        "idx_tokens_revoked_retention",
+        "tokens",
+        "%(revoked_at, id)%",
+        "%WHERE (revoked_at IS NOT NULL)%"
     )]
     #[case(
         "idx_tasks_submitted_token_id",
@@ -482,6 +588,10 @@ mod tests {
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/migrations/2026-07-25-000003_task_submitted_token_retention_index/up.sql"
+            )),
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/migrations/2026-08-04-000001_token_revoked_retention_index/up.sql"
             )),
         ];
 

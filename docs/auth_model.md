@@ -110,7 +110,7 @@ Authorization: Bearer <token>
 ```
 
 Tokens belong to a principal and have a full lifecycle. The stored value is an HMAC
-hash — the raw token is shown exactly once, at creation.
+hash — the raw token is shown exactly once, at creation or renewal.
 
 | Field | Meaning |
 | --- | --- |
@@ -118,7 +118,9 @@ hash — the raw token is shown exactly once, at creation.
 | `issued` | Creation time |
 | `expires_at` | Authoritative expiry; newly issued tokens always store a value |
 | `last_used_at` | Advanced on every successful validation |
-| `revoked_at` | Soft-revoke marker (retained until the token passes expiry retention) |
+| `revoked_at` | Soft-revoke marker |
+| `active` | Server-derived authentication status using the same expiry and revocation rule as validation |
+| `expired` | Server-derived effective-expiry status, independent of revocation |
 | `scope` | Optional object containing the independent `permissions` and `resources` boundaries; `null` means unscoped |
 
 ### Validation
@@ -138,15 +140,16 @@ generic message (no distinction between unknown / revoked / expired / disabled).
 ### Revocation
 
 Revocation is a **soft delete**: `revoked_at` is set and the row remains available
-for audit/history until its effective expiry passes the retention window. Revoked
-tokens never validate again.
+for management and debugging during the retention window. Revoked tokens never
+validate again.
 
 ### Retention
 
-Expired token rows are retained for `HUBUUM_TOKEN_RETENTION_DAYS` (default 30)
-after their effective expiry, then deleted automatically. Newly issued tokens
-always use their stored `expires_at`; a legacy token without one uses `issued`
-plus `HUBUUM_TOKEN_LIFETIME_HOURS`.
+Token rows are retained for `HUBUUM_TOKEN_RETENTION_DAYS` (default 30) after
+their terminal time, then deleted automatically. Terminal time is the earlier
+of revocation and effective expiry. Newly issued tokens always use their stored
+`expires_at`; a legacy token without one uses `issued` plus
+`HUBUUM_TOKEN_LIFETIME_HOURS`.
 
 The purge worker is enabled by default and deletes at most
 `HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE` rows per batch (default 1000). It
@@ -154,6 +157,12 @@ requires a batch size of at least 10 and checks hourly by default, controlled by
 `HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS`. Deleting a token also deletes
 its scope rows through their foreign keys; task provenance retains the task and
 clears its nullable submitted-token reference.
+
+Token creation, renewal, and revocation audit events do not contain the raw
+token or its stored HMAC hash. Their immutable snapshots include the exact
+permission and resource scope, so the audit history remains meaningful after
+the token row and its scope rows are purged. Audit-event retention is configured
+independently from token retention.
 
 ---
 
@@ -315,7 +324,9 @@ serves both kinds:
 | Endpoint | Purpose | Authorization |
 | --- | --- | --- |
 | `POST /api/v1/iam/principals/{principal_id}/tokens` | Mint a token (returns raw value and expiry once) | human: self or admin; SA: admin or human owner-group member |
-| `GET /api/v1/iam/principals/{principal_id}/tokens` | List token metadata (never the hash) | same as above |
+| `GET /api/v1/iam/principals/{principal_id}/tokens` | List active token metadata by default; select retained rows with `state` | same as above |
+| `GET /api/v1/iam/principals/{principal_id}/tokens/{token_id}` | Read one retained token until it is purged | same as above |
+| `POST /api/v1/iam/principals/{principal_id}/tokens/{token_id}/renew` | Mint a fresh copy of an active or expired token | same as above |
 | `POST /api/v1/iam/principals/{principal_id}/tokens/{token_id}/revoke` | Soft-revoke a token | same as above |
 | `GET /api/v1/iam/principals/{principal_id}/groups` | List the principal's groups | same as above |
 | `GET /api/v1/iam/principals/{principal_id}/permissions` | Direct permission rows across **all** collections, grouped by granting group | same as above |
@@ -333,15 +344,32 @@ than the database issuance timestamp and cannot exceed `issued +
 HUBUUM_MAX_TOKEN_LIFETIME_HOURS` (default 8760 hours). The public config exposes
 that bound as `authentication.max_token_lifetime_hours`.
 
+Token lists accept `state=active|expired|revoked|all`; omitting it preserves the
+active-only default. The `expired` and `revoked` subsets can overlap because a
+revoked token may later pass its effective expiry. Retained point lookups return
+`200` for active, expired, and revoked rows, and return `404` once the row has
+been purged. These management endpoints require a separate valid management
+credential: an expired bearer token cannot authenticate itself or be used as a
+lookup capability.
+
+Renewal creates a new token row and raw secret while copying the source token's
+name, description, and exact permission/resource scope. It never modifies or
+reactivates the source, and it applies the default lifetime unless the request
+provides a new `expires_at`. Explicitly revoked tokens cannot be renewed; a
+caller that deliberately wants different authority must submit a normal token
+mint request. The creation audit event for the fresh token records the source as
+`renewed_from_token_id`.
+
 `GET /api/v1/iam/me` returns the scope object for the current token. Both
 token-list endpoints return the same object for every visible token;
 `scope: null` identifies an unscoped token without a redundant boolean.
 
 Two safety properties worth calling out:
 
-- **Revoke is scoped by *both* path ids.** A revoke updates
-  `WHERE id = {token_id} AND principal_id = {path id}`, so a manager of principal A
-  cannot revoke principal B's token by guessing its id (mismatch → `404`).
+- **Token operations are scoped by *both* path ids.** Point lookup, renewal, and
+  revocation constrain the token id by the path principal, so a manager of
+  principal A cannot operate on principal B's token by guessing its id
+  (mismatch → `404`).
 - **Group-membership mutation is admin-only.** Being a human owner-group member lets
   you manage an SA and its credentials, but it does **not** let you grant that SA
   runtime collection access by adding it to arbitrary groups.
