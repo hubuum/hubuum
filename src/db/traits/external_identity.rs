@@ -1,6 +1,6 @@
 use chrono::NaiveDateTime;
+use diesel::dsl::not;
 use hubuum_auth_core::AuthenticatedExternalUser;
-use std::collections::HashSet;
 
 use crate::db::prelude::*;
 use crate::db::traits::identity::ensure_identity_scope;
@@ -267,29 +267,18 @@ pub async fn sync_external_user(
         .execute(conn)
         .await?;
 
-        let retained: HashSet<i32> = group_membership_sources::table
+        let retained_group_ids: Vec<i32> = group_membership_sources::table
             .filter(group_membership_sources::principal_id.eq(user.id))
             .select(group_membership_sources::group_id)
-            .load::<i32>(conn)
-            .await?
-            .into_iter()
-            .collect();
-        let current: Vec<i32> = group_memberships::table
-            .filter(group_memberships::principal_id.eq(user.id))
-            .select(group_memberships::group_id)
             .load(conn)
             .await?;
-        for group_id in current {
-            if !retained.contains(&group_id) {
-                diesel::delete(
-                    group_memberships::table
-                        .filter(group_memberships::principal_id.eq(user.id))
-                        .filter(group_memberships::group_id.eq(group_id)),
-                )
-                .execute(conn)
-                .await?;
-            }
-        }
+        diesel::delete(
+            group_memberships::table
+                .filter(group_memberships::principal_id.eq(user.id))
+                .filter(not(group_memberships::group_id.eq_any(retained_group_ids))),
+        )
+        .execute(conn)
+        .await?;
 
         let event_context = EventContext::system();
         let event = NewEvent::new(
@@ -325,6 +314,7 @@ fn now() -> NaiveDateTime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::capture_queries;
     use crate::models::LDAP_PROVIDER_KIND;
     use crate::models::group::NewGroup;
     use crate::schema::{group_memberships, groups as groups_table, identity_scopes, principals};
@@ -512,6 +502,50 @@ mod tests {
         assert!(memberships.contains(&manual_group.id));
         assert!(memberships.contains(&second_group_id));
         assert!(!memberships.contains(&first_group_id));
+    }
+
+    #[actix_rt::test]
+    async fn sync_external_user_batches_stale_membership_removal() {
+        let scope = TestScope::new();
+        let identity_scope = scope.scoped_name("batched_directory");
+        let subject = format!(
+            "uid={},ou=people,dc=example,dc=org",
+            scope.scoped_name("batched_membership_subject")
+        );
+        let username = scope.scoped_name("batched_membership_user");
+        let groups = (0..8)
+            .map(|index| {
+                external_group(
+                    &scope.scoped_name(&format!("batched_group_key_{index}")),
+                    &scope.scoped_name(&format!("batched_group_{index}")),
+                )
+            })
+            .collect();
+
+        sync_external_user(
+            &scope.pool,
+            &identity_scope,
+            LDAP_PROVIDER_KIND,
+            external_user(&subject, &username, groups),
+        )
+        .await
+        .unwrap();
+
+        let (result, queries) = capture_queries(sync_external_user(
+            &scope.pool,
+            &identity_scope,
+            LDAP_PROVIDER_KIND,
+            external_user(&subject, &username, Vec::new()),
+        ))
+        .await;
+        result.unwrap();
+
+        assert_eq!(
+            queries.queries_matching("DELETE FROM \"group_memberships\""),
+            1,
+            "{:#?}",
+            queries.query_counts()
+        );
     }
 
     async fn group_id_by_external_key(pool: &DbPool, external_key: &str) -> i32 {
