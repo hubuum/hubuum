@@ -55,7 +55,7 @@ impl AmqpSink {
         channel
             .confirm_select(ConfirmSelectOptions::default())
             .await
-            .map_err(|error| SinkError::new(format!("AMQP confirm setup failed: {error}")))?;
+            .map_err(|error| amqp_transport_error("AMQP confirm setup failed", error))?;
 
         if config.declare_exchange {
             channel
@@ -69,9 +69,7 @@ impl AmqpSink {
                     FieldTable::default(),
                 )
                 .await
-                .map_err(|error| {
-                    SinkError::new(format!("AMQP exchange declaration failed: {error}"))
-                })?;
+                .map_err(|error| amqp_transport_error("AMQP exchange declaration failed", error))?;
         }
 
         let payload = serialize_envelope_to_vec(
@@ -95,11 +93,9 @@ impl AmqpSink {
                 properties,
             )
             .await
-            .map_err(|error| SinkError::new(format!("AMQP publish failed: {error}")))?
+            .map_err(|error| amqp_transport_error("AMQP publish failed", error))?
             .await
-            .map_err(|error| {
-                SinkError::new(format!("AMQP publish confirmation failed: {error}"))
-            })?;
+            .map_err(|error| amqp_transport_error("AMQP publish confirmation failed", error))?;
 
         match confirmation {
             Confirmation::Ack(None) | Confirmation::NotRequested => Ok(()),
@@ -118,24 +114,28 @@ impl AmqpSink {
                 Connection::connect(&uri, ConnectionProperties::default().enable_auto_recover())
                     .await
                     .map(Arc::new)
-                    .map_err(|error| SinkError::new(format!("AMQP connection failed: {error}")))
+                    .map_err(|error| amqp_transport_error("AMQP connection failed", error))
             })
             .await?;
 
         match connection.create_channel().await {
             Ok(channel) => Ok(channel),
             Err(error) => {
-                warn!(
-                    message = "Dropping failed AMQP connection from sink pool",
-                    error = %error
-                );
+                let error = amqp_transport_error("AMQP channel creation failed", error);
                 self.connections.remove(&key).await;
-                Err(SinkError::new(format!(
-                    "AMQP channel creation failed: {error}"
-                )))
+                Err(error)
             }
         }
     }
+}
+
+fn amqp_transport_error(operation: &'static str, error: impl fmt::Display) -> SinkError {
+    warn!(
+        message = "AMQP transport operation failed",
+        operation,
+        error = %error,
+    );
+    SinkError::new(operation)
 }
 
 fn parse_config(delivery: &SinkDelivery<'_>) -> Result<AmqpConfig, SinkError> {
@@ -231,6 +231,16 @@ mod tests {
     #[test]
     fn routing_key_uses_entity_type_and_action() {
         assert_eq!(routing_key(&envelope()), "collection.created");
+    }
+
+    #[test]
+    fn transport_errors_cannot_reach_delivery_results() {
+        let error = amqp_transport_error(
+            "AMQP publish failed",
+            "transport failure for amqps://user:secret@example.internal",
+        );
+
+        assert_eq!(error.to_string(), "AMQP publish failed");
     }
 
     #[test]

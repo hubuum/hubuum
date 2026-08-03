@@ -265,6 +265,16 @@ async fn record_remote_call_failure(
     error: OutboundHttpError,
 ) -> Result<RemoteExecutionOutcome, ApiError> {
     let metric_outcome = remote_error_outcome(&error);
+    warn!(
+        message = "Remote target call failed",
+        task_id = context.task_id,
+        target_id = context.target_id,
+        subject_type = context.subject_type,
+        subject_id = context.subject_id,
+        method = context.method,
+        outcome = metric_outcome,
+        error = %error,
+    );
     let api_error = outbound_error_to_api_error(error);
     let message = crate::tasks::helpers::sanitize_error_for_storage(&api_error);
     metrics::remote_call_finished(
@@ -323,10 +333,10 @@ fn remote_error_outcome(error: &OutboundHttpError) -> &'static str {
         | OutboundHttpError::InvalidHeaderValue { .. } => "validation_rejected",
         OutboundHttpError::DnsResolution { .. }
         | OutboundHttpError::EmptyDnsResolution { .. }
-        | OutboundHttpError::ClientBuild(_)
-        | OutboundHttpError::ResponseRead(_)
+        | OutboundHttpError::ClientBuild
+        | OutboundHttpError::ResponseRead
         | OutboundHttpError::Connect
-        | OutboundHttpError::Request(_) => "failure",
+        | OutboundHttpError::Request => "failure",
     }
 }
 
@@ -517,13 +527,11 @@ fn outbound_error_to_api_message(error: OutboundHttpError) -> String {
         OutboundHttpError::DisallowedAddress { host, address } => {
             format!("Remote target host '{host}' resolves to a disallowed address ({address})")
         }
-        OutboundHttpError::ClientBuild(error) => format!("HTTP client error: {error}"),
-        OutboundHttpError::ResponseRead(error) => {
-            format!("Failed reading remote response: {error}")
-        }
+        OutboundHttpError::ClientBuild => "HTTP client initialization failed".to_string(),
+        OutboundHttpError::ResponseRead => "Failed reading remote response".to_string(),
         OutboundHttpError::Timeout => "Remote call timed out".to_string(),
         OutboundHttpError::Connect => "Remote connection failed".to_string(),
-        OutboundHttpError::Request(error) => format!("Remote call failed: {error}"),
+        OutboundHttpError::Request => "Remote call failed".to_string(),
         OutboundHttpError::InvalidHeaderName { name } => format!("Invalid header name: {name}"),
         OutboundHttpError::TransportControlledHeader { name } => {
             format!("Header is controlled by the HTTP transport: {name}")
@@ -537,9 +545,9 @@ fn outbound_error_to_api_message(error: OutboundHttpError) -> String {
 fn outbound_error_to_api_error(error: OutboundHttpError) -> ApiError {
     let internal = matches!(
         &error,
-        OutboundHttpError::ClientBuild(_)
-            | OutboundHttpError::ResponseRead(_)
-            | OutboundHttpError::Request(_)
+        OutboundHttpError::ClientBuild
+            | OutboundHttpError::ResponseRead
+            | OutboundHttpError::Request
     );
     let message = outbound_error_to_api_message(error);
     if internal {
@@ -605,10 +613,10 @@ mod tests {
         },
         "failure"
     )]
-    #[case(OutboundHttpError::ClientBuild("client".to_string()), "failure")]
-    #[case(OutboundHttpError::ResponseRead("body".to_string()), "failure")]
+    #[case(OutboundHttpError::ClientBuild, "failure")]
+    #[case(OutboundHttpError::ResponseRead, "failure")]
     #[case(OutboundHttpError::Connect, "failure")]
-    #[case(OutboundHttpError::Request("request".to_string()), "failure")]
+    #[case(OutboundHttpError::Request, "failure")]
     fn remote_errors_use_lossless_metric_outcomes(
         #[case] error: OutboundHttpError,
         #[case] expected: &'static str,
@@ -645,9 +653,7 @@ mod tests {
 
     #[test]
     fn internal_outbound_errors_are_sanitized_for_storage() {
-        let error = outbound_error_to_api_error(OutboundHttpError::ResponseRead(
-            "transport failure for https://example.com/secret".to_string(),
-        ));
+        let error = outbound_error_to_api_error(OutboundHttpError::ResponseRead);
 
         assert!(matches!(error, ApiError::InternalServerError(_)));
         assert_eq!(

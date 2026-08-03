@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 use ipnet::IpNet;
 use reqwest::Url;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use tracing::warn;
 
 const MAX_CACHED_CLIENTS: usize = 128;
 
@@ -53,11 +54,11 @@ pub enum OutboundHttpError {
     DnsResolution { host: String },
     EmptyDnsResolution { host: String },
     DisallowedAddress { host: String, address: IpAddr },
-    ClientBuild(String),
-    ResponseRead(String),
+    ClientBuild,
+    ResponseRead,
     Timeout,
     Connect,
-    Request(String),
+    Request,
     InvalidHeaderName { name: String },
     TransportControlledHeader { name: String },
     InvalidHeaderValue { name: String },
@@ -81,11 +82,11 @@ impl fmt::Display for OutboundHttpError {
                 f,
                 "outbound host '{host}' resolves to a disallowed address ({address})"
             ),
-            Self::ClientBuild(error) => write!(f, "HTTP client error: {error}"),
-            Self::ResponseRead(error) => write!(f, "failed reading outbound response: {error}"),
+            Self::ClientBuild => write!(f, "HTTP client initialization failed"),
+            Self::ResponseRead => write!(f, "failed reading outbound response"),
             Self::Timeout => write!(f, "outbound call timed out"),
             Self::Connect => write!(f, "outbound connection failed"),
-            Self::Request(error) => write!(f, "outbound call failed: {error}"),
+            Self::Request => write!(f, "outbound call failed"),
             Self::InvalidHeaderName { name } => write!(f, "invalid outbound header name: {name}"),
             Self::TransportControlledHeader { name } => {
                 write!(
@@ -491,7 +492,7 @@ fn cached_client(
     let now = CLIENT_CACHE_CLOCK.fetch_add(1, Ordering::Relaxed);
     let mut cache = CLIENT_CACHE
         .lock()
-        .map_err(|_| OutboundHttpError::ClientBuild("client cache lock poisoned".to_string()))?;
+        .map_err(|_| OutboundHttpError::ClientBuild)?;
 
     if let Some(entry) = cache.get_mut(&key) {
         entry.last_used = now;
@@ -504,9 +505,13 @@ fn cached_client(
     if accept_invalid_certs {
         builder = builder.danger_accept_invalid_certs(true);
     }
-    let client = builder
-        .build()
-        .map_err(|error| OutboundHttpError::ClientBuild(error.to_string()))?;
+    let client = builder.build().map_err(|error| {
+        warn!(
+            message = "Failed building outbound HTTP client",
+            error = %error.without_url(),
+        );
+        OutboundHttpError::ClientBuild
+    })?;
 
     if cache.len() >= MAX_CACHED_CLIENTS
         && let Some(stalest) = cache
@@ -532,11 +537,13 @@ async fn read_capped_body(
 ) -> Result<String, OutboundHttpError> {
     let mut buffer: Vec<u8> = Vec::new();
     while buffer.len() < limit {
-        match response
-            .chunk()
-            .await
-            .map_err(|error| OutboundHttpError::ResponseRead(error.to_string()))?
-        {
+        match response.chunk().await.map_err(|error| {
+            warn!(
+                message = "Failed reading outbound HTTP response",
+                error = %error.without_url(),
+            );
+            OutboundHttpError::ResponseRead
+        })? {
             Some(chunk) => {
                 let remaining = limit - buffer.len();
                 let take = remaining.min(chunk.len());
@@ -579,12 +586,20 @@ fn headers_to_json(headers: &HeaderMap) -> serde_json::Value {
 }
 
 fn map_reqwest_error(error: reqwest::Error) -> OutboundHttpError {
-    if error.is_timeout() {
+    let is_timeout = error.is_timeout();
+    let is_connect = error.is_connect();
+    warn!(
+        message = "Outbound HTTP request failed",
+        error = %error.without_url(),
+        is_timeout,
+        is_connect,
+    );
+    if is_timeout {
         OutboundHttpError::Timeout
-    } else if error.is_connect() {
+    } else if is_connect {
         OutboundHttpError::Connect
     } else {
-        OutboundHttpError::Request(error.to_string())
+        OutboundHttpError::Request
     }
 }
 
@@ -655,6 +670,22 @@ mod tests {
         let json = headers_to_json(&headers);
         assert_eq!(json["set-cookie"], "[redacted]");
         assert_eq!(json["x-request-id"], "abc");
+    }
+
+    #[test]
+    fn transport_errors_cannot_embed_endpoint_details() {
+        assert_eq!(
+            OutboundHttpError::ClientBuild.to_string(),
+            "HTTP client initialization failed"
+        );
+        assert_eq!(
+            OutboundHttpError::ResponseRead.to_string(),
+            "failed reading outbound response"
+        );
+        assert_eq!(
+            OutboundHttpError::Request.to_string(),
+            "outbound call failed"
+        );
     }
 
     #[test]

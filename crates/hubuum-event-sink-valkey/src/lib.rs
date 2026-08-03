@@ -8,6 +8,7 @@ use hubuum_event_sinks_common::{
 };
 use redis::Client;
 use serde::Deserialize;
+use tracing::warn;
 
 const DEFAULT_VALKEY_IO_TIMEOUT_MS: u64 = 25_000;
 
@@ -64,14 +65,14 @@ impl ValkeySink {
 
         tokio::task::spawn_blocking(move || publish_stream_entry(client, entry))
             .await
-            .map_err(|error| SinkError::new(format!("Valkey delivery task failed: {error}")))?
+            .map_err(|error| valkey_transport_error("Valkey delivery task failed", error))?
     }
 
     async fn client(&self, uri: &str) -> Result<Client, SinkError> {
         self.clients
             .get_or_try_insert_with(uri.to_string(), |uri| async move {
                 Client::open(uri)
-                    .map_err(|error| SinkError::new(format!("Invalid Valkey config: {error}")))
+                    .map_err(|error| valkey_transport_error("Invalid Valkey config", error))
             })
             .await
     }
@@ -80,18 +81,27 @@ impl ValkeySink {
 fn publish_stream_entry(client: Client, entry: StreamEntry) -> Result<(), SinkError> {
     let mut connection = client
         .get_connection_with_timeout(entry.io_timeout)
-        .map_err(|error| SinkError::new(format!("Valkey connection failed: {error}")))?;
+        .map_err(|error| valkey_transport_error("Valkey connection failed", error))?;
     connection
         .set_read_timeout(Some(entry.io_timeout))
-        .map_err(|error| SinkError::new(format!("Valkey read timeout setup failed: {error}")))?;
+        .map_err(|error| valkey_transport_error("Valkey read timeout setup failed", error))?;
     connection
         .set_write_timeout(Some(entry.io_timeout))
-        .map_err(|error| SinkError::new(format!("Valkey write timeout setup failed: {error}")))?;
+        .map_err(|error| valkey_transport_error("Valkey write timeout setup failed", error))?;
     let command = xadd_command(&entry);
     let _: String = command
         .query(&mut connection)
-        .map_err(|error| SinkError::new(format!("Valkey XADD failed: {error}")))?;
+        .map_err(|error| valkey_transport_error("Valkey XADD failed", error))?;
     Ok(())
+}
+
+fn valkey_transport_error(operation: &'static str, error: impl fmt::Display) -> SinkError {
+    warn!(
+        message = "Valkey transport operation failed",
+        operation,
+        error = %error,
+    );
+    SinkError::new(operation)
 }
 
 fn parse_config(delivery: &SinkDelivery<'_>) -> Result<ValkeyConfig, SinkError> {
@@ -267,6 +277,16 @@ mod tests {
             error.to_string(),
             "Invalid Valkey config: uri credentials must use {secret} with secret_ref"
         );
+    }
+
+    #[test]
+    fn transport_errors_cannot_reach_delivery_results() {
+        let error = valkey_transport_error(
+            "Valkey XADD failed",
+            "transport failure for rediss://user:secret@example.internal",
+        );
+
+        assert_eq!(error.to_string(), "Valkey XADD failed");
     }
 
     #[test]
