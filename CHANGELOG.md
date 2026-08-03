@@ -54,6 +54,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   detailed database, connection, hashing, and internal failures remain in
   server logs with the restore job identifier instead of being persisted for
   capability-authenticated clients.
+- **Breaking (OpenAPI):** removed the internal `PrincipalToken` storage schema,
+  which contains the persisted bearer-token HMAC, from OpenAPI and made the
+  storage model non-serializable. Consumers that referenced that unbound schema
+  should use the hash-free `PrincipalTokenMetadata` schema returned by token
+  listing endpoints.
 
 ## [0.0.8] - 2026-08-01
 
