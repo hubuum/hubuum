@@ -54,7 +54,7 @@ pub enum OutboundHttpError {
     DnsResolution { host: String },
     EmptyDnsResolution { host: String },
     DisallowedAddress { host: String, address: IpAddr },
-    ClientBuild(String),
+    ClientBuild,
     ResponseRead,
     Timeout,
     Connect,
@@ -82,7 +82,7 @@ impl fmt::Display for OutboundHttpError {
                 f,
                 "outbound host '{host}' resolves to a disallowed address ({address})"
             ),
-            Self::ClientBuild(error) => write!(f, "HTTP client error: {error}"),
+            Self::ClientBuild => write!(f, "HTTP client initialization failed"),
             Self::ResponseRead => write!(f, "failed reading outbound response"),
             Self::Timeout => write!(f, "outbound call timed out"),
             Self::Connect => write!(f, "outbound connection failed"),
@@ -492,7 +492,7 @@ fn cached_client(
     let now = CLIENT_CACHE_CLOCK.fetch_add(1, Ordering::Relaxed);
     let mut cache = CLIENT_CACHE
         .lock()
-        .map_err(|_| OutboundHttpError::ClientBuild("client cache lock poisoned".to_string()))?;
+        .map_err(|_| OutboundHttpError::ClientBuild)?;
 
     if let Some(entry) = cache.get_mut(&key) {
         entry.last_used = now;
@@ -505,9 +505,13 @@ fn cached_client(
     if accept_invalid_certs {
         builder = builder.danger_accept_invalid_certs(true);
     }
-    let client = builder
-        .build()
-        .map_err(|error| OutboundHttpError::ClientBuild(error.to_string()))?;
+    let client = builder.build().map_err(|error| {
+        warn!(
+            message = "Failed building outbound HTTP client",
+            error = %error.without_url(),
+        );
+        OutboundHttpError::ClientBuild
+    })?;
 
     if cache.len() >= MAX_CACHED_CLIENTS
         && let Some(stalest) = cache
@@ -670,6 +674,10 @@ mod tests {
 
     #[test]
     fn transport_errors_cannot_embed_endpoint_details() {
+        assert_eq!(
+            OutboundHttpError::ClientBuild.to_string(),
+            "HTTP client initialization failed"
+        );
         assert_eq!(
             OutboundHttpError::ResponseRead.to_string(),
             "failed reading outbound response"

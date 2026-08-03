@@ -333,7 +333,7 @@ fn remote_error_outcome(error: &OutboundHttpError) -> &'static str {
         | OutboundHttpError::InvalidHeaderValue { .. } => "validation_rejected",
         OutboundHttpError::DnsResolution { .. }
         | OutboundHttpError::EmptyDnsResolution { .. }
-        | OutboundHttpError::ClientBuild(_)
+        | OutboundHttpError::ClientBuild
         | OutboundHttpError::ResponseRead
         | OutboundHttpError::Connect
         | OutboundHttpError::Request => "failure",
@@ -527,7 +527,7 @@ fn outbound_error_to_api_message(error: OutboundHttpError) -> String {
         OutboundHttpError::DisallowedAddress { host, address } => {
             format!("Remote target host '{host}' resolves to a disallowed address ({address})")
         }
-        OutboundHttpError::ClientBuild(error) => format!("HTTP client error: {error}"),
+        OutboundHttpError::ClientBuild => "HTTP client initialization failed".to_string(),
         OutboundHttpError::ResponseRead => "Failed reading remote response".to_string(),
         OutboundHttpError::Timeout => "Remote call timed out".to_string(),
         OutboundHttpError::Connect => "Remote connection failed".to_string(),
@@ -545,7 +545,7 @@ fn outbound_error_to_api_message(error: OutboundHttpError) -> String {
 fn outbound_error_to_api_error(error: OutboundHttpError) -> ApiError {
     let internal = matches!(
         &error,
-        OutboundHttpError::ClientBuild(_)
+        OutboundHttpError::ClientBuild
             | OutboundHttpError::ResponseRead
             | OutboundHttpError::Request
     );
@@ -613,7 +613,7 @@ mod tests {
         },
         "failure"
     )]
-    #[case(OutboundHttpError::ClientBuild("client".to_string()), "failure")]
+    #[case(OutboundHttpError::ClientBuild, "failure")]
     #[case(OutboundHttpError::ResponseRead, "failure")]
     #[case(OutboundHttpError::Connect, "failure")]
     #[case(OutboundHttpError::Request, "failure")]
