@@ -49,6 +49,8 @@ pub trait CanSave {
 /// returned after the update completes.
 pub trait CanUpdate {
     type Output;
+    /// Validated identifier for the persisted model updated by this request.
+    type Identifier;
     /// Update without emitting domain events.
     ///
     /// Intended only for internal infrastructure paths such as bootstrap/setup,
@@ -57,7 +59,7 @@ pub trait CanUpdate {
     async fn update_without_events<C>(
         &self,
         backend: &C,
-        entry_id: i32,
+        entry_id: Self::Identifier,
     ) -> Result<Self::Output, ApiError>
     where
         C: BackendContext + ?Sized;
@@ -65,7 +67,7 @@ pub trait CanUpdate {
     async fn update<C>(
         &self,
         backend: &C,
-        entry_id: i32,
+        entry_id: Self::Identifier,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError>
     where
@@ -139,17 +141,18 @@ where
 #[doc(hidden)]
 pub trait UpdateAdapter {
     type Output;
+    type Identifier;
 
     async fn update_adapter_without_events(
         &self,
         pool: &DbPool,
-        entry_id: i32,
+        entry_id: Self::Identifier,
     ) -> Result<Self::Output, ApiError>;
 
     async fn update_adapter(
         &self,
         pool: &DbPool,
-        entry_id: i32,
+        entry_id: Self::Identifier,
         _context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
         self.update_adapter_without_events(pool, entry_id).await
@@ -161,11 +164,12 @@ where
     T: UpdateAdapter,
 {
     type Output = T::Output;
+    type Identifier = T::Identifier;
 
     async fn update_without_events<C>(
         &self,
         backend: &C,
-        entry_id: i32,
+        entry_id: Self::Identifier,
     ) -> Result<Self::Output, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -177,7 +181,7 @@ where
     async fn update<C>(
         &self,
         backend: &C,
-        entry_id: i32,
+        entry_id: Self::Identifier,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError>
     where

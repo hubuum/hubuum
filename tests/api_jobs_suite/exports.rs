@@ -11,11 +11,12 @@ mod tests {
     use crate::db::traits::task::{TaskBackend, TaskStateUpdate, purge_expired_export_outputs};
     use crate::models::{
         CollectionID, ExportContentType, ExportJsonResponse, ExportRelationContext, ExportRequest,
-        ExportScope, ExportScopeKind, ExportTemplate, ExportTemplateKind, HubuumClass,
-        HubuumClassRelation, HubuumObjectRelation, NewExportTaskOutputRecord, NewExportTemplate,
-        NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-        NewTaskEventRecord, NewTaskRecord, Permissions, TaskEventResponse, TaskID, TaskKind,
-        TaskResponse, TaskResultCounts, TaskStatus, TokenResourceScope, UpdateExportTemplate,
+        ExportScope, ExportScopeKind, ExportTemplate, ExportTemplateID, ExportTemplateKind,
+        HubuumClass, HubuumClassRelation, HubuumObjectRelation, NewExportTaskOutputRecord,
+        NewExportTemplate, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
+        NewHubuumObjectRelation, NewTaskEventRecord, NewTaskRecord, Permissions, TaskEventResponse,
+        TaskID, TaskKind, TaskResponse, TaskResultCounts, TaskStatus, TokenResourceScope,
+        UpdateExportTemplate,
     };
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -606,7 +607,7 @@ mod tests {
             template: Some("changed output".to_string()),
             ..empty_update_template_payload()
         }
-        .update_without_events(&context.pool, template_id)
+        .update_without_events(&context.pool, ExportTemplateID::new(template_id).unwrap())
         .await
         .unwrap();
 

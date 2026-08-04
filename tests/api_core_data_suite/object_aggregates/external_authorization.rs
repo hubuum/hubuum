@@ -151,7 +151,7 @@ async fn non_pushdown_aggregation_preserves_large_internal_sums(
             data: Some(serde_json::from_str(r#"{"amount":9e308}"#).unwrap()),
             description: None,
         }
-        .update_without_events(&test_context.pool, object.id)
+        .update_without_events(&test_context.pool, HubuumObjectID::new(object.id).unwrap())
         .await
         .unwrap();
     }
@@ -414,7 +414,7 @@ async fn non_pushdown_grouping_uses_the_authorized_object_snapshot(
             data: None,
             description: None,
         }
-        .update_without_events(&pool, authorized_object.id)
+        .update_without_events(&pool, HubuumObjectID::new(authorized_object.id).unwrap())
         .await
         .unwrap();
     });

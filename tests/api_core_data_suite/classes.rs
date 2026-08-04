@@ -802,7 +802,11 @@ pub mod tests {
             validate_schema: None,
             description: Some("v2".to_string()),
         }
-        .update(&context.pool, created.id, &event_context)
+        .update(
+            &context.pool,
+            HubuumClassID::new(created.id).unwrap(),
+            &event_context,
+        )
         .await
         .unwrap();
 
@@ -879,7 +883,11 @@ pub mod tests {
             validate_schema: None,
             description: None,
         }
-        .update(&context.pool, class.id, &event_context)
+        .update(
+            &context.pool,
+            HubuumClassID::new(class.id).unwrap(),
+            &event_context,
+        )
         .await
         .unwrap();
 
@@ -958,7 +966,11 @@ pub mod tests {
             validate_schema: None,
             description: None,
         }
-        .update(&context.pool, class.id, &event_context)
+        .update(
+            &context.pool,
+            HubuumClassID::new(class.id).unwrap(),
+            &event_context,
+        )
         .await
         .unwrap();
 
@@ -1090,7 +1102,11 @@ pub mod tests {
             validate_schema: None,
             description: Some("v2".to_string()),
         }
-        .update(&context.pool, created.id, &event_context)
+        .update(
+            &context.pool,
+            HubuumClassID::new(created.id).unwrap(),
+            &event_context,
+        )
         .await
         .unwrap();
 
@@ -1101,7 +1117,11 @@ pub mod tests {
             validate_schema: None,
             description: Some("v3".to_string()),
         }
-        .update(&context.pool, created.id, &event_context)
+        .update(
+            &context.pool,
+            HubuumClassID::new(created.id).unwrap(),
+            &event_context,
+        )
         .await
         .unwrap();
 

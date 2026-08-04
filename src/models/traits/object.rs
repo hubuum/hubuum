@@ -160,23 +160,24 @@ impl SaveAdapter for NewHubuumObject {
 
 impl UpdateAdapter for UpdateHubuumObject {
     type Output = HubuumObject;
+    type Identifier = HubuumObjectID;
 
     async fn update_adapter_without_events(
         &self,
         pool: &DbPool,
-        object_id: i32,
+        object_id: HubuumObjectID,
     ) -> Result<Self::Output, ApiError> {
-        self.update_object_record_without_events(pool, object_id)
+        self.update_object_record_without_events(pool, object_id.id())
             .await
     }
 
     async fn update_adapter(
         &self,
         pool: &DbPool,
-        object_id: i32,
+        object_id: HubuumObjectID,
         context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
-        self.update_object_record(pool, object_id, Some(context))
+        self.update_object_record(pool, object_id.id(), Some(context))
             .await
     }
 }

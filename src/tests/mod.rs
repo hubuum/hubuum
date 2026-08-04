@@ -843,6 +843,7 @@ pub fn generate_all_subsets<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
 mod test {
 
     use super::*;
+    use crate::models::CollectionID;
     use crate::{models::collection::UpdateCollection, traits::CanUpdate};
 
     #[actix_rt::test]
@@ -859,7 +860,7 @@ mod test {
         };
 
         let updated_collection = update
-            .update_without_events(&pool, collection.collection.id)
+            .update_without_events(&pool, CollectionID::new(collection.collection.id).unwrap())
             .await
             .unwrap();
         let new_created_at = updated_collection.created_at;

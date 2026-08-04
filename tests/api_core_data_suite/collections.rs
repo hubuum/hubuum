@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::models::{
-        Collection, GroupID, GroupPermission, GroupResponse, NewCollectionWithAssignee, NewGroup,
-        Permission, Permissions, UpdateCollection,
+        Collection, CollectionID, GroupID, GroupPermission, GroupResponse,
+        NewCollectionWithAssignee, NewGroup, Permission, Permissions, UpdateCollection,
     };
 
     use crate::pagination::{
@@ -1081,7 +1081,11 @@ mod tests {
             name: None,
             description: Some("v2".to_string()),
         }
-        .update(&context.pool, created.id, &event_context)
+        .update(
+            &context.pool,
+            CollectionID::new(created.id).unwrap(),
+            &event_context,
+        )
         .await
         .unwrap();
 
