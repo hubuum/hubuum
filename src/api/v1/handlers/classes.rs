@@ -6,7 +6,7 @@ use actix_web::{
 
 use tracing::{debug, info};
 
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -535,8 +535,7 @@ async fn apply_resolved_class_update(
         );
     }
 
-    let precondition = IfMatchCondition::from_request(req)?
-        .database_precondition(&target.class().entity_tag()?)?;
+    let precondition = revision_precondition(req, target.class())?;
     let event_context = requestor.event_context(req);
     with_revision_precondition_scope(
         precondition,
@@ -637,7 +636,7 @@ async fn delete_resolved_class(
     );
 
     let etag = target.class().entity_tag()?;
-    let precondition = IfMatchCondition::from_request(req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(req, &etag)?;
     let event_context = requestor.event_context(req);
     with_revision_precondition_scope(
         precondition,

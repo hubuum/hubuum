@@ -1,6 +1,6 @@
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, web};
 
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::can;
@@ -39,9 +39,7 @@ fn computed_field_precondition(
     request: &HttpRequest,
     definition: &ComputedFieldDefinition,
 ) -> Result<Option<crate::api::etag::RevisionPrecondition>, ApiError> {
-    let condition = IfMatchCondition::from_request(request)?;
-    let current = definition.entity_tag()?;
-    condition.database_precondition(&current)
+    revision_precondition(request, definition)
 }
 
 #[utoipa::path(

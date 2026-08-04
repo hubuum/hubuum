@@ -268,6 +268,19 @@ mod tests {
         panic!("Task {task_id} did not reach a terminal status in time");
     }
 
+    async fn submit_import(context: &TestContext, request: &ImportRequest) -> TaskResponse {
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            request,
+            Vec::new(),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        test::read_body_json(response).await
+    }
+
     fn collection_import_request(
         name: String,
         description: &str,
@@ -464,16 +477,7 @@ mod tests {
             core_timestamp_import_request(&names, initial.clone(), ImportCollisionPolicy::Abort),
             core_timestamp_import_request(&names, restored, ImportCollisionPolicy::Overwrite),
         ] {
-            let response = post_request_with_headers(
-                &context.pool,
-                &context.admin_token,
-                IMPORTS_ENDPOINT,
-                &body,
-                Vec::new(),
-            )
-            .await;
-            let response = assert_response_status(response, StatusCode::ACCEPTED).await;
-            let task: TaskResponse = test::read_body_json(response).await;
+            let task = submit_import(&context, &body).await;
             wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
 
             let timestamps = load_core_timestamp_pairs(&context.pool, &names).await;
@@ -1507,16 +1511,7 @@ mod tests {
             },
         );
 
-        let resp = post_request_with_headers(
-            &context.pool,
-            &context.admin_token,
-            IMPORTS_ENDPOINT,
-            &body,
-            vec![],
-        )
-        .await;
-        let resp = assert_response_status(resp, StatusCode::ACCEPTED).await;
-        let task: TaskResponse = test::read_body_json(resp).await;
+        let task = submit_import(&context, &body).await;
         let completed = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
         assert_eq!(completed.status, TaskStatus::Succeeded);
 
@@ -1562,16 +1557,7 @@ mod tests {
                 label,
                 false,
             );
-            let response = post_request_with_headers(
-                &context.pool,
-                &context.admin_token,
-                IMPORTS_ENDPOINT,
-                &body,
-                Vec::new(),
-            )
-            .await;
-            let response = assert_response_status(response, StatusCode::ACCEPTED).await;
-            let task: TaskResponse = test::read_body_json(response).await;
+            let task = submit_import(&context, &body).await;
             wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
         }
 
@@ -1620,16 +1606,7 @@ mod tests {
             "Original label",
             false,
         );
-        let response = post_request_with_headers(
-            &context.pool,
-            &context.admin_token,
-            IMPORTS_ENDPOINT,
-            &initial,
-            Vec::new(),
-        )
-        .await;
-        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
-        let task: TaskResponse = test::read_body_json(response).await;
+        let task = submit_import(&context, &initial).await;
         wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
         let revision = with_connection(&context.pool, async |conn| {
             use crate::schema::computed_field_definitions::dsl as definition;
@@ -1651,16 +1628,7 @@ mod tests {
             "Dry-run label",
             true,
         );
-        let response = post_request_with_headers(
-            &context.pool,
-            &context.admin_token,
-            IMPORTS_ENDPOINT,
-            &dry_run,
-            Vec::new(),
-        )
-        .await;
-        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
-        let task: TaskResponse = test::read_body_json(response).await;
+        let task = submit_import(&context, &dry_run).await;
         wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
         let response = get_request(
             &context.pool,

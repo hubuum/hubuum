@@ -1,6 +1,6 @@
 use actix_web::{HttpRequest, Responder, delete, get, patch, routes, web};
 
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::{ApiResponse, ResponseLocation};
 use crate::can;
@@ -186,8 +186,7 @@ pub async fn patch_event_subscription(
     }
     let existing = subscription_id.instance(&pool).await?;
     ensure_subscription_collection(&existing, collection_id)?;
-    let precondition =
-        IfMatchCondition::from_request(&req)?.database_precondition(&existing.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &existing)?;
     let event_context = requestor.event_context(&req);
     let updated: EventSubscription = with_revision_precondition_scope(
         precondition,
@@ -234,7 +233,7 @@ pub async fn delete_event_subscription(
     let existing = subscription_id.instance(&pool).await?;
     ensure_subscription_collection(&existing, collection_id)?;
     let etag = existing.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(
         precondition,

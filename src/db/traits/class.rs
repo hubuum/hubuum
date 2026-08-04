@@ -1,5 +1,6 @@
 use crate::db::prelude::*;
 
+use crate::api::etag::RevisionOwner;
 use crate::db::traits::GetClass;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -371,7 +372,7 @@ pub(crate) async fn lock_resolved_class_target(
             .await
             .optional()?,
     };
-    let owner_key = format!("hubuumclass:{}", resolved.id);
+    let owner_key = RevisionOwner::Class.key(resolved.id);
     let locked = crate::db::require_existing_revision_target(locked, &owner_key)?;
     crate::db::assert_locked_revision_precondition(conn, &owner_key, locked.revision).await?;
     Ok(locked)

@@ -1,4 +1,4 @@
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -49,8 +49,7 @@ fn collection_precondition(
     request: &HttpRequest,
     resource: &impl RevisionedResource,
 ) -> Result<Option<crate::api::etag::RevisionPrecondition>, ApiError> {
-    let current = resource.entity_tag()?;
-    IfMatchCondition::from_request(request)?.database_precondition(&current)
+    revision_precondition(request, resource)
 }
 
 #[utoipa::path(
@@ -288,7 +287,7 @@ pub async fn delete_collection(
     );
 
     let etag = collection.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(precondition, collection.delete(&pool, &event_context))
         .await?;

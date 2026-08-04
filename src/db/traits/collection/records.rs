@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::etag::RevisionOwner;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use chrono::NaiveDateTime;
 use diesel_async::RunQueryDsl;
@@ -80,13 +81,13 @@ async fn validate_collection_can_be_deleted(
     Ok(())
 }
 
-async fn lock_collection_for_delete(
+async fn lock_and_validate_collection_for_delete(
     conn: &mut crate::db::DbConnection,
     collection_id: i32,
 ) -> Result<Collection, ApiError> {
     use crate::schema::collections::dsl::{collections, id};
 
-    let owner_key = format!("collections:{collection_id}");
+    let owner_key = RevisionOwner::Collection.key(collection_id);
     let collection = collections
         .filter(id.eq(collection_id))
         .for_update()
@@ -281,6 +282,35 @@ fn collection_event(
     .with_collection_id(collection.id))
 }
 
+async fn delete_collection_by_id(
+    pool: &DbPool,
+    collection_id: i32,
+    context: Option<&EventContext>,
+) -> Result<(), ApiError> {
+    use crate::schema::collections::dsl::{collections, id};
+
+    with_transaction(pool, async |conn| -> Result<(), ApiError> {
+        let collection = lock_and_validate_collection_for_delete(conn, collection_id).await?;
+        diesel::delete(collections.filter(id.eq(collection.id)))
+            .execute(conn)
+            .await?;
+
+        if let Some(context) = context {
+            let event = collection_event(
+                &collection,
+                Action::Deleted,
+                context,
+                format!("Collection '{}' deleted", collection.name),
+            )?
+            .with_before(collection_snapshot(&collection));
+            emit_event(conn, &event).await?;
+        }
+
+        Ok(())
+    })
+    .await
+}
+
 pub trait DeleteCollectionRecord {
     async fn delete_collection_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError>;
 
@@ -296,16 +326,7 @@ pub trait DeleteCollectionRecord {
 
 impl DeleteCollectionRecord for Collection {
     async fn delete_collection_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::collections::dsl::{collections, id};
-
-        with_transaction(pool, async |conn| -> Result<_, ApiError> {
-            let collection = lock_collection_for_delete(conn, self.id).await?;
-            Ok(diesel::delete(collections.filter(id.eq(collection.id)))
-                .execute(conn)
-                .await?)
-        })
-        .await?;
-        Ok(())
+        delete_collection_by_id(pool, self.id, None).await
     }
 
     async fn delete_collection_record(
@@ -313,43 +334,13 @@ impl DeleteCollectionRecord for Collection {
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
-        let Some(context) = context else {
-            return self.delete_collection_record_without_events(pool).await;
-        };
-
-        use crate::schema::collections::dsl::{collections, id};
-
-        with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let before = lock_collection_for_delete(conn, self.id).await?;
-            diesel::delete(collections.filter(id.eq(before.id)))
-                .execute(conn)
-                .await?;
-            let event = collection_event(
-                &before,
-                Action::Deleted,
-                context,
-                format!("Collection '{}' deleted", before.name),
-            )?
-            .with_before(collection_snapshot(&before));
-            emit_event(conn, &event).await?;
-            Ok(())
-        })
-        .await
+        delete_collection_by_id(pool, self.id, context).await
     }
 }
 
 impl DeleteCollectionRecord for CollectionID {
     async fn delete_collection_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
-        use crate::schema::collections::dsl::{collections, id};
-
-        with_transaction(pool, async |conn| -> Result<_, ApiError> {
-            let collection = lock_collection_for_delete(conn, self.id()).await?;
-            Ok(diesel::delete(collections.filter(id.eq(collection.id)))
-                .execute(conn)
-                .await?)
-        })
-        .await?;
-        Ok(())
+        delete_collection_by_id(pool, self.id(), None).await
     }
 
     async fn delete_collection_record(
@@ -357,28 +348,7 @@ impl DeleteCollectionRecord for CollectionID {
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
-        let Some(context) = context else {
-            return self.delete_collection_record_without_events(pool).await;
-        };
-
-        use crate::schema::collections::dsl::{collections, id};
-
-        with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let collection = lock_collection_for_delete(conn, self.id()).await?;
-            diesel::delete(collections.filter(id.eq(collection.id)))
-                .execute(conn)
-                .await?;
-            let event = collection_event(
-                &collection,
-                Action::Deleted,
-                context,
-                format!("Collection '{}' deleted", collection.name),
-            )?
-            .with_before(collection_snapshot(&collection));
-            emit_event(conn, &event).await?;
-            Ok(())
-        })
-        .await
+        delete_collection_by_id(pool, self.id(), context).await
     }
 }
 
@@ -439,7 +409,7 @@ impl UpdateCollectionRecord for UpdateCollection {
         use crate::schema::collections::dsl::{collections, id};
 
         with_transaction(pool, async |conn| -> Result<Collection, ApiError> {
-            let owner_key = format!("collections:{collection_id}");
+            let owner_key = RevisionOwner::Collection.key(collection_id);
             let before = collections
                 .filter(id.eq(collection_id))
                 .for_update()

@@ -524,7 +524,7 @@ async fn delete_object_relation(
     );
 
     let etag = relation.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(precondition, relation.delete(&pool, &event_context)).await?;
     Ok(ApiResponse::no_content_with_etag(etag))

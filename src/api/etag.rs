@@ -36,6 +36,62 @@ enum EtagResourceKind {
     Token,
 }
 
+/// Authoritative database rows that own resource revisions.
+///
+/// HTTP representations and mutation backends share this vocabulary so a
+/// table-name typo cannot silently detach an `If-Match` assertion from the row
+/// it is intended to protect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum RevisionOwner {
+    IdentityScope,
+    Group,
+    Principal,
+    Membership,
+    Collection,
+    CollectionPermissions,
+    Class,
+    Object,
+    ClassRelation,
+    ObjectRelation,
+    ExportTemplate,
+    RemoteTarget,
+    EventSink,
+    EventSubscription,
+    ComputedField,
+    Token,
+}
+
+impl RevisionOwner {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::IdentityScope => "identity_scopes",
+            Self::Group => "groups",
+            Self::Principal => "principals",
+            Self::Membership => "group_memberships",
+            Self::Collection => "collections",
+            Self::CollectionPermissions => "collection_authorization_state",
+            Self::Class => "hubuumclass",
+            Self::Object => "hubuumobject",
+            Self::ClassRelation => "hubuumclass_relation",
+            Self::ObjectRelation => "hubuumobject_relation",
+            Self::ExportTemplate => "export_templates",
+            Self::RemoteTarget => "remote_targets",
+            Self::EventSink => "event_sinks",
+            Self::EventSubscription => "event_subscriptions",
+            Self::ComputedField => "computed_field_definitions",
+            Self::Token => "tokens",
+        }
+    }
+
+    pub(crate) fn key(self, resource_key: impl fmt::Display) -> String {
+        format!("{}:{resource_key}", self.as_str())
+    }
+
+    pub(crate) fn membership_key(principal_id: i32, group_id: i32) -> String {
+        Self::Membership.key(format_args!("{principal_id}:{group_id}"))
+    }
+}
+
 impl EtagResourceKind {
     const fn as_str(self) -> &'static str {
         match self {
@@ -86,26 +142,26 @@ impl EtagResourceKind {
         })
     }
 
-    const fn revision_owner_table(self) -> &'static str {
+    const fn revision_owner(self) -> RevisionOwner {
         match self {
-            Self::IdentityScope => "identity_scopes",
-            Self::Group => "groups",
+            Self::IdentityScope => RevisionOwner::IdentityScope,
+            Self::Group => RevisionOwner::Group,
             Self::Principal | Self::User | Self::ServiceAccount | Self::PrincipalSettings => {
-                "principals"
+                RevisionOwner::Principal
             }
-            Self::Membership => "group_memberships",
-            Self::Collection => "collections",
-            Self::CollectionPermissions => "collection_authorization_state",
-            Self::Class => "hubuumclass",
-            Self::Object => "hubuumobject",
-            Self::ClassRelation => "hubuumclass_relation",
-            Self::ObjectRelation => "hubuumobject_relation",
-            Self::ExportTemplate => "export_templates",
-            Self::RemoteTarget => "remote_targets",
-            Self::EventSink => "event_sinks",
-            Self::EventSubscription => "event_subscriptions",
-            Self::ComputedField => "computed_field_definitions",
-            Self::Token => "tokens",
+            Self::Membership => RevisionOwner::Membership,
+            Self::Collection => RevisionOwner::Collection,
+            Self::CollectionPermissions => RevisionOwner::CollectionPermissions,
+            Self::Class => RevisionOwner::Class,
+            Self::Object => RevisionOwner::Object,
+            Self::ClassRelation => RevisionOwner::ClassRelation,
+            Self::ObjectRelation => RevisionOwner::ObjectRelation,
+            Self::ExportTemplate => RevisionOwner::ExportTemplate,
+            Self::RemoteTarget => RevisionOwner::RemoteTarget,
+            Self::EventSink => RevisionOwner::EventSink,
+            Self::EventSubscription => RevisionOwner::EventSubscription,
+            Self::ComputedField => RevisionOwner::ComputedField,
+            Self::Token => RevisionOwner::Token,
         }
     }
 }
@@ -113,17 +169,17 @@ impl EtagResourceKind {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EntityTag {
     kind: EtagResourceKind,
-    key: Vec<u8>,
+    key: String,
     revision: ResourceRevision,
 }
 
 impl EntityTag {
     fn new(
         kind: EtagResourceKind,
-        key: impl AsRef<[u8]>,
+        key: impl Into<String>,
         revision: ResourceRevision,
     ) -> Result<Self, ApiError> {
-        let key = key.as_ref();
+        let key = key.into();
         if key.is_empty() || key.len() > MAX_RESOURCE_KEY_BYTES {
             return Err(ApiError::InternalServerError(
                 "ETag resource key is outside its bounded size".to_string(),
@@ -131,7 +187,7 @@ impl EntityTag {
         }
         Ok(Self {
             kind,
-            key: key.to_vec(),
+            key,
             revision,
         })
     }
@@ -184,6 +240,8 @@ impl EntityTag {
         let key = URL_SAFE_NO_PAD
             .decode(encoded_key)
             .map_err(|_| invalid_if_match("validator resource key is malformed"))?;
+        let key = String::from_utf8(key)
+            .map_err(|_| invalid_if_match("validator resource key is malformed"))?;
         if key.is_empty() || key.len() > MAX_RESOURCE_KEY_BYTES {
             return Err(invalid_if_match(
                 "validator resource key is outside its bounded size",
@@ -205,11 +263,8 @@ impl EntityTag {
         self.kind == other.kind && self.key == other.key
     }
 
-    fn revision_owner_key(&self) -> Result<String, ApiError> {
-        let key = std::str::from_utf8(&self.key).map_err(|_| {
-            ApiError::InternalServerError("ETag resource key is not valid UTF-8".to_string())
-        })?;
-        Ok(format!("{}:{key}", self.kind.revision_owner_table()))
+    fn revision_owner_key(&self) -> String {
+        self.kind.revision_owner().key(&self.key)
     }
 }
 
@@ -219,7 +274,7 @@ impl fmt::Display for EntityTag {
             formatter,
             "\"{ETAG_PREFIX}.{}.{}.{}\"",
             self.kind.as_str(),
-            URL_SAFE_NO_PAD.encode(&self.key),
+            URL_SAFE_NO_PAD.encode(self.key.as_bytes()),
             self.revision
         )
     }
@@ -332,7 +387,7 @@ impl IfMatchCondition {
             }
         };
         Ok(Some(RevisionPrecondition {
-            owner_key: current.revision_owner_key()?,
+            owner_key: current.revision_owner_key(),
             revisions,
         }))
     }
@@ -340,6 +395,29 @@ impl IfMatchCondition {
 
 pub trait RevisionedResource {
     fn entity_tag(&self) -> Result<EntityTag, ApiError>;
+}
+
+/// Build the database-owned conditional mutation assertion for `resource`.
+///
+/// Keeping request parsing and resource compatibility checks together avoids
+/// subtly different `If-Match` handling across mutation handlers.
+pub fn revision_precondition<R>(
+    request: &HttpRequest,
+    resource: &R,
+) -> Result<Option<RevisionPrecondition>, ApiError>
+where
+    R: RevisionedResource,
+{
+    revision_precondition_for_tag(request, &resource.entity_tag()?)
+}
+
+/// Build a precondition from an already materialized tag. Delete handlers use
+/// this form when the same tag is also returned with the successful response.
+pub fn revision_precondition_for_tag(
+    request: &HttpRequest,
+    current: &EntityTag,
+) -> Result<Option<RevisionPrecondition>, ApiError> {
+    IfMatchCondition::from_request(request)?.database_precondition(current)
 }
 
 fn invalid_if_match(detail: &str) -> ApiError {
@@ -509,7 +587,12 @@ mod tests {
 
     #[test]
     fn weak_malformed_and_mixed_wildcards_are_rejected() {
-        for value in ["W/\"hubuum-v1.collection.NDI.1\"", "* , \"x\"", "plain"] {
+        for value in [
+            "W/\"hubuum-v1.collection.NDI.1\"",
+            "* , \"x\"",
+            "plain",
+            "\"hubuum-v1.collection._w.1\"",
+        ] {
             let request = TestRequest::default()
                 .insert_header((header::IF_MATCH, value))
                 .to_http_request();

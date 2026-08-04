@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 use utoipa::ToSchema;
 
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition};
 use crate::api::openapi::{ApiErrorResponse, LoginResponse};
 use crate::api::response::ApiResponse;
 use crate::db::traits::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
@@ -393,8 +393,7 @@ pub async fn revoke_token(
         PrincipalTokenMetadata::load_for_principal_token(&pool, path.principal_id, path.token_id)
             .await?;
     let current = PrincipalTokenPointResponse::from(current);
-    let precondition =
-        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
 
     let event_context = requestor.event_context(&req);
     let revoked = with_revision_precondition_scope(
@@ -543,8 +542,7 @@ pub async fn put_principal_settings(
     let principal_id = principal_id.into_inner();
     ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
     let current = principal_id.settings(&pool).await?;
-    let condition = IfMatchCondition::from_request(&req)?;
-    let precondition = condition.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let settings = with_revision_precondition_scope(
         precondition,
@@ -587,8 +585,7 @@ pub async fn patch_principal_settings(
     let principal_id = principal_id.into_inner();
     ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
     let current = principal_id.settings(&pool).await?;
-    let condition = IfMatchCondition::from_request(&req)?;
-    let precondition = condition.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let settings = with_revision_precondition_scope(
         precondition,
@@ -620,8 +617,7 @@ pub async fn delete_principal_settings(
     let principal_id = principal_id.into_inner();
     ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
     let current = principal_id.settings(&pool).await?;
-    let condition = IfMatchCondition::from_request(&req)?;
-    let precondition = condition.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let reset = with_revision_precondition_scope(
         precondition,

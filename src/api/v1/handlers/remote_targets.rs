@@ -2,7 +2,7 @@ use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, po
 use hubuum_task_core::IdempotencyKey;
 use tracing::{debug, info};
 
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -229,8 +229,7 @@ pub async fn patch_remote_target(
     };
     validate_remote_target_class_scope(&pool, effective_collection_id, effective_class_id).await?;
 
-    let precondition =
-        IfMatchCondition::from_request(&req)?.database_precondition(&existing.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &existing)?;
     let row = update.into_row(&existing)?;
     let event_context = requestor.event_context(&req);
     let updated: RemoteTarget = with_revision_precondition_scope(
@@ -285,7 +284,7 @@ pub async fn delete_remote_target(
         CollectionID::new(existing.collection_id)?
     );
     let etag = existing.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(
         precondition,

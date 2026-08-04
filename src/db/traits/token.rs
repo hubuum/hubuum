@@ -1,5 +1,6 @@
 use crate::db::prelude::*;
 
+use crate::api::etag::RevisionOwner;
 use crate::db::traits::authz::{load_token_scope_conn, load_token_scopes_for_tokens_conn};
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -235,7 +236,7 @@ pub async fn revoke_token_by_id_for_principal_db(
         };
         crate::db::assert_locked_revision_precondition(
             conn,
-            &format!("tokens:{}", before.id),
+            &RevisionOwner::Token.key(before.id),
             before.revision,
         )
         .await?;

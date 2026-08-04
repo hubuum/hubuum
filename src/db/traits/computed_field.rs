@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
+use crate::api::etag::RevisionOwner;
 use crate::db::prelude::*;
 use crate::db::traits::search::{JsonSqlPredicate, dynamic_sql_predicate};
 use crate::db::traits::task::{
@@ -529,7 +530,7 @@ pub async fn update_shared_definition(
         let current = locked_definition(conn, definition_id).await?;
         crate::db::assert_locked_revision_precondition(
             conn,
-            &format!("computed_field_definitions:{}", current.id),
+            &RevisionOwner::ComputedField.key(current.id),
             current.revision,
         )
         .await?;
@@ -654,7 +655,7 @@ pub async fn update_personal_definition(
         let current = locked_definition(conn, definition_id).await?;
         crate::db::assert_locked_revision_precondition(
             conn,
-            &format!("computed_field_definitions:{}", current.id),
+            &RevisionOwner::ComputedField.key(current.id),
             current.revision,
         )
         .await?;

@@ -2,6 +2,7 @@ use crate::db::prelude::*;
 use diesel::sql_query;
 use serde_json;
 
+use crate::api::etag::RevisionOwner;
 use crate::db::traits::GetObject;
 use crate::db::traits::class::lock_resolved_class_target;
 use crate::db::traits::computed_field::{
@@ -664,7 +665,7 @@ async fn lock_resolved_object_target(
 
     let resolved_class = target.class();
     let resolved = target.object();
-    let owner_key = format!("hubuumobject:{}", resolved.id);
+    let owner_key = RevisionOwner::Object.key(resolved.id);
     acquire_object_write_class_advisory_lock(conn, resolved_class.id).await?;
     let locked_class = match target.selector().kind() {
         ObjectSelectorKind::ById {

@@ -233,7 +233,7 @@ async fn delete_class_relation(
         || relation.to_hubuum_class_id == class_id.id()
     {
         let etag = relation.entity_tag()?;
-        let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+        let precondition = revision_precondition_for_tag(&req, &etag)?;
         let event_context = requestor.event_context(&req);
         with_revision_precondition_scope(precondition, relation.delete(&pool, &event_context))
             .await?;
