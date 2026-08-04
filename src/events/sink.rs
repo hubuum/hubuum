@@ -202,7 +202,12 @@ impl Sink for hubuum_event_sink_valkey::ValkeySink {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
     use futures::FutureExt;
+    use futures::future::join_all;
     use hubuum_event_sinks_common::UriConnectionPool;
     use uuid::Uuid;
 
@@ -311,6 +316,58 @@ mod tests {
         assert!(!debug.contains("config-secret"));
         assert!(!debug.contains("routing-secret"));
         assert!(!debug.contains("secret-reference"));
+    }
+
+    #[actix_rt::test]
+    async fn uri_connection_pool_initializes_each_key_once_under_concurrency() {
+        let pool = UriConnectionPool::<String, usize>::default();
+        let initializations = Arc::new(AtomicUsize::new(0));
+
+        let results = join_all((0..16).map(|_| {
+            let initializations = Arc::clone(&initializations);
+            pool.get_or_try_insert_with("shared-uri".to_string(), move |_| async move {
+                initializations.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                Ok(42)
+            })
+        }))
+        .await;
+
+        assert!(results.into_iter().all(|result| result == Ok(42)));
+        assert_eq!(initializations.load(Ordering::SeqCst), 1);
+    }
+
+    #[actix_rt::test]
+    async fn uri_connection_pool_retries_a_failed_initializer() {
+        let pool = UriConnectionPool::<String, usize>::default();
+        let initializations = Arc::new(AtomicUsize::new(0));
+
+        let first = pool
+            .get_or_try_insert_with("retry-uri".to_string(), {
+                let initializations = Arc::clone(&initializations);
+                move |_| async move {
+                    initializations.fetch_add(1, Ordering::SeqCst);
+                    Err(SinkError::new("initialization failed"))
+                }
+            })
+            .await;
+        let second = pool
+            .get_or_try_insert_with("retry-uri".to_string(), {
+                let initializations = Arc::clone(&initializations);
+                move |_| async move {
+                    initializations.fetch_add(1, Ordering::SeqCst);
+                    Ok(42)
+                }
+            })
+            .await;
+        let cached = pool
+            .get_or_try_insert_with("retry-uri".to_string(), |_| async move { Ok(99) })
+            .await;
+
+        assert_eq!(first.unwrap_err().to_string(), "initialization failed");
+        assert_eq!(second, Ok(42));
+        assert_eq!(cached, Ok(42));
+        assert_eq!(initializations.load(Ordering::SeqCst), 2);
     }
 
     #[cfg(any(feature = "amqp", feature = "email", feature = "valkey"))]
