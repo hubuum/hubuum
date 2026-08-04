@@ -17,6 +17,17 @@ use std::str::FromStr;
 /// limits.
 pub const MAX_INTEGER_FILTER_VALUES: usize = 1_024;
 
+/// Maximum number of top-level `key=value` components accepted by the common
+/// query parser.
+pub const MAX_QUERY_PARAMETERS: usize = 128;
+
+/// Maximum number of resource filters accepted by one parsed query.
+pub const MAX_QUERY_FILTERS: usize = 64;
+
+/// Maximum number of requested sort fields. Cursor predicate construction is
+/// quadratic in this value, so keep it deliberately small and explicit.
+pub const MAX_QUERY_SORT_FIELDS: usize = 8;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryError {
     BadRequest(String),
@@ -82,13 +93,22 @@ fn parse_query_parameter_with_options(
         ));
     }
 
-    for (key, value) in decode_query_parameter_pairs(qs)? {
-        if passthrough_keys.contains(key.as_str()) {
-            passthrough.entry(key).or_default().push(value);
+    for (index, chunk) in qs.split('&').enumerate() {
+        if index >= MAX_QUERY_PARAMETERS {
+            return Err(QueryError::BadRequest(format!(
+                "query accepts at most {MAX_QUERY_PARAMETERS} parameters"
+            )));
+        }
+        let (key, value) = decode_query_parameter_pair(chunk)?;
+        if passthrough_keys.contains(key.as_ref()) {
+            passthrough
+                .entry(key.into_owned())
+                .or_default()
+                .push(value.into_owned());
             continue;
         }
 
-        match key.as_str() {
+        match key.as_ref() {
             "limit" => {
                 if limit.is_some() {
                     return Err(QueryError::BadRequest("duplicate limit".into()));
@@ -102,7 +122,7 @@ fn parse_query_parameter_with_options(
                 if cursor.is_some() {
                     return Err(QueryError::BadRequest("duplicate cursor".into()));
                 }
-                cursor = Some(value);
+                cursor = Some(value.into_owned());
             }
             "include_total" => {
                 if include_total.is_some() {
@@ -112,10 +132,36 @@ fn parse_query_parameter_with_options(
             }
             "sort" | "order_by" => {
                 for piece in value.split(',') {
-                    sort.push(parse_sort_param(piece)?);
+                    if sort.len() >= MAX_QUERY_SORT_FIELDS {
+                        return Err(QueryError::BadRequest(format!(
+                            "query accepts at most {MAX_QUERY_SORT_FIELDS} sort fields"
+                        )));
+                    }
+                    let parsed = parse_sort_param(piece)?;
+                    if sort
+                        .iter()
+                        .any(|existing: &SortParam| existing.field == parsed.field)
+                    {
+                        return Err(QueryError::BadRequest(format!(
+                            "duplicate sort field '{}'",
+                            parsed.field
+                        )));
+                    }
+                    sort.push(parsed);
                 }
             }
-            _ => filters.push(parse_single_filter(&key, &value, allow_computed_filters)?),
+            _ => {
+                if filters.len() >= MAX_QUERY_FILTERS {
+                    return Err(QueryError::BadRequest(format!(
+                        "query accepts at most {MAX_QUERY_FILTERS} filters"
+                    )));
+                }
+                filters.push(parse_single_filter(
+                    key.as_ref(),
+                    value.as_ref(),
+                    allow_computed_filters,
+                )?);
+            }
         }
     }
 
@@ -1299,6 +1345,112 @@ mod tests {
         assert_eq!(parsed.sort.len(), 2);
         assert!(parsed.sort[0].descending);
         assert!(!parsed.sort[1].descending);
+    }
+
+    #[test]
+    fn common_parser_rejects_more_than_the_parameter_limit() {
+        let query = std::iter::repeat_n("local=value", MAX_QUERY_PARAMETERS + 1)
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let error = parse_query_parameter_with_passthrough(&query, &["local"]).unwrap_err();
+
+        assert_eq!(
+            error,
+            QueryError::BadRequest(format!(
+                "query accepts at most {MAX_QUERY_PARAMETERS} parameters"
+            ))
+        );
+    }
+
+    #[test]
+    fn common_parser_accepts_the_parameter_limit() {
+        let query = std::iter::repeat_n("local=value", MAX_QUERY_PARAMETERS)
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let (_, passthrough) = parse_query_parameter_with_passthrough(&query, &["local"]).unwrap();
+
+        assert_eq!(passthrough["local"].len(), MAX_QUERY_PARAMETERS);
+    }
+
+    #[test]
+    fn common_parser_rejects_more_than_the_filter_limit() {
+        let query = std::iter::repeat_n("name__contains=value", MAX_QUERY_FILTERS + 1)
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let error = parse_query_parameter(&query).unwrap_err();
+
+        assert_eq!(
+            error,
+            QueryError::BadRequest(format!("query accepts at most {MAX_QUERY_FILTERS} filters"))
+        );
+    }
+
+    #[test]
+    fn common_parser_accepts_the_filter_limit() {
+        let query = std::iter::repeat_n("name__contains=value", MAX_QUERY_FILTERS)
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let parsed = parse_query_parameter(&query).unwrap();
+
+        assert_eq!(parsed.filters.len(), MAX_QUERY_FILTERS);
+    }
+
+    #[test]
+    fn common_parser_rejects_more_than_the_sort_limit() {
+        let fields = [
+            "id",
+            "name",
+            "description",
+            "created_at",
+            "updated_at",
+            "collection_id",
+            "class_id",
+            "username",
+            "proper_name",
+        ];
+        assert_eq!(fields.len(), MAX_QUERY_SORT_FIELDS + 1);
+
+        let error = parse_query_parameter(&format!("sort={}", fields.join(","))).unwrap_err();
+
+        assert_eq!(
+            error,
+            QueryError::BadRequest(format!(
+                "query accepts at most {MAX_QUERY_SORT_FIELDS} sort fields"
+            ))
+        );
+    }
+
+    #[test]
+    fn common_parser_accepts_the_sort_limit() {
+        let fields = [
+            "id",
+            "name",
+            "description",
+            "created_at",
+            "updated_at",
+            "collection_id",
+            "class_id",
+            "username",
+        ];
+        assert_eq!(fields.len(), MAX_QUERY_SORT_FIELDS);
+
+        let parsed = parse_query_parameter(&format!("sort={}", fields.join(","))).unwrap();
+
+        assert_eq!(parsed.sort.len(), MAX_QUERY_SORT_FIELDS);
+    }
+
+    #[test]
+    fn common_parser_rejects_duplicate_sort_fields() {
+        let error = parse_query_parameter("sort=id.asc,-id").unwrap_err();
+
+        assert_eq!(
+            error,
+            QueryError::BadRequest("duplicate sort field 'id'".to_string())
+        );
     }
 
     #[test]

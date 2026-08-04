@@ -14,6 +14,7 @@ Query parameters are passed as standard query string parameters:
 - `field__operator=value` applies an explicit operator
 - filters are combined with `AND`
 - repeated `sort` fields are expressed as a comma-separated list
+- one common resource query may contain at most 128 parameters and 64 filters
 
 Example:
 
@@ -99,6 +100,8 @@ Supported forms:
 Notes:
 
 - Sort support is endpoint-specific.
+- A query may request at most eight distinct sort fields. Repeating the same
+  field, including with a different direction, is rejected.
 - Cursor pagination requires a stable sort, so Hubuum appends a deterministic tie-breaker automatically.
 - If you omit `sort`, each endpoint uses its own default stable sort.
 - Some relation endpoints support sorting on contextual fields like `from_*`, `to_*`, `depth`, and `path`.
