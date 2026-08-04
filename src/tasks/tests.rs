@@ -36,7 +36,7 @@ use crate::db::{capture_queries, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
     CURRENT_IMPORT_VERSION, ClassKey, CollectionID, CollectionKey, ExportContentType,
-    ExportScopeKind, ExportTemplateKind, ImportAtomicity, ImportClassInput,
+    ExportScopeKind, ExportTemplateKind, GroupID, ImportAtomicity, ImportClassInput,
     ImportClassRelationInput, ImportCollectionInput, ImportCollisionPolicy,
     ImportExportTemplateInput, ImportGraph, ImportGroupMembershipInput, ImportIdentityScopeInput,
     ImportMembershipSourceInput, ImportMode, ImportObjectInput, ImportObjectRelationInput,
@@ -2065,7 +2065,7 @@ async fn test_resolve_collection_planning_rejects_ambiguous_bare_name() {
     ((NewCollectionWithAssignee {
         name: child_name.clone(),
         description: "first ambiguous child".to_string(),
-        group_id: parent_one.owner_group.id,
+        group_id: GroupID::new(parent_one.owner_group.id).unwrap(),
         parent_collection_id: Some(CollectionID::new(parent_one.collection.id).unwrap()),
     })
     .save_without_events(&context.pool))
@@ -2074,7 +2074,7 @@ async fn test_resolve_collection_planning_rejects_ambiguous_bare_name() {
     ((NewCollectionWithAssignee {
         name: child_name.clone(),
         description: "second ambiguous child".to_string(),
-        group_id: parent_two.owner_group.id,
+        group_id: GroupID::new(parent_two.owner_group.id).unwrap(),
         parent_collection_id: Some(CollectionID::new(parent_two.collection.id).unwrap()),
     })
     .save_without_events(&context.pool))
@@ -2108,7 +2108,7 @@ async fn test_resolve_collection_planning_uses_path_to_disambiguate_name() {
     ((NewCollectionWithAssignee {
         name: child_name.clone(),
         description: "first path child".to_string(),
-        group_id: parent_one.owner_group.id,
+        group_id: GroupID::new(parent_one.owner_group.id).unwrap(),
         parent_collection_id: Some(CollectionID::new(parent_one.collection.id).unwrap()),
     })
     .save_without_events(&context.pool))
@@ -2117,7 +2117,7 @@ async fn test_resolve_collection_planning_uses_path_to_disambiguate_name() {
     let target_child = ((NewCollectionWithAssignee {
         name: child_name.clone(),
         description: "second path child".to_string(),
-        group_id: parent_two.owner_group.id,
+        group_id: GroupID::new(parent_two.owner_group.id).unwrap(),
         parent_collection_id: Some(CollectionID::new(parent_two.collection.id).unwrap()),
     })
     .save_without_events(&context.pool))

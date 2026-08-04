@@ -9,7 +9,7 @@ use crate::db::DbPool;
 use crate::db::traits::authz::AuthzSubject;
 use crate::db::traits::collection as collection_backend;
 use crate::errors::ApiError;
-use crate::models::group::Group;
+use crate::models::group::{Group, GroupID};
 use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::search::QueryOptions;
 use crate::models::traits::GroupAccessors;
@@ -75,7 +75,8 @@ impl UpdateCollection {
 pub struct NewCollectionWithAssignee {
     pub name: String,
     pub description: String,
-    pub group_id: i32,
+    #[schema(value_type = i32, minimum = 1)]
+    pub group_id: GroupID,
     pub parent_collection_id: Option<CollectionID>,
 }
 
@@ -107,7 +108,7 @@ fn new_collection_with_assignee_example() -> NewCollectionWithAssignee {
     NewCollectionWithAssignee {
         name: "global-assets".to_string(),
         description: "Shared assets and metadata".to_string(),
-        group_id: 1,
+        group_id: GroupID::new(1).expect("valid example group id"),
         parent_collection_id: None,
     }
 }
@@ -566,7 +567,7 @@ mod tests {
         let child = NewCollectionWithAssignee {
             name: scope.scoped_name("inherited_child"),
             description: "Child collection".to_string(),
-            group_id: child_group.id,
+            group_id: GroupID::new(child_group.id).unwrap(),
             parent_collection_id: Some(CollectionID::new(parent.collection.id).unwrap()),
         }
         .save_without_events(&pool)
@@ -674,7 +675,7 @@ mod tests {
         let child = NewCollectionWithAssignee {
             name: scope.scoped_name("move_child"),
             description: "Child collection".to_string(),
-            group_id: child_group.id,
+            group_id: GroupID::new(child_group.id).unwrap(),
             parent_collection_id: Some(CollectionID::new(parent.collection.id).unwrap()),
         }
         .save_without_events(&pool)
@@ -692,7 +693,7 @@ mod tests {
         let grandchild = NewCollectionWithAssignee {
             name: scope.scoped_name("move_grandchild"),
             description: "Grandchild collection".to_string(),
-            group_id: grandchild_group.id,
+            group_id: GroupID::new(grandchild_group.id).unwrap(),
             parent_collection_id: Some(CollectionID::new(child.id).unwrap()),
         }
         .save_without_events(&pool)

@@ -23028,7 +23028,8 @@
           },
           "group_id": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "minimum": 1
           },
           "name": {
             "type": "string"
@@ -23584,7 +23585,8 @@
           },
           "owner_group_id": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "minimum": 1
           }
         },
         "example": {

@@ -572,7 +572,8 @@ pub async fn create_test_service_account(
         identity_scope: None,
         name,
         description: Some("test service account".to_string()),
-        owner_group_id: owner_group.id,
+        owner_group_id: crate::models::GroupID::new(owner_group.id)
+            .expect("persisted owner group id should be positive"),
     }
     .save_without_events(pool, created_by)
     .await
@@ -810,7 +811,7 @@ async fn create_collection_for_group(
     NewCollectionWithAssignee {
         name: collection_name.to_string(),
         description: "Test collection".to_string(),
-        group_id,
+        group_id: crate::models::GroupID::new(group_id)?,
         parent_collection_id: None,
     }
     .save_without_events(pool)

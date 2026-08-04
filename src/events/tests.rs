@@ -1126,7 +1126,7 @@ async fn collection_writes_emit_lifecycle_events_in_transaction() {
     let collection = NewCollectionWithAssignee {
         name: collection_name.clone(),
         description: "before".to_string(),
-        group_id: fixture.owner_group.id,
+        group_id: GroupID::new(fixture.owner_group.id).unwrap(),
         parent_collection_id: None,
     }
     .save(&scope.pool, &context)

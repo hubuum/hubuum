@@ -1310,6 +1310,22 @@ mod tests {
     }
 
     #[test]
+    fn creation_assignee_group_ids_document_positive_minimum() {
+        let json = openapi_json();
+
+        for pointer in [
+            "/components/schemas/NewCollectionWithAssignee/properties/group_id/minimum",
+            "/components/schemas/NewServiceAccount/properties/owner_group_id/minimum",
+        ] {
+            assert_eq!(
+                json.pointer(pointer),
+                Some(&Value::from(1)),
+                "creation assignee group id should document its positive-ID invariant"
+            );
+        }
+    }
+
+    #[test]
     fn object_relation_limits_document_positive_nullable_fields() {
         let json = openapi_json();
         assert_eq!(

@@ -8,7 +8,7 @@ mod tests {
     use crate::db::with_connection;
     use crate::models::search::{DataType, SearchOperator};
     use crate::models::{
-        Collection, HubuumClass, HubuumClassExpanded, HubuumObject, HubuumObjectWithPath,
+        Collection, GroupID, HubuumClass, HubuumClassExpanded, HubuumObject, HubuumObjectWithPath,
         NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
         NewHubuumObjectRelation,
     };
@@ -612,7 +612,7 @@ mod tests {
         let collection_z = NewCollectionWithAssignee {
             name: "querying_sort_description_collection_z".to_string(),
             description: "querying-sort-description-z".to_string(),
-            group_id: admin_group.id,
+            group_id: GroupID::new(admin_group.id).unwrap(),
             parent_collection_id: None,
         }
         .save_without_events(&context.pool)
@@ -621,7 +621,7 @@ mod tests {
         let collection_a = NewCollectionWithAssignee {
             name: "querying_sort_description_collection_a".to_string(),
             description: "querying-sort-description-a".to_string(),
-            group_id: admin_group.id,
+            group_id: GroupID::new(admin_group.id).unwrap(),
             parent_collection_id: None,
         }
         .save_without_events(&context.pool)
@@ -630,7 +630,7 @@ mod tests {
         let collection_m = NewCollectionWithAssignee {
             name: "querying_sort_description_collection_m".to_string(),
             description: "querying-sort-description-m".to_string(),
-            group_id: admin_group.id,
+            group_id: GroupID::new(admin_group.id).unwrap(),
             parent_collection_id: None,
         }
         .save_without_events(&context.pool)
@@ -805,7 +805,7 @@ mod tests {
         let collection_z = NewCollectionWithAssignee {
             name: "descending_sort_z".to_string(),
             description: "z-description".to_string(),
-            group_id: admin_group.id,
+            group_id: GroupID::new(admin_group.id).unwrap(),
             parent_collection_id: None,
         }
         .save_without_events(&context.pool)
@@ -814,7 +814,7 @@ mod tests {
         let collection_a = NewCollectionWithAssignee {
             name: "descending_sort_a".to_string(),
             description: "a-description".to_string(),
-            group_id: admin_group.id,
+            group_id: GroupID::new(admin_group.id).unwrap(),
             parent_collection_id: None,
         }
         .save_without_events(&context.pool)
@@ -823,7 +823,7 @@ mod tests {
         let collection_m = NewCollectionWithAssignee {
             name: "descending_sort_m".to_string(),
             description: "m-description".to_string(),
-            group_id: admin_group.id,
+            group_id: GroupID::new(admin_group.id).unwrap(),
             parent_collection_id: None,
         }
         .save_without_events(&context.pool)

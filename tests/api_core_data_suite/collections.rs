@@ -119,7 +119,7 @@ mod tests {
         let content = NewCollectionWithAssignee {
             name: "test_collection_create".to_string(),
             description: "test collection create description".to_string(),
-            group_id: admin_group.id,
+            group_id: GroupID::new(admin_group.id).unwrap(),
             parent_collection_id: None,
         };
 
@@ -198,6 +198,29 @@ mod tests {
         let _ = assert_response_status(resp, http::StatusCode::NOT_FOUND).await;
     }
 
+    #[rstest]
+    #[actix_web::test]
+    async fn collection_creation_rejects_a_non_positive_assignee_group_id(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let request = serde_json::json!({
+            "name": context.scoped_name("invalid_assignee"),
+            "description": "invalid assignee",
+            "group_id": 0
+        });
+
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            COLLECTION_ENDPOINT,
+            &request,
+        )
+        .await;
+
+        assert_response_status(response, http::StatusCode::BAD_REQUEST).await;
+    }
+
     // Invalid collection ids are refused during path extraction (`CollectionID`'s validating
     // `Deserialize` plus the `PathConfig` error handler), so the request is rejected at the edge
     // with a `400` rather than surfacing as a confusing lookup miss further in. Covers
@@ -274,7 +297,7 @@ mod tests {
         let content = NewCollectionWithAssignee {
             name: "test_collection_permissions".to_string(),
             description: "test collection permissions description".to_string(),
-            group_id: admin_group.id,
+            group_id: GroupID::new(admin_group.id).unwrap(),
             parent_collection_id: None,
         };
 

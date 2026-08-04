@@ -82,7 +82,8 @@ pub async fn create_service_account(
     // Create authz: admin may create for any group; a non-admin human may create
     // only for a group they already belong to.
     if !requestor.user.is_admin(&pool).await?
-        && !is_human_owner_group_member(&pool, requestor.user.id, new_sa.owner_group_id).await?
+        && !is_human_owner_group_member(&pool, requestor.user.id, new_sa.owner_group_id.id())
+            .await?
     {
         return Err(ApiError::Forbidden(
             "May only create a service account owned by a group you belong to".to_string(),
@@ -93,7 +94,7 @@ pub async fn create_service_account(
         message = "Service account create requested",
         requestor = requestor.user.id,
         name = new_sa.name.as_str(),
-        owner_group_id = new_sa.owner_group_id
+        owner_group_id = new_sa.owner_group_id.id()
     );
 
     let event_context = requestor.event_context(&req);

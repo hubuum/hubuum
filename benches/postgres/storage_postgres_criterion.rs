@@ -6,7 +6,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use hubuum::db::{DbPool, ensure_database_schema_ready, init_pool_with_statement_timeout};
 use hubuum::events::EventContext;
 use hubuum::models::{
-    Collection, CollectionID, Group, NewCollectionWithAssignee, NewGroup, collection_ancestors,
+    Collection, CollectionID, Group, GroupID, NewCollectionWithAssignee, NewGroup,
+    collection_ancestors,
 };
 use hubuum::traits::{CanDelete, CanSave, CollectionAccessors};
 use tokio::runtime::{Builder, Runtime};
@@ -62,7 +63,8 @@ impl StorageFixture {
                 NewCollectionWithAssignee {
                     name: unique_name("storage-bench-collection"),
                     description: "PostgreSQL storage point-read benchmark".to_string(),
-                    group_id: owner_group.id,
+                    group_id: GroupID::new(owner_group.id)
+                        .expect("persisted owner group id should be positive"),
                     parent_collection_id: None,
                 }
                 .save_without_events(&pool),
@@ -77,7 +79,8 @@ impl StorageFixture {
                     NewCollectionWithAssignee {
                         name: unique_name(&format!("storage-bench-depth-{depth}")),
                         description: format!("PostgreSQL storage ancestor level {depth}"),
-                        group_id: owner_group.id,
+                        group_id: GroupID::new(owner_group.id)
+                            .expect("persisted owner group id should be positive"),
                         parent_collection_id: Some(
                             CollectionID::new(parent_id).expect("valid parent id"),
                         ),
@@ -170,7 +173,8 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
                 let command = NewCollectionWithAssignee {
                     name: unique_name("storage-bench-create"),
                     description: "PostgreSQL storage create benchmark".to_string(),
-                    group_id: fixture.owner_group.id,
+                    group_id: GroupID::new(fixture.owner_group.id)
+                        .expect("persisted owner group id should be positive"),
                     parent_collection_id: Some(point_read_id),
                 };
                 let started = Instant::now();
