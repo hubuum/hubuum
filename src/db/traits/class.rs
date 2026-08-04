@@ -353,32 +353,27 @@ pub(crate) async fn lock_resolved_class_target(
 
     let resolved = target.class();
     let locked = match target.selector().kind() {
-        ClassSelectorKind::ById(class_id) => {
-            hubuumclass
-                .filter(id.eq(class_id.id()))
-                .filter(id.eq(resolved.id))
-                .filter(name.eq(&resolved.name))
-                .filter(collection_id.eq(resolved.collection_id))
-                .for_update()
-                .first::<HubuumClass>(conn)
-                .await?
-        }
-        ClassSelectorKind::ByName(class_name) => {
-            hubuumclass
-                .filter(id.eq(resolved.id))
-                .filter(name.eq(class_name))
-                .filter(collection_id.eq(resolved.collection_id))
-                .for_update()
-                .first::<HubuumClass>(conn)
-                .await?
-        }
+        ClassSelectorKind::ById(class_id) => hubuumclass
+            .filter(id.eq(class_id.id()))
+            .filter(id.eq(resolved.id))
+            .filter(name.eq(&resolved.name))
+            .filter(collection_id.eq(resolved.collection_id))
+            .for_update()
+            .first::<HubuumClass>(conn)
+            .await
+            .optional()?,
+        ClassSelectorKind::ByName(class_name) => hubuumclass
+            .filter(id.eq(resolved.id))
+            .filter(name.eq(class_name))
+            .filter(collection_id.eq(resolved.collection_id))
+            .for_update()
+            .first::<HubuumClass>(conn)
+            .await
+            .optional()?,
     };
-    crate::db::assert_locked_revision_precondition(
-        conn,
-        &format!("hubuumclass:{}", locked.id),
-        locked.revision,
-    )
-    .await?;
+    let owner_key = format!("hubuumclass:{}", resolved.id);
+    let locked = crate::db::require_existing_revision_target(locked, &owner_key)?;
+    crate::db::assert_locked_revision_precondition(conn, &owner_key, locked.revision).await?;
     Ok(locked)
 }
 

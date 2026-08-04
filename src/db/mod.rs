@@ -512,8 +512,9 @@ pub(crate) async fn assert_locked_revision_precondition(
 
 /// Reject a conditional mutation when the authoritative row disappeared
 /// before it could be locked. `If-Match` (including `*`) requires the selected
-/// resource to still exist; an unconditional mutation may create it.
-pub(crate) fn assert_revision_precondition_allows_insert(
+/// resource to still exist; unconditional callers retain their ordinary
+/// missing-target behavior.
+pub(crate) fn assert_revision_precondition_allows_missing_target(
     owner_key: &str,
 ) -> Result<(), crate::errors::ApiError> {
     if ambient_revision_precondition()
@@ -526,6 +527,23 @@ pub(crate) fn assert_revision_precondition_allows_insert(
         ));
     }
     Ok(())
+}
+
+/// Require an authoritative row that was resolved before entering the
+/// mutation transaction. If a matching conditional request lost the row
+/// before it could be locked, report a stale resource instead of an ordinary
+/// not-found response.
+pub(crate) fn require_existing_revision_target<T>(
+    target: Option<T>,
+    owner_key: &str,
+) -> Result<T, crate::errors::ApiError> {
+    match target {
+        Some(target) => Ok(target),
+        None => {
+            assert_revision_precondition_allows_missing_target(owner_key)?;
+            Err(diesel::result::Error::NotFound.into())
+        }
+    }
 }
 
 /// Apply transaction-local provenance settings consumed by history triggers.

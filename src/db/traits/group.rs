@@ -81,7 +81,7 @@ async fn insert_effective_membership(
         return Ok((membership, false));
     }
 
-    crate::db::assert_revision_precondition_allows_insert(&owner_key)?;
+    crate::db::assert_revision_precondition_allows_missing_target(&owner_key)?;
 
     let inserted = diesel::insert_into(group_memberships)
         .values((
@@ -140,10 +140,24 @@ async fn remove_manual_membership_source(
     conn: &mut DbConnection,
     principal: i32,
     group: i32,
-) -> Result<bool, ApiError> {
+) -> Result<(Option<PrincipalGroup>, bool), ApiError> {
     use crate::schema::{group_membership_sources, group_memberships};
 
     ensure_group_allows_local_write(conn, group).await?;
+    let owner_key = format!("group_memberships:{principal}:{group}");
+    let membership = group_memberships::table
+        .filter(group_memberships::principal_id.eq(principal))
+        .filter(group_memberships::group_id.eq(group))
+        .for_update()
+        .first::<PrincipalGroup>(conn)
+        .await
+        .optional()?;
+    let Some(membership) = membership else {
+        crate::db::assert_revision_precondition_allows_missing_target(&owner_key)?;
+        return Ok((None, false));
+    };
+    crate::db::assert_locked_revision_precondition(conn, &owner_key, membership.revision).await?;
+
     let local_scope_id = identity_scope_id_by_name_conn(conn, LOCAL_IDENTITY_SCOPE).await?;
     diesel::delete(
         group_membership_sources::table
@@ -170,9 +184,9 @@ async fn remove_manual_membership_source(
         )
         .execute(conn)
         .await?;
-        return Ok(deleted > 0);
+        return Ok((Some(membership), deleted > 0));
     }
-    Ok(false)
+    Ok((Some(membership), false))
 }
 
 async fn ensure_group_allows_local_write(
@@ -745,10 +759,7 @@ impl GroupMembersBackend for Group {
         };
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let membership = load_principal_group(conn, member_principal_id, self.id)
-                .await
-                .optional()?;
-            let removed_effective =
+            let (membership, removed_effective) =
                 remove_manual_membership_source(conn, member_principal_id, self.id).await?;
 
             if let Some(membership) = membership.filter(|_| removed_effective) {

@@ -80,6 +80,25 @@ async fn validate_collection_can_be_deleted(
     Ok(())
 }
 
+async fn lock_collection_for_delete(
+    conn: &mut crate::db::DbConnection,
+    collection_id: i32,
+) -> Result<Collection, ApiError> {
+    use crate::schema::collections::dsl::{collections, id};
+
+    let owner_key = format!("collections:{collection_id}");
+    let collection = collections
+        .filter(id.eq(collection_id))
+        .for_update()
+        .first::<Collection>(conn)
+        .await
+        .optional()?;
+    let collection = crate::db::require_existing_revision_target(collection, &owner_key)?;
+    crate::db::assert_locked_revision_precondition(conn, &owner_key, collection.revision).await?;
+    validate_collection_can_be_deleted(conn, collection.id).await?;
+    Ok(collection)
+}
+
 pub(crate) async fn insert_collection_closure_rows(
     conn: &mut crate::db::DbConnection,
     target_collection_id: i32,
@@ -279,9 +298,9 @@ impl DeleteCollectionRecord for Collection {
     async fn delete_collection_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::collections::dsl::{collections, id};
 
-        with_connection(pool, async |conn| -> Result<_, ApiError> {
-            validate_collection_can_be_deleted(conn, self.id).await?;
-            Ok(diesel::delete(collections.filter(id.eq(self.id)))
+        with_transaction(pool, async |conn| -> Result<_, ApiError> {
+            let collection = lock_collection_for_delete(conn, self.id).await?;
+            Ok(diesel::delete(collections.filter(id.eq(collection.id)))
                 .execute(conn)
                 .await?)
         })
@@ -301,13 +320,8 @@ impl DeleteCollectionRecord for Collection {
         use crate::schema::collections::dsl::{collections, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let before = collections
-                .filter(id.eq(self.id))
-                .for_update()
-                .first::<Collection>(conn)
-                .await?;
-            validate_collection_can_be_deleted(conn, before.id).await?;
-            diesel::delete(collections.filter(id.eq(self.id)))
+            let before = lock_collection_for_delete(conn, self.id).await?;
+            diesel::delete(collections.filter(id.eq(before.id)))
                 .execute(conn)
                 .await?;
             let event = collection_event(
@@ -328,9 +342,9 @@ impl DeleteCollectionRecord for CollectionID {
     async fn delete_collection_record_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
         use crate::schema::collections::dsl::{collections, id};
 
-        with_connection(pool, async |conn| -> Result<_, ApiError> {
-            validate_collection_can_be_deleted(conn, self.id()).await?;
-            Ok(diesel::delete(collections.filter(id.eq(self.id())))
+        with_transaction(pool, async |conn| -> Result<_, ApiError> {
+            let collection = lock_collection_for_delete(conn, self.id()).await?;
+            Ok(diesel::delete(collections.filter(id.eq(collection.id)))
                 .execute(conn)
                 .await?)
         })
@@ -350,12 +364,7 @@ impl DeleteCollectionRecord for CollectionID {
         use crate::schema::collections::dsl::{collections, id};
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let collection = collections
-                .filter(id.eq(self.id()))
-                .for_update()
-                .first::<Collection>(conn)
-                .await?;
-            validate_collection_can_be_deleted(conn, collection.id).await?;
+            let collection = lock_collection_for_delete(conn, self.id()).await?;
             diesel::delete(collections.filter(id.eq(collection.id)))
                 .execute(conn)
                 .await?;
@@ -430,17 +439,16 @@ impl UpdateCollectionRecord for UpdateCollection {
         use crate::schema::collections::dsl::{collections, id};
 
         with_transaction(pool, async |conn| -> Result<Collection, ApiError> {
+            let owner_key = format!("collections:{collection_id}");
             let before = collections
                 .filter(id.eq(collection_id))
                 .for_update()
                 .first::<Collection>(conn)
+                .await
+                .optional()?;
+            let before = crate::db::require_existing_revision_target(before, &owner_key)?;
+            crate::db::assert_locked_revision_precondition(conn, &owner_key, before.revision)
                 .await?;
-            crate::db::assert_locked_revision_precondition(
-                conn,
-                &format!("collections:{}", before.id),
-                before.revision,
-            )
-            .await?;
             if !self.has_changes(&before) {
                 return Ok(before);
             }

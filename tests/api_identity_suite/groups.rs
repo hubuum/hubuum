@@ -650,6 +650,65 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn stale_membership_delete_rejects_an_absent_manual_source(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let group = create_test_group(&context.pool).await;
+        let user = create_test_user(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &user)
+            .await
+            .unwrap();
+        let scope = crate::db::traits::identity::identity_scope_by_name(
+            &context.pool,
+            crate::models::LOCAL_IDENTITY_SCOPE,
+        )
+        .await
+        .unwrap();
+        with_connection(&context.pool, async |conn| {
+            use crate::schema::group_membership_sources;
+            diesel::insert_into(group_membership_sources::table)
+                .values((
+                    group_membership_sources::principal_id.eq(user.id),
+                    group_membership_sources::group_id.eq(group.id),
+                    group_membership_sources::source.eq(crate::models::EXTERNAL_MEMBERSHIP_SOURCE),
+                    group_membership_sources::source_scope_id.eq(scope.id),
+                    group_membership_sources::source_key.eq("surviving-stale-source"),
+                ))
+                .execute(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        let before =
+            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
+        let stale_tag = before.entity_tag().unwrap();
+        let precondition = IfMatchCondition::Tags(vec![stale_tag.clone()])
+            .database_precondition(&stale_tag)
+            .unwrap();
+
+        group
+            .remove_member_without_events(&user, &context.pool)
+            .await
+            .unwrap();
+        let error = with_revision_precondition_scope(
+            precondition,
+            group.remove_member_without_events(&user, &context.pool),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::errors::ApiError::PreconditionFailed(_, _)
+        ));
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn tagged_group_points_exclude_revision_exempt_sync_bookkeeping(
         #[future(awt)] test_context: TestContext,
     ) {

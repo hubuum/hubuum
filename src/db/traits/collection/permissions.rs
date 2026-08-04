@@ -484,12 +484,12 @@ pub async fn groups_can_on_paginated_with_total_count_from_backend(
         ancestor_collection_id, collection_closure, descendant_collection_id,
     };
     use crate::schema::groups::dsl::{
-        created_at, description, groupname, groups, id as group_table_id, updated_at,
+        created_at, description, groupname, groups, id as group_table_id, revision, updated_at,
     };
     use crate::schema::permissions::dsl::{
         collection_id as permission_collection_id, group_id, permissions,
     };
-    use crate::{date_search, numeric_search, string_search};
+    use crate::{date_search, numeric_search, revision_search, string_search};
 
     let build_query = || -> Result<_, ApiError> {
         let base_query = permissions.into_boxed();
@@ -520,6 +520,7 @@ pub async fn groups_can_on_paginated_with_total_count_from_backend(
                 FilterField::Description => string_search!(query, param, operator, description),
                 FilterField::CreatedAt => date_search!(query, param, operator, created_at),
                 FilterField::UpdatedAt => date_search!(query, param, operator, updated_at),
+                FilterField::Revision => revision_search!(query, param, operator, revision),
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for groups",

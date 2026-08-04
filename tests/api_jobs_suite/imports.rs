@@ -11,15 +11,16 @@ mod tests {
 
     use crate::db::{DbPool, with_connection};
     use crate::models::{
-        CURRENT_IMPORT_VERSION, CollectionKey, GroupID, GroupKey, HubuumClassRelation,
-        IdentityScopeKey, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
-        ImportCollectionInput, ImportCollectionPermissionInput, ImportCollisionPolicy,
+        CURRENT_IMPORT_VERSION, ClassKey, CollectionKey, ComputedResultType, GroupID, GroupKey,
+        HubuumClass, HubuumClassRelation, IdentityScopeKey, ImportAtomicity, ImportClassInput,
+        ImportClassRelationInput, ImportCollectionInput, ImportCollectionPermissionInput,
+        ImportCollisionPolicy, ImportComputedFieldInput, ImportComputedFieldVisibility,
         ImportEventSubscriptionInput, ImportGraph, ImportGroupInput, ImportGroupMembershipInput,
         ImportIdentityScopeInput, ImportMode, ImportObjectInput, ImportObjectRelationInput,
         ImportPermissionPolicy, ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest,
-        ImportTaskResultResponse, ImportWriteCondition, NewTaskRecord, ObjectRelationLimit,
-        Permissions, ResourceRevision, RestoreTimestamps, TaskEventResponse, TaskKind,
-        TaskResponse, TaskStatus,
+        ImportTaskResultResponse, ImportWriteCondition, NewHubuumClass, NewTaskRecord,
+        ObjectRelationLimit, Permissions, ResourceRevision, RestoreTimestamps, TaskEventResponse,
+        TaskKind, TaskResponse, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::schema::collections::dsl::{
@@ -285,6 +286,53 @@ mod tests {
                     timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
+                }],
+                ..ImportGraph::default()
+            },
+        }
+    }
+
+    fn shared_computed_field_import_request(
+        class: &HubuumClass,
+        collection_name: &str,
+        key: &str,
+        label: &str,
+        dry_run: bool,
+    ) -> ImportRequest {
+        ImportRequest {
+            version: CURRENT_IMPORT_VERSION,
+            dry_run: Some(dry_run),
+            mode: Some(ImportMode {
+                atomicity: Some(ImportAtomicity::Strict),
+                collision_policy: Some(ImportCollisionPolicy::Overwrite),
+                permission_policy: Some(ImportPermissionPolicy::Abort),
+            }),
+            graph: ImportGraph {
+                computed_fields: vec![ImportComputedFieldInput {
+                    ref_: Some("computed-field:shared".to_string()),
+                    class_ref: None,
+                    class_key: Some(ClassKey {
+                        name: class.name.clone(),
+                        collection_ref: None,
+                        collection_key: Some(CollectionKey {
+                            name: collection_name.to_string(),
+                            path: None,
+                        }),
+                    }),
+                    visibility: ImportComputedFieldVisibility::Shared,
+                    owner_ref: None,
+                    owner_key: None,
+                    key: key.to_string(),
+                    label: label.to_string(),
+                    description: String::new(),
+                    operation: serde_json::json!({
+                        "type": "first_non_null",
+                        "paths": ["/name"]
+                    }),
+                    result_type: ComputedResultType::String,
+                    enabled: true,
+                    condition: Some(ImportWriteCondition::Overwrite),
+                    timestamps: None,
                 }],
                 ..ImportGraph::default()
             },
@@ -1482,6 +1530,151 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(description, updated_description);
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn shared_computed_field_import_overwrites_the_null_owner_scope(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let fixture = context
+            .class_fixture(
+                "shared_computed_import_overwrite",
+                vec![NewHubuumClass {
+                    name: context.scoped_name("shared_computed_import_class"),
+                    collection_id: 0,
+                    json_schema: None,
+                    validate_schema: Some(false),
+                    description: "Shared computed import class".to_string(),
+                }],
+            )
+            .await
+            .unwrap();
+        let class = &fixture.classes[0];
+        let key = context.scoped_name("shared_computed_import_key");
+
+        for label in ["Original label", "Updated label"] {
+            let body = shared_computed_field_import_request(
+                class,
+                &fixture.collection.collection.name,
+                &key,
+                label,
+                false,
+            );
+            let response = post_request_with_headers(
+                &context.pool,
+                &context.admin_token,
+                IMPORTS_ENDPOINT,
+                &body,
+                Vec::new(),
+            )
+            .await;
+            let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+            let task: TaskResponse = test::read_body_json(response).await;
+            wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        }
+
+        let labels = with_connection(&context.pool, async |conn| {
+            use crate::schema::computed_field_definitions::dsl as definition;
+            definition::computed_field_definitions
+                .filter(definition::class_id.eq(class.id))
+                .filter(definition::owner_user_id.is_null())
+                .filter(definition::key.eq(&key))
+                .select(definition::label)
+                .load::<String>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(labels, vec!["Updated label".to_string()]);
+
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn dry_run_reports_a_shared_computed_field_revision(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let fixture = context
+            .class_fixture(
+                "shared_computed_import_dry_run",
+                vec![NewHubuumClass {
+                    name: context.scoped_name("shared_computed_dry_run_class"),
+                    collection_id: 0,
+                    json_schema: None,
+                    validate_schema: Some(false),
+                    description: "Shared computed dry-run class".to_string(),
+                }],
+            )
+            .await
+            .unwrap();
+        let class = &fixture.classes[0];
+        let key = context.scoped_name("shared_computed_dry_run_key");
+        let initial = shared_computed_field_import_request(
+            class,
+            &fixture.collection.collection.name,
+            &key,
+            "Original label",
+            false,
+        );
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &initial,
+            Vec::new(),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(response).await;
+        wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        let revision = with_connection(&context.pool, async |conn| {
+            use crate::schema::computed_field_definitions::dsl as definition;
+            definition::computed_field_definitions
+                .filter(definition::class_id.eq(class.id))
+                .filter(definition::owner_user_id.is_null())
+                .filter(definition::key.eq(&key))
+                .select(definition::revision)
+                .first::<ResourceRevision>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        let dry_run = shared_computed_field_import_request(
+            class,
+            &fixture.collection.collection.name,
+            &key,
+            "Dry-run label",
+            true,
+        );
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &dry_run,
+            Vec::new(),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(response).await;
+        wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/imports/{}/results", task.id),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let results: Vec<ImportTaskResultResponse> = test::read_body_json(response).await;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].observed_revision, Some(revision));
+
+        fixture.cleanup().await.unwrap();
     }
 
     #[rstest]

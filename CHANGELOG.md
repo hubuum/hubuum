@@ -229,6 +229,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Conditional collection, class, object, and membership mutations now return
+  `412 Precondition Failed` when their selected target vanishes, changes before
+  delete validation, or produces a membership-source no-op.
+- Import v2 now matches shared computed fields with their null owner, reports
+  vanished `if_revision` execution targets as `stale_revision`, and exposes
+  observed shared-field revisions during dry runs. Permission-scoped group
+  lists now honor the documented `revision` filter.
 - In-memory cursor pagination now computes every row's sort values before
   ordering and extracts each value once, so failures cannot silently leave rows
   unordered and fallible work is not repeated inside the sort comparator.

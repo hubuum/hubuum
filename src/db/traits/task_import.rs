@@ -50,6 +50,19 @@ fn assert_import_create_condition(condition: Option<ImportWriteCondition>) -> Re
     Ok(())
 }
 
+fn require_existing_import_target<T>(
+    target: Option<T>,
+    condition: Option<ImportWriteCondition>,
+) -> Result<T, ApiError> {
+    match target {
+        Some(target) => Ok(target),
+        None => {
+            assert_import_create_condition(condition)?;
+            Err(diesel::result::Error::NotFound.into())
+        }
+    }
+}
+
 pub async fn lookup_collections_by_name(
     pool: &DbPool,
     value: &str,
@@ -463,7 +476,9 @@ pub async fn update_collection_db(
         .select(crate::schema::collections::revision)
         .for_update()
         .first::<ResourceRevision>(conn)
-        .await?;
+        .await
+        .optional()?;
+    let current_revision = require_existing_import_target(current_revision, input.condition)?;
     assert_import_revision(input.condition, current_revision)?;
 
     let update = UpdateCollection {
@@ -559,7 +574,9 @@ pub async fn update_class_db(
         .select(crate::schema::hubuumclass::revision)
         .for_update()
         .first::<ResourceRevision>(conn)
-        .await?;
+        .await
+        .optional()?;
+    let current_revision = require_existing_import_target(current_revision, input.condition)?;
     assert_import_revision(input.condition, current_revision)?;
 
     let update = UpdateHubuumClass {
@@ -650,7 +667,9 @@ pub async fn update_object_db(
         .select(crate::schema::hubuumobject::revision)
         .for_update()
         .first::<ResourceRevision>(conn)
-        .await?;
+        .await
+        .optional()?;
+    let current_revision = require_existing_import_target(current_revision, input.condition)?;
     assert_import_revision(input.condition, current_revision)?;
 
     let update = UpdateHubuumObject {
@@ -1253,7 +1272,7 @@ pub async fn upsert_computed_field_db(
         .filter(d::class_id.eq(class_id_value))
         .filter(d::visibility.eq(visibility))
         .filter(d::key.eq(&input.key))
-        .filter(d::owner_user_id.eq(owner_id_value))
+        .filter(d::owner_user_id.is_not_distinct_from(owner_id_value))
         .for_update()
         .select(crate::models::ComputedFieldDefinition::as_select())
         .first(conn)
@@ -1783,7 +1802,9 @@ pub async fn check_class_relation_import_condition_db(
         .select(revision)
         .for_update()
         .first::<ResourceRevision>(conn)
-        .await?;
+        .await
+        .optional()?;
+    let current_revision = require_existing_import_target(current_revision, condition)?;
     assert_import_revision(condition, current_revision)
 }
 
@@ -1890,7 +1911,9 @@ pub async fn check_object_relation_import_condition_db(
         .select(revision)
         .for_update()
         .first::<ResourceRevision>(conn)
-        .await?;
+        .await
+        .optional()?;
+    let current_revision = require_existing_import_target(current_revision, condition)?;
     assert_import_revision(condition, current_revision)
 }
 
@@ -1912,7 +1935,9 @@ pub async fn apply_permissions_db(
         .select(crate::schema::collection_authorization_state::revision)
         .for_update()
         .first::<ResourceRevision>(conn)
-        .await?;
+        .await
+        .optional()?;
+    let authorization_revision = require_existing_import_target(authorization_revision, condition)?;
     assert_import_revision(condition, authorization_revision)?;
 
     let existing = permissions_table
@@ -2096,6 +2121,23 @@ mod tests {
     use crate::db::traits::identity::ensure_identity_scope;
     use crate::models::{GroupKey, LDAP_PROVIDER_KIND, NewGroup};
     use crate::tests::TestScope;
+
+    #[test]
+    fn conditional_import_reports_a_missing_execution_target_as_stale() {
+        let error = require_existing_import_target::<()>(
+            None,
+            Some(ImportWriteCondition::IfRevision {
+                expected_revision: ResourceRevision::INITIAL,
+            }),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ApiError::PreconditionFailed(message, _)
+                if message == CONDITIONAL_IMPORT_TARGET_MISSING
+        ));
+    }
 
     #[actix_rt::test]
     async fn group_lookup_disambiguates_identity_scopes() {

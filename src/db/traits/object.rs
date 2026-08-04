@@ -664,72 +664,67 @@ async fn lock_resolved_object_target(
 
     let resolved_class = target.class();
     let resolved = target.object();
+    let owner_key = format!("hubuumobject:{}", resolved.id);
     acquire_object_write_class_advisory_lock(conn, resolved_class.id).await?;
     let locked_class = match target.selector().kind() {
         ObjectSelectorKind::ById {
             class_id,
             object_id: _,
-        } => {
-            class::hubuumclass
-                .filter(class::id.eq(class_id.id()))
-                .filter(class::id.eq(resolved_class.id))
-                .filter(class::name.eq(&resolved_class.name))
-                .filter(class::collection_id.eq(resolved_class.collection_id))
-                .for_update()
-                .first::<HubuumClass>(conn)
-                .await?
-        }
+        } => class::hubuumclass
+            .filter(class::id.eq(class_id.id()))
+            .filter(class::id.eq(resolved_class.id))
+            .filter(class::name.eq(&resolved_class.name))
+            .filter(class::collection_id.eq(resolved_class.collection_id))
+            .for_update()
+            .first::<HubuumClass>(conn)
+            .await
+            .optional()?,
         ObjectSelectorKind::ByName {
             class_name,
             object_name: _,
-        } => {
-            class::hubuumclass
-                .filter(class::id.eq(resolved_class.id))
-                .filter(class::name.eq(class_name))
-                .filter(class::collection_id.eq(resolved_class.collection_id))
-                .for_update()
-                .first::<HubuumClass>(conn)
-                .await?
-        }
+        } => class::hubuumclass
+            .filter(class::id.eq(resolved_class.id))
+            .filter(class::name.eq(class_name))
+            .filter(class::collection_id.eq(resolved_class.collection_id))
+            .for_update()
+            .first::<HubuumClass>(conn)
+            .await
+            .optional()?,
     };
+    let locked_class = crate::db::require_existing_revision_target(locked_class, &owner_key)?;
 
     let locked_object = match target.selector().kind() {
         ObjectSelectorKind::ById {
             class_id,
             object_id,
-        } => {
-            object::hubuumobject
-                .filter(object::id.eq(object_id.id()))
-                .filter(object::id.eq(resolved.id))
-                .filter(object::name.eq(&resolved.name))
-                .filter(object::collection_id.eq(resolved.collection_id))
-                .filter(object::hubuum_class_id.eq(class_id.id()))
-                .filter(object::hubuum_class_id.eq(resolved.hubuum_class_id))
-                .for_update()
-                .first::<HubuumObject>(conn)
-                .await?
-        }
+        } => object::hubuumobject
+            .filter(object::id.eq(object_id.id()))
+            .filter(object::id.eq(resolved.id))
+            .filter(object::name.eq(&resolved.name))
+            .filter(object::collection_id.eq(resolved.collection_id))
+            .filter(object::hubuum_class_id.eq(class_id.id()))
+            .filter(object::hubuum_class_id.eq(resolved.hubuum_class_id))
+            .for_update()
+            .first::<HubuumObject>(conn)
+            .await
+            .optional()?,
         ObjectSelectorKind::ByName {
             class_name: _,
             object_name,
-        } => {
-            object::hubuumobject
-                .filter(object::id.eq(resolved.id))
-                .filter(object::hubuum_class_id.eq(resolved.hubuum_class_id))
-                .filter(object::collection_id.eq(resolved.collection_id))
-                .filter(object::name.eq(object_name))
-                .for_update()
-                .first::<HubuumObject>(conn)
-                .await?
-        }
+        } => object::hubuumobject
+            .filter(object::id.eq(resolved.id))
+            .filter(object::hubuum_class_id.eq(resolved.hubuum_class_id))
+            .filter(object::collection_id.eq(resolved.collection_id))
+            .filter(object::name.eq(object_name))
+            .for_update()
+            .first::<HubuumObject>(conn)
+            .await
+            .optional()?,
     };
+    let locked_object = crate::db::require_existing_revision_target(locked_object, &owner_key)?;
 
-    crate::db::assert_locked_revision_precondition(
-        conn,
-        &format!("hubuumobject:{}", locked_object.id),
-        locked_object.revision,
-    )
-    .await?;
+    crate::db::assert_locked_revision_precondition(conn, &owner_key, locked_object.revision)
+        .await?;
 
     Ok((locked_class, locked_object))
 }
