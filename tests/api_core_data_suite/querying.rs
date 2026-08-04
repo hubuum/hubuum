@@ -5,7 +5,7 @@ mod tests {
     use chrono::{NaiveDate, NaiveDateTime};
     use rstest::rstest;
 
-    use crate::db::with_connection;
+    use crate::db::with_transaction;
     use crate::models::search::{DataType, SearchOperator};
     use crate::models::{
         Collection, GroupID, HubuumClass, HubuumClassExpanded, HubuumObject, HubuumObjectWithPath,
@@ -126,14 +126,18 @@ mod tests {
         object: &HubuumObject,
         created_at: NaiveDateTime,
     ) {
-        with_connection(&context.pool, async |conn| {
+        with_transaction(&context.pool, async |conn| {
+            diesel::sql_query("SELECT set_config('hubuum.restore_revisions', 'on', true)")
+                .execute(conn)
+                .await?;
             diesel::update(hubuumobject.filter(hubuumobject_id.eq(object.id)))
                 .set((
                     object_created_at.eq(created_at),
                     object_updated_at.eq(created_at),
                 ))
                 .execute(conn)
-                .await
+                .await?;
+            Ok::<(), diesel::result::Error>(())
         })
         .await
         .unwrap();

@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 use tracing::debug;
 
+use crate::api::etag::RevisionedResource;
 use crate::api::openapi::MessageResponse;
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
@@ -31,6 +32,7 @@ pub enum ApiResponse<T> {
     },
     Empty {
         status: StatusCode,
+        headers: Option<HashMap<String, String>>,
     },
     Created {
         data: T,
@@ -85,8 +87,58 @@ impl<T> ApiResponse<T> {
         Self::new(data, StatusCode::ACCEPTED)
     }
 
+    pub fn revisioned(data: T, status: StatusCode) -> Result<Self, ApiError>
+    where
+        T: RevisionedResource,
+    {
+        let etag = data.entity_tag()?;
+        Ok(Self::new_with_etag(data, status, etag))
+    }
+
+    pub fn new_with_resource_etag<R>(
+        data: T,
+        status: StatusCode,
+        resource: &R,
+    ) -> Result<Self, ApiError>
+    where
+        R: RevisionedResource,
+    {
+        Ok(Self::new_with_etag(data, status, resource.entity_tag()?))
+    }
+
+    pub fn new_with_etag(data: T, status: StatusCode, etag: impl ToString) -> Self {
+        Self::new_with_headers(data, status, etag_header(etag))
+    }
+
+    pub fn ok_revisioned(data: T) -> Result<Self, ApiError>
+    where
+        T: RevisionedResource,
+    {
+        Self::revisioned(data, StatusCode::OK)
+    }
+
+    pub fn accepted_revisioned(data: T) -> Result<Self, ApiError>
+    where
+        T: RevisionedResource,
+    {
+        Self::revisioned(data, StatusCode::ACCEPTED)
+    }
+
     pub fn created(data: T, location: ResponseLocation) -> Self {
         Self::Created { data, location }
+    }
+
+    pub fn created_revisioned(data: T, location: ResponseLocation) -> Result<Self, ApiError>
+    where
+        T: RevisionedResource,
+    {
+        let mut headers = location_header(location);
+        headers.insert(header::ETAG.to_string(), data.entity_tag()?.to_string());
+        Ok(Self::Json {
+            data,
+            status: StatusCode::CREATED,
+            headers: Some(headers),
+        })
     }
 
     pub fn accepted_at(data: T, location: ResponseLocation) -> Self {
@@ -179,12 +231,24 @@ impl ApiResponse<()> {
     pub fn no_content() -> Self {
         Self::Empty {
             status: StatusCode::NO_CONTENT,
+            headers: None,
+        }
+    }
+
+    pub fn no_content_with_etag(etag: impl ToString) -> Self {
+        Self::Empty {
+            status: StatusCode::NO_CONTENT,
+            headers: Some(etag_header(etag)),
         }
     }
 
     pub fn not_found_empty() -> Self {
         Self::new((), StatusCode::NOT_FOUND)
     }
+}
+
+fn etag_header(etag: impl ToString) -> HashMap<String, String> {
+    HashMap::from([(header::ETAG.to_string(), etag.to_string())])
 }
 
 impl ApiResponse<MessageResponse> {
@@ -213,7 +277,11 @@ impl<T: Serialize> Responder for ApiResponse<T> {
                     response_builder.json(data)
                 }
             }
-            Self::Empty { status } => HttpResponse::build(status).finish(),
+            Self::Empty { status, headers } => {
+                let mut response_builder = HttpResponse::build(status);
+                insert_headers(&mut response_builder, headers);
+                response_builder.finish()
+            }
             Self::Created { data, location } => HttpResponse::Created()
                 .insert_header((header::LOCATION, location.as_str()))
                 .json(data),

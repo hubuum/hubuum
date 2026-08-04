@@ -71,6 +71,7 @@ pub enum ApiError {
     PermissionBackendUnavailable(String),
     DatabaseError(String),
     Conflict(String),
+    PreconditionFailed(String, Option<String>),
     TooManyRequests(String),
     ServiceUnavailable(String),
     NotFound(String),
@@ -94,6 +95,7 @@ impl ApiError {
             ApiError::PayloadTooLarge(_) => "payload_too_large",
             ApiError::DatabaseError(_) => "database_error",
             ApiError::Conflict(_) => "conflict",
+            ApiError::PreconditionFailed(_, _) => "precondition_failed",
             ApiError::TooManyRequests(_) => "too_many_requests",
             ApiError::ServiceUnavailable(_) => "service_unavailable",
             ApiError::NotImplemented(_) => "not_implemented",
@@ -145,6 +147,7 @@ impl ApiError {
             | ApiError::UnsupportedMediaType(message)
             | ApiError::PayloadTooLarge(message)
             | ApiError::Conflict(message)
+            | ApiError::PreconditionFailed(message, _)
             | ApiError::TooManyRequests(message)
             | ApiError::NotFound(message)
             | ApiError::Gone(message)
@@ -164,6 +167,7 @@ impl fmt::Display for ApiError {
             ApiError::NotFound(message) => write!(f, "{message}"),
             ApiError::Gone(message) => write!(f, "{message}"),
             ApiError::Conflict(message) => write!(f, "{message}"),
+            ApiError::PreconditionFailed(message, _) => write!(f, "{message}"),
             ApiError::TooManyRequests(message) => write!(f, "{message}"),
             ApiError::ServiceUnavailable(message) => write!(f, "{message}"),
             ApiError::NotImplemented(message) => write!(f, "{message}"),
@@ -190,6 +194,19 @@ impl ResponseError for ApiError {
         match self {
             ApiError::Conflict(message) => {
                 HttpResponse::Conflict().json(json!({ "error": "Conflict", "message": message}))
+            }
+            ApiError::PreconditionFailed(message, current_etag) => {
+                metrics::revision_condition("stale");
+                let mut response = HttpResponse::PreconditionFailed();
+                if let Some(current_etag) = current_etag {
+                    response.insert_header((actix_web::http::header::ETAG, current_etag.as_str()));
+                }
+                response.json(json!({
+                    "error": "Precondition Failed",
+                    "reason": "stale_resource",
+                    "message": message,
+                    "guidance": "Refetch the canonical resource and retry with its current ETag"
+                }))
             }
             ApiError::TooManyRequests(message) => HttpResponse::TooManyRequests()
                 .json(json!({ "error": "Too Many Requests", "message": message })),
@@ -241,6 +258,7 @@ impl ResponseError for ApiError {
     fn status_code(&self) -> StatusCode {
         match self {
             ApiError::Conflict(_) => StatusCode::CONFLICT,
+            ApiError::PreconditionFailed(_, _) => StatusCode::PRECONDITION_FAILED,
             ApiError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
@@ -329,6 +347,19 @@ impl From<DieselError> for ApiError {
             }
             DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
                 let message = info.message();
+                if message == "hubuum_stale_resource" {
+                    debug!(message = "Conditional mutation rejected as stale");
+                    return ApiError::PreconditionFailed(
+                        "The resource changed since the supplied validator was issued".to_string(),
+                        None,
+                    );
+                }
+                if message.contains("resource revision")
+                    || message.contains("revision advancement")
+                    || message.contains("caller-supplied resource revision")
+                {
+                    metrics::revision_condition("invariant_failure");
+                }
                 if message.starts_with("Invalid object relation:") {
                     debug!(message = message, error = ?e);
                     return ApiError::BadRequest(message.to_string());

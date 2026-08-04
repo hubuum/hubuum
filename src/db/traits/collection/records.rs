@@ -11,6 +11,7 @@ fn collection_snapshot(collection: &Collection) -> serde_json::Value {
         "created_at": collection.created_at,
         "updated_at": collection.updated_at,
         "parent_collection_id": collection.parent_collection_id,
+        "revision": collection.revision,
     })
 }
 
@@ -434,6 +435,12 @@ impl UpdateCollectionRecord for UpdateCollection {
                 .for_update()
                 .first::<Collection>(conn)
                 .await?;
+            crate::db::assert_locked_revision_precondition(
+                conn,
+                &format!("collections:{}", before.id),
+                before.revision,
+            )
+            .await?;
             if !self.has_changes(&before) {
                 return Ok(before);
             }

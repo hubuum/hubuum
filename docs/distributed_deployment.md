@@ -93,6 +93,12 @@ replicas may remain online during the migration: the expanded schema derives
 task initiators from `submitted_by` and treats their legacy `hubuum.actor_id`
 session setting as direct-user attribution.
 
+For the resource-revision migration, stop old API and worker replicas before
+running the migration, then deploy the complete new replica set. This release
+changes authoritative write ordering and deliberately rejects backup v3 and
+import v1, so it is not a mixed-version rolling upgrade. Quiesce backup and
+restore operations until every replica is on the new version.
+
 The `api` and `worker` entrypoints wait until the database records the latest
 migration required by the binary. API `/readyz` performs the same schema check.
 This prevents a missed or incomplete migration job from making a replica appear

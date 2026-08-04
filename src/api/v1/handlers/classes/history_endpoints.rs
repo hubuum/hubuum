@@ -183,7 +183,10 @@ async fn get_class_as_of(
 
     let principal_names =
         resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
-    Ok(ApiResponse::ok(HistoryResponse::new(row, &principal_names)))
+    Ok(ApiResponse::new(
+        HistoryResponse::new(row, &principal_names),
+        StatusCode::OK,
+    ))
 }
 
 #[utoipa::path(
@@ -381,5 +384,8 @@ async fn get_object_as_of(
 
     let principal_names =
         resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
-    Ok(ApiResponse::ok(HistoryResponse::new(row, &principal_names)))
+    Ok(ApiResponse::new(
+        HistoryResponse::new(row, &principal_names),
+        StatusCode::OK,
+    ))
 }

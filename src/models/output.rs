@@ -3,7 +3,7 @@
 
 // A typical use is to combine the output of multiple models into a single response
 
-use crate::models::{Collection, Group, HubuumClass, Permission};
+use crate::models::{Collection, Group, HubuumClass, Permission, ResourceRevision};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -11,6 +11,19 @@ use utoipa::ToSchema;
 pub struct GroupPermission {
     pub group: Group,
     pub permission: Permission,
+}
+
+/// The revisioned, SQL-owned authorization state for a collection.
+///
+/// Individual permission rows are implementation details of this aggregate;
+/// callers condition mutations on the revision of the complete set.
+#[derive(Serialize, Deserialize, Clone, ToSchema)]
+pub struct CollectionPermissionSet {
+    pub collection_id: i32,
+    pub revision: ResourceRevision,
+    /// ACL rows contain stable group identifiers without embedding mutable
+    /// group representations that are outside this aggregate's revision.
+    pub permissions: Vec<Permission>,
 }
 
 #[derive(Serialize, Deserialize, Clone, ToSchema)]
@@ -33,6 +46,7 @@ pub struct HubuumClassExpanded {
     pub description: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 impl PartialEq<HubuumClass> for HubuumClassExpanded {
@@ -45,6 +59,7 @@ impl PartialEq<HubuumClass> for HubuumClassExpanded {
             && self.description == other.description
             && self.created_at == other.created_at
             && self.updated_at == other.updated_at
+            && self.revision == other.revision
     }
 }
 
@@ -58,5 +73,6 @@ impl PartialEq<HubuumClassExpanded> for HubuumClass {
             && self.description == other.description
             && self.created_at == other.created_at
             && self.updated_at == other.updated_at
+            && self.revision == other.revision
     }
 }

@@ -20,6 +20,7 @@ fn class_snapshot(class: &HubuumClass) -> serde_json::Value {
         "description": class.description,
         "created_at": class.created_at,
         "updated_at": class.updated_at,
+        "revision": class.revision,
     })
 }
 
@@ -351,23 +352,34 @@ pub(crate) async fn lock_resolved_class_target(
     use crate::schema::hubuumclass::dsl::{collection_id, hubuumclass, id, name};
 
     let resolved = target.class();
-    match target.selector().kind() {
-        ClassSelectorKind::ById(class_id) => Ok(hubuumclass
-            .filter(id.eq(class_id.id()))
-            .filter(id.eq(resolved.id))
-            .filter(name.eq(&resolved.name))
-            .filter(collection_id.eq(resolved.collection_id))
-            .for_update()
-            .first::<HubuumClass>(conn)
-            .await?),
-        ClassSelectorKind::ByName(class_name) => Ok(hubuumclass
-            .filter(id.eq(resolved.id))
-            .filter(name.eq(class_name))
-            .filter(collection_id.eq(resolved.collection_id))
-            .for_update()
-            .first::<HubuumClass>(conn)
-            .await?),
-    }
+    let locked = match target.selector().kind() {
+        ClassSelectorKind::ById(class_id) => {
+            hubuumclass
+                .filter(id.eq(class_id.id()))
+                .filter(id.eq(resolved.id))
+                .filter(name.eq(&resolved.name))
+                .filter(collection_id.eq(resolved.collection_id))
+                .for_update()
+                .first::<HubuumClass>(conn)
+                .await?
+        }
+        ClassSelectorKind::ByName(class_name) => {
+            hubuumclass
+                .filter(id.eq(resolved.id))
+                .filter(name.eq(class_name))
+                .filter(collection_id.eq(resolved.collection_id))
+                .for_update()
+                .first::<HubuumClass>(conn)
+                .await?
+        }
+    };
+    crate::db::assert_locked_revision_precondition(
+        conn,
+        &format!("hubuumclass:{}", locked.id),
+        locked.revision,
+    )
+    .await?;
+    Ok(locked)
 }
 
 pub trait UpdateResolvedClassRecord {

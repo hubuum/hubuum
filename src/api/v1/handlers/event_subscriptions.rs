@@ -1,5 +1,6 @@
-use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
+use actix_web::{HttpRequest, Responder, delete, get, patch, routes, web};
 
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::{ApiResponse, ResponseLocation};
 use crate::can;
@@ -7,6 +8,7 @@ use crate::db::traits::UserPermissions;
 use crate::db::traits::event_subscription::{
     DeleteEventSubscriptionRecord, SaveEventSubscriptionRecord, UpdateEventSubscriptionRecord,
 };
+use crate::db::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::parse_query_parameter;
@@ -63,7 +65,7 @@ pub async fn create_event_subscription(
         "/api/v1/collections/{}/event-subscriptions/{}",
         created.collection_id, created.id
     ))?;
-    Ok(ApiResponse::created(created, location))
+    ApiResponse::created_revisioned(created, location)
 }
 
 #[utoipa::path(
@@ -135,7 +137,7 @@ pub async fn get_event_subscription(
     );
     let subscription = subscription_id.instance(&pool).await?;
     ensure_subscription_collection(&subscription, collection_id)?;
-    Ok(ApiResponse::new(subscription, StatusCode::OK))
+    ApiResponse::ok_revisioned(subscription)
 }
 
 #[utoipa::path(
@@ -184,13 +186,18 @@ pub async fn patch_event_subscription(
     }
     let existing = subscription_id.instance(&pool).await?;
     ensure_subscription_collection(&existing, collection_id)?;
+    let precondition =
+        IfMatchCondition::from_request(&req)?.database_precondition(&existing.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
-    let updated: EventSubscription = update
-        .into_row(&existing)?
-        .update_event_subscription_record(&pool, existing.id, &event_context)
-        .await?
-        .try_into()?;
-    Ok(ApiResponse::new(updated, StatusCode::OK))
+    let updated: EventSubscription = with_revision_precondition_scope(
+        precondition,
+        update
+            .into_row(&existing)?
+            .update_event_subscription_record(&pool, existing.id, &event_context),
+    )
+    .await?
+    .try_into()?;
+    ApiResponse::ok_revisioned(updated)
 }
 
 #[utoipa::path(
@@ -226,11 +233,15 @@ pub async fn delete_event_subscription(
     );
     let existing = subscription_id.instance(&pool).await?;
     ensure_subscription_collection(&existing, collection_id)?;
+    let etag = existing.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(&req);
-    subscription_id
-        .delete_event_subscription_record(&pool, &event_context)
-        .await?;
-    Ok(ApiResponse::no_content())
+    with_revision_precondition_scope(
+        precondition,
+        subscription_id.delete_event_subscription_record(&pool, &event_context),
+    )
+    .await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 fn ensure_subscription_collection(

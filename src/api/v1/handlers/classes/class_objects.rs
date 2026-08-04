@@ -222,7 +222,7 @@ async fn create_object_in_class(
         create_object_in_resolved_class(&pool, &requestor, &req, target, object_data.into_inner())
             .await?;
     let location = api_locations::class_object(object.hubuum_class_id, object.id())?;
-    Ok(ApiResponse::created(object, location))
+    ApiResponse::created_revisioned(object, location)
 }
 
 #[utoipa::path(
@@ -258,7 +258,7 @@ async fn create_object_in_class_by_name(
         create_object_in_resolved_class(&pool, &requestor, &req, target, object_data.into_inner())
             .await?;
     let location = api_locations::class_object(object.hubuum_class_id, object.id())?;
-    Ok(ApiResponse::created(object, location))
+    ApiResponse::created_revisioned(object, location)
 }
 
 async fn create_object_in_resolved_class(
@@ -320,10 +320,11 @@ async fn read_resolved_object(
             StatusCode::OK,
         ))
     } else {
-        Ok(ApiResponse::new(
+        ApiResponse::new_with_resource_etag(
             HubuumObjectReadResponse::Raw(target.object().clone()),
             StatusCode::OK,
-        ))
+            target.object(),
+        )
     }
 }
 
@@ -415,10 +416,14 @@ async fn apply_resolved_object_update(
     );
     ensure_object_update_stays_in_path_class(&update, target.object())?;
 
+    let precondition = IfMatchCondition::from_request(req)?
+        .database_precondition(&target.object().entity_tag()?)?;
     let event_context = requestor.event_context(req);
-    update
-        .update_resolved_object(pool, &target, &event_context)
-        .await
+    with_revision_precondition_scope(
+        precondition,
+        update.update_resolved_object(pool, &target, &event_context),
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -461,7 +466,7 @@ async fn patch_object_in_class(
         .resolve_object_target(&pool)
         .await?;
     let object = apply_resolved_object_update(&pool, &requestor, &req, target, object_data).await?;
-    Ok(ApiResponse::new(object, StatusCode::OK))
+    ApiResponse::ok_revisioned(object)
 }
 
 #[utoipa::path(
@@ -504,7 +509,7 @@ async fn patch_object_in_class_by_name(
         object_data.into_inner().into_domain()?,
     )
     .await?;
-    Ok(ApiResponse::new(object, StatusCode::OK))
+    ApiResponse::ok_revisioned(object)
 }
 
 async fn apply_object_data_patch(
@@ -522,8 +527,17 @@ async fn apply_object_data_patch(
         target.object()
     );
 
+    // The resource validator is evaluated by the database before any RFC 6902
+    // operation, so a stale request is a 412 even when a later `test` would
+    // otherwise fail with 409.
+    let precondition = IfMatchCondition::from_request(req)?
+        .database_precondition(&target.object().entity_tag()?)?;
     let event_context = requestor.event_context(req);
-    patch.patch_object_data(pool, &target, &event_context).await
+    with_revision_precondition_scope(
+        precondition,
+        patch.patch_object_data(pool, &target, &event_context),
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -578,7 +592,7 @@ async fn patch_object_data_in_class(
         .await?;
     let object =
         apply_object_data_patch(&pool, &requestor, &req, target, patch.into_inner()).await?;
-    Ok(ApiResponse::new(object, StatusCode::OK))
+    ApiResponse::ok_revisioned(object)
 }
 
 #[utoipa::path(
@@ -633,7 +647,7 @@ async fn patch_object_data_by_name_in_class(
 
     let object =
         apply_object_data_patch(&pool, &requestor, &req, target, patch.into_inner()).await?;
-    Ok(ApiResponse::new(object, StatusCode::OK))
+    ApiResponse::ok_revisioned(object)
 }
 
 async fn delete_resolved_object(
@@ -641,7 +655,7 @@ async fn delete_resolved_object(
     requestor: &Authenticated,
     req: &HttpRequest,
     target: ResolvedObjectTarget,
-) -> Result<(), ApiError> {
+) -> Result<crate::api::etag::EntityTag, ApiError> {
     can!(
         pool,
         &requestor.principal,
@@ -650,8 +664,15 @@ async fn delete_resolved_object(
         target.object()
     );
 
+    let etag = target.object().entity_tag()?;
+    let precondition = IfMatchCondition::from_request(req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(req);
-    target.delete_resolved_object(pool, &event_context).await
+    with_revision_precondition_scope(
+        precondition,
+        target.delete_resolved_object(pool, &event_context),
+    )
+    .await?;
+    Ok(etag)
 }
 
 #[utoipa::path(
@@ -689,8 +710,8 @@ async fn delete_object_in_class(
     let target = ObjectSelector::by_id(class_id, object_id)
         .resolve_object_target(&pool)
         .await?;
-    delete_resolved_object(&pool, &requestor, &req, target).await?;
-    Ok(ApiResponse::no_content())
+    let etag = delete_resolved_object(&pool, &requestor, &req, target).await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 #[utoipa::path(
@@ -722,6 +743,6 @@ async fn delete_object_in_class_by_name(
     let target = ObjectSelector::by_name(class_name, object_name)
         .resolve_object_target(&pool)
         .await?;
-    delete_resolved_object(&pool, &requestor, &req, target).await?;
-    Ok(ApiResponse::no_content())
+    let etag = delete_resolved_object(&pool, &requestor, &req, target).await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }

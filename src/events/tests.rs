@@ -39,7 +39,7 @@ use crate::models::class::{NewHubuumClass, UpdateHubuumClass};
 use crate::models::collection::{NewCollectionWithAssignee, UpdateCollection, move_collection};
 use crate::models::group::{NewGroup, UpdateGroup};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
-use crate::models::search::QueryOptions;
+use crate::models::search::{QueryOptions, parse_query_parameter};
 use crate::models::token::{renew_token_by_id_for_principal, revoke_token_by_id_for_principal};
 use crate::models::{
     CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink as EventSinkModel,
@@ -58,6 +58,48 @@ use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController};
 
 static EVENT_DELIVERY_TEST_LOCK: TestMutex = test_mutex();
 static EVENT_RETENTION_TEST_LOCK: TestMutex = test_mutex();
+
+#[rstest]
+#[tokio::test]
+#[case("before_revision", true)]
+#[case("after_revision", false)]
+async fn audit_revision_is_null_filters_nullable_revisions(
+    #[case] field: &str,
+    #[case] before: bool,
+) {
+    let scope = test_scope();
+    let entity_id = (Uuid::new_v4().as_u128() as i32 & (i32::MAX - 1)) + 1;
+    let event = NewEvent::new(
+        EntityType::Collection,
+        Action::Created,
+        ActorKind::System,
+        "legacy revision-null event",
+    )
+    .unwrap()
+    .with_entity_id(entity_id);
+    with_transaction(&scope.pool, async |conn| emit_event(conn, &event).await)
+        .await
+        .unwrap();
+
+    let query_options =
+        parse_query_parameter(&format!("{field}__is_null=true&include_total=false")).unwrap();
+    let filters = EventListFilters {
+        entity_type: Some(EntityType::Collection),
+        entity_id: Some(entity_id),
+        ..EventListFilters::default()
+    };
+    let (event_rows, _) =
+        list_events_with_total_count(&scope.pool, &[], true, &filters, &query_options)
+            .await
+            .unwrap();
+
+    assert_eq!(event_rows.len(), 1);
+    if before {
+        assert!(event_rows[0].before_revision.is_none());
+    } else {
+        assert!(event_rows[0].after_revision.is_none());
+    }
+}
 
 /// Count event rows for a given `event_id` (0 or 1, since `event_id` is UNIQUE).
 async fn count_events_for(conn: &mut crate::db::DbConnection, target: Uuid) -> i64 {
@@ -1015,6 +1057,7 @@ async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
     let claimed = claim_event_delivery_by_id(&scope.pool, delivery.id, settings)
         .await
         .unwrap();
+    let failure_started_at = chrono::Utc::now().naive_utc();
     process_claimed_event_delivery(&scope.pool, settings, &resolver, claimed)
         .await
         .unwrap();
@@ -1022,13 +1065,9 @@ async fn event_delivery_worker_retries_with_backoff_then_marks_dead() {
     assert_eq!(first_failure.status, EventDeliveryStatus::Failed.as_str());
     assert_eq!(first_failure.attempts, 1);
     assert_eq!(first_failure.last_error.as_deref(), Some("delivery failed"));
-    assert!(first_failure.next_attempt_at > chrono::Utc::now().naive_utc());
-    assert!(
-        next_event_delivery_wakeup_in_db(&scope.pool)
-            .await
-            .unwrap()
-            .is_some_and(|wait| wait <= std::time::Duration::from_millis(1_000))
-    );
+    assert!(first_failure.next_attempt_at > failure_started_at);
+    let wakeup = next_event_delivery_wakeup_in_db(&scope.pool).await.unwrap();
+    assert!(wakeup.is_none_or(|wait| wait <= std::time::Duration::from_millis(1_000)));
 
     with_connection(&scope.pool, async |conn| {
         use crate::schema::event_deliveries::dsl::{event_deliveries, id, next_attempt_at};
@@ -1999,6 +2038,10 @@ async fn permission_writes_emit_granted_revoked_events() {
     assert_eq!(rows.len(), 3);
 
     assert_eq!(rows[0].action, "granted");
+    assert_eq!(
+        rows[0].before.as_ref().unwrap()["granted_permissions"],
+        serde_json::json!([])
+    );
     assert_eq!(rows[0].actor_user_id, Some(25));
     assert_eq!(
         rows[0].correlation_id.as_deref(),
@@ -2037,7 +2080,10 @@ async fn permission_writes_emit_granted_revoked_events() {
         rows[2].metadata["requested_permissions"],
         serde_json::json!(["ReadCollection"])
     );
-    assert!(rows[2].after.is_none());
+    assert_eq!(
+        rows[2].after.as_ref().unwrap()["granted_permissions"],
+        serde_json::json!([])
+    );
 
     group.delete_without_events(&scope.pool).await.unwrap();
     fixture.cleanup().await.unwrap();

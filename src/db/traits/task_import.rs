@@ -7,15 +7,48 @@ use crate::db::{DbPool, SendAsyncFn, with_connection};
 use crate::errors::ApiError;
 use crate::models::event_subscription::validate_subscription_parts;
 use crate::models::{
-    Collection, CollectionKey, Group, HubuumClass, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, IdentityScope, ImportClassInput, ImportCollectionInput,
+    CONDITIONAL_IMPORT_TARGET_MISSING, Collection, CollectionKey, Group, HubuumClass,
+    HubuumClassRelation, HubuumObject, HubuumObjectRelation, IdentityScope, ImportClassInput,
+    ImportCollectionInput, ImportComputedFieldInput, ImportComputedFieldVisibility,
     ImportEventSinkInput, ImportEventSubscriptionInput, ImportExportTemplateInput,
     ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
-    ImportPrincipalInput, ImportPrincipalSubtype, ImportRemoteTargetInput, NewHubuumClass,
-    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission,
-    Permissions, PermissionsList, Principal, RestoreTimestamps, ServiceAccount, UpdateCollection,
-    UpdateHubuumClass, UpdateHubuumObject, UpdatePermission, User,
+    ImportPrincipalInput, ImportPrincipalSubtype, ImportRemoteTargetInput, ImportWriteCondition,
+    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
+    NewPermission, Permission, Permissions, PermissionsList, Principal, ResourceRevision,
+    RestoreTimestamps, ServiceAccount, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
+    UpdatePermission, User,
 };
+
+fn assert_import_revision(
+    condition: Option<ImportWriteCondition>,
+    current_revision: ResourceRevision,
+) -> Result<(), ApiError> {
+    let Some(expected_revision) = condition.and_then(ImportWriteCondition::expected_revision)
+    else {
+        return Ok(());
+    };
+    if expected_revision == current_revision {
+        return Ok(());
+    }
+    crate::observability::metrics::revision_condition("async_stale");
+    Err(ApiError::PreconditionFailed(
+        format!(
+            "stale_revision: expected revision {expected_revision}, observed {current_revision}"
+        ),
+        None,
+    ))
+}
+
+fn assert_import_create_condition(condition: Option<ImportWriteCondition>) -> Result<(), ApiError> {
+    if condition.is_some_and(ImportWriteCondition::requires_existing) {
+        crate::observability::metrics::revision_condition("async_stale");
+        return Err(ApiError::PreconditionFailed(
+            CONDITIONAL_IMPORT_TARGET_MISSING.to_string(),
+            None,
+        ));
+    }
+    Ok(())
+}
 
 pub async fn lookup_collections_by_name(
     pool: &DbPool,
@@ -408,6 +441,7 @@ pub async fn create_collection_db(
     input: &ImportCollectionInput,
     parent_collection_id: Option<i32>,
 ) -> Result<Collection, ApiError> {
+    assert_import_create_condition(input.condition)?;
     let insert = CollectionRowInsert::new(&input.name, &input.description)
         .parent_collection_id(parent_collection_id);
     let insert = match input.timestamps.as_ref() {
@@ -423,6 +457,14 @@ pub async fn update_collection_db(
     input: &ImportCollectionInput,
 ) -> Result<Collection, ApiError> {
     use crate::schema::collections::dsl::{collections, created_at, id, updated_at};
+
+    let current_revision = collections
+        .filter(id.eq(collection_id_value))
+        .select(crate::schema::collections::revision)
+        .for_update()
+        .first::<ResourceRevision>(conn)
+        .await?;
+    assert_import_revision(input.condition, current_revision)?;
 
     let update = UpdateCollection {
         name: Some(input.name.clone()),
@@ -476,6 +518,7 @@ pub async fn create_class_db(
     input: &ImportClassInput,
     collection_id_value: i32,
 ) -> Result<HubuumClass, ApiError> {
+    assert_import_create_condition(input.condition)?;
     use crate::schema::hubuumclass::dsl::{created_at, hubuumclass, updated_at};
 
     let new_class = NewHubuumClass {
@@ -510,6 +553,14 @@ pub async fn update_class_db(
     input: &ImportClassInput,
 ) -> Result<HubuumClass, ApiError> {
     use crate::schema::hubuumclass::dsl::{created_at, hubuumclass, id, updated_at};
+
+    let current_revision = hubuumclass
+        .filter(id.eq(class_id_value))
+        .select(crate::schema::hubuumclass::revision)
+        .for_update()
+        .first::<ResourceRevision>(conn)
+        .await?;
+    assert_import_revision(input.condition, current_revision)?;
 
     let update = UpdateHubuumClass {
         name: Some(input.name.clone()),
@@ -556,6 +607,7 @@ pub async fn create_object_db(
     input: &ImportObjectInput,
     class: &HubuumClass,
 ) -> Result<HubuumObject, ApiError> {
+    assert_import_create_condition(input.condition)?;
     use crate::schema::hubuumobject::dsl::{created_at, hubuumobject, updated_at};
 
     let new_object = NewHubuumObject {
@@ -592,6 +644,14 @@ pub async fn update_object_db(
     input: &ImportObjectInput,
 ) -> Result<HubuumObject, ApiError> {
     use crate::schema::hubuumobject::dsl::{created_at, hubuumobject, id, updated_at};
+
+    let current_revision = hubuumobject
+        .filter(id.eq(object_id_value))
+        .select(crate::schema::hubuumobject::revision)
+        .for_update()
+        .first::<ResourceRevision>(conn)
+        .await?;
+    assert_import_revision(input.condition, current_revision)?;
 
     let update = UpdateHubuumObject {
         name: Some(input.name.clone()),
@@ -699,36 +759,45 @@ pub async fn upsert_identity_scope_db(
     };
     let existing = identity_scopes
         .filter(name.eq(&input.name))
+        .for_update()
         .first::<IdentityScope>(conn)
         .await
         .optional()?;
     let row = match existing {
-        Some(_) if !overwrite => {
+        Some(existing) if !overwrite => {
+            assert_import_revision(input.condition, existing.revision)?;
             return Err(ApiError::Conflict(format!(
                 "Identity scope '{}' already exists",
                 input.name
             )));
         }
         Some(existing) => {
+            assert_import_revision(input.condition, existing.revision)?;
             let (created, updated) = input
                 .timestamps
                 .as_ref()
                 .map(RestoreTimestamps::as_pair)
                 .unwrap_or((existing.created_at, existing.updated_at));
             with_imported_timestamp_override(conn, async |conn| {
-                diesel::update(identity_scopes.filter(id.eq(existing.id)))
-                    .set((
-                        provider_kind.eq(&input.provider_kind),
-                        created_at.eq(created),
-                        updated_at.eq(updated),
-                    ))
-                    .get_result::<IdentityScope>(conn)
-                    .await
-                    .map_err(ApiError::from)
+                crate::db::updated_or_current(
+                    diesel::update(identity_scopes.filter(id.eq(existing.id)))
+                        .set((
+                            provider_kind.eq(&input.provider_kind),
+                            created_at.eq(created),
+                            updated_at.eq(updated),
+                        ))
+                        .get_result::<IdentityScope>(conn)
+                        .await
+                        .optional(),
+                    async || identity_scopes.filter(id.eq(existing.id)).first(conn).await,
+                )
+                .await
+                .map_err(ApiError::from)
             })
             .await?
         }
         None => {
+            assert_import_create_condition(input.condition)?;
             let (created, updated) = imported_timestamps(input.timestamps.as_ref());
             diesel::insert_into(identity_scopes)
                 .values((
@@ -754,40 +823,49 @@ pub async fn upsert_group_db(
     let existing = groups
         .filter(identity_scope_id.eq(identity_scope_id_value))
         .filter(groupname.eq(&input.groupname))
+        .for_update()
         .first::<Group>(conn)
         .await
         .optional()?;
     let row = match existing {
-        Some(_) if !overwrite => {
+        Some(existing) if !overwrite => {
+            assert_import_revision(input.condition, existing.revision)?;
             return Err(ApiError::Conflict(format!(
                 "Group '{}' already exists in its identity scope",
                 input.groupname
             )));
         }
         Some(existing) => {
+            assert_import_revision(input.condition, existing.revision)?;
             let (created, updated) = input
                 .timestamps
                 .as_ref()
                 .map(RestoreTimestamps::as_pair)
                 .unwrap_or((existing.created_at, existing.updated_at));
             with_imported_timestamp_override(conn, async |conn| {
-                diesel::update(groups.filter(id.eq(existing.id)))
-                    .set((
-                        description.eq(&input.description),
-                        managed_by.eq(&input.managed_by),
-                        external_key.eq(&input.external_key),
-                        last_sync_attempted_at.eq(input.last_sync_attempted_at),
-                        last_sync_success_at.eq(input.last_sync_success_at),
-                        created_at.eq(created),
-                        updated_at.eq(updated),
-                    ))
-                    .get_result::<Group>(conn)
-                    .await
-                    .map_err(ApiError::from)
+                crate::db::updated_or_current(
+                    diesel::update(groups.filter(id.eq(existing.id)))
+                        .set((
+                            description.eq(&input.description),
+                            managed_by.eq(&input.managed_by),
+                            external_key.eq(&input.external_key),
+                            last_sync_attempted_at.eq(input.last_sync_attempted_at),
+                            last_sync_success_at.eq(input.last_sync_success_at),
+                            created_at.eq(created),
+                            updated_at.eq(updated),
+                        ))
+                        .get_result::<Group>(conn)
+                        .await
+                        .optional(),
+                    async || groups.filter(id.eq(existing.id)).first(conn).await,
+                )
+                .await
+                .map_err(ApiError::from)
             })
             .await?
         }
         None => {
+            assert_import_create_condition(input.condition)?;
             let (created, updated) = imported_timestamps(input.timestamps.as_ref());
             diesel::insert_into(groups)
                 .values((
@@ -842,10 +920,12 @@ pub async fn upsert_principal_db(
     let existing = p::principals
         .filter(p::identity_scope_id.eq(identity_scope_id_value))
         .filter(p::name.eq(&input.name))
+        .for_update()
         .first::<Principal>(conn)
         .await
         .optional()?;
     if let Some(existing) = &existing {
+        assert_import_revision(input.condition, existing.revision)?;
         if !overwrite {
             return Err(ApiError::Conflict(format!(
                 "Principal '{}' already exists in its identity scope",
@@ -867,23 +947,34 @@ pub async fn upsert_principal_db(
                 .map(RestoreTimestamps::as_pair)
                 .unwrap_or((existing.created_at, existing.updated_at));
             with_imported_timestamp_override(conn, async |conn| {
-                diesel::update(p::principals.filter(p::id.eq(existing.id)))
-                    .set((
-                        p::provider_managed.eq(input.provider_managed),
-                        p::settings.eq(&input.settings),
-                        p::external_subject.eq(&input.external_subject),
-                        p::last_sync_attempted_at.eq(input.last_sync_attempted_at),
-                        p::last_sync_success_at.eq(input.last_sync_success_at),
-                        p::created_at.eq(created),
-                        p::updated_at.eq(updated),
-                    ))
-                    .get_result::<Principal>(conn)
-                    .await
-                    .map_err(ApiError::from)
+                crate::db::updated_or_current(
+                    diesel::update(p::principals.filter(p::id.eq(existing.id)))
+                        .set((
+                            p::provider_managed.eq(input.provider_managed),
+                            p::settings.eq(&input.settings),
+                            p::external_subject.eq(&input.external_subject),
+                            p::last_sync_attempted_at.eq(input.last_sync_attempted_at),
+                            p::last_sync_success_at.eq(input.last_sync_success_at),
+                            p::created_at.eq(created),
+                            p::updated_at.eq(updated),
+                        ))
+                        .get_result::<Principal>(conn)
+                        .await
+                        .optional(),
+                    async || {
+                        p::principals
+                            .filter(p::id.eq(existing.id))
+                            .first(conn)
+                            .await
+                    },
+                )
+                .await
+                .map_err(ApiError::from)
             })
             .await?
         }
         None => {
+            assert_import_create_condition(input.condition)?;
             let (created, updated) = imported_timestamps(input.timestamps.as_ref());
             diesel::insert_into(p::principals)
                 .values((
@@ -1033,14 +1124,20 @@ pub async fn upsert_group_membership_db(
     let existing_membership = m::group_memberships
         .filter(m::principal_id.eq(principal_id_value))
         .filter(m::group_id.eq(group_id_value))
-        .select((m::created_at, m::updated_at))
-        .first::<(NaiveDateTime, NaiveDateTime)>(conn)
+        .select((m::created_at, m::updated_at, m::revision))
+        .for_update()
+        .first::<(NaiveDateTime, NaiveDateTime, ResourceRevision)>(conn)
         .await
         .optional()?;
-    if existing_membership.is_some() && !overwrite {
-        return Err(ApiError::Conflict(format!(
-            "Principal {principal_id_value} is already a member of group {group_id_value}"
-        )));
+    if let Some((_, _, revision)) = existing_membership {
+        assert_import_revision(input.condition, revision)?;
+        if !overwrite {
+            return Err(ApiError::Conflict(format!(
+                "Principal {principal_id_value} is already a member of group {group_id_value}"
+            )));
+        }
+    } else {
+        assert_import_create_condition(input.condition)?;
     }
 
     with_imported_timestamp_override(conn, async |conn| {
@@ -1048,7 +1145,7 @@ pub async fn upsert_group_membership_db(
             .timestamps
             .as_ref()
             .map(RestoreTimestamps::as_pair)
-            .or(existing_membership)
+            .or(existing_membership.map(|(created, updated, _)| (created, updated)))
             .unwrap_or_else(|| imported_timestamps(None));
         match existing_membership {
             Some(_) => {
@@ -1129,6 +1226,122 @@ pub async fn upsert_group_membership_db(
     .await
 }
 
+pub async fn upsert_computed_field_db(
+    conn: &mut crate::db::DbConnection,
+    input: &ImportComputedFieldInput,
+    class_id_value: i32,
+    owner_id_value: Option<i32>,
+    overwrite: bool,
+) -> Result<i32, ApiError> {
+    use crate::schema::computed_field_definitions::dsl as d;
+
+    crate::models::ComputedFieldDefinitionRequest {
+        key: input.key.clone(),
+        label: input.label.clone(),
+        description: input.description.clone(),
+        operation: input.operation.clone(),
+        result_type: input.result_type,
+        enabled: input.enabled,
+    }
+    .validate()?;
+
+    let visibility = match input.visibility {
+        ImportComputedFieldVisibility::Shared => "shared",
+        ImportComputedFieldVisibility::Personal => "personal",
+    };
+    let existing = d::computed_field_definitions
+        .filter(d::class_id.eq(class_id_value))
+        .filter(d::visibility.eq(visibility))
+        .filter(d::key.eq(&input.key))
+        .filter(d::owner_user_id.eq(owner_id_value))
+        .for_update()
+        .select(crate::models::ComputedFieldDefinition::as_select())
+        .first(conn)
+        .await
+        .optional()?;
+
+    if let Some(existing) = existing {
+        assert_import_revision(input.condition, existing.revision)?;
+        if !overwrite {
+            return Err(ApiError::Conflict(format!(
+                "Computed field '{}' already exists in its scope",
+                input.key
+            )));
+        }
+        let (created, updated) = input
+            .timestamps
+            .as_ref()
+            .map(RestoreTimestamps::as_pair)
+            .unwrap_or((existing.created_at, existing.updated_at));
+        let (definition, changed) = with_imported_timestamp_override(conn, async |conn| {
+            let updated_definition =
+                diesel::update(d::computed_field_definitions.filter(d::id.eq(existing.id)))
+                    .set((
+                        d::label.eq(&input.label),
+                        d::description.eq(&input.description),
+                        d::operation.eq(&input.operation),
+                        d::result_type.eq(input.result_type.as_str()),
+                        d::enabled.eq(input.enabled),
+                        d::created_at.eq(created),
+                        d::updated_at.eq(updated),
+                    ))
+                    .returning(crate::models::ComputedFieldDefinition::as_returning())
+                    .get_result(conn)
+                    .await
+                    .optional()?;
+            match updated_definition {
+                Some(definition) => Ok((definition, true)),
+                None => Ok((
+                    d::computed_field_definitions
+                        .find(existing.id)
+                        .select(crate::models::ComputedFieldDefinition::as_select())
+                        .first(conn)
+                        .await?,
+                    false,
+                )),
+            }
+        })
+        .await?;
+        if changed && matches!(input.visibility, ImportComputedFieldVisibility::Shared) {
+            crate::db::traits::computed_field::advance_revision_and_enqueue(
+                conn,
+                class_id_value,
+                None,
+            )
+            .await?;
+        }
+        return Ok(definition.id);
+    }
+
+    assert_import_create_condition(input.condition)?;
+    let (created, updated) = imported_timestamps(input.timestamps.as_ref());
+    let definition = diesel::insert_into(d::computed_field_definitions)
+        .values((
+            d::class_id.eq(class_id_value),
+            d::visibility.eq(visibility),
+            d::owner_user_id.eq(owner_id_value),
+            d::key.eq(&input.key),
+            d::label.eq(&input.label),
+            d::description.eq(&input.description),
+            d::operation.eq(&input.operation),
+            d::result_type.eq(input.result_type.as_str()),
+            d::enabled.eq(input.enabled),
+            d::semantics_version.eq(hubuum_computed_fields::SEMANTICS_VERSION),
+            d::created_by.eq(owner_id_value),
+            d::updated_by.eq(owner_id_value),
+            d::created_at.eq(created),
+            d::updated_at.eq(updated),
+        ))
+        .returning(crate::models::ComputedFieldDefinition::as_returning())
+        .get_result::<crate::models::ComputedFieldDefinition>(conn)
+        .await?;
+    if matches!(input.visibility, ImportComputedFieldVisibility::Shared) {
+        crate::db::traits::computed_field::advance_revision_and_enqueue(conn, class_id_value, None)
+            .await?;
+    }
+    Ok(definition.id)
+}
+
 pub async fn load_export_template_sources_db(
     conn: &mut crate::db::DbConnection,
     collection_id_value: i32,
@@ -1154,10 +1367,16 @@ pub async fn upsert_export_template_db(
     let existing = t::export_templates
         .filter(t::collection_id.eq(collection_id_value))
         .filter(t::name.eq(&input.name))
-        .select((t::id, t::created_at, t::updated_at))
-        .first::<(i32, NaiveDateTime, NaiveDateTime)>(conn)
+        .select((t::id, t::created_at, t::updated_at, t::revision))
+        .for_update()
+        .first::<(i32, NaiveDateTime, NaiveDateTime, ResourceRevision)>(conn)
         .await
         .optional()?;
+    if let Some((_, _, _, revision)) = existing {
+        assert_import_revision(input.condition, revision)?;
+    } else {
+        assert_import_create_condition(input.condition)?;
+    }
     if existing.is_some() && !overwrite {
         return Err(ApiError::Conflict(format!(
             "Export template '{}' already exists in the collection",
@@ -1184,7 +1403,7 @@ pub async fn upsert_export_template_db(
         .default_missing_data_policy
         .map(|value| value.as_str().to_string());
     match existing {
-        Some((existing_id, existing_created, existing_updated)) => {
+        Some((existing_id, existing_created, existing_updated, _)) => {
             let (created, updated) = input
                 .timestamps
                 .as_ref()
@@ -1252,10 +1471,16 @@ pub async fn upsert_remote_target_db(
     let existing = r::remote_targets
         .filter(r::collection_id.eq(collection_id_value))
         .filter(r::name.eq(&input.name))
-        .select((r::id, r::created_at, r::updated_at))
-        .first::<(i32, NaiveDateTime, NaiveDateTime)>(conn)
+        .select((r::id, r::created_at, r::updated_at, r::revision))
+        .for_update()
+        .first::<(i32, NaiveDateTime, NaiveDateTime, ResourceRevision)>(conn)
         .await
         .optional()?;
+    if let Some((_, _, _, revision)) = existing {
+        assert_import_revision(input.condition, revision)?;
+    } else {
+        assert_import_create_condition(input.condition)?;
+    }
     if existing.is_some() && !overwrite {
         return Err(ApiError::Conflict(format!(
             "Remote target '{}' already exists in the collection",
@@ -1265,7 +1490,7 @@ pub async fn upsert_remote_target_db(
     let auth_config = serde_json::to_value(&input.auth_config)?;
     let subject_types = serde_json::to_value(&input.allowed_subject_types)?;
     match existing {
-        Some((existing_id, existing_created, existing_updated)) => {
+        Some((existing_id, existing_created, existing_updated, _)) => {
             let (created, updated) = input
                 .timestamps
                 .as_ref()
@@ -1328,10 +1553,16 @@ pub async fn upsert_event_sink_db(
     use crate::schema::event_sinks::dsl as s;
     let existing = s::event_sinks
         .filter(s::name.eq(&input.name))
-        .select((s::id, s::created_at, s::updated_at))
-        .first::<(i32, NaiveDateTime, NaiveDateTime)>(conn)
+        .select((s::id, s::created_at, s::updated_at, s::revision))
+        .for_update()
+        .first::<(i32, NaiveDateTime, NaiveDateTime, ResourceRevision)>(conn)
         .await
         .optional()?;
+    if let Some((_, _, _, revision)) = existing {
+        assert_import_revision(input.condition, revision)?;
+    } else {
+        assert_import_create_condition(input.condition)?;
+    }
     if existing.is_some() && !overwrite {
         return Err(ApiError::Conflict(format!(
             "Event sink '{}' already exists",
@@ -1339,7 +1570,7 @@ pub async fn upsert_event_sink_db(
         )));
     }
     match existing {
-        Some((existing_id, existing_created, existing_updated)) => {
+        Some((existing_id, existing_created, existing_updated, _)) => {
             let (created, updated) = input
                 .timestamps
                 .as_ref()
@@ -1399,10 +1630,16 @@ pub async fn upsert_event_subscription_db(
     let existing = s::event_subscriptions
         .filter(s::collection_id.eq(collection_id_value))
         .filter(s::name.eq(&input.name))
-        .select((s::id, s::created_at, s::updated_at))
-        .first::<(i32, NaiveDateTime, NaiveDateTime)>(conn)
+        .select((s::id, s::created_at, s::updated_at, s::revision))
+        .for_update()
+        .first::<(i32, NaiveDateTime, NaiveDateTime, ResourceRevision)>(conn)
         .await
         .optional()?;
+    if let Some((_, _, _, revision)) = existing {
+        assert_import_revision(input.condition, revision)?;
+    } else {
+        assert_import_create_condition(input.condition)?;
+    }
     if existing.is_some() && !overwrite {
         return Err(ApiError::Conflict(format!(
             "Event subscription '{}' already exists in the collection",
@@ -1412,7 +1649,7 @@ pub async fn upsert_event_subscription_db(
     let entity_types = serde_json::to_value(&input.entity_types)?;
     let actions = serde_json::to_value(&input.actions)?;
     match existing {
-        Some((existing_id, existing_created, existing_updated)) => {
+        Some((existing_id, existing_created, existing_updated, _)) => {
             let (created, updated) = input
                 .timestamps
                 .as_ref()
@@ -1465,7 +1702,9 @@ pub async fn create_class_relation_db(
     conn: &mut crate::db::DbConnection,
     new_relation: NewHubuumClassRelation,
     timestamps: Option<&RestoreTimestamps>,
+    condition: Option<ImportWriteCondition>,
 ) -> Result<HubuumClassRelation, ApiError> {
+    assert_import_create_condition(condition)?;
     use crate::schema::hubuumclass_relation::dsl::{created_at, hubuumclass_relation, updated_at};
     let new_relation = new_relation.normalized()?;
 
@@ -1492,11 +1731,13 @@ pub async fn update_class_relation_timestamps_db(
     left: i32,
     right: i32,
     timestamps: &RestoreTimestamps,
+    condition: Option<ImportWriteCondition>,
 ) -> Result<HubuumClassRelation, ApiError> {
     use crate::schema::hubuumclass_relation::dsl::{
         created_at, from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id, updated_at,
     };
     let pair = normalize_pair(left, right);
+    check_class_relation_import_condition_db(conn, pair.0, pair.1, condition).await?;
 
     with_imported_timestamp_override(conn, async |conn| {
         crate::db::updated_or_current(
@@ -1526,12 +1767,34 @@ pub async fn update_class_relation_timestamps_db(
     .await
 }
 
+pub async fn check_class_relation_import_condition_db(
+    conn: &mut crate::db::DbConnection,
+    left: i32,
+    right: i32,
+    condition: Option<ImportWriteCondition>,
+) -> Result<(), ApiError> {
+    use crate::schema::hubuumclass_relation::dsl::{
+        from_hubuum_class_id, hubuumclass_relation, revision, to_hubuum_class_id,
+    };
+    let pair = normalize_pair(left, right);
+    let current_revision = hubuumclass_relation
+        .filter(from_hubuum_class_id.eq(pair.0))
+        .filter(to_hubuum_class_id.eq(pair.1))
+        .select(revision)
+        .for_update()
+        .first::<ResourceRevision>(conn)
+        .await?;
+    assert_import_revision(condition, current_revision)
+}
+
 pub async fn create_object_relation_db(
     conn: &mut crate::db::DbConnection,
     from_object: &HubuumObject,
     to_object: &HubuumObject,
     timestamps: Option<&RestoreTimestamps>,
+    condition: Option<ImportWriteCondition>,
 ) -> Result<HubuumObjectRelation, ApiError> {
+    assert_import_create_condition(condition)?;
     use crate::schema::hubuumclass_relation::dsl::{
         from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id,
     };
@@ -1575,11 +1838,13 @@ pub async fn update_object_relation_timestamps_db(
     from_object: &HubuumObject,
     to_object: &HubuumObject,
     timestamps: &RestoreTimestamps,
+    condition: Option<ImportWriteCondition>,
 ) -> Result<HubuumObjectRelation, ApiError> {
     use crate::schema::hubuumobject_relation::dsl::{
         created_at, from_hubuum_object_id, hubuumobject_relation, to_hubuum_object_id, updated_at,
     };
     let pair = normalize_pair(from_object.id, to_object.id);
+    check_object_relation_import_condition_db(conn, from_object, to_object, condition).await?;
 
     with_imported_timestamp_override(conn, async |conn| {
         crate::db::updated_or_current(
@@ -1609,16 +1874,46 @@ pub async fn update_object_relation_timestamps_db(
     .await
 }
 
+pub async fn check_object_relation_import_condition_db(
+    conn: &mut crate::db::DbConnection,
+    from_object: &HubuumObject,
+    to_object: &HubuumObject,
+    condition: Option<ImportWriteCondition>,
+) -> Result<(), ApiError> {
+    use crate::schema::hubuumobject_relation::dsl::{
+        from_hubuum_object_id, hubuumobject_relation, revision, to_hubuum_object_id,
+    };
+    let pair = normalize_pair(from_object.id, to_object.id);
+    let current_revision = hubuumobject_relation
+        .filter(from_hubuum_object_id.eq(pair.0))
+        .filter(to_hubuum_object_id.eq(pair.1))
+        .select(revision)
+        .for_update()
+        .first::<ResourceRevision>(conn)
+        .await?;
+    assert_import_revision(condition, current_revision)
+}
+
 pub async fn apply_permissions_db(
     conn: &mut crate::db::DbConnection,
     collection_id_value: i32,
     group_id_value: i32,
     permissions: &[Permissions],
     replace_existing: bool,
+    condition: Option<ImportWriteCondition>,
+    overwrite: bool,
 ) -> Result<Permission, ApiError> {
     use crate::schema::permissions::dsl::{
         collection_id, group_id, permissions as permissions_table,
     };
+
+    let authorization_revision = crate::schema::collection_authorization_state::table
+        .find(collection_id_value)
+        .select(crate::schema::collection_authorization_state::revision)
+        .for_update()
+        .first::<ResourceRevision>(conn)
+        .await?;
+    assert_import_revision(condition, authorization_revision)?;
 
     let existing = permissions_table
         .filter(collection_id.eq(collection_id_value))
@@ -1626,10 +1921,15 @@ pub async fn apply_permissions_db(
         .first::<Permission>(conn)
         .await
         .optional()?;
+    if existing.is_some() && !overwrite {
+        return Err(ApiError::Conflict(format!(
+            "Permissions for group {group_id_value} already exist on collection {collection_id_value}"
+        )));
+    }
 
     let permission_list = PermissionsList::new(permissions.to_vec());
     match existing {
-        Some(_) => {
+        Some(existing) => {
             let mut update = if replace_existing {
                 UpdatePermission {
                     has_read_collection: Some(false),
@@ -1669,13 +1969,18 @@ pub async fn apply_permissions_db(
             };
             apply_permission_list_to_update(&mut update, permissions);
 
-            diesel::update(
-                permissions_table
-                    .filter(collection_id.eq(collection_id_value))
-                    .filter(group_id.eq(group_id_value)),
+            crate::db::updated_or_current(
+                diesel::update(
+                    permissions_table
+                        .filter(collection_id.eq(collection_id_value))
+                        .filter(group_id.eq(group_id_value)),
+                )
+                .set(&update)
+                .get_result::<Permission>(conn)
+                .await
+                .optional(),
+                async move || Ok(existing),
             )
-            .set(&update)
-            .get_result::<Permission>(conn)
             .await
             .map_err(ApiError::from)
         }

@@ -309,6 +309,8 @@ mod tests {
             fanout_claim_token: None,
             initiator_user_id: Some(17),
             task_id: Some(18),
+            before_revision: None,
+            after_revision: None,
         }
     }
 

@@ -26,6 +26,13 @@ diesel::table! {
 }
 
 diesel::table! {
+    collection_authorization_state (collection_id) {
+        collection_id -> Int4,
+        revision -> Int8,
+    }
+}
+
+diesel::table! {
     collection_closure (ancestor_collection_id, descendant_collection_id) {
         ancestor_collection_id -> Int4,
         descendant_collection_id -> Int4,
@@ -41,6 +48,7 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         parent_collection_id -> Nullable<Int4>,
+        revision -> Int8,
     }
 }
 
@@ -60,6 +68,7 @@ diesel::table! {
         actor_kind -> Nullable<Text>,
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
+        revision -> Int8,
     }
 }
 
@@ -117,6 +126,7 @@ diesel::table! {
         enabled -> Bool,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        revision -> Int8,
     }
 }
 
@@ -134,6 +144,7 @@ diesel::table! {
         enabled -> Bool,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        revision -> Int8,
     }
 }
 
@@ -161,6 +172,8 @@ diesel::table! {
         fanout_claim_token -> Nullable<Uuid>,
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
+        before_revision -> Nullable<Int8>,
+        after_revision -> Nullable<Int8>,
     }
 }
 
@@ -203,6 +216,7 @@ diesel::table! {
         default_limits -> Nullable<Jsonb>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        revision -> Int8,
     }
 }
 
@@ -232,6 +246,7 @@ diesel::table! {
         actor_kind -> Nullable<Text>,
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
+        revision -> Int8,
     }
 }
 
@@ -253,6 +268,7 @@ diesel::table! {
         group_id -> Int4,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        revision -> Int8,
     }
 }
 
@@ -268,6 +284,7 @@ diesel::table! {
         external_key -> Nullable<Varchar>,
         last_sync_attempted_at -> Nullable<Timestamp>,
         last_sync_success_at -> Nullable<Timestamp>,
+        revision -> Int8,
     }
 }
 
@@ -281,6 +298,7 @@ diesel::table! {
         description -> Varchar,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        revision -> Int8,
     }
 }
 
@@ -302,6 +320,7 @@ diesel::table! {
         actor_kind -> Nullable<Text>,
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
+        revision -> Int8,
     }
 }
 
@@ -326,6 +345,7 @@ diesel::table! {
         updated_at -> Timestamp,
         from_max_relations -> Nullable<Int4>,
         to_max_relations -> Nullable<Int4>,
+        revision -> Int8,
     }
 }
 
@@ -348,6 +368,7 @@ diesel::table! {
         task_id -> Nullable<Int4>,
         from_max_relations -> Nullable<Int4>,
         to_max_relations -> Nullable<Int4>,
+        revision -> Int8,
     }
 }
 
@@ -361,6 +382,7 @@ diesel::table! {
         description -> Varchar,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        revision -> Int8,
     }
 }
 
@@ -382,6 +404,7 @@ diesel::table! {
         actor_kind -> Nullable<Text>,
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
+        revision -> Int8,
     }
 }
 
@@ -393,6 +416,7 @@ diesel::table! {
         class_relation_id -> Int4,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        revision -> Int8,
     }
 }
 
@@ -412,6 +436,7 @@ diesel::table! {
         actor_kind -> Nullable<Text>,
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
+        revision -> Int8,
     }
 }
 
@@ -422,6 +447,7 @@ diesel::table! {
         provider_kind -> Varchar,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        revision -> Int8,
     }
 }
 
@@ -507,6 +533,7 @@ diesel::table! {
         external_subject -> Nullable<Varchar>,
         last_sync_attempted_at -> Nullable<Timestamp>,
         last_sync_success_at -> Nullable<Timestamp>,
+        revision -> Int8,
     }
 }
 
@@ -546,6 +573,7 @@ diesel::table! {
         enabled -> Bool,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        revision -> Int8,
     }
 }
 
@@ -574,6 +602,7 @@ diesel::table! {
         actor_kind -> Nullable<Text>,
         initiator_user_id -> Nullable<Int4>,
         task_id -> Nullable<Int4>,
+        revision -> Int8,
     }
 }
 
@@ -706,6 +735,7 @@ diesel::table! {
         revoked_at -> Nullable<Timestamp>,
         permission_scoped -> Bool,
         resource_scoped -> Bool,
+        revision -> Int8,
     }
 }
 
@@ -725,6 +755,7 @@ diesel::table! {
 diesel::joinable!(backup_task_outputs -> tasks (task_id));
 diesel::joinable!(class_computation_state -> hubuumclass (class_id));
 diesel::joinable!(class_computation_state -> tasks (active_task_id));
+diesel::joinable!(collection_authorization_state -> collections (collection_id));
 diesel::joinable!(computed_field_definitions -> hubuumclass (class_id));
 diesel::joinable!(computed_field_definitions -> users (owner_user_id));
 diesel::joinable!(event_deliveries -> event_subscriptions (subscription_id));
@@ -770,6 +801,7 @@ diesel::joinable!(tokens -> principals (principal_id));
 diesel::allow_tables_to_appear_in_same_query!(
     backup_task_outputs,
     class_computation_state,
+    collection_authorization_state,
     collection_closure,
     collections,
     collections_history,

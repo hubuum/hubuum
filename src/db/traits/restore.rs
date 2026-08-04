@@ -37,6 +37,7 @@ const TRUNCATE_TABLES: &[&str] = &[
     "export_templates_history",
     "export_templates",
     "permissions",
+    "collection_authorization_state",
     "hubuumobject_relation_history",
     "hubuumobject_relation",
     "hubuumobject_history",
@@ -348,6 +349,9 @@ pub(crate) async fn apply_restore_db(
         diesel::sql_query("SELECT set_config('hubuum.restore_events', 'on', true)")
             .execute(conn)
             .await?;
+        diesel::sql_query("SELECT set_config('hubuum.restore_revisions', 'on', true)")
+            .execute(conn)
+            .await?;
 
         let lock_tables = TRUNCATE_TABLES.join(", ");
         for table in TRUNCATE_TABLES {
@@ -627,22 +631,6 @@ pub(crate) async fn delete_server_instance_db(
     })
     .await?;
     Ok(())
-}
-
-pub(crate) async fn identity_scope_name_db(
-    pool: &DbPool,
-    identity_scope_id: i32,
-) -> Result<String, ApiError> {
-    with_connection(pool, async |conn| {
-        use crate::schema::identity_scopes::dsl::{id, identity_scopes, name};
-
-        identity_scopes
-            .filter(id.eq(identity_scope_id))
-            .select(name)
-            .first::<String>(conn)
-            .await
-    })
-    .await
 }
 
 #[cfg(test)]

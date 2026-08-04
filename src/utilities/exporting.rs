@@ -533,6 +533,7 @@ mod tests {
             default_limits: None,
             created_at: now,
             updated_at: now,
+            revision: crate::models::ResourceRevision::INITIAL,
         }
     }
 

@@ -114,6 +114,12 @@ async fn update_event_sink_record_impl(
             .for_update()
             .first::<EventSinkRow>(conn)
             .await?;
+        crate::db::assert_locked_revision_precondition(
+            conn,
+            &format!("event_sinks:{}", before.id),
+            before.revision,
+        )
+        .await?;
         if !row.has_changes(&before) {
             return Ok(before);
         }
@@ -291,6 +297,12 @@ async fn update_event_subscription_record_impl(
                 .for_update()
                 .first::<EventSubscriptionRow>(conn)
                 .await?;
+            crate::db::assert_locked_revision_precondition(
+                conn,
+                &format!("event_subscriptions:{}", before.id),
+                before.revision,
+            )
+            .await?;
             if !row.has_changes(&before) {
                 return Ok(before);
             }
@@ -426,6 +438,7 @@ fn event_sink_snapshot(row: &EventSinkRow) -> serde_json::Value {
         "config": config,
         "secret_ref": row.secret_ref,
         "enabled": row.enabled,
+        "revision": row.revision,
     })
 }
 
@@ -442,6 +455,7 @@ fn event_subscription_snapshot(row: &EventSubscriptionRow) -> serde_json::Value 
         "filter": row.filter,
         "routing": routing,
         "enabled": row.enabled,
+        "revision": row.revision,
     })
 }
 
@@ -481,7 +495,7 @@ pub async fn enabled_event_sink_count(pool: &DbPool) -> Result<i64, ApiError> {
 fn build_event_sink_query(
     query_options: &QueryOptions,
 ) -> Result<crate::schema::event_sinks::BoxedQuery<'static, diesel::pg::Pg>, ApiError> {
-    use crate::schema::event_sinks::dsl::{created_at, event_sinks, id, kind, name};
+    use crate::schema::event_sinks::dsl::{created_at, event_sinks, id, kind, name, revision};
 
     let mut query = event_sinks.into_boxed();
     for param in query_options.filters.clone() {
@@ -491,6 +505,7 @@ fn build_event_sink_query(
             FilterField::Name => crate::string_search!(query, param, operator, name),
             FilterField::Kind => crate::string_search!(query, param, operator, kind),
             FilterField::CreatedAt => crate::date_search!(query, param, operator, created_at),
+            FilterField::Revision => crate::revision_search!(query, param, operator, revision),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not searchable for event sinks",
@@ -529,7 +544,7 @@ fn build_event_subscription_query(
     query_options: &QueryOptions,
 ) -> Result<crate::schema::event_subscriptions::BoxedQuery<'static, diesel::pg::Pg>, ApiError> {
     use crate::schema::event_subscriptions::dsl::{
-        collection_id, created_at, event_subscriptions, id, name,
+        collection_id, created_at, event_subscriptions, id, name, revision,
     };
 
     let mut query = event_subscriptions
@@ -541,6 +556,7 @@ fn build_event_subscription_query(
             FilterField::Id => crate::numeric_search!(query, param, operator, id),
             FilterField::Name => crate::string_search!(query, param, operator, name),
             FilterField::CreatedAt => crate::date_search!(query, param, operator, created_at),
+            FilterField::Revision => crate::revision_search!(query, param, operator, revision),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not searchable for event subscriptions",
@@ -622,6 +638,7 @@ mod tests {
             enabled: true,
             created_at: timestamp,
             updated_at: timestamp,
+            revision: crate::models::ResourceRevision::INITIAL,
         };
 
         let snapshot = event_subscription_snapshot(&row);

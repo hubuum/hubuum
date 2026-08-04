@@ -220,6 +220,41 @@ where
         .map_into_boxed_body()
 }
 
+pub async fn patch_request_with_headers<T>(
+    pool: &DbPool,
+    token: &str,
+    endpoint: &str,
+    content: T,
+    headers: Vec<(http::header::HeaderName, String)>,
+) -> actix_web::dev::ServiceResponse
+where
+    T: Serialize,
+{
+    let app = test::init_service(
+        App::new()
+            .wrap(actix_web::middleware::from_fn(
+                crate::middlewares::actor_context,
+            ))
+            .wrap(TracingMiddleware::new())
+            .app_data(Data::new(pool.clone()))
+            .app_data(app_context(pool))
+            .configure(prod_api::config),
+    )
+    .await;
+
+    let mut request = test::TestRequest::patch()
+        .insert_header(create_token_header(token))
+        .uri(endpoint);
+    for (name, value) in headers {
+        request = request.insert_header((name, value));
+    }
+    request
+        .set_json(&content)
+        .send_request(&app)
+        .await
+        .map_into_boxed_body()
+}
+
 pub async fn patch_request_with_content_type<T>(
     pool: &DbPool,
     token: &str,

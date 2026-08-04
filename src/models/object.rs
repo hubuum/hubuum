@@ -11,6 +11,7 @@ use crate::db::traits::object::{
 #[cfg(test)]
 use crate::db::with_connection;
 use crate::errors::ApiError;
+use crate::models::ResourceRevision;
 use crate::models::class::{HubuumClass, HubuumClassID};
 use crate::models::computed_field::HubuumObjectComputedResponse;
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
@@ -37,6 +38,8 @@ pub struct HubuumObject {
     pub created_at: chrono::NaiveDateTime,
     #[diesel(sql_type = Timestamp)]
     pub updated_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = BigInt)]
+    pub revision: ResourceRevision,
 }
 
 #[derive(Serialize, Deserialize, Clone, Insertable, ToSchema)]
@@ -319,6 +322,7 @@ pub struct HubuumObjectWithPath {
     pub description: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
     pub path: Vec<i32>,
 }
 
@@ -395,6 +399,7 @@ pub struct HubuumObjectHistory {
     pub actor_kind: Option<String>,
     pub initiator_user_id: Option<i32>,
     pub task_id: Option<i32>,
+    pub revision: ResourceRevision,
 }
 
 crate::impl_history_pagination!(HubuumObjectHistory, "hubuumobject_history");
@@ -441,6 +446,7 @@ pub mod tests {
             description: String::new(),
             created_at: now,
             updated_at: now,
+            revision: crate::models::ResourceRevision::INITIAL,
         }
     }
 

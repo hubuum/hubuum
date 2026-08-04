@@ -16,6 +16,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::errors::ApiError;
+use crate::models::ResourceRevision;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 use crate::pagination::{
@@ -173,6 +174,8 @@ pub struct Event {
     pub fanout_claim_token: Option<Uuid>,
     pub initiator_user_id: Option<i32>,
     pub task_id: Option<i32>,
+    pub before_revision: Option<ResourceRevision>,
+    pub after_revision: Option<ResourceRevision>,
 }
 
 impl fmt::Debug for Event {
@@ -228,6 +231,8 @@ pub struct EventResponse {
     pub after: Option<serde_json::Value>,
     pub metadata: serde_json::Value,
     pub schema_version: i32,
+    pub before_revision: Option<ResourceRevision>,
+    pub after_revision: Option<ResourceRevision>,
 }
 
 impl fmt::Debug for EventResponse {
@@ -303,6 +308,8 @@ impl EventResponse {
             after: value.after,
             metadata: value.metadata,
             schema_version: value.schema_version,
+            before_revision: value.before_revision,
+            after_revision: value.after_revision,
         }
     }
 }
@@ -357,7 +364,7 @@ impl CursorSqlMapping for EventResponse {
         Ok(match field {
             FilterField::Id => CursorSqlField {
                 column: "events.id",
-                sql_type: CursorSqlType::Integer,
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             FilterField::OccurredAt => CursorSqlField {
@@ -629,6 +636,8 @@ mod tests {
             summary: "created".to_string(),
             before: Some(serde_json::json!({"token": "stored-before-secret"})),
             after: Some(serde_json::json!({"token": "stored-after-secret"})),
+            before_revision: None,
+            after_revision: None,
             metadata: serde_json::json!({"token": "stored-metadata-secret"}),
             schema_version: 1,
             dispatched_at: None,

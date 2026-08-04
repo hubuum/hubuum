@@ -4,12 +4,12 @@ use utoipa::ToSchema;
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::GroupID;
 use crate::models::search::{FilterField, SortParam};
+use crate::models::{GroupID, ResourceRevision};
 use crate::schema::service_accounts;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 
 /// A non-human principal used by automation/integrations. Its id is the
@@ -33,6 +33,21 @@ pub struct ServiceAccount {
 impl ServiceAccount {
     pub fn is_disabled(&self) -> bool {
         self.disabled_at.is_some()
+    }
+
+    /// Build the strongly tagged point representation in one database snapshot.
+    pub async fn to_point_response<C>(
+        &self,
+        backend: &C,
+    ) -> Result<ServiceAccountPointResponse, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        crate::db::traits::principal::load_service_account_point_response(
+            backend.db_pool(),
+            self.id,
+        )
+        .await
     }
 }
 
@@ -61,10 +76,56 @@ pub struct ServiceAccountResponse {
     pub disabled_at: Option<chrono::NaiveDateTime>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
+}
+
+/// Strongly tagged point representation of a service account.
+///
+/// The identity-scope name is omitted because that independently revisioned
+/// resource is not covered by the service account's principal revision.
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
+pub struct ServiceAccountPointResponse {
+    pub id: i32,
+    pub identity_scope_id: i32,
+    pub name: String,
+    pub description: String,
+    pub owner_group_id: i32,
+    pub created_by: Option<i32>,
+    pub disabled_at: Option<chrono::NaiveDateTime>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
+}
+
+impl ServiceAccountPointResponse {
+    pub fn from_parts(
+        service_account: ServiceAccount,
+        identity_scope_id: i32,
+        name: String,
+        revision: ResourceRevision,
+    ) -> Self {
+        Self {
+            id: service_account.id,
+            identity_scope_id,
+            name,
+            description: service_account.description,
+            owner_group_id: service_account.owner_group_id,
+            created_by: service_account.created_by,
+            disabled_at: service_account.disabled_at,
+            created_at: service_account.created_at,
+            updated_at: service_account.updated_at,
+            revision,
+        }
+    }
 }
 
 impl ServiceAccountResponse {
-    pub fn from_parts(sa: &ServiceAccount, identity_scope: String, name: String) -> Self {
+    pub fn from_parts(
+        sa: &ServiceAccount,
+        identity_scope: String,
+        name: String,
+        revision: ResourceRevision,
+    ) -> Self {
         Self {
             id: sa.id,
             identity_scope,
@@ -75,6 +136,7 @@ impl ServiceAccountResponse {
             disabled_at: sa.disabled_at,
             created_at: sa.created_at,
             updated_at: sa.updated_at,
+            revision,
         }
     }
 }
@@ -87,21 +149,28 @@ pub struct ServiceAccountWithName {
     pub service_account: ServiceAccount,
     pub identity_scope: String,
     pub name: String,
+    pub revision: ResourceRevision,
 }
 
 impl ServiceAccountWithName {
-    pub fn from_tuple(t: (ServiceAccount, String, String)) -> Self {
+    pub fn from_tuple(t: (ServiceAccount, String, String, ResourceRevision)) -> Self {
         Self {
             service_account: t.0,
             identity_scope: t.1,
             name: t.2,
+            revision: t.3,
         }
     }
 }
 
 impl From<ServiceAccountWithName> for ServiceAccountResponse {
     fn from(value: ServiceAccountWithName) -> Self {
-        ServiceAccountResponse::from_parts(&value.service_account, value.identity_scope, value.name)
+        ServiceAccountResponse::from_parts(
+            &value.service_account,
+            value.identity_scope,
+            value.name,
+            value.revision,
+        )
     }
 }
 
@@ -114,6 +183,7 @@ impl CursorPaginated for ServiceAccountWithName {
                 | FilterField::IdentityScope
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -124,6 +194,7 @@ impl CursorPaginated for ServiceAccountWithName {
             FilterField::Name => CursorValue::String(self.name.clone()),
             FilterField::CreatedAt => CursorValue::DateTime(self.service_account.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.service_account.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for service accounts",
@@ -171,6 +242,11 @@ impl CursorSqlMapping for ServiceAccountWithName {
             FilterField::UpdatedAt => CursorSqlField {
                 column: "service_accounts.updated_at",
                 sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "principals.revision",
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             _ => {

@@ -8,6 +8,9 @@ Notes:
 - response bodies remain JSON arrays; the next page cursor is returned in `X-Next-Cursor`
 - contextual endpoints may inject exact filters from path parameters
 - some endpoints also apply permission scoping before query filters are evaluated
+- every authoritative resource row and temporal-history row additionally
+  supports `revision` filtering and sorting, unless the endpoint is explicitly
+  described as an aggregate or non-paginated representation
 
 ## IAM
 
@@ -25,7 +28,7 @@ Notes:
 | --- | --- | --- | --- | --- |
 | `/api/v1/collections` | `id`, `name`, `description`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `description`, `created_at`, `updated_at` | `id.asc` | `permissions` narrows the collections to those where the caller has the named effective permission |
 | `/api/v1/collections/{collection_id}/children`, `/api/v1/collections/{collection_id}/ancestors` | n/a | n/a | n/a | hierarchy helpers; results are not query-parameter paginated |
-| `/api/v1/collections/{collection_id}/permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | returns direct `GroupPermission` rows stored on the collection |
+| `/api/v1/collections/{collection_id}/permissions` | n/a | n/a | n/a | revisioned point representation of the complete SQL-owned permission set; not query-parameter paginated |
 | `/api/v1/collections/{collection_id}/permissions/principal/{principal_id}` | `id`, `name`, `groupname`, `created_at`, `updated_at`, `permissions` | `id`, `name`, `groupname`, `created_at`, `updated_at` | `id.asc` | direct rows constrained to one collection and one principal's memberships (human or service account) |
 | `/api/v1/collections/{collection_id}/permissions/effective/group/{group_id}`, `/api/v1/collections/{collection_id}/permissions/effective/principal/{principal_id}` | n/a | n/a | n/a | returns direct and inherited rows with source collection and depth; results are not query-parameter paginated |
 | `/api/v1/collections/{collection_id}/has_permissions/{permission}` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id`, `name`, `groupname`, `description`, `created_at`, `updated_at` | `id.asc` | path permission already narrows the result set |

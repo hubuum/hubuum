@@ -52,7 +52,7 @@ macro_rules! history_db_fns {
             use $crate::db::prelude::*;
             use $($schema)::+::dsl::*;
             let total = $crate::pagination::exact_count_or_skipped(query_options, async || {
-                $crate::db::with_connection(pool, async |conn| {
+                $crate::db::with_connection(pool, async |conn| -> Result<i64, $crate::errors::ApiError> {
                     let mut query = $($schema)::+::table
                         .into_boxed()
                         .filter(id.eq(entity_id));
@@ -62,10 +62,22 @@ macro_rules! history_db_fns {
                     {
                         query = query.filter($visibility_column.eq_any(collection_ids));
                     }
-                    query
+                    for param in &query_options.filters {
+                        let operator = param.operator.clone();
+                        match param.field {
+                            $crate::models::search::FilterField::Revision => {
+                                $crate::revision_search!(query, param, operator, revision)
+                            }
+                            _ => return Err($crate::errors::ApiError::BadRequest(format!(
+                                "Field '{}' is not searchable for history",
+                                param.field
+                            ))),
+                        }
+                    }
+                    Ok(query
                         .count()
                         .get_result::<i64>(conn)
-                        .await
+                        .await?)
                 })
                 .await
             }).await?;
@@ -74,6 +86,18 @@ macro_rules! history_db_fns {
                 collection_filter
             {
                 query = query.filter($visibility_column.eq_any(collection_ids));
+            }
+            for param in &query_options.filters {
+                let operator = param.operator.clone();
+                match param.field {
+                    $crate::models::search::FilterField::Revision => {
+                        $crate::revision_search!(query, param, operator, revision)
+                    }
+                    _ => return Err($crate::errors::ApiError::BadRequest(format!(
+                        "Field '{}' is not searchable for history",
+                        param.field
+                    ))),
+                }
             }
             $crate::apply_query_options!(query, query_options, $ty);
             let items = $crate::db::with_connection(pool, async |conn| {
@@ -147,7 +171,7 @@ pub async fn object_history_paginated_with_total_count(
     use crate::schema::hubuumobject_history::dsl as history;
 
     let total = crate::pagination::exact_count_or_skipped(query_options, async || {
-        with_connection(pool, async |conn| {
+        with_connection(pool, async |conn| -> Result<i64, ApiError> {
             let mut query = history::hubuumobject_history
                 .into_boxed()
                 .filter(history::id.eq(object_id))
@@ -155,7 +179,21 @@ pub async fn object_history_paginated_with_total_count(
             if let HistoryCollectionFilter::Visible(collection_ids) = collection_filter {
                 query = query.filter(history::collection_id.eq_any(collection_ids));
             }
-            query.count().get_result::<i64>(conn).await
+            for param in &query_options.filters {
+                let operator = param.operator.clone();
+                match param.field {
+                    crate::models::search::FilterField::Revision => {
+                        crate::revision_search!(query, param, operator, history::revision)
+                    }
+                    _ => {
+                        return Err(ApiError::BadRequest(format!(
+                            "Field '{}' is not searchable for history",
+                            param.field
+                        )));
+                    }
+                }
+            }
+            Ok(query.count().get_result::<i64>(conn).await?)
         })
         .await
     })
@@ -166,6 +204,20 @@ pub async fn object_history_paginated_with_total_count(
         .filter(history::hubuum_class_id.eq(class_id));
     if let HistoryCollectionFilter::Visible(collection_ids) = collection_filter {
         query = query.filter(history::collection_id.eq_any(collection_ids));
+    }
+    for param in &query_options.filters {
+        let operator = param.operator.clone();
+        match param.field {
+            crate::models::search::FilterField::Revision => {
+                crate::revision_search!(query, param, operator, history::revision)
+            }
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not searchable for history",
+                    param.field
+                )));
+            }
+        }
     }
     crate::apply_query_options!(query, query_options, crate::models::HubuumObjectHistory);
     let items = with_connection(pool, async |conn| {

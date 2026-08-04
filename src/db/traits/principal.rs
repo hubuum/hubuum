@@ -5,7 +5,11 @@ use crate::db::prelude::*;
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, NewEvent, emit_event};
-use crate::models::{NewPrincipal, Principal, PrincipalKind, PrincipalSettings, User};
+use crate::models::{
+    NewPrincipal, Principal, PrincipalKind, PrincipalSettings, PrincipalSettingsResponse,
+    ServiceAccount, ServiceAccountPointResponse, User, UserPointResponse, UserResponse,
+    UserWithName,
+};
 
 pub trait InsertPrincipalRecord {
     /// Insert the principal row and return it (principal-first id allocation).
@@ -42,21 +46,59 @@ pub async fn load_principal_by_id(
     .await
 }
 
+pub(crate) async fn principal_revision_conn(
+    conn: &mut DbConnection,
+    principal_id_value: i32,
+) -> Result<crate::models::ResourceRevision, ApiError> {
+    use crate::schema::principals::dsl::{id, principals, revision};
+
+    Ok(principals
+        .filter(id.eq(principal_id_value))
+        .select(revision)
+        .first(conn)
+        .await?)
+}
+
+pub(crate) async fn lock_principal_revision_conn(
+    conn: &mut DbConnection,
+    principal_id_value: i32,
+) -> Result<crate::models::ResourceRevision, ApiError> {
+    use crate::schema::principals::dsl::{id, principals, revision};
+
+    let owner_revision = principals
+        .filter(id.eq(principal_id_value))
+        .select(revision)
+        .for_update()
+        .first(conn)
+        .await?;
+    crate::db::assert_locked_revision_precondition(
+        conn,
+        &format!("principals:{principal_id_value}"),
+        owner_revision,
+    )
+    .await?;
+    Ok(owner_revision)
+}
+
 pub async fn load_principal_settings(
     pool: &DbPool,
     principal_id_value: i32,
-) -> Result<PrincipalSettings, ApiError> {
-    use crate::schema::principals::dsl::{id, principals as principals_table, settings};
+) -> Result<PrincipalSettingsResponse, ApiError> {
+    use crate::schema::principals::dsl::{id, principals as principals_table, revision, settings};
 
-    let value = with_connection(pool, async |conn| {
+    let (value, stored_revision) = with_connection(pool, async |conn| {
         principals_table
             .filter(id.eq(principal_id_value))
-            .select(settings)
-            .first::<serde_json::Value>(conn)
+            .select((settings, revision))
+            .first::<(serde_json::Value, crate::models::ResourceRevision)>(conn)
             .await
     })
     .await?;
-    stored_principal_settings(principal_id_value, value)
+    Ok(PrincipalSettingsResponse::new(
+        principal_id_value,
+        stored_revision,
+        stored_principal_settings(principal_id_value, value)?,
+    ))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -72,51 +114,80 @@ pub async fn mutate_principal_settings(
     mutation: PrincipalSettingsMutation,
     input: PrincipalSettings,
     event_context: &EventContext,
-) -> Result<PrincipalSettings, ApiError> {
+) -> Result<PrincipalSettingsResponse, ApiError> {
     use crate::schema::principals;
 
-    with_transaction(pool, async |conn| -> Result<PrincipalSettings, ApiError> {
-        let (kind, name, stored_before) = principals::table
-            .filter(principals::id.eq(principal_id_value))
-            .select((principals::kind, principals::name, principals::settings))
-            .for_update()
-            .first::<(String, String, serde_json::Value)>(conn)
+    with_transaction(
+        pool,
+        async |conn| -> Result<PrincipalSettingsResponse, ApiError> {
+            let (kind, name, stored_before, before_revision) = principals::table
+                .filter(principals::id.eq(principal_id_value))
+                .select((
+                    principals::kind,
+                    principals::name,
+                    principals::settings,
+                    principals::revision,
+                ))
+                .for_update()
+                .first::<(
+                    String,
+                    String,
+                    serde_json::Value,
+                    crate::models::ResourceRevision,
+                )>(conn)
+                .await?;
+            crate::db::assert_locked_revision_precondition(
+                conn,
+                &format!("principals:{principal_id_value}"),
+                before_revision,
+            )
             .await?;
-        let before = stored_principal_settings(principal_id_value, stored_before)?;
-        let after = match mutation {
-            PrincipalSettingsMutation::Replace => input,
-            PrincipalSettingsMutation::Patch => before.clone().merge_patch(&input),
-            PrincipalSettingsMutation::Reset => PrincipalSettings::default(),
-        };
+            let before = stored_principal_settings(principal_id_value, stored_before)?;
+            let after = match mutation {
+                PrincipalSettingsMutation::Replace => input,
+                PrincipalSettingsMutation::Patch => before.clone().merge_patch(&input),
+                PrincipalSettingsMutation::Reset => PrincipalSettings::default(),
+            };
 
-        if before == after {
-            return Ok(after);
-        }
+            if before == after {
+                return Ok(PrincipalSettingsResponse::new(
+                    principal_id_value,
+                    before_revision,
+                    after,
+                ));
+            }
 
-        diesel::update(principals::table.filter(principals::id.eq(principal_id_value)))
-            .set(principals::settings.eq(after.as_value()))
-            .execute(conn)
-            .await?;
+            let after_revision =
+                diesel::update(principals::table.filter(principals::id.eq(principal_id_value)))
+                    .set(principals::settings.eq(after.as_value()))
+                    .returning(principals::revision)
+                    .get_result::<crate::models::ResourceRevision>(conn)
+                    .await?;
 
-        let entity_type = match PrincipalKind::from_db(&kind)? {
-            PrincipalKind::Human => EntityType::User,
-            PrincipalKind::ServiceAccount => EntityType::ServiceAccount,
-        };
-        let event = NewEvent::new(
-            entity_type,
-            Action::Updated,
-            event_context.actor_kind(),
-            format!("Principal settings for '{name}' updated"),
-        )?
-        .with_context(event_context)
-        .with_entity_id(principal_id_value)
-        .with_entity_name(name)
-        .with_before(json!({ "settings": before }))
-        .with_after(json!({ "settings": after }));
-        emit_event(conn, &event).await?;
+            let entity_type = match PrincipalKind::from_db(&kind)? {
+                PrincipalKind::Human => EntityType::User,
+                PrincipalKind::ServiceAccount => EntityType::ServiceAccount,
+            };
+            let event = NewEvent::new(
+                entity_type,
+                Action::Updated,
+                event_context.actor_kind(),
+                format!("Principal settings for '{name}' updated"),
+            )?
+            .with_context(event_context)
+            .with_entity_id(principal_id_value)
+            .with_entity_name(name)
+            .with_before(json!({ "revision": before_revision, "settings": before }))
+            .with_after(json!({ "revision": after_revision, "settings": after }));
+            emit_event(conn, &event).await?;
 
-        Ok(after)
-    })
+            Ok(PrincipalSettingsResponse::new(
+                principal_id_value,
+                after_revision,
+                after,
+            ))
+        },
+    )
     .await
 }
 
@@ -150,75 +221,98 @@ pub async fn load_principal_with_user(
     .await
 }
 
-pub struct PrincipalIdentityMetadata {
-    pub identity_scope: String,
-    pub provider_kind: String,
-    pub name: String,
-    pub provider_managed: bool,
-    pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
-    pub last_sync_success_at: Option<chrono::NaiveDateTime>,
-}
-
-pub async fn principal_identity_scope_and_name(
+/// Load the rich, untagged user representation in one database snapshot.
+pub(crate) async fn load_user_response(
     pool: &DbPool,
-    principal_id_value: i32,
-) -> Result<(String, String), ApiError> {
-    use crate::schema::{identity_scopes, principals};
+    user_id_value: i32,
+) -> Result<UserResponse, ApiError> {
+    use crate::schema::{identity_scopes, principals, users};
 
-    with_connection(pool, async |conn| {
-        principals::table
-            .inner_join(identity_scopes::table)
-            .filter(principals::id.eq(principal_id_value))
-            .select((identity_scopes::name, principals::name))
-            .first::<(String, String)>(conn)
-            .await
-    })
-    .await
-}
-
-pub async fn principal_identity_metadata(
-    pool: &DbPool,
-    principal_id_value: i32,
-) -> Result<PrincipalIdentityMetadata, ApiError> {
-    use crate::schema::{identity_scopes, principals};
-
-    let (
-        identity_scope,
-        provider_kind,
-        name,
-        provider_managed,
-        last_sync_attempted_at,
-        last_sync_success_at,
-    ) = with_connection(pool, async |conn| {
-        principals::table
-            .inner_join(identity_scopes::table)
-            .filter(principals::id.eq(principal_id_value))
+    let row = with_connection(pool, async |conn| {
+        users::table
+            .inner_join(principals::table.on(principals::id.eq(users::id)))
+            .inner_join(
+                identity_scopes::table.on(identity_scopes::id.eq(principals::identity_scope_id)),
+            )
+            .filter(users::id.eq(user_id_value))
             .select((
+                User::as_select(),
                 identity_scopes::name,
                 identity_scopes::provider_kind,
                 principals::name,
                 principals::provider_managed,
                 principals::last_sync_attempted_at,
                 principals::last_sync_success_at,
+                principals::revision,
             ))
-            .first::<(
-                String,
-                String,
-                String,
-                bool,
-                Option<chrono::NaiveDateTime>,
-                Option<chrono::NaiveDateTime>,
-            )>(conn)
+            .first(conn)
             .await
     })
     .await?;
 
-    Ok(PrincipalIdentityMetadata {
-        identity_scope,
-        provider_kind,
+    Ok(UserResponse::from(UserWithName::from_tuple(row)))
+}
+
+/// Load the user point body and its validator revision in one SQL statement.
+pub(crate) async fn load_user_point_response(
+    pool: &DbPool,
+    user_id_value: i32,
+) -> Result<UserPointResponse, ApiError> {
+    use crate::schema::{principals, users};
+
+    let (user, identity_scope_id, name, provider_managed, revision) =
+        with_connection(pool, async |conn| {
+            users::table
+                .inner_join(principals::table.on(principals::id.eq(users::id)))
+                .filter(users::id.eq(user_id_value))
+                .select((
+                    User::as_select(),
+                    principals::identity_scope_id,
+                    principals::name,
+                    principals::provider_managed,
+                    principals::revision,
+                ))
+                .first(conn)
+                .await
+        })
+        .await?;
+
+    Ok(UserPointResponse::from_parts(
+        user,
+        identity_scope_id,
         name,
         provider_managed,
-        last_sync_attempted_at,
-        last_sync_success_at,
-    })
+        revision,
+    ))
+}
+
+/// Load the service-account point body and revision in one SQL statement.
+pub(crate) async fn load_service_account_point_response(
+    pool: &DbPool,
+    service_account_id_value: i32,
+) -> Result<ServiceAccountPointResponse, ApiError> {
+    use crate::schema::{principals, service_accounts};
+
+    let (service_account, identity_scope_id, name, revision) =
+        with_connection(pool, async |conn| {
+            service_accounts::table
+                .inner_join(principals::table.on(principals::id.eq(service_accounts::id)))
+                .filter(service_accounts::id.eq(service_account_id_value))
+                .select((
+                    ServiceAccount::as_select(),
+                    principals::identity_scope_id,
+                    principals::name,
+                    principals::revision,
+                ))
+                .first(conn)
+                .await
+        })
+        .await?;
+
+    Ok(ServiceAccountPointResponse::from_parts(
+        service_account,
+        identity_scope_id,
+        name,
+        revision,
+    ))
 }

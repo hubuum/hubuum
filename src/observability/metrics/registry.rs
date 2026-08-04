@@ -341,6 +341,10 @@ pub fn init() -> Result<(), ApiError> {
             .u64_counter("hubuum_client_allowlist_rejections")
             .with_description("Requests rejected by the client IP allowlist")
             .build(),
+        revision_conditions: meter
+            .u64_counter("hubuum_revision_conditions")
+            .with_description("Revision precondition outcomes by bounded kind")
+            .build(),
         event_queue_items: meter
             .i64_gauge("hubuum_event_queue_items")
             .with_description("Event fan-out and delivery queue items by state")

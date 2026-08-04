@@ -2,7 +2,9 @@ use serde_json::json;
 
 use crate::db::prelude::*;
 use crate::db::traits::identity::identity_scope_by_name;
-use crate::db::traits::principal::InsertPrincipalRecord;
+use crate::db::traits::principal::{
+    InsertPrincipalRecord, lock_principal_revision_conn, principal_revision_conn,
+};
 use crate::db::traits::task::{QueuedTaskCancellation, cancel_queued_tasks_conn};
 use crate::db::traits::token::revoke_all_tokens_for_principal_conn;
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
@@ -110,6 +112,7 @@ where
                 ))
                 .get_result::<ServiceAccount>(conn)
                 .await?;
+            let revision = principal_revision_conn(conn, principal.id).await?;
             if let Some(event_context) = event_context {
                 let event = NewEvent::new(
                     EntityType::ServiceAccount,
@@ -127,6 +130,7 @@ where
                     "owner_group_id": sa.owner_group_id,
                     "created_by": sa.created_by,
                     "disabled_at": sa.disabled_at,
+                    "revision": revision,
                 }))
                 .with_metadata(json!({
                     "owner_group_id": sa.owner_group_id,
@@ -173,9 +177,9 @@ async fn update_service_account_record(
     use crate::schema::service_accounts::dsl::{id, service_accounts as sa_table};
 
     with_transaction(pool, async |conn| -> Result<ServiceAccount, ApiError> {
+        let before_revision = lock_principal_revision_conn(conn, service_account_id).await?;
         let before = sa_table
             .filter(id.eq(service_account_id))
-            .for_update()
             .first::<ServiceAccount>(conn)
             .await?;
         if !update.has_changes(&before) {
@@ -185,6 +189,7 @@ async fn update_service_account_record(
             .set(update)
             .get_result::<ServiceAccount>(conn)
             .await?;
+        let after_revision = principal_revision_conn(conn, service_account_id).await?;
         if let Some(event_context) = event_context {
             let name = load_principal_name_by_id(conn, updated.id).await?;
             let event = NewEvent::new(
@@ -196,8 +201,8 @@ async fn update_service_account_record(
             .with_context(event_context)
             .with_entity_id(updated.id)
             .with_entity_name(&name)
-            .with_before(service_account_snapshot(&before, &name))
-            .with_after(service_account_snapshot(&updated, &name))
+            .with_before(service_account_snapshot(&before, &name, before_revision))
+            .with_after(service_account_snapshot(&updated, &name, after_revision))
             .with_metadata(json!({
                 "owner_group_id": updated.owner_group_id,
             }));
@@ -285,9 +290,9 @@ async fn disable_service_account_conn(
 ) -> Result<(ServiceAccount, Vec<TaskRecord>), ApiError> {
     use crate::schema::service_accounts::dsl::{disabled_at, id, service_accounts as sa_table};
 
+    let before_revision = lock_principal_revision_conn(conn, service_account_id).await?;
     let before = sa_table
         .filter(id.eq(service_account_id))
-        .for_update()
         .first::<ServiceAccount>(conn)
         .await?;
     let disabled = if before.disabled_at.is_some() {
@@ -297,6 +302,7 @@ async fn disable_service_account_conn(
             .set(disabled_at.eq(diesel::dsl::now))
             .get_result::<ServiceAccount>(conn)
             .await?;
+        let after_revision = principal_revision_conn(conn, service_account_id).await?;
         if let Some(event_context) = event_context {
             let name = load_principal_name_by_id(conn, disabled.id).await?;
             let event = NewEvent::new(
@@ -308,8 +314,8 @@ async fn disable_service_account_conn(
             .with_context(event_context)
             .with_entity_id(disabled.id)
             .with_entity_name(&name)
-            .with_before(service_account_snapshot(&before, &name))
-            .with_after(service_account_snapshot(&disabled, &name))
+            .with_before(service_account_snapshot(&before, &name, before_revision))
+            .with_after(service_account_snapshot(&disabled, &name, after_revision))
             .with_metadata(json!({
                 "owner_group_id": disabled.owner_group_id,
             }));
@@ -342,12 +348,7 @@ async fn delete_service_account(
     use crate::schema::principals::dsl::{id, principals as principals_table};
     let sa_id = account_id.id();
     with_transaction(pool, async |conn| -> Result<(), ApiError> {
-        principals_table
-            .filter(id.eq(sa_id))
-            .for_update()
-            .select(id)
-            .first::<i32>(conn)
-            .await?;
+        let before_revision = lock_principal_revision_conn(conn, sa_id).await?;
         let sa = load_service_account_by_id_conn(conn, sa_id).await?;
         if let Some(event_context) = event_context {
             let name = load_principal_name_by_id(conn, sa_id).await?;
@@ -360,7 +361,7 @@ async fn delete_service_account(
             .with_context(event_context)
             .with_entity_id(sa_id)
             .with_entity_name(&name)
-            .with_before(service_account_snapshot(&sa, &name))
+            .with_before(service_account_snapshot(&sa, &name, before_revision))
             .with_metadata(json!({
                 "owner_group_id": sa.owner_group_id,
             }));
@@ -400,7 +401,11 @@ async fn load_service_account_by_id_conn(
         .map_err(ApiError::from)
 }
 
-fn service_account_snapshot(sa: &ServiceAccount, name: &str) -> serde_json::Value {
+fn service_account_snapshot(
+    sa: &ServiceAccount,
+    name: &str,
+    revision: crate::models::ResourceRevision,
+) -> serde_json::Value {
     json!({
         "id": sa.id,
         "name": name,
@@ -408,6 +413,7 @@ fn service_account_snapshot(sa: &ServiceAccount, name: &str) -> serde_json::Valu
         "owner_group_id": sa.owner_group_id,
         "created_by": sa.created_by,
         "disabled_at": sa.disabled_at,
+        "revision": revision,
     })
 }
 
@@ -571,6 +577,9 @@ where
             }
             FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
             FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+            FilterField::Revision => {
+                crate::revision_search!(base_query, param, operator, principals::revision)
+            }
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't searchable for service accounts",
@@ -588,8 +597,14 @@ where
                 ServiceAccount::as_select(),
                 identity_scopes::name,
                 principals::name,
+                principals::revision,
             ))
-            .load::<(ServiceAccount, String, String)>(conn)
+            .load::<(
+                ServiceAccount,
+                String,
+                String,
+                crate::models::ResourceRevision,
+            )>(conn)
             .await
     })
     .await?;
@@ -614,7 +629,7 @@ where
     use crate::schema::service_accounts::dsl::{
         created_at, id, owner_group_id, service_accounts, updated_at,
     };
-    use crate::{date_search, numeric_search, string_search};
+    use crate::{date_search, numeric_search, revision_search, string_search};
 
     let mut base_query = service_accounts
         .inner_join(principals::table.on(principals::id.eq(id)))
@@ -638,6 +653,9 @@ where
             }
             FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
             FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+            FilterField::Revision => {
+                revision_search!(base_query, param, operator, principals::revision)
+            }
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't searchable for service accounts",

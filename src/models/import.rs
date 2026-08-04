@@ -13,13 +13,15 @@ use crate::models::export_template::{
 };
 use crate::models::remote_target::validate_target_parts;
 use crate::models::{
-    EventSinkKind, ExportContentType, ExportInclude, ExportLimits, ExportMissingDataPolicy,
-    ExportRelationContext, ExportScopeKind, ExportTemplateKind, ObjectRelationLimit, Permissions,
-    REDACTED_DEBUG_VALUE, RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType,
-    redacted_debug_option,
+    ComputedResultType, EventSinkKind, ExportContentType, ExportInclude, ExportLimits,
+    ExportMissingDataPolicy, ExportRelationContext, ExportScopeKind, ExportTemplateKind,
+    ObjectRelationLimit, Permissions, REDACTED_DEBUG_VALUE, RemoteAuthConfig, RemoteHttpMethod,
+    RemoteTargetSubjectType, redacted_debug_option,
 };
 
-pub const CURRENT_IMPORT_VERSION: i32 = 1;
+pub const CURRENT_IMPORT_VERSION: i32 = 2;
+pub(crate) const CONDITIONAL_IMPORT_TARGET_MISSING: &str =
+    "stale_revision: conditional import target does not exist";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -33,6 +35,34 @@ pub enum ImportAtomicity {
 pub enum ImportCollisionPolicy {
     Abort,
     Overwrite,
+}
+
+/// Per-item collision and optimistic-concurrency behavior for import v2.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ImportWriteCondition {
+    CreateOnly,
+    Overwrite,
+    IfRevision {
+        expected_revision: crate::models::ResourceRevision,
+    },
+}
+
+impl ImportWriteCondition {
+    pub fn expected_revision(self) -> Option<crate::models::ResourceRevision> {
+        match self {
+            Self::IfRevision { expected_revision } => Some(expected_revision),
+            Self::CreateOnly | Self::Overwrite => None,
+        }
+    }
+
+    pub fn allows_overwrite(self) -> bool {
+        !matches!(self, Self::CreateOnly)
+    }
+
+    pub fn requires_existing(self) -> bool {
+        matches!(self, Self::IfRevision { .. })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -171,6 +201,7 @@ pub struct ImportIdentityScopeInput {
     pub ref_: Option<String>,
     pub name: String,
     pub provider_kind: String,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -186,6 +217,7 @@ pub struct ImportGroupInput {
     pub external_key: Option<String>,
     pub last_sync_attempted_at: Option<NaiveDateTime>,
     pub last_sync_success_at: Option<NaiveDateTime>,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -261,6 +293,7 @@ pub struct ImportPrincipalInput {
     pub last_sync_success_at: Option<NaiveDateTime>,
     #[serde(flatten)]
     pub subtype: ImportPrincipalSubtype,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -317,6 +350,7 @@ pub struct ImportGroupMembershipInput {
     pub group_key: Option<GroupKey>,
     #[serde(default)]
     pub sources: Vec<ImportMembershipSourceInput>,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -328,6 +362,7 @@ pub struct ImportCollectionInput {
     pub description: String,
     pub parent_collection_ref: Option<String>,
     pub parent_collection_key: Option<CollectionKey>,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -341,6 +376,7 @@ pub struct ImportClassInput {
     pub validate_schema: Option<bool>,
     pub collection_ref: Option<String>,
     pub collection_key: Option<CollectionKey>,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -353,6 +389,35 @@ pub struct ImportObjectInput {
     pub data: serde_json::Value,
     pub class_ref: Option<String>,
     pub class_key: Option<ClassKey>,
+    pub condition: Option<ImportWriteCondition>,
+    pub timestamps: Option<RestoreTimestamps>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportComputedFieldVisibility {
+    Shared,
+    Personal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ImportComputedFieldInput {
+    #[serde(rename = "ref")]
+    pub ref_: Option<String>,
+    pub class_ref: Option<String>,
+    pub class_key: Option<ClassKey>,
+    pub visibility: ImportComputedFieldVisibility,
+    pub owner_ref: Option<String>,
+    pub owner_key: Option<PrincipalKey>,
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    #[schema(value_type = Object)]
+    pub operation: serde_json::Value,
+    pub result_type: ComputedResultType,
+    pub enabled: bool,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -368,6 +433,7 @@ pub struct ImportClassRelationInput {
     pub reverse_template_alias: Option<String>,
     pub from_max_relations: Option<ObjectRelationLimit>,
     pub to_max_relations: Option<ObjectRelationLimit>,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -379,6 +445,7 @@ pub struct ImportObjectRelationInput {
     pub from_object_key: Option<ObjectKey>,
     pub to_object_ref: Option<String>,
     pub to_object_key: Option<ObjectKey>,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -391,6 +458,7 @@ pub struct ImportCollectionPermissionInput {
     pub group_key: GroupKey,
     pub permissions: Vec<Permissions>,
     pub replace_existing: Option<bool>,
+    pub condition: Option<ImportWriteCondition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -412,6 +480,7 @@ pub struct ImportExportTemplateInput {
     pub relation_context: Option<ExportRelationContext>,
     pub default_missing_data_policy: Option<ExportMissingDataPolicy>,
     pub default_limits: Option<ExportLimits>,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -464,6 +533,7 @@ pub struct ImportRemoteTargetInput {
     pub allowed_subject_types: Vec<RemoteTargetSubjectType>,
     pub timeout_ms: i32,
     pub enabled: bool,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -498,6 +568,7 @@ pub struct ImportEventSinkInput {
     pub config: serde_json::Value,
     pub secret_ref: Option<String>,
     pub enabled: bool,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -532,6 +603,7 @@ pub struct ImportEventSubscriptionInput {
     #[serde(default = "empty_json_object")]
     pub routing: serde_json::Value,
     pub enabled: bool,
+    pub condition: Option<ImportWriteCondition>,
     pub timestamps: Option<RestoreTimestamps>,
 }
 
@@ -572,6 +644,8 @@ pub struct ImportGraph {
     pub classes: Vec<ImportClassInput>,
     #[serde(default)]
     pub objects: Vec<ImportObjectInput>,
+    #[serde(default)]
+    pub computed_fields: Vec<ImportComputedFieldInput>,
     #[serde(default)]
     pub class_relations: Vec<ImportClassRelationInput>,
     #[serde(default)]
@@ -717,6 +791,38 @@ impl ImportGraph {
                 )?;
             }
         }
+        for field in &self.computed_fields {
+            validate_required_selector(
+                field.class_ref.is_some(),
+                field.class_key.is_some(),
+                "class_ref",
+                "class_key",
+            )?;
+            if let Some(key) = &field.class_key {
+                validate_class_key(key)?;
+            }
+            match field.visibility {
+                ImportComputedFieldVisibility::Shared => validate_optional_selector(
+                    field.owner_ref.is_some(),
+                    field.owner_key.is_some(),
+                    "owner_ref",
+                    "owner_key",
+                )?,
+                ImportComputedFieldVisibility::Personal => validate_required_selector(
+                    field.owner_ref.is_some(),
+                    field.owner_key.is_some(),
+                    "owner_ref",
+                    "owner_key",
+                )?,
+            }
+            if matches!(field.visibility, ImportComputedFieldVisibility::Shared)
+                && (field.owner_ref.is_some() || field.owner_key.is_some())
+            {
+                return Err(ApiError::BadRequest(
+                    "Shared computed-field imports must not provide an owner".to_string(),
+                ));
+            }
+        }
         for template in &self.export_templates {
             validate_required_selector(
                 template.collection_ref.is_some(),
@@ -781,6 +887,17 @@ impl ImportRequest {
         for principal in &self.graph.principals {
             principal.validate_credentials()?;
         }
+        for field in &self.graph.computed_fields {
+            crate::models::ComputedFieldDefinitionRequest {
+                key: field.key.clone(),
+                label: field.label.clone(),
+                description: field.description.clone(),
+                operation: field.operation.clone(),
+                result_type: field.result_type,
+                enabled: field.enabled,
+            }
+            .validate()?;
+        }
         for template in &self.graph.export_templates {
             template.validate()?;
         }
@@ -822,6 +939,7 @@ impl ImportRequest {
             + self.graph.group_memberships.len()
             + self.graph.classes.len()
             + self.graph.objects.len()
+            + self.graph.computed_fields.len()
             + self.graph.class_relations.len()
             + self.graph.object_relations.len()
             + self.graph.collection_permissions.len()
@@ -862,8 +980,8 @@ mod tests {
         IdentityScopeKey, ImportAtomicity, ImportCollisionPolicy, ImportEventSinkInput,
         ImportEventSubscriptionInput, ImportExportTemplateInput, ImportGraph, ImportMode,
         ImportPermissionPolicy, ImportPrincipalInput, ImportPrincipalSubtype,
-        ImportRemoteTargetInput, ImportRequest, RestoreTimestamps, validate_optional_selector,
-        validate_required_selector,
+        ImportRemoteTargetInput, ImportRequest, ImportWriteCondition, RestoreTimestamps,
+        validate_optional_selector, validate_required_selector,
     };
     use crate::models::{
         CollectionKey, EventSinkKind, ExportContentType, ExportTemplateKind, REDACTED_DEBUG_VALUE,
@@ -873,7 +991,7 @@ mod tests {
     #[test]
     fn test_import_request_mode_fills_missing_fields_with_defaults() {
         let request = ImportRequest {
-            version: 1,
+            version: super::CURRENT_IMPORT_VERSION,
             dry_run: Some(false),
             mode: Some(ImportMode {
                 atomicity: Some(ImportAtomicity::BestEffort),
@@ -887,6 +1005,34 @@ mod tests {
         assert_eq!(mode.atomicity, Some(ImportAtomicity::BestEffort));
         assert_eq!(mode.collision_policy, Some(ImportCollisionPolicy::Abort));
         assert_eq!(mode.permission_policy, Some(ImportPermissionPolicy::Abort));
+    }
+
+    #[test]
+    fn import_v2_rejects_v1_and_parses_revision_conditions() {
+        let legacy = ImportRequest {
+            version: 1,
+            dry_run: Some(true),
+            mode: None,
+            graph: ImportGraph::default(),
+        };
+        assert!(legacy.validate().is_err());
+
+        let condition: ImportWriteCondition = serde_json::from_value(serde_json::json!({
+            "mode": "if_revision",
+            "expected_revision": 17
+        }))
+        .unwrap();
+        assert_eq!(
+            condition.expected_revision(),
+            Some(crate::models::ResourceRevision::new(17).unwrap())
+        );
+        assert!(
+            serde_json::from_value::<ImportWriteCondition>(serde_json::json!({
+                "mode": "if_revision",
+                "expected_revision": 0
+            }))
+            .is_err()
+        );
     }
 
     fn human_principal(
@@ -912,6 +1058,7 @@ mod tests {
                 email: None,
                 anonymized_at: None,
             },
+            condition: None,
             timestamps: None,
         }
     }
@@ -1095,6 +1242,7 @@ mod tests {
                 relation_context: None,
                 default_missing_data_policy: None,
                 default_limits: None,
+                condition: None,
                 timestamps: None,
             }],
             ..ImportGraph::default()
@@ -1126,6 +1274,7 @@ mod tests {
                 relation_context: None,
                 default_missing_data_policy: None,
                 default_limits: None,
+                condition: None,
                 timestamps: None,
             }],
             ..ImportGraph::default()
@@ -1155,6 +1304,7 @@ mod tests {
                 allowed_subject_types: vec![RemoteTargetSubjectType::Collection],
                 timeout_ms: 1_000,
                 enabled: true,
+                condition: None,
                 timestamps: None,
             }],
             ..ImportGraph::default()
@@ -1173,6 +1323,7 @@ mod tests {
                 config: serde_json::json!([]),
                 secret_ref: None,
                 enabled: true,
+                condition: None,
                 timestamps: None,
             }],
             ..ImportGraph::default()
@@ -1205,6 +1356,7 @@ mod tests {
                 allowed_subject_types: vec![RemoteTargetSubjectType::Collection],
                 timeout_ms: 1_000,
                 enabled: true,
+                condition: None,
                 timestamps: None,
             }],
             event_sinks: vec![ImportEventSinkInput {
@@ -1216,6 +1368,7 @@ mod tests {
                 }),
                 secret_ref: Some("import-secret-reference".to_string()),
                 enabled: true,
+                condition: None,
                 timestamps: None,
             }],
             event_subscriptions: vec![ImportEventSubscriptionInput {
@@ -1233,6 +1386,7 @@ mod tests {
                     "url": "https://example.invalid/hook?key=import-routing-secret"
                 }),
                 enabled: true,
+                condition: None,
                 timestamps: None,
             }],
             ..ImportGraph::default()

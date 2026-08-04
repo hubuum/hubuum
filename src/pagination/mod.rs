@@ -680,6 +680,7 @@ where
             field.expression()
         ))),
         (CursorSqlType::Integer, CursorValue::Integer(value)) => Ok(value.to_string()),
+        (CursorSqlType::BigInt, CursorValue::Integer(value)) => Ok(value.to_string()),
         (CursorSqlType::Numeric, CursorValue::Decimal(value)) => {
             let value =
                 hubuum_computed_fields::canonical_decimal_string(value).ok_or_else(|| {
@@ -752,7 +753,9 @@ const MAX_JSON_CURSOR_NESTING_DEPTH: usize = crate::db::json::MAX_POSTGRES_JSONB
 macro_rules! apply_cursor_ordering_fields {
     ($query:ident, $sorts:expr, $sql_fields:expr) => {{
         use diesel::dsl::sql;
-        use diesel::sql_types::{Array, Bool, Integer, Jsonb, Nullable, Numeric, Text, Timestamp};
+        use diesel::sql_types::{
+            Array, BigInt, Bool, Integer, Jsonb, Nullable, Numeric, Text, Timestamp,
+        };
 
         let mut is_first_order = true;
         for (sort, sql_field) in $sorts.iter().zip($sql_fields.iter()) {
@@ -770,6 +773,18 @@ macro_rules! apply_cursor_ordering_fields {
                 }
                 (false, $crate::pagination::CursorSqlType::Integer, true) => {
                     $query.then_order_by(sql::<Nullable<Integer>>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::BigInt, false) => {
+                    $query.order_by(sql::<BigInt>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::BigInt, false) => {
+                    $query.then_order_by(sql::<BigInt>(&order_sql))
+                }
+                (true, $crate::pagination::CursorSqlType::BigInt, true) => {
+                    $query.order_by(sql::<Nullable<BigInt>>(&order_sql))
+                }
+                (false, $crate::pagination::CursorSqlType::BigInt, true) => {
+                    $query.then_order_by(sql::<Nullable<BigInt>>(&order_sql))
                 }
                 (true, $crate::pagination::CursorSqlType::Numeric, false) => {
                     $query.order_by(sql::<Numeric>(&order_sql))

@@ -94,7 +94,8 @@ Shared management is class-bound:
 GET    /api/v1/classes/{class_id}/computed-fields
 POST   /api/v1/classes/{class_id}/computed-fields
 PATCH  /api/v1/classes/{class_id}/computed-fields/{field_id}
-DELETE /api/v1/classes/{class_id}/computed-fields/{field_id}?expected_revision={revision}
+DELETE /api/v1/classes/{class_id}/computed-fields/{field_id}
+If-Match: "<opaque-etag-from-point-response>"
 POST   /api/v1/classes/{class_id}/computed-fields/preview
 POST   /api/v1/classes/{class_id}/computed-fields/rebuild
 ```
@@ -104,8 +105,9 @@ previewing, or rebuilding shared definitions requires `UpdateCollection` for the
 class's current collection. Clients do not choose the permission used by the
 server.
 
-PATCH bodies and DELETE queries carry `expected_revision`. A stale revision
-returns `409 Conflict`. A value-affecting change atomically updates the
+PATCH and DELETE use the canonical point response's opaque `ETag` in an
+`If-Match` header. A stale validator
+returns `412 Precondition Failed`. A value-affecting change atomically updates the
 definition, increments the class evaluation revision, marks it rebuilding, and
 queues a bounded internal reindex task. Label-only and description-only changes
 do not invalidate materialized values.
@@ -124,7 +126,8 @@ Human users manage their definitions through the self API:
 GET    /api/v1/iam/me/computed-fields?class_id={class_id}
 POST   /api/v1/iam/me/computed-fields
 PATCH  /api/v1/iam/me/computed-fields/{field_id}
-DELETE /api/v1/iam/me/computed-fields/{field_id}?expected_revision={revision}
+DELETE /api/v1/iam/me/computed-fields/{field_id}
+If-Match: "<opaque-etag-from-point-response>"
 POST   /api/v1/iam/me/computed-fields/preview
 ```
 
@@ -310,7 +313,8 @@ deliberately refreshed classes.
 
 ## Backup, events, and metrics
 
-Backup version 3 includes computed-field definitions as authoritative state.
+Backup version 4 includes computed-field definitions and their resource
+revisions as authoritative state.
 Class rebuild state and object materializations are excluded as rebuildable
 caches. Restore validates all definitions, increments each affected class
 revision, and queues rebuild tasks.

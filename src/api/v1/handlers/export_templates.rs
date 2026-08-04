@@ -1,6 +1,7 @@
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use tracing::{debug, info};
 
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -12,6 +13,7 @@ use crate::db::traits::history::{
     HistoryCollectionFilter, export_template_as_of,
     export_template_history_paginated_with_total_count,
 };
+use crate::db::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::exports::{ExportTaskSubmission, submit_export_task};
 use crate::extractors::{AccessEventContext, Authenticated};
@@ -95,7 +97,7 @@ pub async fn create_template(
     let created = template.save(&pool, &event_context).await?;
 
     let location = api_locations::template(created.id)?;
-    Ok(ApiResponse::created(created, location))
+    ApiResponse::created_revisioned(created, location)
 }
 
 #[utoipa::path(
@@ -211,7 +213,7 @@ pub async fn get_template(
         &template
     );
 
-    Ok(ApiResponse::new(template, StatusCode::OK))
+    ApiResponse::ok_revisioned(template)
 }
 
 #[utoipa::path(
@@ -338,10 +340,16 @@ pub async fn patch_template(
         );
     }
 
+    let precondition =
+        IfMatchCondition::from_request(&req)?.database_precondition(&existing.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
-    let updated = update.update(&pool, template_id, &event_context).await?;
+    let updated = with_revision_precondition_scope(
+        precondition,
+        update.update(&pool, template_id, &event_context),
+    )
+    .await?;
 
-    Ok(ApiResponse::new(updated, StatusCode::OK))
+    ApiResponse::ok_revisioned(updated)
 }
 
 #[utoipa::path(
@@ -385,10 +393,13 @@ pub async fn delete_template(
         &template
     );
 
+    let etag = template.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(&req);
-    template_id.delete(&pool, &event_context).await?;
+    with_revision_precondition_scope(precondition, template_id.delete(&pool, &event_context))
+        .await?;
 
-    Ok(ApiResponse::no_content())
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 #[utoipa::path(
@@ -578,5 +589,8 @@ pub async fn get_template_as_of(
 
     let principal_names =
         resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
-    Ok(ApiResponse::ok(HistoryResponse::new(row, &principal_names)))
+    Ok(ApiResponse::new(
+        HistoryResponse::new(row, &principal_names),
+        StatusCode::OK,
+    ))
 }

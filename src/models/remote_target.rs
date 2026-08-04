@@ -17,7 +17,8 @@ use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     Collection, CollectionID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
-    HubuumObjectRelationID, Permissions, REDACTED_DEBUG_VALUE, redacted_debug_option,
+    HubuumObjectRelationID, Permissions, REDACTED_DEBUG_VALUE, ResourceRevision,
+    redacted_debug_option,
 };
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -195,6 +196,7 @@ pub(crate) struct RemoteTargetRow {
     pub enabled: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 impl_redacted_remote_target_debug!(
@@ -230,6 +232,7 @@ impl RemoteTargetRow {
             "enabled": self.enabled,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "revision": self.revision,
         })
     }
 }
@@ -251,6 +254,7 @@ pub struct RemoteTarget {
     pub enabled: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 impl_redacted_remote_target_debug!(
@@ -726,6 +730,7 @@ impl TryFrom<RemoteTargetRow> for RemoteTarget {
             enabled: row.enabled,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            revision: row.revision,
         })
     }
 }
@@ -1205,6 +1210,7 @@ impl CursorPaginated for RemoteTarget {
                 | FilterField::CollectionId
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -1216,6 +1222,7 @@ impl CursorPaginated for RemoteTarget {
             FilterField::CollectionId => Ok(CursorValue::Integer(self.collection_id as i64)),
             FilterField::CreatedAt => Ok(CursorValue::DateTime(self.created_at)),
             FilterField::UpdatedAt => Ok(CursorValue::DateTime(self.updated_at)),
+            FilterField::Revision => Ok(CursorValue::Integer(self.revision.get())),
             _ => Err(ApiError::BadRequest(format!(
                 "Unsupported sort field '{}' for remote targets",
                 field
@@ -1266,6 +1273,11 @@ impl CursorSqlMapping for RemoteTarget {
             FilterField::UpdatedAt => CursorSqlField {
                 column: "remote_targets.updated_at",
                 sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "remote_targets.revision",
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             _ => {
@@ -1601,6 +1613,7 @@ pub struct RemoteTargetHistory {
     pub actor_kind: Option<String>,
     pub initiator_user_id: Option<i32>,
     pub task_id: Option<i32>,
+    pub revision: ResourceRevision,
 }
 
 impl_redacted_remote_target_debug!(

@@ -16,7 +16,7 @@ use crate::models::search::{FilterField, QueryOptions, SortParam, parse_query_pa
 use crate::models::{
     Collection, CollectionID, ExportContentType, ExportInclude, ExportLimits,
     ExportMissingDataPolicy, ExportRelationContext, ExportRequest, ExportScope, ExportScopeKind,
-    ExportTemplateRunRequest,
+    ExportTemplateRunRequest, ResourceRevision,
 };
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -81,6 +81,7 @@ pub(crate) struct ExportTemplateRow {
     default_limits: Option<serde_json::Value>,
     created_at: chrono::NaiveDateTime,
     updated_at: chrono::NaiveDateTime,
+    revision: ResourceRevision,
 }
 
 impl ExportTemplateRow {
@@ -94,6 +95,10 @@ impl ExportTemplateRow {
 
     pub(crate) fn name(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) fn revision(&self) -> ResourceRevision {
+        self.revision
     }
 
     pub(crate) fn audit_snapshot(&self) -> serde_json::Value {
@@ -114,6 +119,7 @@ impl ExportTemplateRow {
             "default_limits": self.default_limits,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "revision": self.revision,
         })
     }
 }
@@ -137,6 +143,7 @@ pub struct ExportTemplate {
     pub default_limits: Option<ExportLimits>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 crate::int_id_newtype! {
@@ -342,6 +349,7 @@ impl TryFrom<ExportTemplateRow> for ExportTemplate {
             default_limits: from_optional_json(row.default_limits)?,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            revision: row.revision,
         })
     }
 }
@@ -1144,6 +1152,7 @@ impl CursorPaginated for ExportTemplate {
                 | FilterField::CollectionId
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -1157,6 +1166,7 @@ impl CursorPaginated for ExportTemplate {
             }
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for export templates",
@@ -1211,6 +1221,11 @@ impl CursorSqlMapping for ExportTemplate {
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
+            FilterField::Revision => CursorSqlField {
+                column: "export_templates.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for export templates",
@@ -1247,6 +1262,7 @@ fn export_template_example() -> ExportTemplate {
         }),
         created_at: example_timestamp,
         updated_at: example_timestamp,
+        revision: ResourceRevision::INITIAL,
     }
 }
 
@@ -1316,6 +1332,7 @@ pub struct ExportTemplateHistory {
     pub actor_kind: Option<String>,
     pub initiator_user_id: Option<i32>,
     pub task_id: Option<i32>,
+    pub revision: ResourceRevision,
 }
 
 crate::impl_history_pagination!(ExportTemplateHistory, "export_templates_history");

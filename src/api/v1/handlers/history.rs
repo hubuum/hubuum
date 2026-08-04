@@ -195,7 +195,11 @@ macro_rules! impl_history_pagination {
     ($ty:ty, $table:literal) => {
         impl $crate::traits::CursorPaginated for $ty {
             fn supports_sort(field: &$crate::models::search::FilterField) -> bool {
-                matches!(field, $crate::models::search::FilterField::HistoryId)
+                matches!(
+                    field,
+                    $crate::models::search::FilterField::HistoryId
+                        | $crate::models::search::FilterField::Revision
+                )
             }
 
             fn cursor_value(
@@ -205,6 +209,9 @@ macro_rules! impl_history_pagination {
                 Ok(match field {
                     $crate::models::search::FilterField::HistoryId => {
                         $crate::traits::CursorValue::Integer(self.history_id)
+                    }
+                    $crate::models::search::FilterField::Revision => {
+                        $crate::traits::CursorValue::Integer(self.revision.get())
                     }
                     other => {
                         return Err($crate::errors::ApiError::BadRequest(format!(
@@ -238,7 +245,14 @@ macro_rules! impl_history_pagination {
                     $crate::models::search::FilterField::HistoryId => {
                         $crate::traits::CursorSqlField {
                             column: concat!($table, ".history_id"),
-                            sql_type: $crate::traits::CursorSqlType::Integer,
+                            sql_type: $crate::traits::CursorSqlType::BigInt,
+                            nullable: false,
+                        }
+                    }
+                    $crate::models::search::FilterField::Revision => {
+                        $crate::traits::CursorSqlField {
+                            column: concat!($table, ".revision"),
+                            sql_type: $crate::traits::CursorSqlType::BigInt,
                             nullable: false,
                         }
                     }
@@ -375,6 +389,7 @@ mod tests {
             actor_kind: None,
             initiator_user_id: None,
             task_id: None,
+            revision: crate::models::ResourceRevision::INITIAL,
         };
         authorize_history_snapshot(
             &context,

@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 
-use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
+use actix_web::{
+    Either, HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web,
+};
 
 use tracing::{debug, info};
 
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -20,6 +23,7 @@ use crate::db::traits::relations::{
 };
 use crate::db::traits::user::UserSearchBackend;
 use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
+use crate::db::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated, ObjectDataPatchPayload};
 use crate::models::collection as collection_model;
@@ -52,8 +56,8 @@ use crate::traits::{BackendContext, CanDelete, CanSave, Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
 
 use crate::models::search::{
-    FilterField, QueryOptions, QueryParamsExt, SearchOperator, parse_query_parameter,
-    parse_query_parameter_with_computed_filters_and_passthrough,
+    FilterField, QueryOptions, QueryParamsExt, SearchOperator, decode_query_parameter_pairs,
+    parse_query_parameter, parse_query_parameter_with_computed_filters_and_passthrough,
     parse_query_parameter_with_passthrough,
 };
 use crate::models::traits::class_relation::ToHubuumClasses;
@@ -72,6 +76,29 @@ fn parse_computed_include(query_string: &str) -> Result<(QueryOptions, bool), Ap
         }
     };
     Ok((params, include_computed))
+}
+
+fn parse_collection_include(query_string: &str) -> Result<bool, ApiError> {
+    let mut include = None;
+    for (key, value) in decode_query_parameter_pairs(query_string)? {
+        if key != "include" {
+            return Err(ApiError::BadRequest(
+                "Class point reads only accept include=collection".to_string(),
+            ));
+        }
+        if include.replace(value).is_some() {
+            return Err(ApiError::BadRequest(
+                "include accepts exactly one value: collection".to_string(),
+            ));
+        }
+    }
+    match include.as_deref() {
+        None => Ok(false),
+        Some("collection") => Ok(true),
+        Some(_) => Err(ApiError::BadRequest(
+            "include accepts exactly one value: collection".to_string(),
+        )),
+    }
 }
 
 fn parse_computed_object_list_query(query_string: &str) -> Result<(QueryOptions, bool), ApiError> {
@@ -154,6 +181,7 @@ fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
         description: object.description.clone(),
         created_at: object.created_at,
         updated_at: object.updated_at,
+        revision: object.revision,
         path: vec![object.id],
     }
 }
@@ -168,6 +196,7 @@ fn class_with_root_path(class: &HubuumClass) -> HubuumClassWithPath {
         description: class.description.clone(),
         created_at: class.created_at,
         updated_at: class.updated_at,
+        revision: class.revision,
         path: vec![class.id],
     }
 }
@@ -384,21 +413,18 @@ async fn create_class(
     );
 
     let event_context = requestor.event_context(&req);
-    let class = class_data
-        .save(&pool, &event_context)
-        .await?
-        .expand_collection(&pool)
-        .await?;
+    let class = class_data.save(&pool, &event_context).await?;
+    let expanded = class.expand_collection(&pool).await?;
 
     let location = api_locations::class(class.id)?;
-    Ok(ApiResponse::created(class, location))
+    Ok(ApiResponse::created(expanded, location))
 }
 
 async fn read_resolved_class(
     pool: &AppContext,
     requestor: &Authenticated,
     target: ResolvedClassTarget,
-) -> Result<HubuumClassExpanded, ApiError> {
+) -> Result<HubuumClass, ApiError> {
     can!(
         pool,
         &requestor.principal,
@@ -406,7 +432,7 @@ async fn read_resolved_class(
         [Permissions::ReadClass],
         target.class()
     );
-    target.class().expand_collection(pool).await
+    Ok(target.class().clone())
 }
 
 #[utoipa::path(
@@ -418,7 +444,7 @@ async fn read_resolved_class(
         ("class_id" = i32, Path, description = "Class ID")
     ),
     responses(
-        (status = 200, description = "Class", body = HubuumClassExpanded),
+        (status = 200, description = "Class (expanded with include=collection)", body = HubuumClass),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse)
     )
@@ -428,6 +454,7 @@ async fn get_class(
     pool: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
     let class_id = class_id.into_inner();
@@ -442,8 +469,11 @@ async fn get_class(
         .resolve_class_target(&pool)
         .await?;
     let class = read_resolved_class(&pool, &requestor, target).await?;
-
-    Ok(ApiResponse::new(class, StatusCode::OK))
+    if parse_collection_include(req.query_string())? {
+        let expanded = class.expand_collection(&pool).await?;
+        return Ok(Either::Right(ApiResponse::ok(expanded)));
+    }
+    Ok(Either::Left(ApiResponse::ok_revisioned(class)?))
 }
 
 #[utoipa::path(
@@ -455,7 +485,7 @@ async fn get_class(
     security(("bearer_auth" = [])),
     params(("class_name" = String, Path, description = "Globally unique class name")),
     responses(
-        (status = 200, description = "Class", body = HubuumClassExpanded),
+        (status = 200, description = "Class (expanded with include=collection)", body = HubuumClass),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Class not found", body = ApiErrorResponse)
     )
@@ -465,12 +495,17 @@ async fn get_class_by_name(
     pool: AppContext,
     requestor: Authenticated,
     class_name: web::Path<String>,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let target = ClassSelector::by_name(class_name.into_inner())
         .resolve_class_target(&pool)
         .await?;
     let class = read_resolved_class(&pool, &requestor, target).await?;
-    Ok(ApiResponse::new(class, StatusCode::OK))
+    if parse_collection_include(req.query_string())? {
+        let expanded = class.expand_collection(&pool).await?;
+        return Ok(Either::Right(ApiResponse::ok(expanded)));
+    }
+    Ok(Either::Left(ApiResponse::ok_revisioned(class)?))
 }
 
 async fn apply_resolved_class_update(
@@ -479,7 +514,7 @@ async fn apply_resolved_class_update(
     req: &HttpRequest,
     target: ResolvedClassTarget,
     update: UpdateHubuumClass,
-) -> Result<HubuumClassExpanded, ApiError> {
+) -> Result<HubuumClass, ApiError> {
     can!(
         pool,
         &requestor.principal,
@@ -500,12 +535,14 @@ async fn apply_resolved_class_update(
         );
     }
 
+    let precondition = IfMatchCondition::from_request(req)?
+        .database_precondition(&target.class().entity_tag()?)?;
     let event_context = requestor.event_context(req);
-    update
-        .update_resolved_class(pool, &target, &event_context)
-        .await?
-        .expand_collection(pool)
-        .await
+    with_revision_precondition_scope(
+        precondition,
+        update.update_resolved_class(pool, &target, &event_context),
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -546,7 +583,8 @@ async fn update_class(
         .resolve_class_target(&pool)
         .await?;
     let class = apply_resolved_class_update(&pool, &requestor, &req, target, class_data).await?;
-    Ok(ApiResponse::new(class, StatusCode::OK))
+    let expanded = class.expand_collection(&pool).await?;
+    Ok(ApiResponse::ok(expanded))
 }
 
 #[utoipa::path(
@@ -580,7 +618,8 @@ async fn update_class_by_name(
     let class =
         apply_resolved_class_update(&pool, &requestor, &req, target, class_data.into_inner())
             .await?;
-    Ok(ApiResponse::new(class, StatusCode::OK))
+    let expanded = class.expand_collection(&pool).await?;
+    Ok(ApiResponse::ok(expanded))
 }
 
 async fn delete_resolved_class(
@@ -588,7 +627,7 @@ async fn delete_resolved_class(
     requestor: &Authenticated,
     req: &HttpRequest,
     target: ResolvedClassTarget,
-) -> Result<(), ApiError> {
+) -> Result<crate::api::etag::EntityTag, ApiError> {
     can!(
         pool,
         &requestor.principal,
@@ -597,8 +636,15 @@ async fn delete_resolved_class(
         target.class()
     );
 
+    let etag = target.class().entity_tag()?;
+    let precondition = IfMatchCondition::from_request(req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(req);
-    target.delete_resolved_class(pool, &event_context).await
+    with_revision_precondition_scope(
+        precondition,
+        target.delete_resolved_class(pool, &event_context),
+    )
+    .await?;
+    Ok(etag)
 }
 
 #[utoipa::path(
@@ -634,8 +680,8 @@ async fn delete_class(
     let target = ClassSelector::by_id(class_id)
         .resolve_class_target(&pool)
         .await?;
-    delete_resolved_class(&pool, &requestor, &req, target).await?;
-    Ok(ApiResponse::no_content())
+    let etag = delete_resolved_class(&pool, &requestor, &req, target).await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 #[utoipa::path(
@@ -663,8 +709,8 @@ async fn delete_class_by_name(
     let target = ClassSelector::by_name(class_name.into_inner())
         .resolve_class_target(&pool)
         .await?;
-    delete_resolved_class(&pool, &requestor, &req, target).await?;
-    Ok(ApiResponse::no_content())
+    let etag = delete_resolved_class(&pool, &requestor, &req, target).await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 #[utoipa::path(

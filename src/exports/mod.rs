@@ -2608,6 +2608,7 @@ fn object_with_root_path(object: &HubuumObject) -> HubuumObjectWithPath {
         description: object.description.clone(),
         created_at: object.created_at,
         updated_at: object.updated_at,
+        revision: object.revision,
         path: vec![object.id],
     }
 }
@@ -3292,6 +3293,7 @@ mod tests {
             description: String::new(),
             created_at: test_timestamp(),
             updated_at: test_timestamp(),
+            revision: crate::models::ResourceRevision::INITIAL,
             path: vec![id],
         }
     }
@@ -3405,6 +3407,7 @@ mod tests {
                 default_limits: None,
                 created_at: test_timestamp(),
                 updated_at: test_timestamp(),
+                revision: crate::models::ResourceRevision::INITIAL,
             }),
             collection_templates: Vec::new(),
         }

@@ -8,8 +8,8 @@ pub mod tests {
     use crate::events::EventContext;
     use crate::models::traits::{ResolveClassTarget, UpdateResolvedClass};
     use crate::models::{
-        ClassSelector, GroupID, HubuumClassExpanded, HubuumClassID, NewHubuumClass, Permissions,
-        PermissionsList, UpdateHubuumClass,
+        ClassSelector, GroupID, HubuumClass, HubuumClassExpanded, HubuumClassID, NewHubuumClass,
+        Permissions, PermissionsList, UpdateHubuumClass,
     };
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use actix_web::{http::StatusCode, test};
@@ -317,7 +317,7 @@ pub mod tests {
             )
             .await;
             let resp = assert_response_status(resp, StatusCode::OK).await;
-            let returned_class: HubuumClassExpanded = test::read_body_json(resp).await;
+            let returned_class: HubuumClass = test::read_body_json(resp).await;
             assert_eq!(class, &returned_class);
         }
         cleanup(&created_classes).await;
@@ -364,11 +364,20 @@ pub mod tests {
         .await;
 
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        assert!(
+            !resp.headers().contains_key(actix_web::http::header::ETAG),
+            "expanded class creation responses must not carry a single-resource ETag"
+        );
         let headers = resp.headers().clone();
         let created_class_from_create: HubuumClassExpanded = test::read_body_json(resp).await;
         let created_class_url = headers.get("Location").unwrap().to_str().unwrap();
 
-        let resp = get_request(&context.pool, &context.admin_token, created_class_url).await;
+        let resp = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{created_class_url}?include=collection"),
+        )
+        .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
         let created_class: HubuumClassExpanded = test::read_body_json(resp).await;
 
@@ -447,11 +456,18 @@ pub mod tests {
         .await;
 
         let resp = assert_response_status(resp, StatusCode::OK).await;
+        assert!(
+            !resp.headers().contains_key(actix_web::http::header::ETAG),
+            "expanded class mutation responses must not carry a single-resource ETag"
+        );
         let updated_class_from_patch: HubuumClassExpanded = test::read_body_json(resp).await;
         let resp = get_request(
             &context.pool,
             &context.admin_token,
-            &format!("{}/{}", CLASSES_ENDPOINT, created_class.id),
+            &format!(
+                "{}/{}?include=collection",
+                CLASSES_ENDPOINT, created_class.id
+            ),
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;

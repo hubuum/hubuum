@@ -439,7 +439,7 @@ async fn get_object_relation_from_class_and_objects(
         vec![resource],
     )
     .await?;
-    Ok(ApiResponse::new(relation, StatusCode::OK))
+    ApiResponse::ok_revisioned(relation)
 }
 
 #[utoipa::path(
@@ -523,9 +523,11 @@ async fn delete_object_relation(
         relation_id_actual = relation.id()
     );
 
+    let etag = relation.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(&req);
-    relation.delete(&pool, &event_context).await?;
-    Ok(ApiResponse::no_content())
+    with_revision_precondition_scope(precondition, relation.delete(&pool, &event_context)).await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 #[utoipa::path(
@@ -610,5 +612,5 @@ async fn create_object_relation(
         to_class.id(),
         to_object.id(),
     )?;
-    Ok(ApiResponse::created(relation, location))
+    ApiResponse::created_revisioned(relation, location)
 }

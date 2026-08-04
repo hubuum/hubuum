@@ -1,5 +1,6 @@
 use actix_web::web::{self, PathConfig};
 
+pub mod etag;
 pub mod handlers;
 pub mod locations;
 pub mod openapi;

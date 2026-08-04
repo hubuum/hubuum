@@ -1242,11 +1242,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Class",
+            "description": "Class (expanded with include=collection)",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubuumClassExpanded"
+                  "$ref": "#/components/schemas/HubuumClass"
                 }
               }
             }
@@ -1294,11 +1302,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Class deleted"
+            "description": "Class deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -1329,6 +1354,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -1350,6 +1378,15 @@
             "in": "path",
             "description": "Globally unique current class name",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -1415,6 +1452,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -1707,6 +1747,14 @@
         "responses": {
           "201": {
             "description": "Object created in class",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1813,6 +1861,14 @@
         "responses": {
           "200": {
             "description": "Object in class, optionally enriched with computed fields",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1883,11 +1939,28 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Object deleted"
+            "description": "Object deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -1918,6 +1991,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -1951,6 +2027,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -1966,6 +2051,14 @@
         "responses": {
           "200": {
             "description": "Updated object",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2013,6 +2106,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -2048,6 +2144,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -2064,6 +2169,14 @@
         "responses": {
           "200": {
             "description": "Updated object, or the unchanged object for a no-op patch",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2131,6 +2244,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           },
           "413": {
             "description": "JSON Patch request or resulting object data exceeds its resource limits",
@@ -3013,11 +3129,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Class",
+            "description": "Class (expanded with include=collection)",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubuumClassExpanded"
+                  "$ref": "#/components/schemas/HubuumClass"
                 }
               }
             }
@@ -3066,11 +3190,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Class deleted"
+            "description": "Class deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -3091,6 +3232,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -3115,6 +3259,15 @@
             "schema": {
               "type": "integer",
               "format": "int32"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -3168,6 +3321,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -3348,6 +3504,14 @@
         "responses": {
           "201": {
             "description": "Object created in class",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3649,6 +3813,81 @@
       }
     },
     "/api/v1/classes/{class_id}/computed-fields/{field_id}": {
+      "get": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Computed Fields By Field Id",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/computed-fields/{field_id}.",
+        "operationId": "getApiV1ClassesByClassIdComputedFieldsByFieldId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "field_id",
+            "in": "path",
+            "description": "Computed-field definition ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Shared computed-field definition",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldDefinition"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Computed field or class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "delete": {
         "tags": [
           "computed fields"
@@ -3678,12 +3917,12 @@
             }
           },
           {
-            "name": "expected_revision",
-            "in": "query",
-            "required": true,
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string"
             }
           }
         ],
@@ -3707,6 +3946,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -3741,6 +3983,15 @@
             "schema": {
               "type": "integer",
               "format": "int32"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -3784,6 +4035,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -5178,6 +5432,14 @@
         "responses": {
           "201": {
             "description": "Class relation created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5225,6 +5487,81 @@
       }
     },
     "/api/v1/classes/{class_id}/relations/{relation_id}": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Relations By Relation Id",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/relations/{relation_id}.",
+        "operationId": "getApiV1ClassesByClassIdRelationsByRelationId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "relation_id",
+            "in": "path",
+            "description": "Class relation ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Class relation",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumClassRelation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class or relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "delete": {
         "tags": [
           "classes"
@@ -5252,11 +5589,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Class relation deleted"
+            "description": "Class relation deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "400": {
             "description": "Bad request",
@@ -5287,6 +5641,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -5349,6 +5706,14 @@
         "responses": {
           "200": {
             "description": "Object relation",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5436,6 +5801,14 @@
         "responses": {
           "201": {
             "description": "Object relation created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5538,11 +5911,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Object relation deleted"
+            "description": "Object relation deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -5563,6 +5953,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -5614,6 +6007,14 @@
         "responses": {
           "200": {
             "description": "Object in class, optionally enriched with computed fields",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5676,11 +6077,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Object deleted"
+            "description": "Object deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -5701,6 +6119,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -5736,6 +6157,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -5751,6 +6181,14 @@
         "responses": {
           "200": {
             "description": "Updated object",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5788,6 +6226,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -5825,6 +6266,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -5841,6 +6291,14 @@
         "responses": {
           "200": {
             "description": "Updated object, or the unchanged object for a no-op patch",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5908,6 +6366,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           },
           "413": {
             "description": "JSON Patch request or resulting object data exceeds its resource limits",
@@ -6523,6 +6984,14 @@
         "responses": {
           "201": {
             "description": "Collection created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6592,6 +7061,14 @@
         "responses": {
           "200": {
             "description": "Collection",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6644,11 +7121,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Collection deleted"
+            "description": "Collection deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -6669,6 +7163,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -6694,6 +7191,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -6709,6 +7215,14 @@
         "responses": {
           "202": {
             "description": "Collection updated",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6746,6 +7260,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -7041,6 +7558,14 @@
         "responses": {
           "201": {
             "description": "Event subscription created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7140,6 +7665,14 @@
         "responses": {
           "200": {
             "description": "Event subscription",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7212,11 +7745,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Event subscription deleted"
+            "description": "Event subscription deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -7247,6 +7797,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -7282,6 +7835,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -7297,6 +7859,14 @@
         "responses": {
           "200": {
             "description": "Event subscription updated",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7354,6 +7924,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -7907,6 +8480,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -7922,6 +8504,14 @@
         "responses": {
           "202": {
             "description": "Collection moved",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7979,6 +8569,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -8049,8 +8642,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Group permissions on collection The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Revisioned permission set The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              },
               "X-Next-Cursor": {
                 "schema": {
                   "type": "string"
@@ -8073,10 +8672,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/GroupPermission"
-                  }
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
                 }
               }
             }
@@ -8285,11 +8881,19 @@
         ],
         "responses": {
           "200": {
-            "description": "Permission record",
+            "description": "Revisioned permission set",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Permission"
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
                 }
               }
             }
@@ -8348,6 +8952,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -8365,7 +8978,22 @@
         },
         "responses": {
           "200": {
-            "description": "Permissions replaced"
+            "description": "Permissions replaced",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
+                }
+              }
+            }
           },
           "400": {
             "description": "Bad request",
@@ -8396,6 +9024,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -8431,6 +9062,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -8448,7 +9088,22 @@
         },
         "responses": {
           "201": {
-            "description": "Permissions set"
+            "description": "Permissions set",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
+                }
+              }
+            }
           },
           "400": {
             "description": "Bad request",
@@ -8479,6 +9134,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -8514,11 +9172,35 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
-          "204": {
-            "description": "Permissions revoked"
+          "200": {
+            "description": "Permissions revoked",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -8539,6 +9221,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -8644,11 +9329,35 @@
             "schema": {
               "$ref": "#/components/schemas/Permissions"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "201": {
-            "description": "Permission granted"
+            "description": "Permission granted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -8669,6 +9378,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -8713,11 +9425,35 @@
             "schema": {
               "$ref": "#/components/schemas/Permissions"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
-          "204": {
-            "description": "Permission revoked"
+          "200": {
+            "description": "Permission revoked",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -8738,6 +9474,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -9435,6 +10174,14 @@
         "responses": {
           "201": {
             "description": "Event sink created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9514,6 +10261,14 @@
         "responses": {
           "200": {
             "description": "Event sink",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9576,11 +10331,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Event sink deleted"
+            "description": "Event sink deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -9611,6 +10383,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -9636,6 +10411,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -9651,6 +10435,14 @@
         "responses": {
           "200": {
             "description": "Event sink updated",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9708,6 +10500,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -10043,6 +10838,14 @@
         "responses": {
           "201": {
             "description": "Template created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -10122,6 +10925,14 @@
         "responses": {
           "200": {
             "description": "Template",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -10184,11 +10995,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Template deleted"
+            "description": "Template deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -10219,6 +11047,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -10244,6 +11075,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -10259,6 +11099,14 @@
         "responses": {
           "200": {
             "description": "Template updated",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -10316,6 +11164,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -11200,10 +12051,18 @@
         "responses": {
           "201": {
             "description": "Group created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupResponse"
+                  "$ref": "#/components/schemas/GroupPointResponse"
                 }
               }
             }
@@ -11269,10 +12128,18 @@
         "responses": {
           "200": {
             "description": "Group",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupResponse"
+                  "$ref": "#/components/schemas/GroupPointResponse"
                 }
               }
             }
@@ -11321,11 +12188,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Group deleted"
+            "description": "Group deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -11366,6 +12250,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -11391,6 +12278,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -11406,10 +12302,18 @@
         "responses": {
           "200": {
             "description": "Updated group",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupResponse"
+                  "$ref": "#/components/schemas/GroupPointResponse"
                 }
               }
             }
@@ -11453,6 +12357,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -11771,6 +12678,81 @@
       }
     },
     "/api/v1/iam/groups/{group_id}/members/{principal_id}": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Get Api V1 Iam Groups By Group Id Members By Principal Id",
+        "description": "Auto-generated documentation for GET /api/v1/iam/groups/{group_id}/members/{principal_id}.",
+        "operationId": "getApiV1IamGroupsByGroupIdMembersByPrincipalId",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Membership",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalMemberResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Membership not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "post": {
         "tags": [
           "groups"
@@ -11798,11 +12780,35 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
-          "204": {
-            "description": "User added to group"
+          "201": {
+            "description": "Membership created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalMemberResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -11823,6 +12829,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -11858,11 +12867,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "User removed from group"
+            "description": "User removed from group",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -11883,6 +12909,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -12059,6 +13088,14 @@
         "responses": {
           "201": {
             "description": "Personal computed field created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -12133,6 +13170,81 @@
       }
     },
     "/api/v1/iam/me/computed-fields/{field_id}": {
+      "get": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Get Api V1 Iam Me Computed Fields By Field Id",
+        "description": "Auto-generated documentation for GET /api/v1/iam/me/computed-fields/{field_id}.",
+        "operationId": "getApiV1IamMeComputedFieldsByFieldId",
+        "parameters": [
+          {
+            "name": "field_id",
+            "in": "path",
+            "description": "Computed-field definition ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Personal computed-field definition",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldDefinition"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Service accounts are not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Computed field not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "delete": {
         "tags": [
           "computed fields"
@@ -12152,18 +13264,26 @@
             }
           },
           {
-            "name": "expected_revision",
-            "in": "query",
-            "required": true,
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string"
             }
           }
         ],
         "responses": {
           "204": {
-            "description": "Personal computed field deleted"
+            "description": "Personal computed field deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "409": {
             "description": "Revision conflict",
@@ -12174,6 +13294,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -12199,6 +13322,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -12214,6 +13346,14 @@
         "responses": {
           "200": {
             "description": "Personal computed field updated",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -12231,6 +13371,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -12392,10 +13535,18 @@
         "responses": {
           "200": {
             "description": "Current principal settings",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -12424,6 +13575,17 @@
         "summary": "Put Api V1 Iam Me Settings",
         "description": "Auto-generated documentation for PUT /api/v1/iam/me/settings.",
         "operationId": "putApiV1IamMeSettings",
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -12437,10 +13599,18 @@
         "responses": {
           "200": {
             "description": "Replaced current principal settings",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -12464,6 +13634,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -12479,9 +13652,28 @@
         "summary": "Delete Api V1 Iam Me Settings",
         "description": "Auto-generated documentation for DELETE /api/v1/iam/me/settings.",
         "operationId": "deleteApiV1IamMeSettings",
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "204": {
-            "description": "Current principal settings reset"
+            "description": "Current principal settings reset",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -12492,6 +13684,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -12507,6 +13702,17 @@
         "summary": "Patch Api V1 Iam Me Settings",
         "description": "Applies an object-only JSON Merge Patch to the current principal settings. Object values merge recursively; a `null` value removes its key; arrays, strings, numbers, and booleans replace the existing value. An object patch applied to a missing or non-object value starts from an empty object. The document root must be an object. Use PUT, rather than PATCH, when a setting itself must retain a null value.",
         "operationId": "patchApiV1IamMeSettings",
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "description": "The settings patch object.",
           "content": {
@@ -12528,17 +13734,18 @@
         "responses": {
           "200": {
             "description": "Merged current principal settings",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
-                },
-                "example": {
-                  "layout": {
-                    "columns": 2,
-                    "density": "normal"
-                  },
-                  "theme": "dark"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -12562,6 +13769,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -12897,10 +14107,18 @@
         "responses": {
           "200": {
             "description": "Principal settings",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -12949,6 +14167,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -12964,10 +14191,18 @@
         "responses": {
           "200": {
             "description": "Replaced principal settings",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -13001,6 +14236,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -13026,11 +14264,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Principal settings reset"
+            "description": "Principal settings reset",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -13051,6 +14306,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -13076,6 +14334,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -13099,17 +14366,18 @@
         "responses": {
           "200": {
             "description": "Merged principal settings",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
-                },
-                "example": {
-                  "layout": {
-                    "columns": 2,
-                    "density": "normal"
-                  },
-                  "theme": "dark"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -13143,6 +14411,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -13402,10 +14673,18 @@
         "responses": {
           "200": {
             "description": "Retained token metadata",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalTokenMetadata"
+                  "$ref": "#/components/schemas/PrincipalTokenPointResponse"
                 }
               }
             }
@@ -13585,11 +14864,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Token revoked"
+            "description": "Token revoked",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -13620,6 +14916,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -13749,10 +15048,18 @@
         "responses": {
           "201": {
             "description": "Service account created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ServiceAccountResponse"
+                  "$ref": "#/components/schemas/ServiceAccountPointResponse"
                 }
               }
             }
@@ -13828,10 +15135,18 @@
         "responses": {
           "200": {
             "description": "Service account",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ServiceAccountResponse"
+                  "$ref": "#/components/schemas/ServiceAccountPointResponse"
                 }
               }
             }
@@ -13890,11 +15205,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Service account deleted"
+            "description": "Service account deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -13925,6 +15257,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -13950,6 +15285,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -13965,10 +15309,18 @@
         "responses": {
           "200": {
             "description": "Updated service account",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ServiceAccountResponse"
+                  "$ref": "#/components/schemas/ServiceAccountPointResponse"
                 }
               }
             }
@@ -14002,6 +15354,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -14029,15 +15384,32 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
             "description": "Service account disabled",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ServiceAccountResponse"
+                  "$ref": "#/components/schemas/ServiceAccountPointResponse"
                 }
               }
             }
@@ -14071,6 +15443,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -14220,10 +15595,18 @@
         "responses": {
           "201": {
             "description": "User created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
+                  "$ref": "#/components/schemas/UserPointResponse"
                 }
               }
             }
@@ -14289,10 +15672,18 @@
         "responses": {
           "200": {
             "description": "User",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
+                  "$ref": "#/components/schemas/UserPointResponse"
                 }
               }
             }
@@ -14351,11 +15742,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "User deleted"
+            "description": "User deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -14386,6 +15794,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -14411,6 +15822,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -14426,10 +15846,18 @@
         "responses": {
           "200": {
             "description": "Updated user",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
+                  "$ref": "#/components/schemas/UserPointResponse"
                 }
               }
             }
@@ -14473,6 +15901,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -14500,11 +15931,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "User anonymized"
+            "description": "User anonymized",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -14535,6 +15983,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -15148,6 +16599,14 @@
         "responses": {
           "201": {
             "description": "Class relation created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -15217,6 +16676,14 @@
         "responses": {
           "200": {
             "description": "Class relation",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -15269,11 +16736,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Class relation deleted"
+            "description": "Class relation deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -15294,6 +16778,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -15433,6 +16920,14 @@
         "responses": {
           "201": {
             "description": "Object relation created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -15502,6 +16997,14 @@
         "responses": {
           "200": {
             "description": "Object relation",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -15554,11 +17057,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Object relation deleted"
+            "description": "Object relation deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -15579,6 +17099,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -15718,6 +17241,14 @@
         "responses": {
           "201": {
             "description": "Remote target created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -16016,6 +17547,14 @@
         "responses": {
           "200": {
             "description": "Remote target",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -16078,11 +17617,28 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
-            "description": "Remote target deleted"
+            "description": "Remote target deleted",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -16113,6 +17669,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -16138,6 +17697,15 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "description": "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -16153,6 +17721,14 @@
         "responses": {
           "200": {
             "description": "Remote target updated",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -16210,6 +17786,9 @@
                 }
               }
             }
+          },
+          "412": {
+            "description": "Precondition failed because If-Match does not match the current resource revision."
           }
         },
         "security": [
@@ -17593,7 +19172,7 @@
       },
       "BackupHistory": {
         "type": "object",
-        "description": "Privileged, restore-only table snapshots. In backup version 3, each section\nname and row shape corresponds to the PostgreSQL table restored from it.\nThese are versioned disaster-recovery internals, not portable import data.",
+        "description": "Privileged, restore-only table snapshots. In backup version 4, each section\nname and row shape corresponds to the PostgreSQL table restored from it.\nThese are versioned disaster-recovery internals, not portable import data.",
         "required": [
           "sections"
         ],
@@ -17844,7 +19423,8 @@
           "name",
           "description",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -17868,6 +19448,9 @@
             ],
             "format": "int32"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -17884,7 +19467,8 @@
           "updated_at",
           "op",
           "valid_from",
-          "history_id"
+          "history_id",
+          "revision"
         ],
         "properties": {
           "actor_id": {
@@ -17935,6 +19519,9 @@
             ],
             "format": "int32"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "task_id": {
             "type": [
               "integer",
@@ -17981,6 +19568,31 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "CollectionPermissionSet": {
+        "type": "object",
+        "description": "The revisioned, SQL-owned authorization state for a collection.\n\nIndividual permission rows are implementation details of this aggregate;\ncallers condition mutations on the revision of the complete set.",
+        "required": [
+          "collection_id",
+          "revision",
+          "permissions"
+        ],
+        "properties": {
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Permission"
+            },
+            "description": "ACL rows contain stable group identifiers without embedding mutable\ngroup representations that are outside this aggregate's revision."
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           }
         }
       },
@@ -18047,8 +19659,7 @@
             "type": "string"
           },
           "revision": {
-            "type": "integer",
-            "format": "int64"
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "semantics_version": {
             "type": "integer",
@@ -18072,9 +19683,6 @@
       },
       "ComputedFieldDefinitionPatch": {
         "type": "object",
-        "required": [
-          "expected_revision"
-        ],
         "properties": {
           "description": {
             "type": [
@@ -18087,10 +19695,6 @@
               "boolean",
               "null"
             ]
-          },
-          "expected_revision": {
-            "type": "integer",
-            "format": "int64"
           },
           "key": {
             "type": [
@@ -18395,7 +19999,8 @@
         "description": "Public metadata for the token authenticating the current request.",
         "required": [
           "id",
-          "issued"
+          "issued",
+          "revision"
         ],
         "properties": {
           "description": {
@@ -18430,6 +20035,9 @@
               "string",
               "null"
             ]
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "scope": {
             "oneOf": [
@@ -18990,7 +20598,27 @@
             "format": "int32"
           },
           "after": {},
+          "after_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourceRevision"
+              }
+            ]
+          },
           "before": {},
+          "before_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourceRevision"
+              }
+            ]
+          },
           "collection_id": {
             "type": [
               "integer",
@@ -19061,7 +20689,8 @@
           "config",
           "enabled",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "config": {},
@@ -19081,6 +20710,9 @@
           },
           "name": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "secret_ref": {
             "type": [
@@ -19177,7 +20809,8 @@
           "routing",
           "enabled",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "actions": {
@@ -19215,6 +20848,9 @@
           },
           "name": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "routing": {},
           "sink_id": {
@@ -19888,7 +21524,8 @@
           "template",
           "kind",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "class_id": {
@@ -19968,6 +21605,9 @@
               }
             ]
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "scope_kind": {
             "oneOf": [
               {
@@ -20003,6 +21643,7 @@
           "kind": "export",
           "name": "owner-export",
           "relation_context": null,
+          "revision": 1,
           "scope_kind": "objects_in_class",
           "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
           "updated_at": "2026-03-06T12:00:00"
@@ -20022,7 +21663,8 @@
           "updated_at",
           "op",
           "valid_from",
-          "history_id"
+          "history_id",
+          "revision"
         ],
         "properties": {
           "actor_id": {
@@ -20098,6 +21740,9 @@
             "type": "string"
           },
           "relation_context": {},
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "scope_kind": {
             "type": [
               "string",
@@ -20226,7 +21871,8 @@
           "created_at",
           "updated_at",
           "identity_scope_id",
-          "managed_by"
+          "managed_by",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -20269,6 +21915,9 @@
           },
           "managed_by": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -20332,6 +21981,55 @@
           }
         }
       },
+      "GroupPointResponse": {
+        "type": "object",
+        "description": "Canonical group representation covered completely by the group revision.\nDirectory synchronization timestamps remain available in list responses,\nbut are intentionally excluded here because they are operational state and\ndo not advance the authoritative revision.",
+        "required": [
+          "id",
+          "identity_scope",
+          "groupname",
+          "description",
+          "managed_by",
+          "created_at",
+          "updated_at",
+          "revision"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "external_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "groupname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "identity_scope": {
+            "type": "string"
+          },
+          "managed_by": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "GroupResponse": {
         "type": "object",
         "required": [
@@ -20341,7 +22039,8 @@
           "description",
           "managed_by",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -20384,6 +22083,9 @@
           "managed_by": {
             "type": "string"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -20402,7 +22104,8 @@
               "updated_at",
               "op",
               "valid_from",
-              "history_id"
+              "history_id",
+              "revision"
             ],
             "properties": {
               "actor_id": {
@@ -20452,6 +22155,9 @@
                   "null"
                 ],
                 "format": "int32"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
               },
               "task_id": {
                 "type": [
@@ -20513,7 +22219,8 @@
               "updated_at",
               "op",
               "valid_from",
-              "history_id"
+              "history_id",
+              "revision"
             ],
             "properties": {
               "actor_id": {
@@ -20589,6 +22296,9 @@
                 "type": "string"
               },
               "relation_context": {},
+              "revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
+              },
               "scope_kind": {
                 "type": [
                   "string",
@@ -20656,7 +22366,8 @@
               "updated_at",
               "op",
               "valid_from",
-              "history_id"
+              "history_id",
+              "revision"
             ],
             "properties": {
               "actor_id": {
@@ -20704,6 +22415,9 @@
               },
               "op": {
                 "type": "string"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
               },
               "task_id": {
                 "type": [
@@ -20767,7 +22481,8 @@
               "updated_at",
               "op",
               "valid_from",
-              "history_id"
+              "history_id",
+              "revision"
             ],
             "properties": {
               "actor_id": {
@@ -20819,6 +22534,9 @@
               },
               "op": {
                 "type": "string"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
               },
               "task_id": {
                 "type": [
@@ -20884,7 +22602,8 @@
               "updated_at",
               "op",
               "valid_from",
-              "history_id"
+              "history_id",
+              "revision"
             ],
             "properties": {
               "actor_id": {
@@ -20954,6 +22673,9 @@
               "op": {
                 "type": "string"
               },
+              "revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
+              },
               "task_id": {
                 "type": [
                   "integer",
@@ -21014,7 +22736,8 @@
           "validate_schema",
           "description",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "collection_id": {
@@ -21036,6 +22759,9 @@
           "name": {
             "type": "string"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -21054,7 +22780,8 @@
           "validate_schema",
           "description",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "collection": {
@@ -21074,6 +22801,9 @@
           "json_schema": {},
           "name": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -21096,7 +22826,8 @@
           "updated_at",
           "op",
           "valid_from",
-          "history_id"
+          "history_id",
+          "revision"
         ],
         "properties": {
           "actor_id": {
@@ -21144,6 +22875,9 @@
           },
           "op": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "task_id": {
             "type": [
@@ -21184,7 +22918,8 @@
           "from_hubuum_class_id",
           "to_hubuum_class_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -21222,6 +22957,9 @@
               "null"
             ]
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "to_hubuum_class_id": {
             "type": "integer",
             "format": "int32"
@@ -21258,6 +22996,7 @@
           "description",
           "created_at",
           "updated_at",
+          "revision",
           "path"
         ],
         "properties": {
@@ -21287,6 +23026,9 @@
               "format": "int32"
             }
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -21306,7 +23048,8 @@
           "data",
           "description",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "collection_id": {
@@ -21331,6 +23074,9 @@
           },
           "name": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -21369,7 +23115,8 @@
           "updated_at",
           "op",
           "valid_from",
-          "history_id"
+          "history_id",
+          "revision"
         ],
         "properties": {
           "actor_id": {
@@ -21421,6 +23168,9 @@
           },
           "op": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "task_id": {
             "type": [
@@ -21470,7 +23220,8 @@
           "to_hubuum_object_id",
           "class_relation_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "class_relation_id": {
@@ -21488,6 +23239,9 @@
           "id": {
             "type": "integer",
             "format": "int32"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "to_hubuum_object_id": {
             "type": "integer",
@@ -21515,6 +23269,7 @@
           "description",
           "created_at",
           "updated_at",
+          "revision",
           "path"
         ],
         "properties": {
@@ -21547,6 +23302,9 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -21595,6 +23353,16 @@
               "null"
             ]
           },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "description": {
             "type": "string"
           },
@@ -21629,6 +23397,16 @@
       "ImportClassRelationInput": {
         "type": "object",
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "forward_template_alias": {
             "type": [
               "string",
@@ -21718,6 +23496,16 @@
           "description"
         ],
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "description": {
             "type": "string"
           },
@@ -21781,6 +23569,16 @@
               "null"
             ]
           },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "group_key": {
             "$ref": "#/components/schemas/GroupKey"
           },
@@ -21811,6 +23609,105 @@
           "overwrite"
         ]
       },
+      "ImportComputedFieldInput": {
+        "type": "object",
+        "required": [
+          "visibility",
+          "key",
+          "label",
+          "operation",
+          "result_type",
+          "enabled"
+        ],
+        "properties": {
+          "class_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClassKey"
+              }
+            ]
+          },
+          "class_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "object"
+          },
+          "owner_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PrincipalKey"
+              }
+            ]
+          },
+          "owner_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "result_type": {
+            "$ref": "#/components/schemas/ComputedResultType"
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ImportComputedFieldVisibility"
+          }
+        }
+      },
+      "ImportComputedFieldVisibility": {
+        "type": "string",
+        "enum": [
+          "shared",
+          "personal"
+        ]
+      },
       "ImportEventSinkInput": {
         "type": "object",
         "required": [
@@ -21819,6 +23716,16 @@
           "enabled"
         ],
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "config": {},
           "enabled": {
             "type": "boolean"
@@ -21883,6 +23790,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
             ]
           },
           "description": {
@@ -21976,6 +23893,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
             ]
           },
           "content_type": {
@@ -22094,6 +24021,12 @@
               "$ref": "#/components/schemas/ImportCollectionInput"
             }
           },
+          "computed_fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportComputedFieldInput"
+            }
+          },
           "event_sinks": {
             "type": "array",
             "items": {
@@ -22164,6 +24097,16 @@
           "managed_by"
         ],
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "description": {
             "type": "string"
           },
@@ -22230,6 +24173,16 @@
       "ImportGroupMembershipInput": {
         "type": "object",
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "group_key": {
             "oneOf": [
               {
@@ -22293,6 +24246,16 @@
           "provider_kind"
         ],
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -22417,6 +24380,16 @@
               "null"
             ]
           },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "data": {},
           "description": {
             "type": "string"
@@ -22445,6 +24418,16 @@
       "ImportObjectRelationInput": {
         "type": "object",
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "from_object_key": {
             "oneOf": [
               {
@@ -22514,6 +24497,16 @@
               "provider_managed"
             ],
             "properties": {
+              "condition": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ImportWriteCondition"
+                  }
+                ]
+              },
               "external_subject": {
                 "type": [
                   "string",
@@ -22742,6 +24735,16 @@
               "null"
             ]
           },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "description": {
             "type": "string"
           },
@@ -22867,6 +24870,16 @@
               "null"
             ]
           },
+          "observed_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourceRevision"
+              }
+            ]
+          },
           "outcome": {
             "type": "string"
           },
@@ -22875,6 +24888,57 @@
             "format": "int32"
           }
         }
+      },
+      "ImportWriteCondition": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "create_only"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "overwrite"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "expected_revision",
+              "mode"
+            ],
+            "properties": {
+              "expected_revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "if_revision"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Per-item collision and optimistic-concurrency behavior for import v2."
       },
       "LoginRateLimitConfig": {
         "type": "object",
@@ -23169,10 +25233,49 @@
         ],
         "properties": {
           "principal": {
-            "$ref": "#/components/schemas/PrincipalMemberResponse"
+            "$ref": "#/components/schemas/MembershipPrincipalResponse"
           },
           "token": {
             "$ref": "#/components/schemas/CurrentTokenMetadata"
+          }
+        }
+      },
+      "MembershipPrincipalResponse": {
+        "type": "object",
+        "description": "Public principal details nested in a membership entity. Its revision is the\nprincipal revision, independent of the enclosing membership revision.",
+        "required": [
+          "principal_id",
+          "identity_scope",
+          "kind",
+          "name",
+          "created_at",
+          "updated_at",
+          "revision"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "identity_scope": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "principal_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -24657,32 +26760,39 @@
       },
       "PrincipalMemberResponse": {
         "type": "object",
-        "description": "Public representation of a group member (a principal of either kind).",
+        "description": "Public representation of the revision-owned membership between a principal\nand a group.",
         "required": [
           "principal_id",
-          "identity_scope",
-          "kind",
-          "name",
+          "group_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
             "type": "string",
             "format": "date-time"
           },
-          "identity_scope": {
-            "type": "string"
+          "group_id": {
+            "type": "integer",
+            "format": "int32"
           },
-          "kind": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
+          "principal": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MembershipPrincipalResponse"
+              }
+            ]
           },
           "principal_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -24694,6 +26804,21 @@
         "type": "object",
         "description": "An object-only JSON document containing a principal's local preferences.\n\nValues below the document root may be any JSON type. The private\nrepresentation keeps callers from constructing an invalid non-object root."
       },
+      "PrincipalSettingsResponse": {
+        "type": "object",
+        "required": [
+          "revision",
+          "settings"
+        ],
+        "properties": {
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/PrincipalSettings"
+          }
+        }
+      },
       "PrincipalTokenMetadata": {
         "type": "object",
         "description": "Public, hash-free projection of a token for listing, including its exact\npermission and resource scope dimensions.",
@@ -24702,7 +26827,8 @@
           "principal_id",
           "issued",
           "active",
-          "expired"
+          "expired",
+          "revision"
         ],
         "properties": {
           "active": {
@@ -24749,6 +26875,9 @@
           "principal_id": {
             "$ref": "#/components/schemas/PrincipalID"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "revoked_at": {
             "type": [
               "string",
@@ -24764,6 +26893,67 @@
               {
                 "$ref": "#/components/schemas/TokenScopeDetails",
                 "description": "Exact permission and resource boundaries. `None` means that this token\nis unscoped."
+              }
+            ]
+          }
+        }
+      },
+      "PrincipalTokenPointResponse": {
+        "type": "object",
+        "description": "Canonical token representation covered completely by the token revision.\n`last_used_at` remains available in token lists, but is excluded from this\npoint representation because routine activity does not advance revision.",
+        "required": [
+          "id",
+          "principal_id",
+          "issued",
+          "revision"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "$ref": "#/components/schemas/TokenID"
+          },
+          "issued": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "principal_id": {
+            "$ref": "#/components/schemas/PrincipalID"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "scope": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TokenScopeDetails"
               }
             ]
           }
@@ -25204,7 +27394,8 @@
           "timeout_ms",
           "enabled",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "allowed_subject_types": {
@@ -25254,6 +27445,9 @@
           "name": {
             "type": "string"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "timeout_ms": {
             "type": "integer",
             "format": "int32"
@@ -25285,7 +27479,8 @@
           "updated_at",
           "op",
           "valid_from",
-          "history_id"
+          "history_id",
+          "revision"
         ],
         "properties": {
           "actor_id": {
@@ -25354,6 +27549,9 @@
           },
           "op": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "task_id": {
             "type": [
@@ -25461,6 +27659,12 @@
             "description": "Value to replace with."
           }
         }
+      },
+      "ResourceRevision": {
+        "type": "integer",
+        "format": "int64",
+        "description": "Database-owned positive resource revision.",
+        "minimum": 1
       },
       "RestoreConfig": {
         "type": "object",
@@ -25753,6 +27957,65 @@
           }
         }
       },
+      "ServiceAccountPointResponse": {
+        "type": "object",
+        "description": "Strongly tagged point representation of a service account.\n\nThe identity-scope name is omitted because that independently revisioned\nresource is not covered by the service account's principal revision.",
+        "required": [
+          "id",
+          "identity_scope_id",
+          "name",
+          "description",
+          "owner_group_id",
+          "created_at",
+          "updated_at",
+          "revision"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "description": {
+            "type": "string"
+          },
+          "disabled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "identity_scope_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_group_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ServiceAccountResponse": {
         "type": "object",
         "description": "Public response shape, combining the service-account row with its principal\nname (the name lives on `principals`).",
@@ -25763,7 +28026,8 @@
           "description",
           "owner_group_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -25800,6 +28064,9 @@
           "owner_group_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -27050,6 +29317,58 @@
           "proper_name": "Alice Doe"
         }
       },
+      "UserPointResponse": {
+        "type": "object",
+        "description": "Strongly tagged point representation of a user.\n\nDirectory-provider metadata is intentionally absent: its lifecycle is not\nowned by the principal revision used for this representation's ETag.",
+        "required": [
+          "id",
+          "identity_scope_id",
+          "provider_managed",
+          "name",
+          "created_at",
+          "updated_at",
+          "revision"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "identity_scope_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "proper_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_managed": {
+            "type": "boolean"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "UserResponse": {
         "type": "object",
         "description": "Public representation of a user, including the name resolved from the\nprincipal (the name authority).",
@@ -27060,7 +29379,8 @@
           "provider_managed",
           "name",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -27108,6 +29428,9 @@
           },
           "provider_managed": {
             "type": "boolean"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",

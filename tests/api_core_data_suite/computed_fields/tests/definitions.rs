@@ -198,22 +198,105 @@ async fn shared_patch_requires_the_current_definition_revision(
     )
     .await;
     let response = assert_response_status(response, StatusCode::CREATED).await;
+    assert!(
+        !response
+            .headers()
+            .contains_key(actix_web::http::header::ETAG),
+        "the composite mutation body must not use the definition ETag"
+    );
     let created: serde_json::Value = test::read_body_json(response).await;
     let field_id = created["definition"]["id"].as_i64().unwrap();
 
-    let response = patch_request(
+    let endpoint = format!("{endpoint}/{field_id}");
+    let response = get_request(&test_context.pool, &test_context.admin_token, &endpoint).await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let etag = response
+        .headers()
+        .get(actix_web::http::header::ETAG)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    let response = patch_request_with_headers(
         &test_context.pool,
         &test_context.admin_token,
-        &format!("{endpoint}/{field_id}"),
+        &endpoint,
         serde_json::json!({
-            "expected_revision": 999,
-            "label": "Wrong revision"
+            "label": "First revisioned update"
+        }),
+        vec![(actix_web::http::header::IF_MATCH, etag.clone())],
+    )
+    .await;
+    assert_response_status(response, StatusCode::OK).await;
+
+    let response = patch_request_with_headers(
+        &test_context.pool,
+        &test_context.admin_token,
+        &endpoint,
+        serde_json::json!({ "label": "First revisioned update" }),
+        vec![(actix_web::http::header::IF_MATCH, etag)],
+    )
+    .await;
+    assert_response_status(response, StatusCode::PRECONDITION_FAILED).await;
+
+    finish_active_rebuild(&test_context, fixture.class.id).await;
+    fixture.cleanup().await.unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn personal_patch_rejects_a_stale_semantic_no_op(#[future(awt)] test_context: TestContext) {
+    let fixture = fixture(&test_context, "personal stale no-op").await;
+    let response = post_request(
+        &test_context.pool,
+        &test_context.admin_token,
+        "/api/v1/iam/me/computed-fields",
+        serde_json::json!({
+            "class_id": fixture.class.id,
+            "key": "personal_stale_no_op",
+            "label": "Original label",
+            "operation": {"type": "first_non_null", "paths": ["/manual/hostname"]},
+            "result_type": "string",
+            "enabled": true
         }),
     )
     .await;
-    assert_response_status(response, StatusCode::CONFLICT).await;
+    let response = assert_response_status(response, StatusCode::CREATED).await;
+    let stale_etag = response
+        .headers()
+        .get(actix_web::http::header::ETAG)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let created: serde_json::Value = test::read_body_json(response).await;
+    let endpoint = format!(
+        "/api/v1/iam/me/computed-fields/{}",
+        created["id"].as_i64().unwrap()
+    );
 
-    finish_active_rebuild(&test_context, fixture.class.id).await;
+    let latest = serde_json::json!({"label": "Latest label"});
+    let response = patch_request_with_headers(
+        &test_context.pool,
+        &test_context.admin_token,
+        &endpoint,
+        &latest,
+        vec![(actix_web::http::header::IF_MATCH, stale_etag.clone())],
+    )
+    .await;
+    assert_response_status(response, StatusCode::OK).await;
+
+    let response = patch_request_with_headers(
+        &test_context.pool,
+        &test_context.admin_token,
+        &endpoint,
+        &latest,
+        vec![(actix_web::http::header::IF_MATCH, stale_etag)],
+    )
+    .await;
+    assert_response_status(response, StatusCode::PRECONDITION_FAILED).await;
+
     fixture.cleanup().await.unwrap();
 }
 

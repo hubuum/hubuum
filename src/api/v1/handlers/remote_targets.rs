@@ -2,13 +2,13 @@ use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, po
 use hubuum_task_core::IdempotencyKey;
 use tracing::{debug, info};
 
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
 use crate::config::{DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, get_config};
-use crate::db::DbPool;
 use crate::db::traits::UserPermissions;
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::history::{
@@ -19,6 +19,7 @@ use crate::db::traits::remote_target::{
     emit_remote_target_invoked_event,
 };
 use crate::db::traits::task::{TaskCreateRequest, TaskScopeSnapshot};
+use crate::db::{DbPool, with_revision_precondition_scope};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::collection::user_can_on_any;
@@ -82,7 +83,7 @@ pub async fn create_remote_target(
         .await?
         .try_into()?;
     let location = api_locations::remote_target(created.id)?;
-    Ok(ApiResponse::created(created, location))
+    ApiResponse::created_revisioned(created, location)
 }
 
 #[utoipa::path(
@@ -164,7 +165,7 @@ pub async fn get_remote_target(
         [Permissions::ReadRemoteTarget],
         CollectionID::new(target.collection_id)?
     );
-    Ok(ApiResponse::new(target, StatusCode::OK))
+    ApiResponse::ok_revisioned(target)
 }
 
 #[utoipa::path(
@@ -228,13 +229,17 @@ pub async fn patch_remote_target(
     };
     validate_remote_target_class_scope(&pool, effective_collection_id, effective_class_id).await?;
 
+    let precondition =
+        IfMatchCondition::from_request(&req)?.database_precondition(&existing.entity_tag()?)?;
     let row = update.into_row(&existing)?;
     let event_context = requestor.event_context(&req);
-    let updated: RemoteTarget = row
-        .update_remote_target_record(&pool, existing.id, Some(&event_context))
-        .await?
-        .try_into()?;
-    Ok(ApiResponse::new(updated, StatusCode::OK))
+    let updated: RemoteTarget = with_revision_precondition_scope(
+        precondition,
+        row.update_remote_target_record(&pool, existing.id, Some(&event_context)),
+    )
+    .await?
+    .try_into()?;
+    ApiResponse::ok_revisioned(updated)
 }
 
 async fn validate_remote_target_class_scope(
@@ -279,11 +284,15 @@ pub async fn delete_remote_target(
         [Permissions::DeleteRemoteTarget],
         CollectionID::new(existing.collection_id)?
     );
+    let etag = existing.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(&req);
-    target_id
-        .delete_remote_target_record(&pool, Some(&event_context))
-        .await?;
-    Ok(actix_web::HttpResponse::NoContent().finish())
+    with_revision_precondition_scope(
+        precondition,
+        target_id.delete_remote_target_record(&pool, Some(&event_context)),
+    )
+    .await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 #[utoipa::path(
@@ -582,5 +591,8 @@ pub async fn get_remote_target_as_of(
 
     let principal_names =
         resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
-    Ok(ApiResponse::ok(HistoryResponse::new(row, &principal_names)))
+    Ok(ApiResponse::new(
+        HistoryResponse::new(row, &principal_names),
+        StatusCode::OK,
+    ))
 }

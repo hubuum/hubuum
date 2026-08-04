@@ -342,6 +342,7 @@ impl ClassGraphRow {
             validate_schema: self.ancestor_validate_schema,
             created_at: self.ancestor_created_at,
             updated_at: self.ancestor_updated_at,
+            revision: self.ancestor_revision,
         }
     }
 
@@ -355,6 +356,7 @@ impl ClassGraphRow {
             validate_schema: self.descendant_validate_schema,
             created_at: self.descendant_created_at,
             updated_at: self.descendant_updated_at,
+            revision: self.descendant_revision,
         }
     }
 
@@ -368,6 +370,7 @@ impl ClassGraphRow {
             validate_schema: self.descendant_validate_schema,
             created_at: self.descendant_created_at,
             updated_at: self.descendant_updated_at,
+            revision: self.descendant_revision,
             path: self.path.clone(),
         }
     }
@@ -408,6 +411,7 @@ impl CursorPaginated for HubuumClassRelation {
                 | FilterField::ClassTo
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -418,6 +422,7 @@ impl CursorPaginated for HubuumClassRelation {
             FilterField::ClassTo => CursorValue::Integer(self.to_hubuum_class_id as i64),
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for class relations",
@@ -467,6 +472,11 @@ impl CursorSqlMapping for HubuumClassRelation {
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
+            FilterField::Revision => CursorSqlField {
+                column: "hubuumclass_relation.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for class relations",
@@ -487,6 +497,7 @@ impl CursorPaginated for HubuumObjectRelation {
                 | FilterField::ObjectTo
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -498,6 +509,7 @@ impl CursorPaginated for HubuumObjectRelation {
             FilterField::ObjectTo => CursorValue::Integer(self.to_hubuum_object_id as i64),
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for object relations",
@@ -550,6 +562,11 @@ impl CursorSqlMapping for HubuumObjectRelation {
             FilterField::UpdatedAt => CursorSqlField {
                 column: "hubuumobject_relation.updated_at",
                 sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "hubuumobject_relation.revision",
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             _ => {

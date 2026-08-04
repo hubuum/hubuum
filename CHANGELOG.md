@@ -33,6 +33,52 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Token retention now starts at the earlier of revocation and effective expiry,
   so explicitly revoked long-lived credentials are purged after the configured
   retention window instead of remaining until their original expiry.
+- Added database-owned positive 64-bit revisions to authoritative resources,
+  aggregate permission, membership, principal, and token state, temporal
+  history, and revision-aware audit events. Revision filtering and sorting are
+  available through the shared list-query contract.
+- Added strong opaque ETags to canonical entity reads and mutation responses,
+  with bounded `If-Match` parsing and lock-protected conditional updates and
+  deletes. Stale validators return `412 Precondition Failed` with the stable
+  `stale_resource` reason.
+- Import v2 collection, class, and object items support `create_only`,
+  unconditional `overwrite`, and numeric `if_revision` write conditions that
+  are rechecked by queued workers under row locks.
+
+- **Breaking (HTTP API):** entity JSON now contains `revision`; principal
+  settings return `{revision, settings}`, SQL permission reads return
+  `{collection_id, revision, permissions}`, and group member lists return
+  membership entities with an optional nested principal. Clients must update
+  deserializers for these response shapes.
+- **Breaking (HTTP API):** class point routes return the class entity by
+  default. Use `include=collection` for the expanded, untagged representation.
+  Raw object points are tagged; `include=computed` remains expanded and
+  untagged.
+- **Breaking (HTTP API):** canonical tagged group points omit directory-sync
+  timestamps, and canonical tagged token points omit `last_used_at`, because
+  those operational fields do not advance resource revisions. The fields
+  remain available in untagged group and token lists.
+- **Breaking (HTTP API):** canonical tagged user and service-account points use
+  stable `identity_scope_id` values and omit independently mutable provider and
+  synchronization metadata. Tagged group-membership points omit the expanded
+  principal, and SQL permission-set entries expose permission rows with stable
+  `group_id` values instead of expanded groups. Rich metadata remains available
+  from the corresponding untagged list responses.
+- Actor-expanded historical snapshots and shared computed-field mutation
+  responses are intentionally untagged because their composite fields do not
+  share one revision owner. Fetch the canonical point resource before a later
+  conditional mutation.
+- **Breaking (computed fields):** mutation bodies and delete queries no longer
+  accept `expected_revision`. Obtain the opaque ETag from a computed-field
+  point route and send it in `If-Match` instead.
+- **Breaking (backup/restore):** full backups are version 4 and restore rejects
+  version 3. Version 4 preserves authoritative, authorization-set, event, and
+  temporal revisions. Operators must create a new backup before restore and
+  must deploy this release without mixed-version writers.
+- **Breaking (imports):** imports are version 2 and version 1 is rejected.
+  Producers must emit the v2 version number and may attach per-item write
+  conditions where supported.
+
 - **Breaking (Rust API):** permission-controller group parameters and
   permission-backend collection and group parameters now use validated
   `CollectionID` and `GroupID` values instead of raw integers. Downstream

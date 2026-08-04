@@ -25,6 +25,7 @@ fn group_snapshot(group: &Group) -> serde_json::Value {
         "external_key": group.external_key,
         "created_at": group.created_at,
         "updated_at": group.updated_at,
+        "revision": group.revision,
     })
 }
 
@@ -49,12 +50,38 @@ fn user_group_metadata(principal_id: i32, group_id: i32) -> serde_json::Value {
     })
 }
 
+fn membership_snapshot(membership: &PrincipalGroup) -> serde_json::Value {
+    serde_json::json!({
+        "principal_id": membership.principal_id,
+        "group_id": membership.group_id,
+        "created_at": membership.created_at,
+        "updated_at": membership.updated_at,
+        "revision": membership.revision,
+    })
+}
+
 async fn insert_effective_membership(
     conn: &mut DbConnection,
     principal: i32,
     group: i32,
-) -> Result<(PrincipalGroup, bool), diesel::result::Error> {
-    use crate::schema::group_memberships::dsl::group_memberships;
+) -> Result<(PrincipalGroup, bool), ApiError> {
+    use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
+
+    let owner_key = format!("group_memberships:{principal}:{group}");
+    let current = group_memberships
+        .filter(principal_id.eq(principal))
+        .filter(group_id.eq(group))
+        .for_update()
+        .first::<PrincipalGroup>(conn)
+        .await
+        .optional()?;
+    if let Some(membership) = current {
+        crate::db::assert_locked_revision_precondition(conn, &owner_key, membership.revision)
+            .await?;
+        return Ok((membership, false));
+    }
+
+    crate::db::assert_revision_precondition_allows_insert(&owner_key)?;
 
     let inserted = diesel::insert_into(group_memberships)
         .values((
@@ -92,6 +119,21 @@ async fn insert_manual_membership_source(
         .execute(conn)
         .await?;
     Ok(())
+}
+
+async fn insert_manual_membership(
+    conn: &mut DbConnection,
+    principal: i32,
+    group: i32,
+) -> Result<(PrincipalGroup, bool), ApiError> {
+    let (_, inserted) = insert_effective_membership(conn, principal, group).await?;
+    insert_manual_membership_source(conn, principal, group).await?;
+    // The source row owns the effective membership revision and may have
+    // advanced it. Always return the final committed representation.
+    Ok((
+        load_principal_group(conn, principal, group).await?,
+        inserted,
+    ))
 }
 
 async fn remove_manual_membership_source(
@@ -195,6 +237,12 @@ async fn lock_group_for_delete(conn: &mut DbConnection, group_id: i32) -> Result
         .for_update()
         .first::<Group>(conn)
         .await?;
+    crate::db::assert_locked_revision_precondition(
+        conn,
+        &format!("groups:{}", group.id),
+        group.revision,
+    )
+    .await?;
     ensure_group_has_no_owned_service_accounts(conn, group.id).await?;
     ensure_group_allows_local_write(conn, group.id).await?;
     Ok(group)
@@ -486,6 +534,12 @@ impl UpdateGroupRecord for UpdateGroup {
                 .for_update()
                 .first::<Group>(conn)
                 .await?;
+            crate::db::assert_locked_revision_precondition(
+                conn,
+                &format!("groups:{}", before.id),
+                before.revision,
+            )
+            .await?;
             ensure_group_allows_local_write(conn, before.id).await?;
             if !self.has_changes(&before) {
                 return Ok(before);
@@ -509,9 +563,9 @@ impl UpdateGroupRecord for UpdateGroup {
     }
 }
 
-/// Group membership is principal-centric: members are `Principal`s, which may be
-/// human users or service accounts. Member listings expose the principal name
-/// and kind via the principals table.
+/// Group membership is principal-centric. Paginated public listings retain the
+/// membership row because it is the authoritative revision owner and join the
+/// principal only as nested display data.
 pub trait GroupMembersBackend {
     async fn load_group_members(&self, pool: &DbPool) -> Result<Vec<Principal>, ApiError>;
 
@@ -519,7 +573,7 @@ pub trait GroupMembersBackend {
         &self,
         pool: &DbPool,
         query_options: &QueryOptions,
-    ) -> Result<Vec<Principal>, ApiError>;
+    ) -> Result<Vec<(PrincipalGroup, Principal)>, ApiError>;
 
     async fn count_group_members_paginated(
         &self,
@@ -565,14 +619,20 @@ impl GroupMembersBackend for Group {
         &self,
         pool: &DbPool,
         query_options: &QueryOptions,
-    ) -> Result<Vec<Principal>, ApiError> {
-        use crate::schema::group_memberships::dsl::{group_id, group_memberships};
-        use crate::schema::principals::dsl::{created_at, id, name, principals, updated_at};
+    ) -> Result<Vec<(PrincipalGroup, Principal)>, ApiError> {
+        use crate::schema::group_memberships::dsl::{
+            created_at as membership_created_at, group_id, group_memberships,
+            revision as membership_revision, updated_at as membership_updated_at,
+        };
+        use crate::schema::principals::dsl::{id, name, principals};
 
         let mut base_query = group_memberships
             .filter(group_id.eq(self.id))
             .inner_join(principals)
-            .select(crate::schema::principals::all_columns)
+            .select((
+                crate::schema::group_memberships::all_columns,
+                crate::schema::principals::all_columns,
+            ))
             .into_boxed();
 
         for param in &query_options.filters {
@@ -582,8 +642,15 @@ impl GroupMembersBackend for Group {
                 FilterField::Name | FilterField::Username => {
                     string_search!(base_query, param, operator, name)
                 }
-                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
-                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, membership_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, membership_updated_at)
+                }
+                FilterField::Revision => {
+                    crate::revision_search!(base_query, param, operator, membership_revision)
+                }
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for principals",
@@ -593,9 +660,16 @@ impl GroupMembersBackend for Group {
             }
         }
 
-        crate::apply_query_options!(base_query, query_options, Principal);
+        crate::apply_query_options!(
+            base_query,
+            query_options,
+            crate::models::PrincipalMemberResponse
+        );
 
-        with_connection(pool, async |conn| base_query.load::<Principal>(conn).await).await
+        with_connection(pool, async |conn| {
+            base_query.load::<(PrincipalGroup, Principal)>(conn).await
+        })
+        .await
     }
 
     async fn count_group_members_paginated(
@@ -603,8 +677,11 @@ impl GroupMembersBackend for Group {
         pool: &DbPool,
         query_options: &QueryOptions,
     ) -> Result<i64, ApiError> {
-        use crate::schema::group_memberships::dsl::{group_id, group_memberships};
-        use crate::schema::principals::dsl::{created_at, id, name, principals, updated_at};
+        use crate::schema::group_memberships::dsl::{
+            created_at as membership_created_at, group_id, group_memberships,
+            revision as membership_revision, updated_at as membership_updated_at,
+        };
+        use crate::schema::principals::dsl::{id, name, principals};
 
         let mut base_query = group_memberships
             .filter(group_id.eq(self.id))
@@ -618,8 +695,15 @@ impl GroupMembersBackend for Group {
                 FilterField::Name | FilterField::Username => {
                     string_search!(base_query, param, operator, name)
                 }
-                FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
-                FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                FilterField::CreatedAt => {
+                    date_search!(base_query, param, operator, membership_created_at)
+                }
+                FilterField::UpdatedAt => {
+                    date_search!(base_query, param, operator, membership_updated_at)
+                }
+                FilterField::Revision => {
+                    crate::revision_search!(base_query, param, operator, membership_revision)
+                }
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for principals",
@@ -678,6 +762,7 @@ impl GroupMembersBackend for Group {
                     ),
                 )?
                 .with_context(context)
+                .with_before(membership_snapshot(&membership))
                 .with_metadata(user_group_metadata(
                     membership.principal_id,
                     membership.group_id,
@@ -714,8 +799,7 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
     ) -> Result<PrincipalGroup, ApiError> {
         with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
             let (membership, _) =
-                insert_effective_membership(conn, self.principal_id, self.group_id).await?;
-            insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
+                insert_manual_membership(conn, self.principal_id, self.group_id).await?;
             Ok(membership)
         })
         .await
@@ -732,8 +816,7 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
 
         with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
             let (membership, inserted) =
-                insert_effective_membership(conn, self.principal_id, self.group_id).await?;
-            insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
+                insert_manual_membership(conn, self.principal_id, self.group_id).await?;
             if inserted {
                 let event = NewEvent::new(
                     EntityType::UserGroup,
@@ -745,6 +828,7 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
                     ),
                 )?
                 .with_context(context)
+                .with_after(membership_snapshot(&membership))
                 .with_metadata(user_group_metadata(
                     membership.principal_id,
                     membership.group_id,
@@ -764,8 +848,7 @@ impl SavePrincipalGroupRecord for PrincipalGroup {
     ) -> Result<PrincipalGroup, ApiError> {
         with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
             let (membership, _) =
-                insert_effective_membership(conn, self.principal_id, self.group_id).await?;
-            insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
+                insert_manual_membership(conn, self.principal_id, self.group_id).await?;
             Ok(membership)
         })
         .await
@@ -782,8 +865,7 @@ impl SavePrincipalGroupRecord for PrincipalGroup {
 
         with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
             let (membership, inserted) =
-                insert_effective_membership(conn, self.principal_id, self.group_id).await?;
-            insert_manual_membership_source(conn, self.principal_id, self.group_id).await?;
+                insert_manual_membership(conn, self.principal_id, self.group_id).await?;
             if inserted {
                 let event = NewEvent::new(
                     EntityType::UserGroup,
@@ -795,6 +877,7 @@ impl SavePrincipalGroupRecord for PrincipalGroup {
                     ),
                 )?
                 .with_context(context)
+                .with_after(membership_snapshot(&membership))
                 .with_metadata(user_group_metadata(
                     membership.principal_id,
                     membership.group_id,
@@ -818,6 +901,17 @@ async fn load_principal_group(
         .filter(group_id.eq(group))
         .first::<PrincipalGroup>(conn)
         .await
+}
+
+pub async fn principal_group_by_ids(
+    pool: &DbPool,
+    principal: i32,
+    group: i32,
+) -> Result<PrincipalGroup, ApiError> {
+    with_connection(pool, async |conn| {
+        load_principal_group(conn, principal, group).await
+    })
+    .await
 }
 
 pub trait DeletePrincipalGroupRecord {

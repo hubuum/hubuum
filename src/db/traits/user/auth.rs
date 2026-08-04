@@ -1,6 +1,8 @@
 use super::*;
 use crate::db::traits::identity::identity_scope_by_name;
-use crate::db::traits::principal::InsertPrincipalRecord;
+use crate::db::traits::principal::{
+    InsertPrincipalRecord, lock_principal_revision_conn, principal_revision_conn,
+};
 use crate::db::traits::token::revoke_all_tokens_for_principal_conn;
 use crate::models::PrincipalID;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
@@ -11,12 +13,17 @@ use diesel_async::RunQueryDsl;
 /// PHC hash, so verification can never succeed.
 const ANONYMIZED_PASSWORD: &str = "!anonymized-no-login";
 
-fn user_snapshot(user: &User, name: &str) -> serde_json::Value {
+fn user_snapshot(
+    user: &User,
+    name: &str,
+    revision: crate::models::ResourceRevision,
+) -> serde_json::Value {
     serde_json::json!({
         "id": user.id,
         "name": name,
         "proper_name": user.proper_name,
         "email": user.email,
+        "revision": revision,
         "created_at": user.created_at,
         "updated_at": user.updated_at,
     })
@@ -275,7 +282,8 @@ async fn delete_principal_without_events(
     principal_id_value: i32,
 ) -> Result<usize, ApiError> {
     use crate::schema::principals::dsl::{id, principals};
-    with_connection(pool, async |conn| -> Result<usize, ApiError> {
+    with_transaction(pool, async |conn| -> Result<usize, ApiError> {
+        lock_principal_revision_conn(conn, principal_id_value).await?;
         ensure_user_allows_local_write_conn(conn, principal_id_value).await?;
         Ok(diesel::delete(principals.filter(id.eq(principal_id_value)))
             .execute(conn)
@@ -296,12 +304,7 @@ async fn delete_principal(
     use crate::schema::principals::dsl::{id, principals};
 
     with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-        principals
-            .filter(id.eq(principal_id_value))
-            .for_update()
-            .select(id)
-            .first::<i32>(conn)
-            .await?;
+        let before_revision = lock_principal_revision_conn(conn, principal_id_value).await?;
         let (user, name) = load_user_with_name(conn, principal_id_value).await?;
         ensure_user_allows_local_write_conn(conn, principal_id_value).await?;
         let deleted = diesel::delete(principals.filter(id.eq(principal_id_value)))
@@ -314,7 +317,7 @@ async fn delete_principal(
             context,
             format!("User '{name}' deleted"),
         )?
-        .with_before(user_snapshot(&user, &name));
+        .with_before(user_snapshot(&user, &name, before_revision));
         emit_event(conn, &event).await?;
         Ok(deleted)
     })
@@ -403,7 +406,6 @@ impl CreateUserRecord for NewUser {
                 ))
                 .get_result::<User>(conn)
                 .await?;
-
             Ok(user)
         })
         .await
@@ -455,6 +457,7 @@ impl CreateUserRecord for NewUser {
                 ))
                 .get_result::<User>(conn)
                 .await?;
+            let revision = principal_revision_conn(conn, principal.id).await?;
 
             let event = user_event(
                 &user,
@@ -463,7 +466,7 @@ impl CreateUserRecord for NewUser {
                 context,
                 format!("User '{name}' created"),
             )?
-            .with_after(user_snapshot(&user, &name));
+            .with_after(user_snapshot(&user, &name, revision));
             emit_event(conn, &event).await?;
             Ok(user)
         })
@@ -499,7 +502,15 @@ impl UpdateUserRecord for UpdateUser {
 
         let principal_id = PrincipalID::new(user_id)?;
         with_transaction(pool, async |conn| -> Result<User, ApiError> {
+            lock_principal_revision_conn(conn, principal_id.id()).await?;
             ensure_user_allows_local_write_conn(conn, principal_id.id()).await?;
+            let before = users
+                .filter(id.eq(principal_id.id()))
+                .first::<User>(conn)
+                .await?;
+            if !self.has_changes(&before) {
+                return Ok(before);
+            }
             let updated = diesel::update(users.filter(id.eq(principal_id.id())))
                 .set(self)
                 .get_result::<User>(conn)
@@ -528,9 +539,9 @@ impl UpdateUserRecord for UpdateUser {
         with_transaction(pool, async |conn| -> Result<User, ApiError> {
             use crate::schema::principals;
 
+            let before_revision = lock_principal_revision_conn(conn, principal_id.id()).await?;
             let before = users
                 .filter(id.eq(principal_id.id()))
-                .for_update()
                 .first::<User>(conn)
                 .await?;
             let name = principals::table
@@ -546,6 +557,7 @@ impl UpdateUserRecord for UpdateUser {
                 .set(self)
                 .get_result::<User>(conn)
                 .await?;
+            let after_revision = principal_revision_conn(conn, principal_id.id()).await?;
             if self.password.is_some() {
                 revoke_all_tokens_for_principal_conn(conn, principal_id).await?;
             }
@@ -556,8 +568,8 @@ impl UpdateUserRecord for UpdateUser {
                 context,
                 format!("User '{name}' updated"),
             )?
-            .with_before(user_snapshot(&before, &name))
-            .with_after(user_snapshot(&after, &name))
+            .with_before(user_snapshot(&before, &name, before_revision))
+            .with_after(user_snapshot(&after, &name, after_revision))
             .with_metadata(serde_json::json!({
                 "password_changed": self.password.is_some(),
             }));
@@ -590,6 +602,7 @@ async fn anonymize_user_record(pool: &DbPool, target_id: i32) -> Result<(), ApiE
 
     let principal_id = PrincipalID::new(target_id)?;
     with_transaction(pool, async |conn| -> Result<(), ApiError> {
+        lock_principal_revision_conn(conn, principal_id.id()).await?;
         ensure_user_allows_local_write_conn(conn, principal_id.id()).await?;
         use crate::schema::computed_field_definitions::dsl as computed;
         diesel::delete(

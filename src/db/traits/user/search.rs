@@ -242,7 +242,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         use crate::schema::collections::dsl::{
             collections, created_at as collection_created_at,
             description as collection_description, id as collection_id, name as collection_name,
-            updated_at as collection_updated_at,
+            revision as collection_revision, updated_at as collection_updated_at,
         };
         use crate::schema::permissions::dsl::{
             collection_id as permissions_collection_id, group_id, permissions,
@@ -296,7 +296,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         }
 
         for param in query_params {
-            use crate::{date_search, numeric_search, string_search};
+            use crate::{date_search, numeric_search, revision_search, string_search};
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, collection_id),
@@ -305,6 +305,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 }
                 FilterField::UpdatedAt => {
                     date_search!(base_query, param, operator, collection_updated_at)
+                }
+                FilterField::Revision => {
+                    revision_search!(base_query, param, operator, collection_revision)
                 }
                 FilterField::Name => {
                     string_search!(base_query, param, operator, collection_name)
@@ -346,7 +349,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         use crate::schema::collections::dsl::{
             collections, created_at as collection_created_at,
             description as collection_description, id as collection_id, name as collection_name,
-            updated_at as collection_updated_at,
+            revision as collection_revision, updated_at as collection_updated_at,
         };
         use crate::schema::permissions::dsl::{
             collection_id as permissions_collection_id, group_id, permissions,
@@ -398,7 +401,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         }
 
         for param in query_params {
-            use crate::{date_search, numeric_search, string_search};
+            use crate::{date_search, numeric_search, revision_search, string_search};
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, collection_id),
@@ -407,6 +410,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 }
                 FilterField::UpdatedAt => {
                     date_search!(base_query, param, operator, collection_updated_at)
+                }
+                FilterField::Revision => {
+                    revision_search!(base_query, param, operator, collection_revision)
                 }
                 FilterField::Name => {
                     string_search!(base_query, param, operator, collection_name)
@@ -462,7 +468,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         use crate::schema::hubuumclass::dsl::{
             collection_id as class_collection_id, created_at as class_created_at,
             description as class_description, hubuumclass, id as class_id, name as class_name,
-            updated_at as class_updated_at, validate_schema as class_validate_schema,
+            revision as class_revision, updated_at as class_updated_at,
+            validate_schema as class_validate_schema,
         };
 
         let query_params = query_options.filters.clone();
@@ -516,7 +523,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         }
 
         for param in query_params {
-            use crate::{boolean_search, date_search, numeric_search, string_search};
+            use crate::{
+                boolean_search, date_search, numeric_search, revision_search, string_search,
+            };
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, class_id),
@@ -528,6 +537,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 }
                 FilterField::UpdatedAt => {
                     date_search!(base_query, param, operator, class_updated_at)
+                }
+                FilterField::Revision => {
+                    revision_search!(base_query, param, operator, class_revision)
                 }
                 FilterField::Name => string_search!(base_query, param, operator, class_name),
                 FilterField::Description => {
@@ -576,7 +588,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         use crate::schema::hubuumclass::dsl::{
             collection_id as class_collection_id, created_at as class_created_at,
             description as class_description, hubuumclass, id as class_id, name as class_name,
-            updated_at as class_updated_at, validate_schema as class_validate_schema,
+            revision as class_revision, updated_at as class_updated_at,
+            validate_schema as class_validate_schema,
         };
 
         let query_params = query_options.filters.clone();
@@ -609,7 +622,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         }
 
         for param in query_params {
-            use crate::{boolean_search, date_search, numeric_search, string_search};
+            use crate::{
+                boolean_search, date_search, numeric_search, revision_search, string_search,
+            };
             let operator = param.operator.clone();
             match param.field {
                 FilterField::Id => numeric_search!(base_query, param, operator, class_id),
@@ -621,6 +636,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 }
                 FilterField::UpdatedAt => {
                     date_search!(base_query, param, operator, class_updated_at)
+                }
+                FilterField::Revision => {
+                    revision_search!(base_query, param, operator, class_revision)
                 }
                 FilterField::Name => string_search!(base_query, param, operator, class_name),
                 FilterField::Description => {
@@ -708,7 +726,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
-            name as object_name, updated_at as object_updated_at,
+            name as object_name, revision as object_revision, updated_at as object_updated_at,
         };
 
         let (query_options, query_mode) = query_plan.into_parts();
@@ -768,7 +786,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         }
 
         for param in query_params {
-            use crate::{date_search, numeric_search, string_search};
+            use crate::{date_search, numeric_search, revision_search, string_search};
             if param.field.computed_query().is_some() {
                 let snapshot = query_mode.snapshot()?;
                 base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
@@ -785,6 +803,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 }
                 FilterField::UpdatedAt => {
                     date_search!(base_query, param, operator, object_updated_at)
+                }
+                FilterField::Revision => {
+                    revision_search!(base_query, param, operator, object_revision)
                 }
                 FilterField::Name => string_search!(base_query, param, operator, object_name),
                 FilterField::Description => {
@@ -876,7 +897,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, created_at as object_created_at,
             description as object_description, hubuum_class_id, hubuumobject, id as object_id,
-            name as object_name, updated_at as object_updated_at,
+            name as object_name, revision as object_revision, updated_at as object_updated_at,
         };
 
         let (query_options, query_mode) = query_plan.into_parts();
@@ -915,7 +936,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         }
 
         for param in query_params {
-            use crate::{date_search, numeric_search, string_search};
+            use crate::{date_search, numeric_search, revision_search, string_search};
             if param.field.computed_query().is_some() {
                 let snapshot = query_mode.snapshot()?;
                 base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
@@ -932,6 +953,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                 }
                 FilterField::UpdatedAt => {
                     date_search!(base_query, param, operator, object_updated_at)
+                }
+                FilterField::Revision => {
+                    revision_search!(base_query, param, operator, object_revision)
                 }
                 FilterField::Name => string_search!(base_query, param, operator, object_name),
                 FilterField::Description => {
@@ -1027,7 +1051,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
         use crate::schema::hubuumclass_relation::dsl::{
             created_at as class_relation_created_at, from_hubuum_class_id, hubuumclass_relation,
-            id as class_relation_id, to_hubuum_class_id, updated_at as class_relation_updated_at,
+            id as class_relation_id, revision as class_relation_revision, to_hubuum_class_id,
+            updated_at as class_relation_updated_at,
         };
 
         let query_params = query_options.filters.clone();
@@ -1154,7 +1179,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
 
             for param in &query_params {
-                use crate::{date_search, numeric_search};
+                use crate::{date_search, numeric_search, revision_search};
                 let operator = param.operator.clone();
                 match param.field {
                     FilterField::Id => {
@@ -1171,6 +1196,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     }
                     FilterField::UpdatedAt => {
                         date_search!(base_query, param, operator, class_relation_updated_at)
+                    }
+                    FilterField::Revision => {
+                        revision_search!(base_query, param, operator, class_relation_revision)
                     }
                     FilterField::ClassFromName => {}
                     FilterField::ClassToName => {}
@@ -1254,7 +1282,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
         use crate::schema::hubuumclass_relation::dsl::{
             created_at as relation_created_at, from_hubuum_class_id, hubuumclass_relation,
-            id as relation_id, to_hubuum_class_id, updated_at as relation_updated_at,
+            id as relation_id, revision as relation_revision, to_hubuum_class_id,
+            updated_at as relation_updated_at,
         };
         use diesel::BoolExpressionMethods;
 
@@ -1309,7 +1338,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
 
             for param in &query_params {
-                use crate::{date_search, numeric_search};
+                use crate::{date_search, numeric_search, revision_search};
                 let operator = param.operator.clone();
                 match param.field {
                     FilterField::Id => numeric_search!(base_query, param, operator, relation_id),
@@ -1324,6 +1353,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     }
                     FilterField::UpdatedAt => {
                         date_search!(base_query, param, operator, relation_updated_at)
+                    }
+                    FilterField::Revision => {
+                        revision_search!(base_query, param, operator, relation_revision)
                     }
                     _ => {
                         return Err(ApiError::BadRequest(format!(
@@ -1726,8 +1758,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
         use crate::schema::hubuumobject_relation::dsl::{
             class_relation_id, created_at as relation_created_at, from_hubuum_object_id,
-            hubuumobject_relation, id as relation_id, to_hubuum_object_id,
-            updated_at as relation_updated_at,
+            hubuumobject_relation, id as relation_id, revision as relation_revision,
+            to_hubuum_object_id, updated_at as relation_updated_at,
         };
 
         let query_params = query_options.filters.clone();
@@ -1790,7 +1822,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
 
             for param in &query_params {
-                use crate::{date_search, numeric_search};
+                use crate::{date_search, numeric_search, revision_search};
                 let operator = param.operator.clone();
                 match param.field {
                     FilterField::Id => numeric_search!(base_query, param, operator, relation_id),
@@ -1808,6 +1840,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     }
                     FilterField::UpdatedAt => {
                         date_search!(base_query, param, operator, relation_updated_at)
+                    }
+                    FilterField::Revision => {
+                        revision_search!(base_query, param, operator, relation_revision)
                     }
                     _ => {
                         return Err(ApiError::BadRequest(format!(
@@ -1889,8 +1924,8 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         };
         use crate::schema::hubuumobject_relation::dsl::{
             class_relation_id, created_at as relation_created_at, from_hubuum_object_id,
-            hubuumobject_relation, id as relation_id, to_hubuum_object_id,
-            updated_at as relation_updated_at,
+            hubuumobject_relation, id as relation_id, revision as relation_revision,
+            to_hubuum_object_id, updated_at as relation_updated_at,
         };
         use diesel::BoolExpressionMethods;
 
@@ -1961,7 +1996,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
 
             for param in &query_params {
-                use crate::{date_search, numeric_search};
+                use crate::{date_search, numeric_search, revision_search};
                 let operator = param.operator.clone();
                 match param.field {
                     FilterField::Id => numeric_search!(base_query, param, operator, relation_id),
@@ -1979,6 +2014,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
                     }
                     FilterField::UpdatedAt => {
                         date_search!(base_query, param, operator, relation_updated_at)
+                    }
+                    FilterField::Revision => {
+                        revision_search!(base_query, param, operator, relation_revision)
                     }
                     _ => {
                         return Err(ApiError::BadRequest(format!(
@@ -2765,7 +2803,8 @@ fn build_root_graph_walk_query(spec: RootGraphWalkSpec) -> RawSqlQuerySpec {
     target_object.description AS descendant_description,
     target_object.data AS descendant_data,
     target_object.created_at AS descendant_created_at,
-    target_object.updated_at AS descendant_updated_at
+    target_object.updated_at AS descendant_updated_at,
+    target_object.revision AS descendant_revision
 FROM ranked_walk
 JOIN hubuumobject target_object
   ON target_object.id = ranked_walk.descendant_object_id
@@ -2793,7 +2832,9 @@ ORDER BY ranked_walk.root_object_id ASC, ranked_walk.related_rank ASC"#
     source_object.created_at AS ancestor_created_at,
     target_object.created_at AS descendant_created_at,
     source_object.updated_at AS ancestor_updated_at,
-    target_object.updated_at AS descendant_updated_at
+    target_object.updated_at AS descendant_updated_at,
+    source_object.revision AS ancestor_revision,
+    target_object.revision AS descendant_revision
 FROM ranked_walk
 JOIN hubuumobject source_object
   ON source_object.id = ranked_walk.ancestor_object_id
@@ -2953,11 +2994,11 @@ where
     let mut raw_sql = if let Some(max_depth) = related_depth_upper_bound {
         bind_variables.push(SQLValue::Integer(max_depth));
         format!(
-            "SELECT * FROM get_bidirectionally_related_classes(?, {collection_array_sql}, ?) AS related_classes"
+            "SELECT related_classes.*, ancestor.revision AS ancestor_revision, descendant.revision AS descendant_revision FROM get_bidirectionally_related_classes(?, {collection_array_sql}, ?) AS related_classes JOIN hubuumclass ancestor ON ancestor.id = related_classes.ancestor_class_id JOIN hubuumclass descendant ON descendant.id = related_classes.descendant_class_id"
         )
     } else {
         format!(
-            "SELECT * FROM get_bidirectionally_related_classes(?, {collection_array_sql}, NULL) AS related_classes"
+            "SELECT related_classes.*, ancestor.revision AS ancestor_revision, descendant.revision AS descendant_revision FROM get_bidirectionally_related_classes(?, {collection_array_sql}, NULL) AS related_classes JOIN hubuumclass ancestor ON ancestor.id = related_classes.ancestor_class_id JOIN hubuumclass descendant ON descendant.id = related_classes.descendant_class_id"
         )
     };
 
@@ -3043,11 +3084,11 @@ where
     let mut raw_sql = if let Some(max_depth) = related_depth_upper_bound {
         bind_variables.push(SQLValue::Integer(max_depth));
         format!(
-            "SELECT * FROM get_bidirectionally_related_objects(?, {collection_array_sql}, ?) AS related_objects"
+            "SELECT related_objects.*, ancestor.revision AS ancestor_revision, descendant.revision AS descendant_revision FROM get_bidirectionally_related_objects(?, {collection_array_sql}, ?) AS related_objects JOIN hubuumobject ancestor ON ancestor.id = related_objects.ancestor_object_id JOIN hubuumobject descendant ON descendant.id = related_objects.descendant_object_id"
         )
     } else {
         format!(
-            "SELECT * FROM get_bidirectionally_related_objects(?, {collection_array_sql}, NULL) AS related_objects"
+            "SELECT related_objects.*, ancestor.revision AS ancestor_revision, descendant.revision AS descendant_revision FROM get_bidirectionally_related_objects(?, {collection_array_sql}, NULL) AS related_objects JOIN hubuumobject ancestor ON ancestor.id = related_objects.ancestor_object_id JOIN hubuumobject descendant ON descendant.id = related_objects.descendant_object_id"
         )
     };
 
@@ -3810,6 +3851,9 @@ impl User {
                 FilterField::Email => string_search!(base_query, param, operator, email),
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
                 FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                FilterField::Revision => {
+                    revision_search!(base_query, param, operator, principals::revision)
+                }
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for users",
@@ -3833,6 +3877,7 @@ impl User {
                     principals::provider_managed,
                     principals::last_sync_attempted_at,
                     principals::last_sync_success_at,
+                    principals::revision,
                 ))
                 .distinct() // TODO: Is it the joins that makes this required?
                 .load::<(
@@ -3843,6 +3888,7 @@ impl User {
                     bool,
                     Option<chrono::NaiveDateTime>,
                     Option<chrono::NaiveDateTime>,
+                    crate::models::ResourceRevision,
                 )>(conn)
                 .await
         })
@@ -3887,6 +3933,9 @@ impl User {
                 FilterField::Email => string_search!(base_query, param, operator, email),
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
                 FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                FilterField::Revision => {
+                    revision_search!(base_query, param, operator, principals::revision)
+                }
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for users",
@@ -3913,7 +3962,7 @@ impl User {
         query_options: QueryOptions,
     ) -> Result<Vec<Group>, ApiError> {
         use crate::schema::groups::dsl::{
-            created_at, description, groupname, groups, id, updated_at,
+            created_at, description, groupname, groups, id, revision, updated_at,
         };
         use crate::schema::identity_scopes;
 
@@ -3942,6 +3991,7 @@ impl User {
                 }
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
                 FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                FilterField::Revision => revision_search!(base_query, param, operator, revision),
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for groups",
@@ -3973,7 +4023,7 @@ impl User {
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
         use crate::schema::groups::dsl::{
-            created_at, description, groupname, groups, id, updated_at,
+            created_at, description, groupname, groups, id, revision, updated_at,
         };
         use crate::schema::identity_scopes;
 
@@ -3994,6 +4044,7 @@ impl User {
                 }
                 FilterField::CreatedAt => date_search!(base_query, param, operator, created_at),
                 FilterField::UpdatedAt => date_search!(base_query, param, operator, updated_at),
+                FilterField::Revision => revision_search!(base_query, param, operator, revision),
                 _ => {
                     return Err(ApiError::BadRequest(format!(
                         "Field '{}' isn't searchable (or does not exist) for groups",

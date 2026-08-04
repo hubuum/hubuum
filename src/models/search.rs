@@ -8,7 +8,7 @@ use tracing::debug;
 pub use hubuum_query::{
     ComputedFieldScope, ComputedQueryValueType, DataType, FilterField, JsonFieldPathRef, Operator,
     ParsedQueryParam, QueryOptions, SQLMappedType, SearchOperator, SortParam, StatementTimeoutMs,
-    get_jsonb_field_type_from_value_and_operator,
+    decode_query_parameter_pairs, get_jsonb_field_type_from_value_and_operator,
 };
 #[cfg(test)]
 use hubuum_query::{get_jsonb_field_type_from_json_schema, get_sql_mapped_type_from_value};
@@ -174,6 +174,9 @@ pub trait ParsedQueryParamExt {
     /// * A vector of integers or ApiError::BadRequest if the value is invalid
     fn value_as_integer(&self) -> Result<Vec<i32>, ApiError>;
 
+    /// Coerce a bounded list of positive BIGINT resource revisions.
+    fn value_as_revision(&self) -> Result<Vec<i64>, ApiError>;
+
     /// ## Coerce the value into a list of dates
     ///
     /// Accepts a comma separated list of RFC3339 dates.
@@ -286,6 +289,10 @@ impl ParsedQueryParamExt for ParsedQueryParam {
 
     fn value_as_integer(&self) -> Result<Vec<i32>, ApiError> {
         self.value.as_integer()
+    }
+
+    fn value_as_revision(&self) -> Result<Vec<i64>, ApiError> {
+        hubuum_query::parse_positive_bigint_list_with_limit(&self.value, 50).map_err(Into::into)
     }
 
     fn value_as_date(&self) -> Result<Vec<NaiveDateTime>, ApiError> {

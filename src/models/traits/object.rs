@@ -80,6 +80,7 @@ impl HubuumObject {
             created_at: self.created_at,
             updated_at: chrono::Local::now().naive_local(),
             id: self.id,
+            revision: self.revision,
         }
     }
 }
@@ -398,6 +399,7 @@ impl CursorPaginated for HubuumObject {
                 | FilterField::Classes
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -414,6 +416,7 @@ impl CursorPaginated for HubuumObject {
             }
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for objects",
@@ -471,6 +474,11 @@ impl CursorSqlMapping for HubuumObject {
             FilterField::UpdatedAt => CursorSqlField {
                 column: "hubuumobject.updated_at",
                 sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "hubuumobject.revision",
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             _ => {

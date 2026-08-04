@@ -16,27 +16,30 @@ use crate::events::EventResponse;
 use crate::models::{
     BackupDocument, BackupHistory, BackupManifest, BackupRequest, BackupState, BackupTaskDetails,
     ClassComputationState, ClassKey, Collection, CollectionHistory, CollectionKey,
-    ComputedFieldDefinition, ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest,
-    ComputedFieldDeleteResponse, ComputedFieldErrorResponse, ComputedFieldListResponse,
-    ComputedFieldMutationResponse, ComputedFieldPreviewRequest, ComputedFieldPreviewResponse,
-    ComputedObjectScopesResponse, ComputedResultType, ComputedScopeResponse, CurrentTokenMetadata,
-    EventDeliveryHealthResponse, EventDeliveryQueueHealth, EventDeliveryResponse,
-    EventDeliveryStatus, EventDeliveryStatusCounts, EventDeliveryUpdateResponse, EventFanoutHealth,
-    EventSink, EventSinkDeliveryHealth, EventSinkKey, EventSinkKind, EventSubscription,
+    CollectionPermissionSet, ComputedFieldDefinition, ComputedFieldDefinitionPatch,
+    ComputedFieldDefinitionRequest, ComputedFieldDeleteResponse, ComputedFieldErrorResponse,
+    ComputedFieldListResponse, ComputedFieldMutationResponse, ComputedFieldPreviewRequest,
+    ComputedFieldPreviewResponse, ComputedObjectScopesResponse, ComputedResultType,
+    ComputedScopeResponse, CurrentTokenMetadata, EventDeliveryHealthResponse,
+    EventDeliveryQueueHealth, EventDeliveryResponse, EventDeliveryStatus,
+    EventDeliveryStatusCounts, EventDeliveryUpdateResponse, EventFanoutHealth, EventSink,
+    EventSinkDeliveryHealth, EventSinkKey, EventSinkKind, EventSubscription,
     EventSubscriptionDeliveryHealth, EventWorkerHealth, EventWorkerWakeupStats, ExportContentType,
     ExportJsonResponse, ExportLimits, ExportMeta, ExportMissingDataPolicy, ExportRequest,
     ExportScope, ExportScopeKind, ExportTaskDetails, ExportTemplate, ExportTemplateHistory,
     ExportTemplateID, ExportTemplateKind, ExportTemplateRunRequest, ExportWarning, Group, GroupKey,
-    GroupPermission, GroupResponse, HubuumClass, HubuumClassExpanded, HubuumClassHistory,
-    HubuumClassRelation, HubuumClassWithPath, HubuumObject, HubuumObjectComputedResponse,
-    HubuumObjectHistory, HubuumObjectReadResponse, HubuumObjectRelation, HubuumObjectWithPath,
-    IdentityScopeKey, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
-    ImportCollectionInput, ImportCollectionPermissionInput, ImportCollisionPolicy,
-    ImportEventSinkInput, ImportEventSubscriptionInput, ImportExportTemplateInput, ImportGraph,
-    ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput,
-    ImportMembershipSourceInput, ImportMode, ImportObjectInput, ImportObjectRelationInput,
-    ImportPermissionPolicy, ImportPrincipalInput, ImportPrincipalSubtype, ImportRemoteTargetInput,
-    ImportRequest, ImportTaskDetails, ImportTaskResultResponse, LoginUser,
+    GroupPermission, GroupPointResponse, GroupResponse, HubuumClass, HubuumClassExpanded,
+    HubuumClassHistory, HubuumClassRelation, HubuumClassWithPath, HubuumObject,
+    HubuumObjectComputedResponse, HubuumObjectHistory, HubuumObjectReadResponse,
+    HubuumObjectRelation, HubuumObjectWithPath, IdentityScopeKey, ImportAtomicity,
+    ImportClassInput, ImportClassRelationInput, ImportCollectionInput,
+    ImportCollectionPermissionInput, ImportCollisionPolicy, ImportComputedFieldInput,
+    ImportComputedFieldVisibility, ImportEventSinkInput, ImportEventSubscriptionInput,
+    ImportExportTemplateInput, ImportGraph, ImportGroupInput, ImportGroupMembershipInput,
+    ImportIdentityScopeInput, ImportMembershipSourceInput, ImportMode, ImportObjectInput,
+    ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalInput,
+    ImportPrincipalSubtype, ImportRemoteTargetInput, ImportRequest, ImportTaskDetails,
+    ImportTaskResultResponse, ImportWriteCondition, LoginUser, MembershipPrincipalResponse,
     NewCollectionWithAssignee, NewEventSink, NewEventSubscription, NewExportTemplate, NewGroup,
     NewHubuumClass, NewHubuumClassRelation, NewHubuumClassRelationFromClass, NewHubuumObject,
     NewHubuumObjectRelation, NewHubuumObjectRequest, NewRemoteTarget, NewServiceAccount, NewUser,
@@ -44,18 +47,19 @@ use crate::models::{
     ObjectAggregateMeasureValue, ObjectAggregateRow, ObjectAggregateValueState,
     ObjectDataPatchDocument, ObjectKey, ObjectsByClass, Permission, Permissions,
     PersonalComputedFieldDefinitionRequest, PrincipalKey, PrincipalMemberResponse,
-    PrincipalSettings, PrincipalTokenMetadata, RelatedClassGraph, RelatedObjectGraph,
-    RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride,
-    RemoteInvocationParameters, RemoteInvocationSubject, RemoteTarget, RemoteTargetHistory,
-    RemoteTargetID, RemoteTargetInvokeRequest, RemoteTargetSubjectType, RestoreConfirmRequest,
+    PrincipalSettings, PrincipalSettingsResponse, PrincipalTokenMetadata,
+    PrincipalTokenPointResponse, RelatedClassGraph, RelatedObjectGraph, RemoteAuthConfig,
+    RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride, RemoteInvocationParameters,
+    RemoteInvocationSubject, RemoteTarget, RemoteTargetHistory, RemoteTargetID,
+    RemoteTargetInvokeRequest, RemoteTargetSubjectType, ResourceRevision, RestoreConfirmRequest,
     RestoreJobStatus, RestoreStageResponse, RestoreTimestamps, RestoreValidationSummary,
-    ServiceAccountResponse, SharedComputedScopeResponse, TaskDetails, TaskEventResponse, TaskKind,
-    TaskLinks, TaskProgress, TaskResponse, TaskStatus, TokenListState, TokenResourceScope,
-    TokenScopeDetails, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent,
-    UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateCollection,
-    UpdateEventSink, UpdateEventSubscription, UpdateExportTemplate, UpdateGroup, UpdateHubuumClass,
-    UpdateHubuumObject, UpdateHubuumObjectRequest, UpdateRemoteTarget, UpdateServiceAccount,
-    UpdateUser, UserResponse,
+    ServiceAccountPointResponse, ServiceAccountResponse, SharedComputedScopeResponse, TaskDetails,
+    TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse, TaskStatus, TokenListState,
+    TokenResourceScope, TokenScopeDetails, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
+    UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
+    UpdateCollection, UpdateEventSink, UpdateEventSubscription, UpdateExportTemplate, UpdateGroup,
+    UpdateHubuumClass, UpdateHubuumObject, UpdateHubuumObjectRequest, UpdateRemoteTarget,
+    UpdateServiceAccount, UpdateUser, UserPointResponse, UserResponse,
 };
 use crate::pagination::{
     NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults,
@@ -68,6 +72,7 @@ use serde::Serialize;
 use utoipa::openapi::OpenApi as OpenApiDoc;
 use utoipa::openapi::header::Header;
 use utoipa::openapi::path::{Operation, Parameter, ParameterBuilder, ParameterIn, PathItem};
+use utoipa::openapi::response::Response;
 use utoipa::openapi::schema::{ObjectBuilder, Schema};
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityScheme};
 use utoipa::openapi::{Object, RefOr, Required, Type};
@@ -111,6 +116,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         groups::update_group,
         groups::delete_group,
         groups::get_group_members,
+        groups::get_group_member,
         groups::add_group_member,
         groups::delete_group_member,
         service_accounts::create_service_account,
@@ -139,6 +145,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         me::patch_my_settings,
         me::delete_my_settings,
         computed_fields::get_personal_computed_fields,
+        computed_fields::get_personal_computed_field,
         computed_fields::create_personal_computed_field,
         computed_fields::patch_personal_computed_field,
         computed_fields::delete_personal_computed_field,
@@ -242,6 +249,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::get_class_permissions,
         classes::get_class_permissions_by_name,
         computed_fields::get_shared_computed_fields,
+        computed_fields::get_shared_computed_field,
         computed_fields::create_shared_computed_field,
         computed_fields::patch_shared_computed_field,
         computed_fields::delete_shared_computed_field,
@@ -250,6 +258,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         classes::get_related_classes,
         classes::get_related_classes_by_name,
         classes::create_class_relation,
+        classes::get_class_relation,
         classes::delete_class_relation,
         classes::get_related_class_relations,
         classes::get_related_class_relations_by_name,
@@ -315,16 +324,22 @@ use utoipa::{Modify, OpenApi, ToSchema};
             ClientAllowlistStatus,
             ObjectsByClass,
             UserResponse,
+            UserPointResponse,
             NewUser,
             UpdateUser,
             LoginUser,
             auth::AuthProvidersResponse,
             auth::LogoutTokenRequest,
             PrincipalTokenMetadata,
+            PrincipalTokenPointResponse,
             PrincipalMemberResponse,
+            MembershipPrincipalResponse,
             PrincipalSettings,
+            PrincipalSettingsResponse,
+            ResourceRevision,
             NewServiceAccount,
             ServiceAccountResponse,
+            ServiceAccountPointResponse,
             UpdateServiceAccount,
             principals::NewTokenRequest,
             principals::RenewTokenRequest,
@@ -334,6 +349,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             CurrentTokenMetadata,
             me::MeResponse,
             Group,
+            GroupPointResponse,
             GroupResponse,
             NewGroup,
             UpdateGroup,
@@ -345,6 +361,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             TokenScopeDetails,
             Permission,
             GroupPermission,
+            CollectionPermissionSet,
             HubuumClass,
             HubuumClassHistory,
             HistoryResponse<HubuumClassHistory>,
@@ -430,6 +447,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             ImportTaskResultResponse,
             ImportAtomicity,
             ImportCollisionPolicy,
+            ImportWriteCondition,
             ImportPermissionPolicy,
             ImportMode,
             IdentityScopeKey,
@@ -444,6 +462,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
             ImportCollectionInput,
             ImportClassInput,
             ImportObjectInput,
+            ImportComputedFieldVisibility,
+            ImportComputedFieldInput,
             ImportClassRelationInput,
             ImportObjectRelationInput,
             ImportCollectionPermissionInput,
@@ -677,8 +697,270 @@ impl Modify for OperationDefaults {
                 if is_unified_search_get(path, method) {
                     add_unified_search_pagination_docs(operation);
                 }
+
+                if is_conditional_operation(path, method) {
+                    add_conditional_request_docs(operation);
+                }
+
+                if is_etagged_operation(path, method) {
+                    add_etag_response_docs(operation);
+                }
             });
         }
+    }
+}
+
+// Keep these operation sets disjoint so every endpoint has one authoritative
+// documentation classification. Conditional endpoints whose composite
+// response is not revision-owned deliberately live in the untagged set.
+const CONDITIONAL_ETAGGED_OPERATIONS: &[(&str, &str)] = &[
+    ("patch", "/api/v1/iam/users/{user_id}"),
+    ("delete", "/api/v1/iam/users/{user_id}"),
+    ("post", "/api/v1/iam/users/{user_id}/anonymize"),
+    ("patch", "/api/v1/iam/groups/{group_id}"),
+    ("delete", "/api/v1/iam/groups/{group_id}"),
+    (
+        "post",
+        "/api/v1/iam/groups/{group_id}/members/{principal_id}",
+    ),
+    (
+        "delete",
+        "/api/v1/iam/groups/{group_id}/members/{principal_id}",
+    ),
+    ("patch", "/api/v1/iam/service-accounts/{service_account_id}"),
+    (
+        "post",
+        "/api/v1/iam/service-accounts/{service_account_id}/disable",
+    ),
+    (
+        "delete",
+        "/api/v1/iam/service-accounts/{service_account_id}",
+    ),
+    (
+        "post",
+        "/api/v1/iam/principals/{principal_id}/tokens/{token_id}/revoke",
+    ),
+    ("put", "/api/v1/iam/principals/{principal_id}/settings"),
+    ("patch", "/api/v1/iam/principals/{principal_id}/settings"),
+    ("delete", "/api/v1/iam/principals/{principal_id}/settings"),
+    ("put", "/api/v1/iam/me/settings"),
+    ("patch", "/api/v1/iam/me/settings"),
+    ("delete", "/api/v1/iam/me/settings"),
+    ("patch", "/api/v1/collections/{collection_id}"),
+    ("delete", "/api/v1/collections/{collection_id}"),
+    ("put", "/api/v1/collections/{collection_id}/parent"),
+    (
+        "post",
+        "/api/v1/collections/{collection_id}/permissions/group/{group_id}",
+    ),
+    (
+        "put",
+        "/api/v1/collections/{collection_id}/permissions/group/{group_id}",
+    ),
+    (
+        "delete",
+        "/api/v1/collections/{collection_id}/permissions/group/{group_id}",
+    ),
+    (
+        "post",
+        "/api/v1/collections/{collection_id}/permissions/group/{group_id}/{permission}",
+    ),
+    (
+        "delete",
+        "/api/v1/collections/{collection_id}/permissions/group/{group_id}/{permission}",
+    ),
+    ("patch", "/api/v1/event-sinks/{sink_id}"),
+    ("delete", "/api/v1/event-sinks/{sink_id}"),
+    (
+        "patch",
+        "/api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}",
+    ),
+    (
+        "delete",
+        "/api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}",
+    ),
+    ("patch", "/api/v1/export-templates/{template_id}"),
+    ("delete", "/api/v1/export-templates/{template_id}"),
+    ("patch", "/api/v1/remote-targets/{target_id}"),
+    ("delete", "/api/v1/remote-targets/{target_id}"),
+    ("delete", "/api/v1/relations/classes/{relation_id}"),
+    ("delete", "/api/v1/relations/objects/{relation_id}"),
+    ("delete", "/api/v1/classes/{class_id}"),
+    ("delete", "/api/v1/classes/by-name/{class_name}"),
+    ("patch", "/api/v1/classes/{class_id}/{object_id}"),
+    (
+        "patch",
+        "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}",
+    ),
+    ("patch", "/api/v1/classes/{class_id}/{object_id}/data"),
+    (
+        "patch",
+        "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}/data",
+    ),
+    ("delete", "/api/v1/classes/{class_id}/{object_id}"),
+    (
+        "delete",
+        "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}",
+    ),
+    (
+        "delete",
+        "/api/v1/classes/{class_id}/relations/{relation_id}",
+    ),
+    (
+        "delete",
+        "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}",
+    ),
+    ("patch", "/api/v1/iam/me/computed-fields/{field_id}"),
+    ("delete", "/api/v1/iam/me/computed-fields/{field_id}"),
+];
+
+const CONDITIONAL_UNTAGGED_OPERATIONS: &[(&str, &str)] = &[
+    ("patch", "/api/v1/classes/{class_id}"),
+    ("patch", "/api/v1/classes/by-name/{class_name}"),
+    (
+        "patch",
+        "/api/v1/classes/{class_id}/computed-fields/{field_id}",
+    ),
+    (
+        "delete",
+        "/api/v1/classes/{class_id}/computed-fields/{field_id}",
+    ),
+];
+
+const ETAGGED_OPERATIONS: &[(&str, &str)] = &[
+    ("post", "/api/v1/iam/users"),
+    ("get", "/api/v1/iam/users/{user_id}"),
+    ("post", "/api/v1/iam/groups"),
+    ("get", "/api/v1/iam/groups/{group_id}"),
+    (
+        "get",
+        "/api/v1/iam/groups/{group_id}/members/{principal_id}",
+    ),
+    ("post", "/api/v1/iam/service-accounts"),
+    ("get", "/api/v1/iam/service-accounts/{service_account_id}"),
+    (
+        "get",
+        "/api/v1/iam/principals/{principal_id}/tokens/{token_id}",
+    ),
+    ("get", "/api/v1/iam/principals/{principal_id}/settings"),
+    ("get", "/api/v1/iam/me/settings"),
+    ("post", "/api/v1/collections"),
+    ("get", "/api/v1/collections/{collection_id}"),
+    ("get", "/api/v1/collections/{collection_id}/permissions"),
+    (
+        "get",
+        "/api/v1/collections/{collection_id}/permissions/group/{group_id}",
+    ),
+    ("post", "/api/v1/event-sinks"),
+    ("get", "/api/v1/event-sinks/{sink_id}"),
+    (
+        "post",
+        "/api/v1/collections/{collection_id}/event-subscriptions",
+    ),
+    (
+        "get",
+        "/api/v1/collections/{collection_id}/event-subscriptions/{subscription_id}",
+    ),
+    ("post", "/api/v1/export-templates"),
+    ("get", "/api/v1/export-templates/{template_id}"),
+    ("post", "/api/v1/remote-targets"),
+    ("get", "/api/v1/remote-targets/{target_id}"),
+    ("get", "/api/v1/classes/{class_id}"),
+    ("get", "/api/v1/classes/by-name/{class_name}"),
+    ("post", "/api/v1/classes/{class_id}/"),
+    ("post", "/api/v1/classes/by-name/{class_name}/objects"),
+    ("get", "/api/v1/classes/{class_id}/{object_id}"),
+    (
+        "get",
+        "/api/v1/classes/by-name/{class_name}/objects/by-name/{object_name}",
+    ),
+    ("post", "/api/v1/classes/{class_id}/relations"),
+    ("get", "/api/v1/classes/{class_id}/relations/{relation_id}"),
+    (
+        "post",
+        "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}",
+    ),
+    (
+        "get",
+        "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}",
+    ),
+    ("post", "/api/v1/relations/classes"),
+    ("get", "/api/v1/relations/classes/{relation_id}"),
+    ("post", "/api/v1/relations/objects"),
+    ("get", "/api/v1/relations/objects/{relation_id}"),
+    (
+        "get",
+        "/api/v1/classes/{class_id}/computed-fields/{field_id}",
+    ),
+    ("get", "/api/v1/iam/me/computed-fields/{field_id}"),
+    ("post", "/api/v1/iam/me/computed-fields"),
+];
+
+fn operation_matches(operations: &[(&str, &str)], path: &str, method: &str) -> bool {
+    operations.iter().any(|(candidate_method, candidate_path)| {
+        method.eq_ignore_ascii_case(candidate_method) && path == *candidate_path
+    })
+}
+
+fn is_conditional_operation(path: &str, method: &str) -> bool {
+    operation_matches(CONDITIONAL_ETAGGED_OPERATIONS, path, method)
+        || operation_matches(CONDITIONAL_UNTAGGED_OPERATIONS, path, method)
+}
+
+fn is_etagged_operation(path: &str, method: &str) -> bool {
+    operation_matches(ETAGGED_OPERATIONS, path, method)
+        || operation_matches(CONDITIONAL_ETAGGED_OPERATIONS, path, method)
+}
+
+fn add_conditional_request_docs(operation: &mut Operation) {
+    let parameters = operation.parameters.get_or_insert_with(Vec::new);
+    if !parameters.iter().any(|parameter| {
+        parameter.name.eq_ignore_ascii_case("If-Match")
+            && matches!(parameter.parameter_in, ParameterIn::Header)
+    }) {
+        parameters.push(
+            ParameterBuilder::new()
+                .name("If-Match")
+                .parameter_in(ParameterIn::Header)
+                .required(Required::False)
+                .description(Some(
+                    "Strong ETag from the latest tagged representation. The header is optional for compatibility; when supplied, the mutation is applied only if the resource still matches.",
+                ))
+                .schema(Some(Object::with_type(Type::String)))
+                .build(),
+        );
+    }
+
+    operation
+        .responses
+        .responses
+        .entry("412".to_string())
+        .or_insert_with(|| {
+            RefOr::T(Response::new(
+                "Precondition failed because If-Match does not match the current resource revision.",
+            ))
+        });
+}
+
+fn add_etag_response_docs(operation: &mut Operation) {
+    for (status, response) in &mut operation.responses.responses {
+        if !status.starts_with('2') {
+            continue;
+        }
+        let RefOr::T(response) = response else {
+            continue;
+        };
+        response
+            .headers
+            .entry("ETag".to_string())
+            .or_insert_with(|| {
+                let mut header = Header::default();
+                header.description = Some(
+                    "Strong validator for this revision-owned representation. It may be omitted when an expanded or backend-specific representation is returned, or when a deleted aggregate no longer exists."
+                        .to_string(),
+                );
+                header
+            });
     }
 }
 
@@ -1088,6 +1370,65 @@ mod tests {
 
         assert!(!schemas.contains_key("PrincipalToken"));
         assert!(schemas.contains_key("PrincipalTokenMetadata"));
+    }
+
+    #[test]
+    fn revision_operations_have_one_documentation_classification() {
+        let operations = CONDITIONAL_ETAGGED_OPERATIONS
+            .iter()
+            .chain(CONDITIONAL_UNTAGGED_OPERATIONS)
+            .chain(ETAGGED_OPERATIONS)
+            .copied()
+            .collect::<Vec<_>>();
+        let unique = operations.iter().copied().collect::<HashSet<_>>();
+
+        assert_eq!(operations.len(), unique.len());
+    }
+
+    #[test]
+    fn conditional_operations_document_if_match_and_precondition_failure() {
+        let json = openapi_json();
+
+        for (method, path) in CONDITIONAL_ETAGGED_OPERATIONS
+            .iter()
+            .chain(CONDITIONAL_UNTAGGED_OPERATIONS)
+        {
+            let operation = &json["paths"][path][method];
+            assert!(operation.is_object(), "missing {method} {path}");
+            assert!(
+                operation["parameters"]
+                    .as_array()
+                    .is_some_and(|parameters| parameters.iter().any(|parameter| {
+                        parameter["name"] == "If-Match" && parameter["in"] == "header"
+                    })),
+                "{method} {path} must document If-Match"
+            );
+            assert!(
+                operation["responses"].get("412").is_some(),
+                "{method} {path} must document 412"
+            );
+        }
+    }
+
+    #[test]
+    fn tagged_operations_document_etag_response_headers() {
+        let json = openapi_json();
+
+        for (method, path) in ETAGGED_OPERATIONS
+            .iter()
+            .chain(CONDITIONAL_ETAGGED_OPERATIONS)
+        {
+            let operation = &json["paths"][path][method];
+            assert!(operation.is_object(), "missing {method} {path}");
+            assert!(
+                operation["responses"]
+                    .as_object()
+                    .is_some_and(|responses| responses.iter().any(|(status, response)| {
+                        status.starts_with('2') && response["headers"].get("ETag").is_some()
+                    })),
+                "{method} {path} must document ETag"
+            );
+        }
     }
 
     fn path_with_sample_params(path: &str) -> String {

@@ -293,6 +293,7 @@ limited to `total`, `planning`, and `execution`; their outcomes are `success`,
 | `hubuum_login_limiter_backend_failures_total` | `backend`, `operation` | Shared login-limiter failures while local enforcement remains active |
 | `hubuum_login_limiter_entries` | `state` | Active and locked login-limiter entries in this process |
 | `hubuum_client_allowlist_rejections_total` | `reason` | Requests rejected for a disallowed or missing client IP |
+| `hubuum_revision_conditions_total` | `outcome` | Conditional writes classified as `matched`, `wildcard`, `stale`, `unconditional`, `malformed`, `async_stale`, or `invariant_failure`; never labelled by resource identity or revision |
 | `hubuum_event_queue_items` | `queue`, `state` | Database-wide fan-out and delivery queue items by bounded state |
 | `hubuum_event_stale_claims` | `queue` | Stale fan-out and delivery worker claims |
 | `hubuum_event_oldest_age_seconds` | `queue` | Oldest actionable fan-out or delivery item age |

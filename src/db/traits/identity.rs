@@ -33,6 +33,20 @@ pub async fn identity_scope_by_name(
     .await
 }
 
+pub(crate) async fn identity_scope_name_by_id(
+    pool: &DbPool,
+    scope_id: i32,
+) -> Result<String, ApiError> {
+    with_connection(pool, async |conn| {
+        identity_scopes::table
+            .filter(identity_scopes::id.eq(scope_id))
+            .select(identity_scopes::name)
+            .first::<String>(conn)
+            .await
+    })
+    .await
+}
+
 pub async fn identity_scope_names_by_ids(
     pool: &DbPool,
     scope_ids: &[i32],
@@ -67,7 +81,7 @@ pub async fn ensure_identity_scope(
 ) -> Result<IdentityScope, ApiError> {
     use crate::schema::identity_scopes::dsl::{identity_scopes as scopes, name};
     with_connection(pool, async |conn| {
-        diesel::insert_into(scopes)
+        let written = diesel::insert_into(scopes)
             .values(NewIdentityScope {
                 name: scope_name,
                 provider_kind: provider,
@@ -77,6 +91,16 @@ pub async fn ensure_identity_scope(
             .set(identity_scopes::provider_kind.eq(provider))
             .get_result::<IdentityScope>(conn)
             .await
+            .optional()?;
+        match written {
+            Some(scope) => Ok(scope),
+            None => {
+                scopes
+                    .filter(name.eq(scope_name))
+                    .first::<IdentityScope>(conn)
+                    .await
+            }
+        }
     })
     .await
 }

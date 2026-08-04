@@ -205,6 +205,7 @@ impl CursorPaginated for Collection {
                 | FilterField::Description
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -217,6 +218,7 @@ impl CursorPaginated for Collection {
             }
             FilterField::CreatedAt => crate::traits::CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => crate::traits::CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => crate::traits::CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for collections",
@@ -264,6 +266,11 @@ impl CursorSqlMapping for Collection {
             FilterField::UpdatedAt => CursorSqlField {
                 column: "collections.updated_at",
                 sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "collections.revision",
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             _ => {

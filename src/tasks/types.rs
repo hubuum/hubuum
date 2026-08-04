@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::models::{
     Collection, HubuumClass, HubuumObject, ImportClassInput, ImportClassRelationInput,
-    ImportCollectionInput, ImportCollectionPermissionInput, ImportEventSinkInput,
-    ImportEventSubscriptionInput, ImportExportTemplateInput, ImportGroupInput,
-    ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
+    ImportCollectionInput, ImportCollectionPermissionInput, ImportComputedFieldInput,
+    ImportEventSinkInput, ImportEventSubscriptionInput, ImportExportTemplateInput,
+    ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
     ImportObjectRelationInput, ImportPrincipalInput, ImportRemoteTargetInput,
     NewImportTaskResultRecord, Permissions, RestoreTimestamps, TaskResultCounts, TaskStatus,
 };
@@ -156,17 +156,26 @@ pub(super) enum PlannedExecution {
         object_id: i32,
         input: ImportObjectInput,
     },
+    UpsertComputedField {
+        input: ImportComputedFieldInput,
+        overwrite: bool,
+    },
     CreateClassRelation(ImportClassRelationInput),
     UpdateClassRelationTimestamps {
         input: ImportClassRelationInput,
         timestamps: RestoreTimestamps,
     },
+    CheckClassRelationCondition(ImportClassRelationInput),
     CreateObjectRelation(ImportObjectRelationInput),
     UpdateObjectRelationTimestamps {
         input: ImportObjectRelationInput,
         timestamps: RestoreTimestamps,
     },
-    ApplyCollectionPermissions(ImportCollectionPermissionInput),
+    CheckObjectRelationCondition(ImportObjectRelationInput),
+    ApplyCollectionPermissions {
+        input: ImportCollectionPermissionInput,
+        overwrite: bool,
+    },
     UpsertExportTemplate {
         input: ImportExportTemplateInput,
         overwrite: bool,
@@ -192,6 +201,23 @@ pub(super) struct PlannedTaskResult {
     pub(super) action: String,
     pub(super) identifier: Option<String>,
     pub(super) details: Option<serde_json::Value>,
+}
+
+impl PlannedTaskResult {
+    pub(super) fn set_observed_revision(
+        &mut self,
+        revision: Option<crate::models::ResourceRevision>,
+    ) {
+        let Some(revision) = revision else {
+            return;
+        };
+        let details = self
+            .details
+            .get_or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if let Some(details) = details.as_object_mut() {
+            details.insert("observed_revision".to_string(), serde_json::json!(revision));
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -294,6 +320,14 @@ pub(super) struct PlanningOutcome {
 }
 
 impl PlanningFailure {
+    pub(super) fn outcome(&self) -> &'static str {
+        if self.message.starts_with("stale_revision") {
+            "stale_revision"
+        } else {
+            "failed"
+        }
+    }
+
     pub(super) fn message_for_storage(&self) -> String {
         match self.kind {
             FailureKind::Runtime => "An internal error occurred".to_string(),
@@ -303,13 +337,14 @@ impl PlanningFailure {
 
     pub(super) fn into_result(self, task_id: i32) -> NewImportTaskResultRecord {
         let error = self.message_for_storage();
+        let outcome = self.outcome();
         NewImportTaskResultRecord {
             task_id,
             item_ref: self.item.item_ref,
             entity_kind: self.item.entity_kind,
             action: self.item.action,
             identifier: self.item.identifier,
-            outcome: "failed".to_string(),
+            outcome: outcome.to_string(),
             error: Some(error),
             details: self.item.details,
         }

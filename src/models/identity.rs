@@ -2,6 +2,7 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::models::ResourceRevision;
 use crate::schema::identity_scopes;
 
 pub const LOCAL_IDENTITY_SCOPE: &str = "local";
@@ -20,6 +21,7 @@ pub struct IdentityScope {
     pub provider_kind: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 #[derive(Insertable)]

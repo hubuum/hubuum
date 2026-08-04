@@ -195,7 +195,12 @@ pub async fn sync_external_user(
                 users::email.eq(&profile.email),
             ))
             .get_result::<User>(conn)
-            .await?;
+            .await
+            .optional()?;
+        let user = match user {
+            Some(user) => user,
+            None => users::table.find(principal.id).first::<User>(conn).await?,
+        };
 
         diesel::update(principals::table.filter(principals::id.eq(principal.id)))
             .set((

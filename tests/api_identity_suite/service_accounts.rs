@@ -42,8 +42,8 @@ mod tests {
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewServiceAccount,
         NewTaskRecord, Permissions, PrincipalID, PrincipalMemberResponse,
         PrincipalTokenCreateRequest, PrincipalTokenMetadata, ServiceAccount, ServiceAccountID,
-        ServiceAccountResponse, TaskID, TaskKind, TaskRecord, TaskStatus, TokenResourceScope,
-        TokenScope,
+        ServiceAccountPointResponse, ServiceAccountResponse, TaskID, TaskKind, TaskRecord,
+        TaskStatus, TokenResourceScope, TokenScope,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
     use crate::test_support::{
@@ -2333,7 +2333,7 @@ mod tests {
     /// #21: group-membership mutation is admin-only — a non-admin human cannot add
     /// a member.
     #[rstest]
-    #[case::admin(true, StatusCode::NO_CONTENT)]
+    #[case::admin(true, StatusCode::CREATED)]
     #[case::non_admin(false, StatusCode::FORBIDDEN)]
     #[actix_web::test]
     async fn test_group_member_mutation_is_admin_only(
@@ -2421,8 +2421,11 @@ mod tests {
         .await;
         let members: Vec<PrincipalMemberResponse> = test::read_body_json(resp).await;
 
-        let kinds: std::collections::HashSet<&str> =
-            members.iter().map(|m| m.kind.as_str()).collect();
+        let kinds: std::collections::HashSet<&str> = members
+            .iter()
+            .filter_map(|membership| membership.principal.as_ref())
+            .map(|principal| principal.kind.as_str())
+            .collect();
         assert!(
             kinds.contains("human") && kinds.contains("service_account"),
             "member listing should include both kinds, got {kinds:?}"
@@ -2968,7 +2971,9 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::CREATED).await;
-        let created: ServiceAccountResponse = test::read_body_json(resp).await;
+        let created_value: serde_json::Value = test::read_body_json(resp).await;
+        assert!(created_value.get("identity_scope").is_none());
+        let created: ServiceAccountPointResponse = serde_json::from_value(created_value).unwrap();
         assert_eq!(
             service_account_audit_event_count(&context, Action::Created, created.id).await,
             1

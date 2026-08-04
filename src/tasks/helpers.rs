@@ -72,6 +72,7 @@ pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
 
     match err {
         ApiError::Conflict(msg) => format!("Conflict: {}", msg),
+        ApiError::PreconditionFailed(msg, _) => format!("Stale resource: {msg}"),
         ApiError::Forbidden(msg) => format!("Permission denied: {}", msg),
         ApiError::NotFound(msg) => format!("Not found: {}", msg),
         ApiError::Gone(msg) => format!("Gone: {}", msg),
@@ -108,6 +109,15 @@ pub(super) fn should_abort_best_effort_execution(err: &ApiError, mode: &ImportMo
             ImportPermissionPolicy::Abort
         ),
         _ => false,
+    }
+}
+
+pub(super) fn import_failure_outcome(error: &ApiError) -> &'static str {
+    match error {
+        ApiError::PreconditionFailed(message, _) if message.starts_with("stale_revision") => {
+            "stale_revision"
+        }
+        _ => "failed",
     }
 }
 
