@@ -212,7 +212,8 @@ Database TLS behavior follows the URL's `sslmode`:
 
 The platform trust store is used by default. Set `PGSSLROOTCERT` to a PEM CA
 bundle for private certificate authorities, or to `system` to explicitly use
-the platform trust store.
+the platform trust store. Custom CA bundles must be regular files no larger than
+4 MiB.
 
 The database must already exist and be reachable from containers on the host. Avoid `localhost` in the URL unless Postgres is inside the same container; from a container, `localhost` means the API container itself.
 

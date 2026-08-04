@@ -71,6 +71,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   that hides request, idempotency, token-scope, and worker-lease material.
   Library callers must use the corresponding task response types for public
   payloads.
+- **Breaking:** TLS certificate chains, private keys, and PostgreSQL root CA
+  bundles must now be regular files and are read with explicit 4 MiB
+  certificate and 1 MiB key limits; malformed rustls certificate entries are
+  rejected instead of skipped. Before upgrading, replace non-regular TLS files,
+  reduce oversized PEM material, and correct malformed certificate entries.
 - **Breaking (HTTP and Rust API):** Event-delivery API responses no longer
   expose the internal `claim_token` worker lease capability. API clients must
   stop deserializing or depending on this field. The persistence-only

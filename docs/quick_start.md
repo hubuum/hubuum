@@ -242,7 +242,10 @@ budgeting, and shared limiter behavior, see
 | `HUBUUM_TLS_KEY_PASSPHRASE` | None | Passphrase for encrypted private key (OpenSSL only) |
 | `HUBUUM_TLS_BACKEND` | Auto / unset | Preferred TLS backend when TLS is enabled (`rustls` or `openssl`) |
 
-**Note**: TLS requires both certificate and key paths to be set. The rustls feature does not support encrypted keys with passphrases.
+**Note**: TLS requires both certificate and key paths to be set. The rustls
+feature does not support encrypted keys with passphrases. Certificate chains
+must be regular PEM files no larger than 4 MiB; private keys must be regular PEM
+files no larger than 1 MiB.
 
 ## Exit Codes
 

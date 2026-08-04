@@ -1,8 +1,14 @@
 use actix_http::{Request, Response};
 use actix_service::{IntoServiceFactory, ServiceFactory};
 use actix_web::{Error, HttpServer, body::MessageBody, dev::AppConfig};
+#[cfg(any(feature = "tls-rustls", feature = "tls-openssl"))]
+use std::path::Path;
 
 use crate::config::TlsBackend;
+#[cfg(any(feature = "tls-rustls", feature = "tls-openssl"))]
+use crate::utilities::bounded_file::{
+    MAX_CERTIFICATE_BUNDLE_BYTES, MAX_PRIVATE_KEY_BYTES, read_bounded_regular_file,
+};
 
 type ServerResult<F, I, S, B> = std::io::Result<HttpServer<F, I, S, B>>;
 
@@ -135,6 +141,26 @@ mod tls_rustls {
     };
     use tracing::info;
 
+    fn parse_certificate_chain(
+        certificate_bytes: &[u8],
+    ) -> std::io::Result<Vec<CertificateDer<'static>>> {
+        let cert_chain = CertificateDer::pem_slice_iter(certificate_bytes)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Failed to parse TLS certificate chain: {e}"),
+                )
+            })?;
+        if cert_chain.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "TLS certificate chain contains no certificates",
+            ));
+        }
+        Ok(cert_chain)
+    }
+
     pub fn configure_server<F, I, S, B>(
         server: HttpServer<F, I, S, B>,
         bind_address: &str,
@@ -158,20 +184,19 @@ mod tls_rustls {
             ));
         }
 
-        let cert_chain = CertificateDer::pem_file_iter(cert)
-            .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to read certificate file: {e}"),
-                )
-            })?
-            .flatten()
-            .collect();
+        let certificate_bytes = read_bounded_regular_file(
+            Path::new(cert),
+            "TLS certificate chain",
+            MAX_CERTIFICATE_BUNDLE_BYTES,
+        )?;
+        let cert_chain = parse_certificate_chain(&certificate_bytes)?;
 
-        let key_der = PrivateKeyDer::from_pem_file(key).map_err(|e| {
+        let key_bytes =
+            read_bounded_regular_file(Path::new(key), "TLS private key", MAX_PRIVATE_KEY_BYTES)?;
+        let key_der = PrivateKeyDer::from_pem_slice(&key_bytes).map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to read key file: {e}"),
+                format!("Failed to parse TLS private key: {e}"),
             )
         })?;
 
@@ -190,6 +215,37 @@ mod tls_rustls {
             .bind_rustls_0_23(bind_address, rustls_config)
             .map_err(|e| std::io::Error::other(format!("Failed to bind server: {e}")))
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn rustls_rejects_a_malformed_entry_after_a_certificate() {
+            let pem = b"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n\
+                -----BEGIN CERTIFICATE-----\nnot-base64!\n-----END CERTIFICATE-----\n";
+
+            let error = parse_certificate_chain(pem).unwrap_err();
+
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+            assert!(
+                error
+                    .to_string()
+                    .contains("Failed to parse TLS certificate chain")
+            );
+        }
+
+        #[test]
+        fn rustls_rejects_a_bundle_without_certificates() {
+            let error = parse_certificate_chain(b"").unwrap_err();
+
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+            assert_eq!(
+                error.to_string(),
+                "TLS certificate chain contains no certificates"
+            );
+        }
+    }
 }
 
 #[cfg(feature = "tls-openssl")]
@@ -197,10 +253,71 @@ mod tls_openssl {
     use super::*;
     use openssl::{
         pkey::PKey,
-        ssl::{SslAcceptor, SslFiletype, SslMethod},
+        ssl::{SslAcceptor, SslAcceptorBuilder, SslMethod},
+        x509::X509,
     };
-    use std::{fs::File, io::Read};
     use tracing::info;
+
+    pub(super) fn build_acceptor(
+        certificate_bytes: &[u8],
+        key_bytes: &[u8],
+        pass: Option<&str>,
+    ) -> std::io::Result<SslAcceptorBuilder> {
+        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())
+            .map_err(|e| std::io::Error::other(format!("unable to create SSL acceptor: {e}")))?;
+
+        let pkey = match pass {
+            Some(pass) => PKey::private_key_from_pem_passphrase(key_bytes, pass.as_bytes())
+                .map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("unable to decrypt private key: {e}"),
+                    )
+                })?,
+            None => PKey::private_key_from_pem(key_bytes).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("unable to parse private key: {e}"),
+                )
+            })?,
+        };
+        builder.set_private_key(&pkey).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unable to set private key: {e}"),
+            )
+        })?;
+
+        let certificates = X509::stack_from_pem(certificate_bytes).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unable to parse certificate chain: {e}"),
+            )
+        })?;
+        let mut certificates = certificates.into_iter();
+        let certificate = certificates.next().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "TLS certificate chain contains no certificates",
+            )
+        })?;
+        builder.set_certificate(&certificate).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unable to set TLS certificate: {e}"),
+            )
+        })?;
+        for certificate in certificates {
+            builder.add_extra_chain_cert(certificate).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("unable to set TLS certificate chain: {e}"),
+                )
+            })?;
+        }
+        validate_openssl_key_pair(&builder)?;
+        Ok(builder)
+    }
 
     pub fn configure_server<F, I, S, B>(
         server: HttpServer<F, I, S, B>,
@@ -218,43 +335,14 @@ mod tls_openssl {
         S::Response: Into<Response<B>>,
         B: MessageBody + 'static,
     {
-        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())
-            .map_err(|e| std::io::Error::other(format!("unable to create SSL acceptor: {e}")))?;
-
-        if let Some(pass) = pass {
-            let mut buf = Vec::new();
-            File::open(key)?.read_to_end(&mut buf)?;
-            let pkey =
-                PKey::private_key_from_pem_passphrase(&buf, pass.as_bytes()).map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("unable to decrypt private key: {e}"),
-                    )
-                })?;
-            builder.set_private_key(&pkey).map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("unable to set private key: {e}"),
-                )
-            })?;
-        } else {
-            builder
-                .set_private_key_file(key, SslFiletype::PEM)
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("unable to load private key file: {e}"),
-                    )
-                })?;
-        }
-
-        builder.set_certificate_chain_file(cert).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("unable to load certificate chain: {e}"),
-            )
-        })?;
-        validate_openssl_key_pair(&builder)?;
+        let key_bytes =
+            read_bounded_regular_file(Path::new(key), "TLS private key", MAX_PRIVATE_KEY_BYTES)?;
+        let certificate_bytes = read_bounded_regular_file(
+            Path::new(cert),
+            "TLS certificate chain",
+            MAX_CERTIFICATE_BUNDLE_BYTES,
+        )?;
+        let builder = build_acceptor(&certificate_bytes, &key_bytes, pass)?;
 
         info!("Server binding with openssl to https://{}", bind_address);
         server
@@ -363,10 +451,12 @@ mod tests {
             pkey::{PKey, Private},
             rsa::Rsa,
             ssl::{SslAcceptor, SslAcceptorBuilder, SslMethod},
+            symm::Cipher,
             x509::{X509, X509NameBuilder},
         };
+        use rstest::rstest;
 
-        use super::super::validate_openssl_key_pair;
+        use super::super::{tls_openssl::build_acceptor, validate_openssl_key_pair};
 
         fn certificate_for(key: &PKey<Private>) -> X509 {
             let mut name = X509NameBuilder::new().unwrap();
@@ -421,6 +511,25 @@ mod tests {
                     .to_string()
                     .contains("TLS private key does not match the certificate")
             );
+        }
+
+        #[rstest]
+        #[case::unencrypted(None)]
+        #[case::encrypted(Some("test-passphrase"))]
+        fn openssl_builds_an_acceptor_from_pem_material(#[case] passphrase: Option<&str>) {
+            let key = PKey::from_rsa(Rsa::generate(2_048).unwrap()).unwrap();
+            let certificate = certificate_for(&key).to_pem().unwrap();
+            let private_key = match passphrase {
+                Some(passphrase) => key
+                    .private_key_to_pem_pkcs8_passphrase(
+                        Cipher::aes_256_cbc(),
+                        passphrase.as_bytes(),
+                    )
+                    .unwrap(),
+                None => key.private_key_to_pem_pkcs8().unwrap(),
+            };
+
+            build_acceptor(&certificate, &private_key, passphrase).unwrap();
         }
     }
 }

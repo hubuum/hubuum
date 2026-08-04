@@ -42,6 +42,7 @@ use rustls::{ClientConfig, RootCertStore};
 use rustls_platform_verifier::BuilderVerifierExt;
 use std::future::Future;
 use std::net::IpAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -51,6 +52,7 @@ use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use crate::events::MutationProvenance;
 use crate::models::search::StatementTimeoutMs;
 use crate::observability::metrics::{self, ResultKind};
+use crate::utilities::bounded_file::{MAX_CERTIFICATE_BUNDLE_BYTES, read_bounded_regular_file};
 use crate::utilities::db::DatabaseUrlComponents;
 
 pub type DbConnection = AsyncPgConnection;
@@ -271,8 +273,13 @@ fn database_tls_config() -> Result<ClientConfig, diesel::result::ConnectionError
             .map_err(|error| diesel::result::ConnectionError::BadConnection(error.to_string()));
     }
 
-    let certificates = CertificateDer::pem_file_iter(&root_cert_path)
-        .map_err(|error| diesel::result::ConnectionError::BadConnection(error.to_string()))?;
+    let certificate_bytes = read_bounded_regular_file(
+        Path::new(&root_cert_path),
+        "PostgreSQL root certificate bundle",
+        MAX_CERTIFICATE_BUNDLE_BYTES,
+    )
+    .map_err(|error| diesel::result::ConnectionError::BadConnection(error.to_string()))?;
+    let certificates = CertificateDer::pem_slice_iter(&certificate_bytes);
     let mut roots = RootCertStore::empty();
     let mut root_count = 0usize;
     for certificate in certificates {
