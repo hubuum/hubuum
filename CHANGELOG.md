@@ -171,6 +171,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Concurrent first deliveries to the same AMQP, email, or Valkey endpoint now
   share one connection initializer instead of opening duplicate connections
   and discarding all but one.
+- Event-sink connection caches now retain at most 64 recently used endpoint
+  configurations, bounding stale connections and credential-resolved URI keys
+  after sink configuration or secret rotation.
 
 ## [0.0.8] - 2026-08-01
 
