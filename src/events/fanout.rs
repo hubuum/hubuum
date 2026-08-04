@@ -10,9 +10,10 @@ use crate::config::{
     DEFAULT_EVENT_FANOUT_BATCH_SIZE, DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
     DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS, DEFAULT_EVENT_FANOUT_WORKERS, get_config,
 };
-use crate::db::traits::event_fanout::{EventFanoutSettings, process_event_fanout_batch};
+use crate::db::traits::event_fanout::process_event_fanout_batch;
 use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
+use crate::events::EventFanoutSettings;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::EventWorkerWakeupStats;
 use crate::observability::metrics;
@@ -50,16 +51,15 @@ fn configured_event_fanout_poll_interval() -> Duration {
     Duration::from_millis(interval_ms)
 }
 
-fn configured_event_fanout_settings() -> EventFanoutSettings {
-    get_config()
-        .map(|config| EventFanoutSettings {
-            batch_size: config.event_fanout_batch_size,
-            lock_timeout_ms: config.event_fanout_lock_timeout_ms,
-        })
-        .unwrap_or(EventFanoutSettings {
-            batch_size: DEFAULT_EVENT_FANOUT_BATCH_SIZE,
-            lock_timeout_ms: DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
-        })
+fn configured_event_fanout_settings() -> Result<EventFanoutSettings, ApiError> {
+    match get_config() {
+        Ok(config) => config.event_fanout_settings(),
+        Err(_) => EventFanoutSettings::new(
+            DEFAULT_EVENT_FANOUT_BATCH_SIZE,
+            DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
+        )
+        .map_err(ApiError::BadRequest),
+    }
 }
 
 pub(super) fn fanout_worker_should_continue(result: &Result<usize, ApiError>) -> bool {
@@ -127,8 +127,8 @@ fn spawn_event_fanout_worker_loop(
             info!(
                 message = "Starting event fan-out worker loop",
                 worker_index = worker_index,
-                batch_size = settings.batch_size,
-                lock_timeout_ms = settings.lock_timeout_ms,
+                batch_size = settings.batch_size(),
+                lock_timeout_ms = settings.lock_timeout_ms(),
                 poll_interval = ?poll_interval
             );
             let system = actix_rt::System::new();
@@ -149,7 +149,13 @@ pub fn ensure_event_fanout_worker_running(pool: DbPool) {
     }
 
     let poll_interval = configured_event_fanout_poll_interval();
-    let settings = configured_event_fanout_settings();
+    let settings = match configured_event_fanout_settings() {
+        Ok(settings) => settings,
+        Err(error) => {
+            error!(message = "Event fan-out settings are invalid", error = %error);
+            return;
+        }
+    };
 
     EVENT_FANOUT_LISTENER.call_once(|| {
         super::pg_notify::spawn_postgres_notification_listener(
@@ -163,8 +169,8 @@ pub fn ensure_event_fanout_worker_running(pool: DbPool) {
         info!(
             message = "Initializing event fan-out workers",
             worker_count = worker_count,
-            batch_size = settings.batch_size,
-            lock_timeout_ms = settings.lock_timeout_ms,
+            batch_size = settings.batch_size(),
+            lock_timeout_ms = settings.lock_timeout_ms(),
             poll_interval = ?poll_interval
         );
         for worker_index in 0..worker_count {

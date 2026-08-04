@@ -12,6 +12,7 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use crate::errors::ApiError;
+use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 use crate::models::retention::FutureRetention;
 use crate::models::{TokenIssuancePolicy, TokenRetentionSettings};
 
@@ -922,6 +923,35 @@ impl AppConfig {
             .build()
     }
 
+    pub(crate) fn event_fanout_settings(&self) -> Result<EventFanoutSettings, ApiError> {
+        EventFanoutSettings::new(
+            self.event_fanout_batch_size,
+            self.event_fanout_lock_timeout_ms,
+        )
+        .map_err(ApiError::BadRequest)
+    }
+
+    pub(crate) fn event_delivery_settings(&self) -> Result<EventDeliverySettings, ApiError> {
+        EventDeliverySettings::builder()
+            .batch_size(self.event_delivery_batch_size)
+            .lock_timeout_ms(self.event_delivery_lock_timeout_ms)
+            .transport_timeout_ms(self.event_delivery_transport_timeout_ms)
+            .retry_backoff_base_ms(self.event_delivery_retry_backoff_base_ms)
+            .retry_backoff_max_ms(self.event_delivery_retry_backoff_max_ms)
+            .max_attempts(self.event_delivery_max_attempts)
+            .build()
+            .map_err(ApiError::BadRequest)
+    }
+
+    pub(crate) fn event_retention_settings(&self) -> Result<EventRetentionSettings, ApiError> {
+        EventRetentionSettings::new(
+            self.event_retention_days,
+            self.event_delivery_retention_days,
+            self.event_retention_purge_batch_size,
+        )
+        .map_err(ApiError::BadRequest)
+    }
+
     fn validate(self) -> Result<Self, ApiError> {
         if self.actix_workers == 0 {
             return Err(ApiError::BadRequest(
@@ -948,29 +978,13 @@ impl AppConfig {
             ));
         }
 
-        if self.event_fanout_batch_size == 0 {
-            return Err(ApiError::BadRequest(
-                "event_fanout_batch_size must be greater than 0".to_string(),
-            ));
-        }
-
         if self.event_fanout_poll_interval_ms == 0 {
             return Err(ApiError::BadRequest(
                 "event_fanout_poll_interval_ms must be greater than 0".to_string(),
             ));
         }
 
-        if self.event_fanout_lock_timeout_ms == 0 {
-            return Err(ApiError::BadRequest(
-                "event_fanout_lock_timeout_ms must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.event_delivery_batch_size == 0 {
-            return Err(ApiError::BadRequest(
-                "event_delivery_batch_size must be greater than 0".to_string(),
-            ));
-        }
+        self.event_fanout_settings()?;
 
         if self.event_delivery_poll_interval_ms == 0 {
             return Err(ApiError::BadRequest(
@@ -978,71 +992,12 @@ impl AppConfig {
             ));
         }
 
-        if self.event_delivery_lock_timeout_ms == 0 {
-            return Err(ApiError::BadRequest(
-                "event_delivery_lock_timeout_ms must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.event_delivery_transport_timeout_ms == 0 {
-            return Err(ApiError::BadRequest(
-                "event_delivery_transport_timeout_ms must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.event_delivery_transport_timeout_ms >= self.event_delivery_lock_timeout_ms {
-            return Err(ApiError::BadRequest(format!(
-                "event_delivery_transport_timeout_ms ({}) must be less than event_delivery_lock_timeout_ms ({})",
-                self.event_delivery_transport_timeout_ms, self.event_delivery_lock_timeout_ms
-            )));
-        }
-
-        if self.event_delivery_retry_backoff_base_ms == 0 {
-            return Err(ApiError::BadRequest(
-                "event_delivery_retry_backoff_base_ms must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.event_delivery_retry_backoff_max_ms == 0 {
-            return Err(ApiError::BadRequest(
-                "event_delivery_retry_backoff_max_ms must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.event_delivery_retry_backoff_base_ms > self.event_delivery_retry_backoff_max_ms {
-            return Err(ApiError::BadRequest(format!(
-                "event_delivery_retry_backoff_base_ms ({}) must be less than or equal to event_delivery_retry_backoff_max_ms ({})",
-                self.event_delivery_retry_backoff_base_ms, self.event_delivery_retry_backoff_max_ms
-            )));
-        }
-
-        if self.event_delivery_max_attempts <= 0 {
-            return Err(ApiError::BadRequest(
-                "event_delivery_max_attempts must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.event_retention_days <= 0 {
-            return Err(ApiError::BadRequest(
-                "event_retention_days must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.event_delivery_retention_days <= 0 {
-            return Err(ApiError::BadRequest(
-                "event_delivery_retention_days must be greater than 0".to_string(),
-            ));
-        }
+        self.event_delivery_settings()?;
+        self.event_retention_settings()?;
 
         if self.event_retention_purge_interval_seconds == 0 {
             return Err(ApiError::BadRequest(
                 "event_retention_purge_interval_seconds must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.event_retention_purge_batch_size == 0 {
-            return Err(ApiError::BadRequest(
-                "event_retention_purge_batch_size must be greater than 0".to_string(),
             ));
         }
 
@@ -2263,6 +2218,40 @@ mod tests {
             error.to_string(),
             "event_delivery_transport_timeout_ms (1000) must be less than event_delivery_lock_timeout_ms (1000)"
         );
+    }
+
+    #[rstest::rstest]
+    #[case::fanout_timeout(
+        "HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS",
+        "18446744073709551615",
+        "event_fanout_lock_timeout_ms is too large for database timestamps"
+    )]
+    #[case::delivery_timeout(
+        "HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS",
+        "18446744073709551615",
+        "event_delivery_lock_timeout_ms is too large for database timestamps"
+    )]
+    #[case::delivery_retry(
+        "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS",
+        "18446744073709551615",
+        "event_delivery_retry_backoff_max_ms is too large for database timestamps"
+    )]
+    #[case::retention_days(
+        "HUBUUM_EVENT_RETENTION_DAYS",
+        "9223372036854775807",
+        "event_retention_days is too large for database timestamps"
+    )]
+    fn event_worker_database_durations_must_be_representable(
+        #[case] variable: &'static str,
+        #[case] value: &str,
+        #[case] expected: &str,
+    ) {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = EnvVarGuard::set(variable, Some(value));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(error.to_string(), expected);
     }
 
     #[test]
