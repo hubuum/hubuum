@@ -10,7 +10,7 @@ use std::future::Future;
 use std::io::Read;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex as StdMutex, OnceLock, Weak};
 use tokio::sync::Mutex;
 
 use crate::db::DbPool;
@@ -27,10 +27,40 @@ const DEFAULT_REFRESH_TTL_SECONDS: i64 = 300;
 const DEFAULT_MAX_STALE_SECONDS: i64 = 3600;
 const MAX_AUTH_CONFIG_BYTES: usize = 1024 * 1024;
 
-static REFRESH_LOCKS: LazyLock<Mutex<HashMap<i32, Arc<Mutex<()>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static REFRESH_LOCKS: LazyLock<RefreshLockRegistry> = LazyLock::new(RefreshLockRegistry::default);
 static AUTH_PROVIDER_REGISTRY: OnceLock<Result<AuthProviderRegistry, AuthProviderRegistryError>> =
     OnceLock::new();
+
+#[derive(Default)]
+struct RefreshLockRegistry {
+    locks: StdMutex<HashMap<i32, Weak<Mutex<()>>>>,
+}
+
+impl RefreshLockRegistry {
+    fn lock_for(&self, principal_id: i32) -> Arc<Mutex<()>> {
+        let mut locks = self
+            .locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        locks.retain(|_, lock| lock.strong_count() > 0);
+
+        if let Some(lock) = locks.get(&principal_id).and_then(Weak::upgrade) {
+            return lock;
+        }
+
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(principal_id, Arc::downgrade(&lock));
+        lock
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
+    }
+}
 
 #[derive(Debug, Clone)]
 enum AuthProviderRegistryError {
@@ -369,14 +399,8 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
         RefreshStatus::Due => {}
     }
 
-    let lock = {
-        let mut locks = REFRESH_LOCKS.lock().await;
-        locks
-            .entry(principal_id)
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    };
-    let refresh_result = {
+    let lock = REFRESH_LOCKS.lock_for(principal_id);
+    {
         let _guard = lock.lock().await;
 
         match external_user_state(pool, principal_id).await {
@@ -423,16 +447,7 @@ pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Re
                 },
             },
         }
-    };
-
-    {
-        let mut locks = REFRESH_LOCKS.lock().await;
-        if Arc::strong_count(&lock) <= 2 {
-            locks.remove(&principal_id);
-        }
     }
-
-    refresh_result
 }
 
 pub async fn ensure_configured_identity_scopes(pool: &DbPool) -> Result<(), ApiError> {
@@ -857,6 +872,28 @@ mod tests {
 
     fn refresh_policy() -> RefreshPolicy {
         RefreshPolicy::new(300, 3600).unwrap()
+    }
+
+    #[test]
+    fn refresh_lock_registry_reuses_live_principal_locks() {
+        let registry = RefreshLockRegistry::default();
+        let first = registry.lock_for(42);
+        let second = registry.lock_for(42);
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn refresh_lock_registry_reclaims_dropped_principal_locks() {
+        let registry = RefreshLockRegistry::default();
+        let dropped = registry.lock_for(42);
+        drop(dropped);
+
+        let live = registry.lock_for(7);
+
+        assert_eq!(registry.len(), 1);
+        assert!(Arc::ptr_eq(&live, &registry.lock_for(7)));
     }
 
     #[test]
