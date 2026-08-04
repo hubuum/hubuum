@@ -12,9 +12,27 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - `HUBUUM_TREETOP_CA_CERT` now loads PEM CA certificate bundles from regular
   files up to 4 MiB into the Treetop client's trust store, enabling private PKI
   without disabling TLS certificate validation.
+- Token managers can inspect retained expired and revoked credentials through
+  lifecycle-filtered lists and point lookups, and can renew an active or expired
+  token into a fresh secret with the same descriptive metadata and exact scope.
+  Token audit snapshots now retain that hash-free scope and link renewals to
+  their source token.
+- Token retention now writes a system-authored `token.purged` audit event with
+  the exact final hash-free token and scope snapshot before deleting each token,
+  including legacy rows whose earlier events predate complete scope snapshots.
 
 ### Changed
 
+- **Breaking (Rust API):** `hubuum_events_core::Action` now includes `Purged`.
+  Downstream exhaustive matches must handle the new variant. Token purge events
+  use this action and identify their retention basis in event metadata.
+- **Breaking (Rust API):** `PrincipalTokenMetadata` now includes the
+  server-derived `active` and `expired` lifecycle fields. Downstream struct
+  literals must initialize both fields; token-management clients should prefer
+  them over reproducing expiry rules locally.
+- Token retention now starts at the earlier of revocation and effective expiry,
+  so explicitly revoked long-lived credentials are purged after the configured
+  retention window instead of remaining until their original expiry.
 - **Breaking (Rust API):** permission-controller group parameters and
   permission-backend collection and group parameters now use validated
   `CollectionID` and `GroupID` values instead of raw integers. Downstream

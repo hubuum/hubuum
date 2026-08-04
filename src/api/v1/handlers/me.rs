@@ -5,16 +5,16 @@ use utoipa::ToSchema;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::principals::{
-    PrincipalCollectionPermissions, principal_permissions_response,
+    PrincipalCollectionPermissions, parse_token_list_query, principal_permissions_response,
 };
 use crate::db::DbPool;
-use crate::db::traits::ActiveTokens;
+use crate::db::traits::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     Group, GroupResponse, PrincipalID, PrincipalMemberResponse, PrincipalSettings, PrincipalToken,
-    PrincipalTokenMetadata,
+    TokenListState,
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::traits::GroupAccessors;
@@ -76,8 +76,11 @@ pub async fn get_me(
     path = "/api/v1/iam/me/tokens",
     tag = "principals",
     security(("bearer_auth" = [])),
+    params(
+        ("state" = Option<TokenListState>, Query, description = "Retained-token lifecycle subset. Defaults to active. Expired and revoked subsets may overlap.")
+    ),
     responses(
-        (status = 200, description = "Current human user's active token metadata", body = [crate::models::PrincipalTokenMetadata]),
+        (status = 200, description = "Current human user's selected retained token metadata; active tokens by default", body = [crate::models::PrincipalTokenMetadata]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse)
     )
@@ -88,17 +91,20 @@ pub async fn list_my_tokens(
     requestor: ManagementAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let params = parse_query_parameter(req.query_string())?;
+    let (params, state) = parse_token_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<PrincipalToken>(&params)?;
-    let (tokens, total_count) = requestor
-        .user
-        .tokens_paginated_with_total_count(&pool, &search_params)
+    let (metadata, total_count) =
+        retained_token_metadata_by_principal_id_paginated_with_total_count(
+            PrincipalID::new(requestor.user.id)?,
+            &pool,
+            &search_params,
+            state,
+        )
         .await?;
-    let page = finalize_page(tokens, &params)?;
-    let metadata = PrincipalTokenMetadata::load_for_tokens(&pool, &page.items).await?;
+    let page = finalize_page(metadata, &params)?;
 
     Ok(ApiResponse::paginated_items(
-        metadata,
+        page.items,
         &page.next_cursor,
         total_count,
         effective_page_limit(&params)?,

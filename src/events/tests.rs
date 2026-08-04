@@ -40,7 +40,7 @@ use crate::models::collection::{NewCollectionWithAssignee, UpdateCollection, mov
 use crate::models::group::{NewGroup, UpdateGroup};
 use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
 use crate::models::search::QueryOptions;
-use crate::models::token::revoke_token_by_id_for_principal;
+use crate::models::token::{renew_token_by_id_for_principal, revoke_token_by_id_for_principal};
 use crate::models::{
     CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink as EventSinkModel,
     EventSinkID, EventSinkKind, EventSubscription, ExportContentType, ExportTemplateID,
@@ -48,7 +48,7 @@ use crate::models::{
     NewEventSink, NewEventSubscription, NewExportTemplate, NewHubuumClassRelation,
     NewHubuumObjectRelation, NewRemoteTargetRow, NewUser, ObjectRelationLimit, Permissions,
     PermissionsList, PrincipalID, PrincipalToken, PrincipalTokenCreateRequest, RemoteTargetID,
-    Token, TokenID, UpdateExportTemplate, UpdateRemoteTargetRow, UpdateUser, UserID,
+    Token, TokenID, TokenScope, UpdateExportTemplate, UpdateRemoteTargetRow, UpdateUser, UserID,
 };
 use crate::schema::events::dsl::events;
 use crate::tests::{
@@ -1810,6 +1810,13 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
     let raw = PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
         .name(Some("automation".to_string()))
         .description(Some("for event tests".to_string()))
+        .scope(
+            TokenScope::from_request_parts(
+                Some(vec![Permissions::ReadCollection, Permissions::ReadClass]),
+                None,
+            )
+            .unwrap(),
+        )
         .create(&scope.pool, Some(&context))
         .await
         .unwrap();
@@ -1832,7 +1839,12 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
     assert_eq!(rows[0].actor_user_id, Some(24));
     assert_eq!(rows[0].correlation_id.as_deref(), Some("token-correlation"));
     assert_eq!(rows[0].metadata["principal_id"], serde_json::json!(user.id));
+    assert!(rows[0].metadata.get("renewed_from_token_id").is_none());
     assert_eq!(rows[0].after.as_ref().unwrap()["name"], "automation");
+    assert_eq!(
+        rows[0].after.as_ref().unwrap()["scope"]["permissions"],
+        serde_json::json!(["ReadCollection", "ReadClass"])
+    );
     assert!(rows[0].after.as_ref().unwrap().get("token").is_none());
 
     assert_eq!(rows[1].action, "revoked");
@@ -1841,6 +1853,59 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
     assert!(!rows[1].after.as_ref().unwrap()["revoked_at"].is_null());
     assert!(rows[1].before.as_ref().unwrap().get("token").is_none());
     assert!(rows[1].after.as_ref().unwrap().get("token").is_none());
+
+    user.delete_without_events(&scope.pool).await.unwrap();
+}
+
+#[actix_web::test]
+async fn token_renewal_event_links_source_and_copies_hash_free_scope() {
+    let scope = test_scope();
+    let context = EventContext::user(24, Some(Uuid::new_v4()), Some("token-renewal".into()));
+    let user = NewUser {
+        identity_scope: None,
+        name: scope.scoped_name("event_token_renewal_user"),
+        password: "token-renewal-password".to_string(),
+        proper_name: None,
+        email: None,
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .unwrap();
+    let source_raw = PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
+        .name(Some("renewable automation".to_string()))
+        .scope(
+            TokenScope::from_request_parts(Some(vec![Permissions::ReadCollection]), None).unwrap(),
+        )
+        .create(&scope.pool, Some(&context))
+        .await
+        .unwrap();
+    let source = token_by_raw_value(&scope, &source_raw).await;
+
+    let renewed_raw = renew_token_by_id_for_principal(
+        &scope.pool,
+        TokenID::new(source.id).unwrap(),
+        PrincipalID::new(user.id).unwrap(),
+        None,
+        Some(&context),
+    )
+    .await
+    .unwrap()
+    .into_token();
+    let renewed = token_by_raw_value(&scope, &renewed_raw).await;
+    let rows = events_for(&scope, "token", renewed.id).await;
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].action, "created");
+    assert_eq!(
+        rows[0].metadata["renewed_from_token_id"],
+        serde_json::json!(source.id)
+    );
+    assert_eq!(
+        rows[0].after.as_ref().unwrap()["scope"]["permissions"],
+        serde_json::json!(["ReadCollection"])
+    );
+    assert!(rows[0].after.as_ref().unwrap().get("token").is_none());
+    assert!(rows[0].metadata.get("token").is_none());
 
     user.delete_without_events(&scope.pool).await.unwrap();
 }

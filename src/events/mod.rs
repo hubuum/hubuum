@@ -23,6 +23,7 @@ mod sink;
 
 pub use context::RequestProvenance;
 pub use db::emit_event;
+pub(crate) use db::emit_events;
 pub use delivery::{
     ensure_event_delivery_worker_running, event_delivery_wakeup_stats, kick_event_delivery_worker,
 };

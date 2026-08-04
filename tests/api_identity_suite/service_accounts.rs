@@ -1922,6 +1922,51 @@ mod tests {
         assert_eq!(resp.status(), expected);
     }
 
+    #[derive(Clone, Copy)]
+    enum RetainedTokenOperation {
+        Get,
+        Renew,
+    }
+
+    #[rstest]
+    #[case::get(RetainedTokenOperation::Get)]
+    #[case::renew(RetainedTokenOperation::Renew)]
+    #[actix_web::test]
+    async fn retained_token_operations_are_path_scoped(#[case] operation: RetainedTokenOperation) {
+        let context = TestContext::new().await;
+        let pool = &context.pool;
+        let group = create_test_group(pool).await;
+        let owner = create_test_service_account(pool, &group, None).await;
+        let other = create_test_service_account(pool, &group, None).await;
+
+        service_account_token(pool, &owner, None, None).await;
+        let token_id = with_connection(pool, async |conn| {
+            crate::schema::tokens::table
+                .filter(crate::schema::tokens::principal_id.eq(owner.id))
+                .select(crate::schema::tokens::id)
+                .order(crate::schema::tokens::id.desc())
+                .first::<i32>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        let endpoint = format!("{PRINCIPALS_ENDPOINT}/{}/tokens/{token_id}", other.id);
+        let response = match operation {
+            RetainedTokenOperation::Get => get_request(pool, &context.admin_token, &endpoint).await,
+            RetainedTokenOperation::Renew => {
+                post_request(
+                    pool,
+                    &context.admin_token,
+                    &format!("{endpoint}/renew"),
+                    &serde_json::json!({}),
+                )
+                .await
+            }
+        };
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
     /// #23 / #33: the management endpoints reject non-human and scoped callers. A
     /// service-account token (even for an SA in its own owner group) and a scoped
     /// human token are both Forbidden from minting tokens.

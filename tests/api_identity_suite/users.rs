@@ -1,10 +1,14 @@
 #[cfg(test)]
 mod tests {
     use crate::auth::ConfiguredLdapScope;
-    use crate::db::traits::ActiveTokens;
+    use crate::db::prelude::*;
+    use crate::db::traits::{ActiveTokens, Status};
+    use crate::db::with_connection;
     use crate::models::group::NewGroup;
     use crate::models::user::{LoginUser, NewUser, UpdateUser, User, UserID, UserResponse};
-    use crate::models::{GroupResponse, PrincipalTokenMetadata};
+    use crate::models::{
+        CollectionID, GroupResponse, Permissions, PrincipalTokenMetadata, Token, TokenResourceScope,
+    };
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::test_support::sync_external_user;
     use actix_web::{http::StatusCode, test};
@@ -20,6 +24,37 @@ mod tests {
 
     const USERS_ENDPOINT: &str = "/api/v1/iam/users";
     const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
+
+    async fn token_id_for_raw(pool: &crate::db::DbPool, raw: &str) -> i32 {
+        let token_hash = Token::storage_hash_from_raw(raw);
+        with_connection(pool, async |conn| {
+            crate::schema::tokens::table
+                .filter(crate::schema::tokens::token.eq(token_hash))
+                .select(crate::schema::tokens::id)
+                .first::<i32>(conn)
+                .await
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn set_token_expiry(
+        pool: &crate::db::DbPool,
+        raw: &str,
+        expires_at: chrono::NaiveDateTime,
+    ) {
+        let token_hash = Token::storage_hash_from_raw(raw);
+        with_connection(pool, async |conn| {
+            diesel::update(
+                crate::schema::tokens::table.filter(crate::schema::tokens::token.eq(token_hash)),
+            )
+            .set(crate::schema::tokens::expires_at.eq(Some(expires_at)))
+            .execute(conn)
+            .await
+        })
+        .await
+        .unwrap();
+    }
 
     fn test_ldap_scope(scope: String) -> ConfiguredLdapScope {
         ConfiguredLdapScope {
@@ -594,6 +629,285 @@ mod tests {
                 .iter()
                 .all(|token| token.principal_id.id() == test_user.id)
         );
+    }
+
+    #[rstest]
+    #[case::principal(false)]
+    #[case::me(true)]
+    #[actix_web::test]
+    async fn retained_expired_tokens_are_discoverable_only_when_requested(
+        #[future(awt)] test_context: TestContext,
+        #[case] use_me_route: bool,
+    ) {
+        let context = test_context;
+        let user = &context.normal_user;
+        let token_name = context.scoped_name("retained-expired-token");
+        let mint = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", user.id),
+            &serde_json::json!({ "name": token_name }),
+        )
+        .await;
+        let mint = assert_response_status(mint, StatusCode::CREATED).await;
+        let minted: serde_json::Value = test::read_body_json(mint).await;
+        let raw = minted["token"].as_str().unwrap();
+        let token_id = token_id_for_raw(&context.pool, raw).await;
+        set_token_expiry(
+            &context.pool,
+            raw,
+            chrono::Utc::now().naive_utc() - chrono::Duration::hours(1),
+        )
+        .await;
+
+        let base = if use_me_route {
+            "/api/v1/iam/me/tokens".to_string()
+        } else {
+            format!("{PRINCIPALS_ENDPOINT}/{}/tokens", user.id)
+        };
+        let response = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{base}?name={token_name}"),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let default_tokens: Vec<PrincipalTokenMetadata> = test::read_body_json(response).await;
+        assert!(default_tokens.is_empty());
+
+        let response = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{base}?state=expired&name={token_name}"),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let expired_tokens: Vec<PrincipalTokenMetadata> = test::read_body_json(response).await;
+        assert_eq!(expired_tokens.len(), 1);
+        assert_eq!(expired_tokens[0].id.id(), token_id);
+        assert!(!expired_tokens[0].active);
+        assert!(expired_tokens[0].expired);
+        assert!(expired_tokens[0].revoked_at.is_none());
+
+        let response = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens/{token_id}", user.id),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let point: PrincipalTokenMetadata = test::read_body_json(response).await;
+        assert_eq!(point.id.id(), token_id);
+        assert!(!point.active);
+        assert!(point.expired);
+    }
+
+    #[rstest]
+    #[case("unknown")]
+    #[case("active&state=all")]
+    #[actix_web::test]
+    async fn token_lists_reject_invalid_state_queries(
+        #[future(awt)] test_context: TestContext,
+        #[case] state: &str,
+    ) {
+        let context = test_context;
+        let response = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!(
+                "{PRINCIPALS_ENDPOINT}/{}/tokens?state={state}",
+                context.normal_user.id
+            ),
+        )
+        .await;
+
+        let _ = assert_response_status(response, StatusCode::BAD_REQUEST).await;
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn retained_revoked_tokens_are_discoverable_by_state(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let user = &context.normal_user;
+        let token_name = context.scoped_name("retained-revoked-token");
+        let mint = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", user.id),
+            &serde_json::json!({ "name": token_name }),
+        )
+        .await;
+        let mint = assert_response_status(mint, StatusCode::CREATED).await;
+        let minted: serde_json::Value = test::read_body_json(mint).await;
+        let token_id = token_id_for_raw(&context.pool, minted["token"].as_str().unwrap()).await;
+
+        let revoke = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens/{token_id}/revoke", user.id),
+            &serde_json::json!({}),
+        )
+        .await;
+        let _ = assert_response_status(revoke, StatusCode::NO_CONTENT).await;
+
+        let response = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!(
+                "{PRINCIPALS_ENDPOINT}/{}/tokens?state=revoked&name={token_name}",
+                user.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let tokens: Vec<PrincipalTokenMetadata> = test::read_body_json(response).await;
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].id.id(), token_id);
+        assert!(!tokens[0].active);
+        assert!(!tokens[0].expired);
+        assert!(tokens[0].revoked_at.is_some());
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn renewing_expired_token_copies_exact_scope_and_metadata(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let fixture = context.with_collection().await;
+        let user = &context.normal_user;
+        let token_name = context.scoped_name("renewed-token");
+        let mint = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", user.id),
+            &serde_json::json!({
+                "name": token_name,
+                "description": "renewal source",
+                "scope": {
+                    "permissions": ["ReadCollection"],
+                    "resources": [{
+                        "kind": "collection",
+                        "id": fixture.collection.id
+                    }]
+                }
+            }),
+        )
+        .await;
+        let mint = assert_response_status(mint, StatusCode::CREATED).await;
+        let minted: serde_json::Value = test::read_body_json(mint).await;
+        let source_raw = minted["token"].as_str().unwrap();
+        let source_id = token_id_for_raw(&context.pool, source_raw).await;
+        set_token_expiry(
+            &context.pool,
+            source_raw,
+            chrono::Utc::now().naive_utc() - chrono::Duration::hours(1),
+        )
+        .await;
+
+        let renew = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens/{source_id}/renew", user.id),
+            &serde_json::json!({}),
+        )
+        .await;
+        let renew = assert_response_status(renew, StatusCode::CREATED).await;
+        let renewed: serde_json::Value = test::read_body_json(renew).await;
+        let renewed_raw = renewed["token"].as_str().unwrap();
+        assert_ne!(renewed_raw, source_raw);
+        assert!(
+            Token(renewed_raw.to_string())
+                .is_valid(&context.pool)
+                .await
+                .is_ok()
+        );
+
+        let response = get_request(
+            &context.pool,
+            &context.normal_token,
+            &format!(
+                "{PRINCIPALS_ENDPOINT}/{}/tokens?state=all&name={token_name}",
+                user.id
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let tokens: Vec<PrincipalTokenMetadata> = test::read_body_json(response).await;
+        assert_eq!(tokens.len(), 2);
+        let source = tokens
+            .iter()
+            .find(|token| token.id.id() == source_id)
+            .unwrap();
+        let renewed_id = token_id_for_raw(&context.pool, renewed_raw).await;
+        let copy = tokens
+            .iter()
+            .find(|token| token.id.id() == renewed_id)
+            .unwrap();
+
+        assert!(source.expired);
+        assert!(!source.active);
+        assert!(copy.active);
+        assert!(!copy.expired);
+        assert_eq!(copy.name, source.name);
+        assert_eq!(copy.description, source.description);
+        assert_eq!(copy.scope, source.scope);
+        let scope = copy.scope.as_ref().unwrap();
+        assert_eq!(
+            scope.permissions(),
+            Some([Permissions::ReadCollection].as_slice())
+        );
+        assert_eq!(
+            scope.resources(),
+            Some(
+                [TokenResourceScope::Collection(
+                    CollectionID::new(fixture.collection.id).unwrap()
+                )]
+                .as_slice()
+            )
+        );
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn renewing_revoked_token_is_rejected(#[future(awt)] test_context: TestContext) {
+        let context = test_context;
+        let user = &context.normal_user;
+        let mint = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", user.id),
+            &serde_json::json!({ "name": context.scoped_name("revoked-renewal") }),
+        )
+        .await;
+        let mint = assert_response_status(mint, StatusCode::CREATED).await;
+        let minted: serde_json::Value = test::read_body_json(mint).await;
+        let source_id = token_id_for_raw(&context.pool, minted["token"].as_str().unwrap()).await;
+
+        let revoke = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!(
+                "{PRINCIPALS_ENDPOINT}/{}/tokens/{source_id}/revoke",
+                user.id
+            ),
+            &serde_json::json!({}),
+        )
+        .await;
+        let _ = assert_response_status(revoke, StatusCode::NO_CONTENT).await;
+
+        let renew = post_request(
+            &context.pool,
+            &context.normal_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens/{source_id}/renew", user.id),
+            &serde_json::json!({}),
+        )
+        .await;
+        let renew = assert_response_status(renew, StatusCode::CONFLICT).await;
+        let body: serde_json::Value = test::read_body_json(renew).await;
+        assert_eq!(body["message"], "Revoked tokens cannot be renewed");
     }
 
     #[rstest]

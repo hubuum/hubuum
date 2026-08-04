@@ -4,7 +4,7 @@ use crate::errors::ApiError;
 
 pub const MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE: usize = 10;
 
-/// Validated post-expiry period for retaining token metadata.
+/// Validated post-terminal period for retaining token metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenRetentionPeriod(Duration);
 

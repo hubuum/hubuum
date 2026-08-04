@@ -195,8 +195,8 @@ Paginated responses include `X-Page-Limit` with the effective page size.
 | `HUBUUM_AUTH_CONFIG_PATH` | *(empty)* | Optional TOML file for external auth providers such as LDAP |
 | `HUBUUM_TOKEN_LIFETIME_HOURS` | `24` | Token lifetime in hours |
 | `HUBUUM_MAX_TOKEN_LIFETIME_HOURS` | `8760` | Maximum lifetime in hours for an explicitly requested token expiry |
-| `HUBUUM_TOKEN_RETENTION_PURGE_ENABLED` | `true` | Delete expired token rows after the retention period |
-| `HUBUUM_TOKEN_RETENTION_DAYS` | `30` | Days to retain a token after its effective expiry |
+| `HUBUUM_TOKEN_RETENTION_PURGE_ENABLED` | `true` | Delete terminal token rows after the retention period |
+| `HUBUUM_TOKEN_RETENTION_DAYS` | `30` | Days to retain a token after the earlier of revocation and effective expiry |
 | `HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS` | `3600` | Delay between token-retention purge runs |
 | `HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE` | `1000` | Maximum token rows deleted in one purge batch; minimum `10` |
 | `HUBUUM_LOGIN_RATE_LIMIT_ENABLED` | `true` | Master switch for login throttling |
