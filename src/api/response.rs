@@ -91,12 +91,8 @@ impl<T> ApiResponse<T> {
     where
         T: RevisionedResource,
     {
-        let etag = data.entity_tag()?.to_string();
-        Ok(Self::new_with_headers(
-            data,
-            status,
-            HashMap::from([(header::ETAG.to_string(), etag)]),
-        ))
+        let etag = data.entity_tag()?;
+        Ok(Self::new_with_etag(data, status, etag))
     }
 
     pub fn new_with_resource_etag<R>(
@@ -107,19 +103,11 @@ impl<T> ApiResponse<T> {
     where
         R: RevisionedResource,
     {
-        Ok(Self::new_with_headers(
-            data,
-            status,
-            HashMap::from([(header::ETAG.to_string(), resource.entity_tag()?.to_string())]),
-        ))
+        Ok(Self::new_with_etag(data, status, resource.entity_tag()?))
     }
 
     pub fn new_with_etag(data: T, status: StatusCode, etag: impl ToString) -> Self {
-        Self::new_with_headers(
-            data,
-            status,
-            HashMap::from([(header::ETAG.to_string(), etag.to_string())]),
-        )
+        Self::new_with_headers(data, status, etag_header(etag))
     }
 
     pub fn ok_revisioned(data: T) -> Result<Self, ApiError>
@@ -250,16 +238,17 @@ impl ApiResponse<()> {
     pub fn no_content_with_etag(etag: impl ToString) -> Self {
         Self::Empty {
             status: StatusCode::NO_CONTENT,
-            headers: Some(HashMap::from([(
-                header::ETAG.to_string(),
-                etag.to_string(),
-            )])),
+            headers: Some(etag_header(etag)),
         }
     }
 
     pub fn not_found_empty() -> Self {
         Self::new((), StatusCode::NOT_FOUND)
     }
+}
+
+fn etag_header(etag: impl ToString) -> HashMap<String, String> {
+    HashMap::from([(header::ETAG.to_string(), etag.to_string())])
 }
 
 impl ApiResponse<MessageResponse> {

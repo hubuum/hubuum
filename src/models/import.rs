@@ -20,6 +20,8 @@ use crate::models::{
 };
 
 pub const CURRENT_IMPORT_VERSION: i32 = 2;
+pub(crate) const CONDITIONAL_IMPORT_TARGET_MISSING: &str =
+    "stale_revision: conditional import target does not exist";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -56,6 +58,10 @@ impl ImportWriteCondition {
 
     pub fn allows_overwrite(self) -> bool {
         !matches!(self, Self::CreateOnly)
+    }
+
+    pub fn requires_existing(self) -> bool {
+        matches!(self, Self::IfRevision { .. })
     }
 }
 

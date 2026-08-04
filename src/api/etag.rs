@@ -14,7 +14,7 @@ const MAX_IF_MATCH_VALIDATORS: usize = 8;
 const MAX_RESOURCE_KEY_BYTES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EtagResourceKind {
+enum EtagResourceKind {
     IdentityScope,
     Group,
     Principal,
@@ -37,7 +37,7 @@ pub enum EtagResourceKind {
 }
 
 impl EtagResourceKind {
-    pub const fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::IdentityScope => "identity_scope",
             Self::Group => "group",
@@ -118,7 +118,7 @@ pub struct EntityTag {
 }
 
 impl EntityTag {
-    pub fn new(
+    fn new(
         kind: EtagResourceKind,
         key: impl AsRef<[u8]>,
         revision: ResourceRevision,
@@ -136,7 +136,7 @@ impl EntityTag {
         })
     }
 
-    pub fn for_id(
+    fn for_id(
         kind: EtagResourceKind,
         id: i32,
         revision: ResourceRevision,
@@ -149,7 +149,7 @@ impl EntityTag {
         Self::new(kind, id.to_string(), revision)
     }
 
-    pub fn revision(&self) -> ResourceRevision {
+    fn revision(&self) -> ResourceRevision {
         self.revision
     }
 
@@ -250,10 +250,6 @@ impl RevisionPrecondition {
             .collect::<Vec<_>>()
             .join(",")
     }
-
-    pub fn is_wildcard(&self) -> bool {
-        self.revisions.is_empty()
-    }
 }
 
 impl IfMatchCondition {
@@ -302,7 +298,7 @@ impl IfMatchCondition {
     /// Validate resource identity independently of freshness. This prevents a
     /// validator copied from another resource from being treated as a stale
     /// value and gives clients a stable 400 response for that programming error.
-    pub fn ensure_compatible(&self, current: &EntityTag) -> Result<(), ApiError> {
+    fn ensure_compatible(&self, current: &EntityTag) -> Result<(), ApiError> {
         if let Self::Tags(tags) = self
             && tags.iter().any(|tag| !tag.same_resource(current))
         {
@@ -311,25 +307,6 @@ impl IfMatchCondition {
             ));
         }
         Ok(())
-    }
-
-    pub fn matches(&self, current: &EntityTag) -> Result<bool, ApiError> {
-        self.ensure_compatible(current)?;
-        Ok(match self {
-            Self::Missing | Self::Any => true,
-            Self::Tags(tags) => tags.iter().any(|tag| tag == current),
-        })
-    }
-
-    pub fn expected_revisions(
-        &self,
-        current: &EntityTag,
-    ) -> Result<Option<Vec<ResourceRevision>>, ApiError> {
-        self.ensure_compatible(current)?;
-        Ok(match self {
-            Self::Missing | Self::Any => None,
-            Self::Tags(tags) => Some(tags.iter().map(EntityTag::revision).collect()),
-        })
     }
 
     /// Convert a parsed condition into the database-owned revision assertion
@@ -460,22 +437,26 @@ impl RevisionedResource for crate::models::CollectionPermissionSet {
 
 impl RevisionedResource for crate::models::PrincipalGroup {
     fn entity_tag(&self) -> Result<EntityTag, ApiError> {
-        EntityTag::new(
-            EtagResourceKind::Membership,
-            format!("{}:{}", self.principal_id, self.group_id),
-            self.revision,
-        )
+        membership_entity_tag(self.principal_id, self.group_id, self.revision)
     }
 }
 
 impl RevisionedResource for crate::models::PrincipalMemberResponse {
     fn entity_tag(&self) -> Result<EntityTag, ApiError> {
-        EntityTag::new(
-            EtagResourceKind::Membership,
-            format!("{}:{}", self.principal_id, self.group_id),
-            self.revision,
-        )
+        membership_entity_tag(self.principal_id, self.group_id, self.revision)
     }
+}
+
+fn membership_entity_tag(
+    principal_id: i32,
+    group_id: i32,
+    revision: ResourceRevision,
+) -> Result<EntityTag, ApiError> {
+    EntityTag::new(
+        EtagResourceKind::Membership,
+        format!("{principal_id}:{group_id}"),
+        revision,
+    )
 }
 
 #[cfg(test)]
@@ -508,7 +489,14 @@ mod tests {
             .insert_header((header::IF_MATCH, format!("{one}, {two}")))
             .to_http_request();
         let parsed = IfMatchCondition::from_request(&request).unwrap();
-        assert!(parsed.matches(&tag(17)).unwrap());
+        let precondition = parsed.database_precondition(&tag(17)).unwrap().unwrap();
+        assert_eq!(
+            precondition.revisions,
+            vec![
+                ResourceRevision::new(16).unwrap(),
+                ResourceRevision::new(17).unwrap()
+            ]
+        );
 
         let request = TestRequest::default()
             .insert_header((header::IF_MATCH, "*"))
@@ -541,7 +529,7 @@ mod tests {
             EntityTag::for_id(EtagResourceKind::Collection, 43, ResourceRevision::INITIAL).unwrap();
         assert!(
             IfMatchCondition::Tags(vec![other])
-                .matches(&tag(1))
+                .database_precondition(&tag(1))
                 .is_err()
         );
 

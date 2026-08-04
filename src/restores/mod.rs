@@ -9,14 +9,14 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::db::traits::identity::identity_scope_name_by_id;
 use crate::db::traits::maintenance::maintenance_state_db;
 use crate::db::traits::restore::{
     RestoreCompletion, RestoreCoordinatorSnapshot, apply_restore_db, delete_server_instance_db,
-    expire_restore_stage_db, fail_restore_and_resume_db, identity_scope_name_db,
-    insert_restore_job_db, load_restore_coordinator_snapshot_db, load_restore_job_db,
-    load_restore_status_job_db, maintenance_generation_and_instances_db,
-    restore_coordinator_tick_db, resume_maintenance_without_job_db, resume_terminal_restore_db,
-    start_restore_draining_db,
+    expire_restore_stage_db, fail_restore_and_resume_db, insert_restore_job_db,
+    load_restore_coordinator_snapshot_db, load_restore_job_db, load_restore_status_job_db,
+    maintenance_generation_and_instances_db, restore_coordinator_tick_db,
+    resume_maintenance_without_job_db, resume_terminal_restore_db, start_restore_draining_db,
 };
 use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
@@ -1103,7 +1103,7 @@ pub async fn identity_scope_name(
     pool: &DbPool,
     identity_scope_id: i32,
 ) -> Result<String, ApiError> {
-    identity_scope_name_db(pool, identity_scope_id).await
+    identity_scope_name_by_id(pool, identity_scope_id).await
 }
 
 #[cfg(test)]

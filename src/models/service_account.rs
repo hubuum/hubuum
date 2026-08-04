@@ -9,7 +9,7 @@ use crate::models::{GroupID, ResourceRevision};
 use crate::schema::service_accounts;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
-    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 
 /// A non-human principal used by automation/integrations. Its id is the
@@ -33,6 +33,21 @@ pub struct ServiceAccount {
 impl ServiceAccount {
     pub fn is_disabled(&self) -> bool {
         self.disabled_at.is_some()
+    }
+
+    /// Build the strongly tagged point representation in one database snapshot.
+    pub async fn to_point_response<C>(
+        &self,
+        backend: &C,
+    ) -> Result<ServiceAccountPointResponse, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        crate::db::traits::principal::load_service_account_point_response(
+            backend.db_pool(),
+            self.id,
+        )
+        .await
     }
 }
 

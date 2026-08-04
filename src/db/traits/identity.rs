@@ -33,6 +33,20 @@ pub async fn identity_scope_by_name(
     .await
 }
 
+pub(crate) async fn identity_scope_name_by_id(
+    pool: &DbPool,
+    scope_id: i32,
+) -> Result<String, ApiError> {
+    with_connection(pool, async |conn| {
+        identity_scopes::table
+            .filter(identity_scopes::id.eq(scope_id))
+            .select(identity_scopes::name)
+            .first::<String>(conn)
+            .await
+    })
+    .await
+}
+
 pub async fn identity_scope_names_by_ids(
     pool: &DbPool,
     scope_ids: &[i32],

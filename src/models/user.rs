@@ -285,40 +285,6 @@ impl CursorSqlMapping for UserWithName {
 }
 
 impl User {
-    /// Resolve this user's identity scope, provider metadata, and name from the
-    /// principal/identity scope tables.
-    pub async fn identity_scope_and_name<C>(
-        &self,
-        backend: &C,
-    ) -> Result<
-        (
-            String,
-            String,
-            String,
-            bool,
-            Option<chrono::NaiveDateTime>,
-            Option<chrono::NaiveDateTime>,
-            ResourceRevision,
-        ),
-        ApiError,
-    >
-    where
-        C: BackendContext + ?Sized,
-    {
-        let metadata =
-            crate::db::traits::principal::principal_identity_metadata(backend.db_pool(), self.id)
-                .await?;
-        Ok((
-            metadata.identity_scope,
-            metadata.provider_kind,
-            metadata.name,
-            metadata.provider_managed,
-            metadata.last_sync_attempted_at,
-            metadata.last_sync_success_at,
-            metadata.revision,
-        ))
-    }
-
     /// Resolve this user's name from the principals table.
     pub async fn name<C>(&self, backend: &C) -> Result<String, ApiError>
     where

@@ -711,7 +711,10 @@ impl Modify for OperationDefaults {
     }
 }
 
-const CONDITIONAL_OPERATIONS: &[(&str, &str)] = &[
+// Keep these operation sets disjoint so every endpoint has one authoritative
+// documentation classification. Conditional endpoints whose composite
+// response is not revision-owned deliberately live in the untagged set.
+const CONDITIONAL_ETAGGED_OPERATIONS: &[(&str, &str)] = &[
     ("patch", "/api/v1/iam/users/{user_id}"),
     ("delete", "/api/v1/iam/users/{user_id}"),
     ("post", "/api/v1/iam/users/{user_id}/anonymize"),
@@ -783,8 +786,6 @@ const CONDITIONAL_OPERATIONS: &[(&str, &str)] = &[
     ("delete", "/api/v1/remote-targets/{target_id}"),
     ("delete", "/api/v1/relations/classes/{relation_id}"),
     ("delete", "/api/v1/relations/objects/{relation_id}"),
-    ("patch", "/api/v1/classes/{class_id}"),
-    ("patch", "/api/v1/classes/by-name/{class_name}"),
     ("delete", "/api/v1/classes/{class_id}"),
     ("delete", "/api/v1/classes/by-name/{class_name}"),
     ("patch", "/api/v1/classes/{class_id}/{object_id}"),
@@ -810,6 +811,13 @@ const CONDITIONAL_OPERATIONS: &[(&str, &str)] = &[
         "delete",
         "/api/v1/classes/{class_id}/{from_object_id}/relations/{to_class_id}/{to_object_id}",
     ),
+    ("patch", "/api/v1/iam/me/computed-fields/{field_id}"),
+    ("delete", "/api/v1/iam/me/computed-fields/{field_id}"),
+];
+
+const CONDITIONAL_UNTAGGED_OPERATIONS: &[(&str, &str)] = &[
+    ("patch", "/api/v1/classes/{class_id}"),
+    ("patch", "/api/v1/classes/by-name/{class_name}"),
     (
         "patch",
         "/api/v1/classes/{class_id}/computed-fields/{field_id}",
@@ -818,11 +826,9 @@ const CONDITIONAL_OPERATIONS: &[(&str, &str)] = &[
         "delete",
         "/api/v1/classes/{class_id}/computed-fields/{field_id}",
     ),
-    ("patch", "/api/v1/iam/me/computed-fields/{field_id}"),
-    ("delete", "/api/v1/iam/me/computed-fields/{field_id}"),
 ];
 
-const UNCONDITIONAL_ETAGGED_OPERATIONS: &[(&str, &str)] = &[
+const ETAGGED_OPERATIONS: &[(&str, &str)] = &[
     ("post", "/api/v1/iam/users"),
     ("get", "/api/v1/iam/users/{user_id}"),
     ("post", "/api/v1/iam/groups"),
@@ -891,19 +897,6 @@ const UNCONDITIONAL_ETAGGED_OPERATIONS: &[(&str, &str)] = &[
     ("post", "/api/v1/iam/me/computed-fields"),
 ];
 
-const UNTAGGED_CONDITIONAL_OPERATIONS: &[(&str, &str)] = &[
-    ("patch", "/api/v1/classes/{class_id}"),
-    ("patch", "/api/v1/classes/by-name/{class_name}"),
-    (
-        "patch",
-        "/api/v1/classes/{class_id}/computed-fields/{field_id}",
-    ),
-    (
-        "delete",
-        "/api/v1/classes/{class_id}/computed-fields/{field_id}",
-    ),
-];
-
 fn operation_matches(operations: &[(&str, &str)], path: &str, method: &str) -> bool {
     operations.iter().any(|(candidate_method, candidate_path)| {
         method.eq_ignore_ascii_case(candidate_method) && path == *candidate_path
@@ -911,13 +904,13 @@ fn operation_matches(operations: &[(&str, &str)], path: &str, method: &str) -> b
 }
 
 fn is_conditional_operation(path: &str, method: &str) -> bool {
-    operation_matches(CONDITIONAL_OPERATIONS, path, method)
+    operation_matches(CONDITIONAL_ETAGGED_OPERATIONS, path, method)
+        || operation_matches(CONDITIONAL_UNTAGGED_OPERATIONS, path, method)
 }
 
 fn is_etagged_operation(path: &str, method: &str) -> bool {
-    operation_matches(UNCONDITIONAL_ETAGGED_OPERATIONS, path, method)
-        || (is_conditional_operation(path, method)
-            && !operation_matches(UNTAGGED_CONDITIONAL_OPERATIONS, path, method))
+    operation_matches(ETAGGED_OPERATIONS, path, method)
+        || operation_matches(CONDITIONAL_ETAGGED_OPERATIONS, path, method)
 }
 
 fn add_conditional_request_docs(operation: &mut Operation) {
@@ -1381,10 +1374,26 @@ mod tests {
     }
 
     #[test]
+    fn revision_operations_have_one_documentation_classification() {
+        let operations = CONDITIONAL_ETAGGED_OPERATIONS
+            .iter()
+            .chain(CONDITIONAL_UNTAGGED_OPERATIONS)
+            .chain(ETAGGED_OPERATIONS)
+            .copied()
+            .collect::<Vec<_>>();
+        let unique = operations.iter().copied().collect::<HashSet<_>>();
+
+        assert_eq!(operations.len(), unique.len());
+    }
+
+    #[test]
     fn conditional_operations_document_if_match_and_precondition_failure() {
         let json = openapi_json();
 
-        for (method, path) in CONDITIONAL_OPERATIONS {
+        for (method, path) in CONDITIONAL_ETAGGED_OPERATIONS
+            .iter()
+            .chain(CONDITIONAL_UNTAGGED_OPERATIONS)
+        {
             let operation = &json["paths"][path][method];
             assert!(operation.is_object(), "missing {method} {path}");
             assert!(
@@ -1406,12 +1415,9 @@ mod tests {
     fn tagged_operations_document_etag_response_headers() {
         let json = openapi_json();
 
-        for (method, path) in
-            UNCONDITIONAL_ETAGGED_OPERATIONS
-                .iter()
-                .chain(CONDITIONAL_OPERATIONS.iter().filter(|(method, path)| {
-                    !operation_matches(UNTAGGED_CONDITIONAL_OPERATIONS, path, method)
-                }))
+        for (method, path) in ETAGGED_OPERATIONS
+            .iter()
+            .chain(CONDITIONAL_ETAGGED_OPERATIONS)
         {
             let operation = &json["paths"][path][method];
             assert!(operation.is_object(), "missing {method} {path}");

@@ -243,14 +243,14 @@ impl MembershipPrincipalResponse {
     where
         C: BackendContext + ?Sized,
     {
-        let metadata = crate::db::traits::principal::principal_identity_metadata(
+        let identity_scope = crate::db::traits::identity::identity_scope_name_by_id(
             backend.db_pool(),
-            principal.id,
+            principal.identity_scope_id,
         )
         .await?;
         Ok(Self {
             principal_id: principal.id,
-            identity_scope: metadata.identity_scope,
+            identity_scope,
             kind: principal.kind,
             name: principal.name,
             created_at: principal.created_at,
@@ -285,38 +285,6 @@ impl PrincipalMemberResponse {
             revision: membership.revision,
             principal: None,
         }
-    }
-
-    pub async fn from_membership<C>(
-        backend: &C,
-        membership: crate::models::PrincipalGroup,
-        principal: Option<Principal>,
-    ) -> Result<Self, ApiError>
-    where
-        C: BackendContext + ?Sized,
-    {
-        let principal = if let Some(principal) = principal {
-            let metadata = crate::db::traits::principal::principal_identity_metadata(
-                backend.db_pool(),
-                principal.id,
-            )
-            .await?;
-            Some(MembershipPrincipalResponse {
-                principal_id: principal.id,
-                identity_scope: metadata.identity_scope,
-                kind: principal.kind,
-                name: principal.name,
-                created_at: principal.created_at,
-                updated_at: principal.updated_at,
-                revision: principal.revision,
-            })
-        } else {
-            None
-        };
-        Ok(Self {
-            principal,
-            ..Self::point(membership)
-        })
     }
 
     pub async fn from_memberships<C>(

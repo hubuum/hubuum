@@ -222,7 +222,7 @@ pub async fn load_principal_with_user(
 }
 
 /// Load the rich, untagged user representation in one database snapshot.
-pub async fn load_user_response(
+pub(crate) async fn load_user_response(
     pool: &DbPool,
     user_id_value: i32,
 ) -> Result<UserResponse, ApiError> {
@@ -254,7 +254,7 @@ pub async fn load_user_response(
 }
 
 /// Load the user point body and its validator revision in one SQL statement.
-pub async fn load_user_point_response(
+pub(crate) async fn load_user_point_response(
     pool: &DbPool,
     user_id_value: i32,
 ) -> Result<UserPointResponse, ApiError> {
@@ -287,7 +287,7 @@ pub async fn load_user_point_response(
 }
 
 /// Load the service-account point body and revision in one SQL statement.
-pub async fn load_service_account_point_response(
+pub(crate) async fn load_service_account_point_response(
     pool: &DbPool,
     service_account_id_value: i32,
 ) -> Result<ServiceAccountPointResponse, ApiError> {
@@ -315,86 +315,4 @@ pub async fn load_service_account_point_response(
         name,
         revision,
     ))
-}
-
-pub struct PrincipalIdentityMetadata {
-    pub identity_scope: String,
-    pub provider_kind: String,
-    pub name: String,
-    pub provider_managed: bool,
-    pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
-    pub last_sync_success_at: Option<chrono::NaiveDateTime>,
-    pub revision: crate::models::ResourceRevision,
-}
-
-pub async fn principal_identity_scope_and_name(
-    pool: &DbPool,
-    principal_id_value: i32,
-) -> Result<(String, String, crate::models::ResourceRevision), ApiError> {
-    use crate::schema::{identity_scopes, principals};
-
-    with_connection(pool, async |conn| {
-        principals::table
-            .inner_join(identity_scopes::table)
-            .filter(principals::id.eq(principal_id_value))
-            .select((
-                identity_scopes::name,
-                principals::name,
-                principals::revision,
-            ))
-            .first::<(String, String, crate::models::ResourceRevision)>(conn)
-            .await
-    })
-    .await
-}
-
-pub async fn principal_identity_metadata(
-    pool: &DbPool,
-    principal_id_value: i32,
-) -> Result<PrincipalIdentityMetadata, ApiError> {
-    use crate::schema::{identity_scopes, principals};
-
-    let (
-        identity_scope,
-        provider_kind,
-        name,
-        provider_managed,
-        last_sync_attempted_at,
-        last_sync_success_at,
-        revision,
-    ) = with_connection(pool, async |conn| {
-        principals::table
-            .inner_join(identity_scopes::table)
-            .filter(principals::id.eq(principal_id_value))
-            .select((
-                identity_scopes::name,
-                identity_scopes::provider_kind,
-                principals::name,
-                principals::provider_managed,
-                principals::last_sync_attempted_at,
-                principals::last_sync_success_at,
-                principals::revision,
-            ))
-            .first::<(
-                String,
-                String,
-                String,
-                bool,
-                Option<chrono::NaiveDateTime>,
-                Option<chrono::NaiveDateTime>,
-                crate::models::ResourceRevision,
-            )>(conn)
-            .await
-    })
-    .await?;
-
-    Ok(PrincipalIdentityMetadata {
-        identity_scope,
-        provider_kind,
-        name,
-        provider_managed,
-        last_sync_attempted_at,
-        last_sync_success_at,
-        revision,
-    })
 }

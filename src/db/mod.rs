@@ -1012,6 +1012,14 @@ mod tests {
         assert!(revoke < first_drop);
     }
 
+    #[test]
+    fn resource_revision_rollback_drops_the_persistent_computed_field_index() {
+        let rollback =
+            include_str!("../../migrations/2026-08-03-000001_resource_revisions/down.sql");
+
+        assert!(rollback.contains("DROP INDEX IF EXISTS computed_field_class_revision_id_idx;"));
+    }
+
     #[tokio::test]
     async fn database_schema_readiness_accepts_the_migrated_test_database() {
         let config = get_config().expect("Failed to load config for test");

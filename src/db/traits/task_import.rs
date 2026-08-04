@@ -7,15 +7,16 @@ use crate::db::{DbPool, SendAsyncFn, with_connection};
 use crate::errors::ApiError;
 use crate::models::event_subscription::validate_subscription_parts;
 use crate::models::{
-    Collection, CollectionKey, Group, HubuumClass, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, IdentityScope, ImportClassInput, ImportCollectionInput,
-    ImportComputedFieldInput, ImportComputedFieldVisibility, ImportEventSinkInput,
-    ImportEventSubscriptionInput, ImportExportTemplateInput, ImportGroupInput,
-    ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput, ImportPrincipalInput,
-    ImportPrincipalSubtype, ImportRemoteTargetInput, ImportWriteCondition, NewHubuumClass,
-    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, NewPermission, Permission,
-    Permissions, PermissionsList, Principal, ResourceRevision, RestoreTimestamps, ServiceAccount,
-    UpdateCollection, UpdateHubuumClass, UpdateHubuumObject, UpdatePermission, User,
+    CONDITIONAL_IMPORT_TARGET_MISSING, Collection, CollectionKey, Group, HubuumClass,
+    HubuumClassRelation, HubuumObject, HubuumObjectRelation, IdentityScope, ImportClassInput,
+    ImportCollectionInput, ImportComputedFieldInput, ImportComputedFieldVisibility,
+    ImportEventSinkInput, ImportEventSubscriptionInput, ImportExportTemplateInput,
+    ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput, ImportObjectInput,
+    ImportPrincipalInput, ImportPrincipalSubtype, ImportRemoteTargetInput, ImportWriteCondition,
+    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
+    NewPermission, Permission, Permissions, PermissionsList, Principal, ResourceRevision,
+    RestoreTimestamps, ServiceAccount, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
+    UpdatePermission, User,
 };
 
 fn assert_import_revision(
@@ -39,10 +40,10 @@ fn assert_import_revision(
 }
 
 fn assert_import_create_condition(condition: Option<ImportWriteCondition>) -> Result<(), ApiError> {
-    if condition.is_some_and(|condition| condition.expected_revision().is_some()) {
+    if condition.is_some_and(ImportWriteCondition::requires_existing) {
         crate::observability::metrics::revision_condition("async_stale");
         return Err(ApiError::PreconditionFailed(
-            "stale_revision: conditional import target does not exist".to_string(),
+            CONDITIONAL_IMPORT_TARGET_MISSING.to_string(),
             None,
         ));
     }

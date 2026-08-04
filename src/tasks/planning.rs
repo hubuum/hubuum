@@ -29,10 +29,11 @@ use crate::db::traits::task_import::{
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{
-    Collection, CollectionID, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
-    ImportCollectionInput, ImportCollectionPermissionInput, ImportCollisionPolicy, ImportMode,
-    ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
-    ImportRequest, ImportWriteCondition, Permissions, RestoreTimestamps,
+    CONDITIONAL_IMPORT_TARGET_MISSING, Collection, CollectionID, ImportAtomicity, ImportClassInput,
+    ImportClassRelationInput, ImportCollectionInput, ImportCollectionPermissionInput,
+    ImportCollisionPolicy, ImportMode, ImportObjectInput, ImportObjectRelationInput,
+    ImportPermissionPolicy, ImportPrincipalSubtype, ImportRequest, ImportWriteCondition,
+    Permissions, RestoreTimestamps,
 };
 
 fn import_item_allows_overwrite(
@@ -50,7 +51,7 @@ fn import_item_allows_overwrite(
 }
 
 fn import_item_requires_existing(condition: Option<ImportWriteCondition>) -> bool {
-    condition.is_some_and(|condition| condition.expected_revision().is_some())
+    condition.is_some_and(ImportWriteCondition::requires_existing)
 }
 use crate::permissions::PrincipalRef;
 use crate::traits::BackendContext;
@@ -1092,7 +1093,7 @@ where
                     input.ref_.clone(),
                     Some(input.name.clone()),
                 ),
-                message: "stale_revision: conditional import target does not exist".to_string(),
+                message: CONDITIONAL_IMPORT_TARGET_MISSING.to_string(),
             });
         }
         if state.scopes.is_some()
@@ -1326,7 +1327,7 @@ where
             return Err(PlanningFailure {
                 kind: FailureKind::Collision,
                 item: planned_result("class", "update", input.ref_.clone(), Some(identifier)),
-                message: "stale_revision: conditional import target does not exist".to_string(),
+                message: CONDITIONAL_IMPORT_TARGET_MISSING.to_string(),
             });
         }
         ensure_collection_permission_cached(
@@ -1551,7 +1552,7 @@ where
             return Err(PlanningFailure {
                 kind: FailureKind::Collision,
                 item: planned_result("object", "update", input.ref_.clone(), Some(identifier)),
-                message: "stale_revision: conditional import target does not exist".to_string(),
+                message: CONDITIONAL_IMPORT_TARGET_MISSING.to_string(),
             });
         }
         ensure_collection_permission_cached(
@@ -1669,7 +1670,7 @@ where
         return Err(PlanningFailure {
             kind: FailureKind::Collision,
             item: planned_result("class_relation", "update", input.ref_.clone(), identifier),
-            message: "stale_revision: conditional import target does not exist".to_string(),
+            message: CONDITIONAL_IMPORT_TARGET_MISSING.to_string(),
         });
     }
     let collision_policy = Some(if import_item_allows_overwrite(input.condition, mode) {
@@ -1839,7 +1840,7 @@ where
         return Err(PlanningFailure {
             kind: FailureKind::Collision,
             item: planned_result("object_relation", "update", input.ref_.clone(), identifier),
-            message: "stale_revision: conditional import target does not exist".to_string(),
+            message: CONDITIONAL_IMPORT_TARGET_MISSING.to_string(),
         });
     }
     let collision_policy = Some(if import_item_allows_overwrite(input.condition, mode) {

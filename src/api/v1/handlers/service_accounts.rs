@@ -46,13 +46,6 @@ async fn ensure_can_manage(
     }
 }
 
-async fn response_for(
-    pool: &DbPool,
-    sa: &ServiceAccount,
-) -> Result<ServiceAccountPointResponse, ApiError> {
-    crate::db::traits::principal::load_service_account_point_response(pool, sa.id).await
-}
-
 #[utoipa::path(
     post,
     path = "/api/v1/iam/service-accounts",
@@ -100,7 +93,7 @@ pub async fn create_service_account(
     let sa = new_sa
         .save(&pool, Some(requestor.user.id), &event_context)
         .await?;
-    let response = response_for(&pool, &sa).await?;
+    let response = sa.to_point_response(&pool).await?;
 
     let location = api_locations::service_account(sa.id)?;
     ApiResponse::created_revisioned(response, location)
@@ -173,7 +166,7 @@ pub async fn get_service_account(
 ) -> Result<impl Responder, ApiError> {
     let sa = service_account_id.into_inner().instance(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
-    ApiResponse::ok_revisioned(response_for(&pool, &sa).await?)
+    ApiResponse::ok_revisioned(sa.to_point_response(&pool).await?)
 }
 
 #[utoipa::path(
@@ -218,14 +211,14 @@ pub async fn update_service_account(
         ));
     }
 
-    let current = response_for(&pool, &sa).await?;
+    let current = sa.to_point_response(&pool).await?;
     let precondition =
         IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
     let updated =
         with_revision_precondition_scope(precondition, update.update(&pool, id, &event_context))
             .await?;
-    ApiResponse::ok_revisioned(response_for(&pool, &updated).await?)
+    ApiResponse::ok_revisioned(updated.to_point_response(&pool).await?)
 }
 
 #[utoipa::path(
@@ -252,7 +245,7 @@ pub async fn disable_service_account(
     let sa = id.instance(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
 
-    let current = response_for(&pool, &sa).await?;
+    let current = sa.to_point_response(&pool).await?;
     let precondition =
         IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
@@ -265,7 +258,7 @@ pub async fn disable_service_account(
         requestor = requestor.user.id
     );
 
-    ApiResponse::ok_revisioned(response_for(&pool, &disabled).await?)
+    ApiResponse::ok_revisioned(disabled.to_point_response(&pool).await?)
 }
 
 #[utoipa::path(
@@ -291,7 +284,7 @@ pub async fn delete_service_account(
     let id = service_account_id.into_inner();
     let sa = id.instance(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
-    let current = response_for(&pool, &sa).await?;
+    let current = sa.to_point_response(&pool).await?;
     let etag = current.entity_tag()?;
     let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(&req);

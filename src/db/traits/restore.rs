@@ -633,22 +633,6 @@ pub(crate) async fn delete_server_instance_db(
     Ok(())
 }
 
-pub(crate) async fn identity_scope_name_db(
-    pool: &DbPool,
-    identity_scope_id: i32,
-) -> Result<String, ApiError> {
-    with_connection(pool, async |conn| {
-        use crate::schema::identity_scopes::dsl::{id, identity_scopes, name};
-
-        identity_scopes
-            .filter(id.eq(identity_scope_id))
-            .select(name)
-            .first::<String>(conn)
-            .await
-    })
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
