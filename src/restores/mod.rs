@@ -30,8 +30,8 @@ use crate::models::retention::FutureRetention;
 use crate::models::{
     BackupDocument, COMPUTED_FIELD_VISIBILITY_PERSONAL, COMPUTED_FIELD_VISIBILITY_SHARED,
     ComputedFieldDefinitionRequest, ComputedResultType, MaintenanceState, NewRestoreJobRecord,
-    RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobRecord, RestoreJobStatus,
-    RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
+    RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID, RestoreJobRecord,
+    RestoreJobStatus, RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
 };
 
 static RESTORE_COORDINATOR: Once = Once::new();
@@ -500,16 +500,19 @@ pub async fn stage_restore(
     })
 }
 
-pub async fn load_restore_job(pool: &DbPool, job_id: i64) -> Result<RestoreJobRecord, ApiError> {
-    load_restore_job_db(pool, job_id).await
+pub async fn load_restore_job(
+    pool: &DbPool,
+    job_id: RestoreJobID,
+) -> Result<RestoreJobRecord, ApiError> {
+    load_restore_job_db(pool, job_id.id()).await
 }
 
 pub async fn restore_status(
     pool: &DbPool,
-    job_id: i64,
+    job_id: RestoreJobID,
     capability: &str,
 ) -> Result<RestoreStageResponse, ApiError> {
-    let job = match load_restore_status_job_db(pool, job_id).await {
+    let job = match load_restore_status_job_db(pool, job_id.id()).await {
         Ok(job) => Some(job),
         Err(ApiError::NotFound(_)) => None,
         Err(error) => return Err(error),
@@ -521,7 +524,7 @@ pub async fn restore_status(
     let Some(job) = job else {
         tracing::warn!(
             message = "Restore capability rejected",
-            restore_job_id = job_id,
+            restore_job_id = job_id.id(),
             reason = "restore stage not found"
         );
         return Err(invalid_restore_capability());
@@ -529,7 +532,7 @@ pub async fn restore_status(
     if !capability_valid {
         tracing::warn!(
             message = "Restore capability rejected",
-            restore_job_id = job_id,
+            restore_job_id = job_id.id(),
             reason = "capability mismatch"
         );
         return Err(invalid_restore_capability());
@@ -600,7 +603,7 @@ fn restore_error_for_storage(error: &ApiError) -> String {
 
 pub async fn confirm_restore(
     pool: &DbPool,
-    job_id: i64,
+    job_id: RestoreJobID,
     confirmation: &RestoreConfirmRequest,
 ) -> Result<RestoreStageResponse, ApiError> {
     let job = match load_restore_job(pool, job_id).await {
@@ -615,7 +618,7 @@ pub async fn confirm_restore(
     let Some(job) = job else {
         tracing::warn!(
             message = "Restore capability rejected",
-            restore_job_id = job_id,
+            restore_job_id = job_id.id(),
             reason = "restore stage not found"
         );
         return Err(invalid_restore_capability());
@@ -623,7 +626,7 @@ pub async fn confirm_restore(
     if !capability_valid {
         tracing::warn!(
             message = "Restore capability rejected",
-            restore_job_id = job_id,
+            restore_job_id = job_id.id(),
             reason = "capability mismatch"
         );
         return Err(invalid_restore_capability());
@@ -725,7 +728,7 @@ async fn reconcile_interrupted_restore_from_snapshot(
         resume_maintenance_without_job_db(pool).await?;
         return Err(error);
     };
-    let job = match load_restore_job(pool, job_id).await {
+    let job = match load_restore_job_db(pool, job_id).await {
         Ok(job) => job,
         Err(error) => {
             fail_restore_and_resume(pool, job_id, &error).await?;

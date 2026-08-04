@@ -1277,6 +1277,24 @@ mod tests {
     }
 
     #[test]
+    fn restore_job_paths_document_positive_ids() {
+        let json = openapi_json();
+
+        for (path, method) in [
+            ("~1api~1v1~1restores~1{restore_id}~1confirm", "post"),
+            ("~1api~1v1~1restores~1{restore_id}~1status", "get"),
+        ] {
+            assert_eq!(
+                json.pointer(&format!(
+                    "/paths/{path}/{method}/parameters/0/schema/minimum"
+                )),
+                Some(&Value::from(1)),
+                "restore job path should document its positive-ID invariant"
+            );
+        }
+    }
+
+    #[test]
     fn export_scope_ids_document_positive_minimum() {
         let json = openapi_json();
 

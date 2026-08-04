@@ -53,6 +53,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `i32` values. Downstream update adapters must declare the associated type,
   and callers must construct the matching ID before invoking `update` or
   `update_without_events`.
+- **Breaking (Rust API):** restore confirmation and status functions now
+  accept a validated `RestoreJobID` instead of a raw `i64`. Downstream callers
+  must construct `RestoreJobID` at their input boundary. Versioned restore
+  paths reject non-positive stage IDs at the request boundary.
 
 ### Security
 

@@ -9,7 +9,7 @@ use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
 use crate::models::principal::load_principal_by_id;
 use crate::models::{
-    BackupDocument, RestoreConfirmRequest, RestoreInitiator, RestoreStageRequest,
+    BackupDocument, RestoreConfirmRequest, RestoreInitiator, RestoreJobID, RestoreStageRequest,
     RestoreStageResponse,
 };
 use crate::restores::{
@@ -72,7 +72,7 @@ pub async fn create_restore_stage(
     path = "/api/v1/restores/{restore_id}/confirm",
     tag = "restores",
     security(("bearer_auth" = [])),
-    params(("restore_id" = i64, Path, description = "Restore stage ID")),
+    params(("restore_id" = i64, Path, description = "Restore stage ID", minimum = 1)),
     request_body = RestoreConfirmRequest,
     responses(
         (status = 200, description = "Restore completed", body = RestoreStageResponse,
@@ -89,7 +89,7 @@ pub async fn create_restore_stage(
 pub async fn confirm_restore_stage(
     pool: web::Data<DbPool>,
     _admin: AdminAccess,
-    restore_id: web::Path<i64>,
+    restore_id: web::Path<RestoreJobID>,
     confirmation: web::Json<RestoreConfirmRequest>,
 ) -> Result<impl Responder, ApiError> {
     let response = confirm_restore(&pool, restore_id.into_inner(), &confirmation).await?;
@@ -101,7 +101,7 @@ pub async fn confirm_restore_stage(
     path = "/api/v1/restores/{restore_id}/status",
     tag = "restores",
     security(("restore_capability" = [])),
-    params(("restore_id" = i64, Path, description = "Restore stage ID")),
+    params(("restore_id" = i64, Path, description = "Restore stage ID", minimum = 1)),
     responses(
         (status = 200, description = "Restore status", body = RestoreStageResponse,
             headers(("Cache-Control" = String, description = "Always no-store for restore metadata"))
@@ -113,7 +113,7 @@ pub async fn confirm_restore_stage(
 #[get("/{restore_id}/status")]
 pub async fn get_restore_status(
     pool: web::Data<DbPool>,
-    restore_id: web::Path<i64>,
+    restore_id: web::Path<RestoreJobID>,
     request: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
     let capability = request
