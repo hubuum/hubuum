@@ -37,7 +37,7 @@ pub use mapping::{cedar_action, cedar_resource, cedar_user};
 /// Production permission backend that delegates to a Treetop policy server.
 ///
 /// - Connect once at startup via `TreetopPermissionBackend::connect`.
-/// - `authorize_many` batches all permission checks into a single Treetop request.
+/// - `authorize_many` sends permission checks in bounded Treetop batches.
 /// - `is_admin` dispatches to Treetop with a System resource check.
 /// - Reverse queries (`collections_user_can`) load candidates from the local DB
 ///   then filter via Treetop batch authorization.
@@ -76,61 +76,34 @@ impl TreetopPermissionBackend {
         Ok(Self { client, pool })
     }
 
-    /// Build the underlying batch authorize request for a vector of
-    /// PermissionRequests. Returns the wire request plus the per-request
-    /// span (start_index, count) so the caller can collapse decisions
-    /// back into per-request results in input order.
-    ///
-    /// Each PermissionRequest may contain multiple permissions (conjunctive
-    /// AND at our layer). We expand each request into N Cedar requests (one
-    /// per permission), then remember the spans so we can AND them back
-    /// together after Treetop returns per-Cedar-request decisions.
-    #[cfg(test)]
-    fn build_batch(
-        principal: &PrincipalRef,
-        requests: &[PermissionRequest],
-    ) -> (AuthorizeRequest, Vec<(usize, usize)>) {
-        let user = cedar_user(principal);
-        let mut batch = AuthorizeRequest::new();
-        let mut spans = Vec::with_capacity(requests.len());
-        let mut idx = 0;
-        for req in requests {
-            let resource = cedar_resource(&req.resource);
-            let count = req.permissions.len();
-            spans.push((idx, count));
-            for perm in &req.permissions {
-                batch = batch.add_request(TreetopRequest::new(
-                    user.clone(),
-                    cedar_action(*perm),
-                    resource.clone(),
-                ));
-                idx += 1;
-            }
-        }
-        (batch, spans)
-    }
-
-    async fn authorize_flat_permission_checks(
+    async fn authorize_cedar_requests(
         &self,
-        checks: &[(PrincipalRef, Permissions, ResourceRef)],
+        mut requests: Box<dyn Iterator<Item = TreetopRequest> + Send + '_>,
+        expected_count: usize,
     ) -> Result<Vec<bool>, ApiError> {
-        let mut decisions = Vec::with_capacity(checks.len());
-        for chunk in checks.chunks(MAX_CEDAR_REQUESTS_PER_BATCH) {
-            let batch = AuthorizeRequest::from_requests(chunk.iter().map(
-                |(principal, permission, resource)| {
-                    TreetopRequest::new(
-                        cedar_user(principal),
-                        cedar_action(*permission),
-                        cedar_resource(resource),
-                    )
-                },
-            ));
+        let mut decisions = Vec::with_capacity(expected_count);
+        loop {
+            let chunk = requests
+                .by_ref()
+                .take(MAX_CEDAR_REQUESTS_PER_BATCH)
+                .collect::<Vec<_>>();
+            if chunk.is_empty() {
+                break;
+            }
+            let chunk_len = chunk.len();
+            let batch = AuthorizeRequest::from_requests(chunk);
             let response = self
                 .client
                 .authorize(&batch)
                 .await
                 .map_err(treetop_to_api_error)?;
-            decisions.extend(extract_decisions(&response, chunk.len())?);
+            decisions.extend(extract_decisions(&response, chunk_len)?);
+        }
+        if decisions.len() != expected_count {
+            return Err(ApiError::InternalServerError(format!(
+                "constructed {} Treetop requests, expected {expected_count}",
+                decisions.len()
+            )));
         }
         Ok(decisions)
     }
@@ -156,6 +129,44 @@ fn load_treetop_ca_certificates(path: &Path) -> Result<Vec<Certificate>, ApiErro
         )));
     }
     Ok(certificates)
+}
+
+fn permission_check_count(requests: &[PermissionRequest]) -> Result<usize, ApiError> {
+    requests.iter().try_fold(0_usize, |count, request| {
+        count
+            .checked_add(request.permissions.len())
+            .ok_or_else(|| ApiError::InternalServerError("too many permission checks".into()))
+    })
+}
+
+fn collapse_permission_decisions(
+    requests: &[PermissionRequest],
+    cedar_decisions: &[bool],
+) -> Result<Vec<PermissionDecision>, ApiError> {
+    let expected_count = permission_check_count(requests)?;
+    if cedar_decisions.len() != expected_count {
+        return Err(ApiError::InternalServerError(format!(
+            "received {} Cedar decisions for {expected_count} permission checks",
+            cedar_decisions.len()
+        )));
+    }
+
+    let mut decision_offset = 0;
+    Ok(requests
+        .iter()
+        .map(|request| {
+            let end = decision_offset + request.permissions.len();
+            let all_allow = cedar_decisions[decision_offset..end]
+                .iter()
+                .all(|allowed| *allowed);
+            decision_offset = end;
+            if all_allow {
+                PermissionDecision::Allow
+            } else {
+                PermissionDecision::Deny
+            }
+        })
+        .collect())
 }
 
 /// Helper to extract boolean decisions from a Treetop authorize response.
@@ -239,34 +250,21 @@ impl PermissionBackend for TreetopPermissionBackend {
             return Ok(Vec::new());
         }
 
-        let mut checks = Vec::new();
-        let mut spans = Vec::with_capacity(requests.len());
-        for request in &requests {
-            let start = checks.len();
-            checks.extend(
-                request
-                    .permissions
-                    .iter()
-                    .map(|permission| (principal.clone(), *permission, request.resource.clone())),
-            );
-            spans.push((start, request.permissions.len()));
-        }
-        let cedar_request_count = checks.len();
-        let cedar_decisions = self.authorize_flat_permission_checks(&checks).await?;
-
-        // Collapse across the spans: each input PermissionRequest is Allow
-        // iff ALL its per-permission Cedar decisions are Allow.
-        let decisions: Vec<PermissionDecision> = spans
-            .into_iter()
-            .map(|(start, count)| {
-                let all_allow = (start..start + count).all(|i| cedar_decisions[i]);
-                if all_allow {
-                    PermissionDecision::Allow
-                } else {
-                    PermissionDecision::Deny
-                }
+        let cedar_request_count = permission_check_count(&requests)?;
+        let user = cedar_user(principal);
+        let cedar_requests = requests.iter().flat_map(|request| {
+            let user = user.clone();
+            let resource = cedar_resource(&request.resource);
+            request.permissions.iter().map(move |permission| {
+                TreetopRequest::new(user.clone(), cedar_action(*permission), resource.clone())
             })
-            .collect();
+        });
+        let cedar_decisions = self
+            .authorize_cedar_requests(Box::new(cedar_requests), cedar_request_count)
+            .await?;
+
+        // Each input request is allowed iff all of its contiguous Cedar checks allow it.
+        let decisions = collapse_permission_decisions(&requests, &cedar_decisions)?;
 
         let allow_count = decisions
             .iter()
@@ -327,31 +325,22 @@ impl PermissionBackend for TreetopPermissionBackend {
         principal: &PrincipalRef,
         tasks: &[ResourceRef],
     ) -> Result<Vec<PermissionDecision>, ApiError> {
-        let mut decisions = Vec::with_capacity(tasks.len());
-        for chunk in tasks.chunks(MAX_CEDAR_REQUESTS_PER_BATCH) {
-            let batch = AuthorizeRequest::from_requests(chunk.iter().map(|task| {
-                TreetopRequest::new(
-                    cedar_user(principal),
-                    Action::new("ReadTask"),
-                    cedar_resource(task),
-                )
-            }));
-            let response = self
-                .client
-                .authorize(&batch)
-                .await
-                .map_err(treetop_to_api_error)?;
-            decisions.extend(extract_decisions(&response, chunk.len())?.into_iter().map(
-                |allowed| {
-                    if allowed {
-                        PermissionDecision::Allow
-                    } else {
-                        PermissionDecision::Deny
-                    }
-                },
-            ));
-        }
-        Ok(decisions)
+        let user = cedar_user(principal);
+        let requests = tasks.iter().map(|task| {
+            TreetopRequest::new(user.clone(), Action::new("ReadTask"), cedar_resource(task))
+        });
+        Ok(self
+            .authorize_cedar_requests(Box::new(requests), tasks.len())
+            .await?
+            .into_iter()
+            .map(|allowed| {
+                if allowed {
+                    PermissionDecision::Allow
+                } else {
+                    PermissionDecision::Deny
+                }
+            })
+            .collect())
     }
 
     async fn collections_user_can(
@@ -373,20 +362,26 @@ impl PermissionBackend for TreetopPermissionBackend {
         } else {
             permissions
         };
-        let checks = all_collections
-            .iter()
-            .flat_map(|collection| {
-                tested_permissions.iter().map(move |permission| {
-                    (
-                        principal.clone(),
-                        *permission,
-                        ResourceRef::for_permission_on_collection(*permission, collection.id),
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-        let decisions = self.authorize_flat_permission_checks(&checks).await?;
         let width = tested_permissions.len();
+        let check_count = candidate_count.checked_mul(width).ok_or_else(|| {
+            ApiError::InternalServerError("too many collection permission checks".into())
+        })?;
+        let user = cedar_user(principal);
+        let requests = all_collections.iter().flat_map(|collection| {
+            let user = user.clone();
+            tested_permissions.iter().map(move |permission| {
+                let resource =
+                    ResourceRef::for_permission_on_collection(*permission, collection.id);
+                TreetopRequest::new(
+                    user.clone(),
+                    cedar_action(*permission),
+                    cedar_resource(&resource),
+                )
+            })
+        });
+        let decisions = self
+            .authorize_cedar_requests(Box::new(requests), check_count)
+            .await?;
         let rows = all_collections
             .into_iter()
             .zip(decisions.chunks(width))
@@ -457,25 +452,29 @@ impl PermissionBackend for TreetopPermissionBackend {
         }
 
         // For each group, build every Permission request against this
-        // collection. Flatten into one big batch — Treetop returns decisions
-        // in input order, so we know which group/permission each maps to.
+        // collection. Treetop returns decisions in input order, so we know
+        // which group/permission each maps to.
         let perms = Permissions::all();
         let mut effective_filter = page.filters.permissions()?;
         effective_filter.ensure_contains(permissions_filter);
-        let checks = all_groups
-            .iter()
-            .flat_map(|group| {
-                let principal = PrincipalRef::new(0, [group.id]);
-                perms.iter().map(move |permission| {
-                    (
-                        principal.clone(),
-                        *permission,
-                        ResourceRef::for_permission_on_collection(*permission, collection_id),
-                    )
-                })
+        let check_count = all_groups.len().checked_mul(perms.len()).ok_or_else(|| {
+            ApiError::InternalServerError("too many group permission checks".into())
+        })?;
+        let requests = all_groups.iter().flat_map(|group| {
+            let user = cedar_user(&PrincipalRef::new(0, [group.id]));
+            perms.iter().map(move |permission| {
+                let resource =
+                    ResourceRef::for_permission_on_collection(*permission, collection_id);
+                TreetopRequest::new(
+                    user.clone(),
+                    cedar_action(*permission),
+                    cedar_resource(&resource),
+                )
             })
-            .collect::<Vec<_>>();
-        let decisions = self.authorize_flat_permission_checks(&checks).await?;
+        });
+        let decisions = self
+            .authorize_cedar_requests(Box::new(requests), check_count)
+            .await?;
 
         let mut all_results: Vec<GroupPermission> = Vec::new();
         for (group, decisions) in all_groups.iter().zip(decisions.chunks(perms.len())) {
@@ -731,8 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn build_batch_produces_correct_spans() {
-        let principal = PrincipalRef::new(42, vec![100, 200]);
+    fn per_request_decisions_are_collapsed_conjunctively() {
         let requests = vec![
             PermissionRequest {
                 resource: ResourceRef::collection(1),
@@ -752,15 +750,31 @@ mod tests {
             },
         ];
 
-        let (batch, spans) = TreetopPermissionBackend::build_batch(&principal, &requests);
+        let decisions =
+            collapse_permission_decisions(&requests, &[true, true, false, true, false, true])
+                .unwrap();
 
-        // First request: 2 permissions -> span (0, 2)
-        // Second request: 1 permission -> span (2, 1)
-        // Third request: 3 permissions -> span (3, 3)
-        assert_eq!(spans, vec![(0, 2), (2, 1), (3, 3)]);
+        assert_eq!(
+            decisions,
+            vec![
+                PermissionDecision::Allow,
+                PermissionDecision::Deny,
+                PermissionDecision::Deny,
+            ]
+        );
+    }
 
-        // Total Cedar requests = 2 + 1 + 3 = 6
-        assert_eq!(batch.requests.len(), 6);
+    #[test]
+    fn collapsing_an_incomplete_decision_set_fails_closed() {
+        let requests = vec![PermissionRequest {
+            resource: ResourceRef::collection(1),
+            permissions: vec![Permissions::ReadCollection, Permissions::UpdateCollection],
+        }];
+
+        assert!(matches!(
+            collapse_permission_decisions(&requests, &[true]),
+            Err(ApiError::InternalServerError(_))
+        ));
     }
 
     #[test]

@@ -18,10 +18,14 @@ use crate::models::{
 };
 use crate::permissions::backend::PermissionBackend;
 use crate::permissions::local::LocalPermissionBackend;
+use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::types::{
-    AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef,
+    AuthorizationResult, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs,
+    ResourceKind, ResourceRef,
 };
-use crate::permissions::visibility::{AuthorizationPage, AuthorizedObjectIds, paginate_authorized};
+use crate::permissions::visibility::{
+    AuthorizationPage, AuthorizedObjectIds, authorize_all_candidates, paginate_authorized,
+};
 use crate::tests::{
     create_collection_fixture, create_test_group, create_test_user, get_pool_and_config,
 };
@@ -42,6 +46,65 @@ fn authorized_object_ids_reject_non_positive_values() {
         error,
         ApiError::InternalServerError("Authorized object ids must be positive".to_string())
     );
+}
+
+#[actix_test]
+async fn candidate_authorization_bounds_each_expanded_permission_batch() {
+    let backend = MockTreetopBackend::new();
+    for action in [Permissions::ReadCollection, Permissions::UpdateCollection] {
+        backend.add_rule(MockAllowRule {
+            group_id: 7,
+            action,
+            resource_kind: ResourceKind::Collection,
+            resource_id: None,
+            attrs: ResourceAttrs::default(),
+        });
+    }
+    let principal = PrincipalRef::new(1, [7]);
+    let candidates = (1..=300).collect::<Vec<_>>();
+
+    let authorized = authorize_all_candidates(
+        &backend,
+        &principal,
+        candidates.clone(),
+        None,
+        vec![Permissions::ReadCollection, Permissions::UpdateCollection],
+        |collection_id| ResourceRef::collection(*collection_id),
+    )
+    .await
+    .expect("candidate authorization should succeed");
+
+    assert_eq!(authorized, candidates);
+    assert_eq!(backend.authorization_batch_sizes(), vec![256, 44]);
+}
+
+#[actix_test]
+async fn authorized_page_preserves_order_across_batch_boundaries() {
+    let backend = MockTreetopBackend::new();
+    backend.add_rule(MockAllowRule {
+        group_id: 7,
+        action: Permissions::ReadCollection,
+        resource_kind: ResourceKind::Collection,
+        resource_id: None,
+        attrs: ResourceAttrs::default(),
+    });
+    let principal = PrincipalRef::new(1, [7]);
+
+    let page = paginate_authorized(
+        &backend,
+        &principal,
+        (1..=600).collect(),
+        None,
+        vec![Permissions::ReadCollection],
+        AuthorizationPage::new(510, 4),
+        |collection_id| ResourceRef::collection(*collection_id),
+    )
+    .await
+    .expect("authorized pagination should succeed");
+
+    assert_eq!(page.total_count, 600);
+    assert_eq!(page.rows, vec![511, 512, 513, 514]);
+    assert_eq!(backend.authorization_batch_sizes(), vec![512, 88]);
 }
 
 /// Wrapper that forces the slow-path branch by returning false from

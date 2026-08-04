@@ -74,6 +74,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (Rust API):** raw dynamic SQL components, bind values, and JSON SQL
   generation helpers are now crate-private. External query integrations should
   use the validated `JsonPredicateExt::as_json_predicate` API instead.
+- External permission-backed list filtering now bounds in-process
+  authorization working sets and avoids retaining authorized rows outside the
+  requested page, reducing peak memory use for large candidate sets.
 
 ### Security
 

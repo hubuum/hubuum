@@ -7,6 +7,9 @@ following test policies loaded.
 
 ## Fixed identifiers
 
+Upload [`test-fixture.cedar`](test-fixture.cedar) alongside the schema. The
+policies are also shown below for context.
+
 The tests use these numeric IDs (chosen high enough to avoid colliding
 with normal Hubuum data):
 
@@ -37,7 +40,7 @@ permit(
 |Test|Expects|
 |---|---|
 |`live_health_check_succeeds`|server reachable, health endpoint returns OK|
-|`live_authorize_many_preserves_request_order`|granted=Allow, missing-resource=Deny, missing-action=Deny in input order|
+|`live_authorize_many_preserves_order_across_wire_batches`|600 mixed grant/resource-denial/action-denial checks retain input order across the 512-check wire boundary|
 |`live_is_admin_distinguishes_admin_from_normal`|Group 9100 -> admin, Group 9101 -> not|
 |`live_collections_user_can_reflects_external_policy`|collection 9201 visible for Group 9101 with ReadCollection|
 |`live_group_permission_on_returns_grant_grid_for_known_group`|synthesized Permission row has `has_read_collection=true` for Group 9101 on collection 9201|
