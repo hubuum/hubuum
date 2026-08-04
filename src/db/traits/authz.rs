@@ -311,6 +311,20 @@ pub(crate) async fn load_token_scopes_for_tokens(
     pool: &DbPool,
     tokens: &[PrincipalToken],
 ) -> Result<Vec<Option<TokenScope>>, ApiError> {
+    with_connection(pool, async |conn| {
+        load_token_scopes_for_tokens_conn(conn, tokens).await
+    })
+    .await
+}
+
+/// Load complete token boundaries on an existing connection.
+///
+/// Callers that hold token row locks use this form so cascading retention
+/// deletion cannot remove scope rows between the token and scope reads.
+pub(crate) async fn load_token_scopes_for_tokens_conn(
+    conn: &mut DbConnection,
+    tokens: &[PrincipalToken],
+) -> Result<Vec<Option<TokenScope>>, ApiError> {
     use std::collections::HashMap;
 
     let mut permission_token_ids = tokens
@@ -333,67 +347,61 @@ pub(crate) async fn load_token_scopes_for_tokens(
         return Ok(vec![None; tokens.len()]);
     }
 
-    let (permissions, collection_ids, class_ids, object_ids) =
-        with_connection(pool, async |conn| -> Result<_, ApiError> {
-            let permissions = if permission_token_ids.is_empty() {
-                Vec::new()
-            } else {
-                token_scopes::table
-                    .filter(token_scopes::token_id.eq_any(&permission_token_ids))
-                    .order_by((token_scopes::token_id.asc(), token_scopes::permission.asc()))
-                    .select((token_scopes::token_id, token_scopes::permission))
-                    .load::<(i32, String)>(conn)
-                    .await?
-            };
-            let collection_ids = if resource_token_ids.is_empty() {
-                Vec::new()
-            } else {
-                token_collection_scopes::table
-                    .filter(token_collection_scopes::token_id.eq_any(&resource_token_ids))
-                    .order_by((
-                        token_collection_scopes::token_id.asc(),
-                        token_collection_scopes::collection_id.asc(),
-                    ))
-                    .select((
-                        token_collection_scopes::token_id,
-                        token_collection_scopes::collection_id,
-                    ))
-                    .load::<(i32, i32)>(conn)
-                    .await?
-            };
-            let class_ids = if resource_token_ids.is_empty() {
-                Vec::new()
-            } else {
-                token_class_scopes::table
-                    .filter(token_class_scopes::token_id.eq_any(&resource_token_ids))
-                    .order_by((
-                        token_class_scopes::token_id.asc(),
-                        token_class_scopes::class_id.asc(),
-                    ))
-                    .select((token_class_scopes::token_id, token_class_scopes::class_id))
-                    .load::<(i32, i32)>(conn)
-                    .await?
-            };
-            let object_ids = if resource_token_ids.is_empty() {
-                Vec::new()
-            } else {
-                token_object_scopes::table
-                    .filter(token_object_scopes::token_id.eq_any(&resource_token_ids))
-                    .order_by((
-                        token_object_scopes::token_id.asc(),
-                        token_object_scopes::object_id.asc(),
-                    ))
-                    .select((
-                        token_object_scopes::token_id,
-                        token_object_scopes::object_id,
-                    ))
-                    .load::<(i32, i32)>(conn)
-                    .await?
-            };
-
-            Ok((permissions, collection_ids, class_ids, object_ids))
-        })
-        .await?;
+    let permissions = if permission_token_ids.is_empty() {
+        Vec::new()
+    } else {
+        token_scopes::table
+            .filter(token_scopes::token_id.eq_any(&permission_token_ids))
+            .order_by((token_scopes::token_id.asc(), token_scopes::permission.asc()))
+            .select((token_scopes::token_id, token_scopes::permission))
+            .load::<(i32, String)>(conn)
+            .await?
+    };
+    let collection_ids = if resource_token_ids.is_empty() {
+        Vec::new()
+    } else {
+        token_collection_scopes::table
+            .filter(token_collection_scopes::token_id.eq_any(&resource_token_ids))
+            .order_by((
+                token_collection_scopes::token_id.asc(),
+                token_collection_scopes::collection_id.asc(),
+            ))
+            .select((
+                token_collection_scopes::token_id,
+                token_collection_scopes::collection_id,
+            ))
+            .load::<(i32, i32)>(conn)
+            .await?
+    };
+    let class_ids = if resource_token_ids.is_empty() {
+        Vec::new()
+    } else {
+        token_class_scopes::table
+            .filter(token_class_scopes::token_id.eq_any(&resource_token_ids))
+            .order_by((
+                token_class_scopes::token_id.asc(),
+                token_class_scopes::class_id.asc(),
+            ))
+            .select((token_class_scopes::token_id, token_class_scopes::class_id))
+            .load::<(i32, i32)>(conn)
+            .await?
+    };
+    let object_ids = if resource_token_ids.is_empty() {
+        Vec::new()
+    } else {
+        token_object_scopes::table
+            .filter(token_object_scopes::token_id.eq_any(&resource_token_ids))
+            .order_by((
+                token_object_scopes::token_id.asc(),
+                token_object_scopes::object_id.asc(),
+            ))
+            .select((
+                token_object_scopes::token_id,
+                token_object_scopes::object_id,
+            ))
+            .load::<(i32, i32)>(conn)
+            .await?
+    };
 
     let mut rows_by_token = tokens
         .iter()

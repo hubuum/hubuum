@@ -8,13 +8,13 @@ use crate::api::v1::handlers::principals::{
     PrincipalCollectionPermissions, parse_token_list_query, principal_permissions_response,
 };
 use crate::db::DbPool;
-use crate::db::traits::RetainedTokens;
+use crate::db::traits::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     Group, GroupResponse, PrincipalID, PrincipalMemberResponse, PrincipalSettings, PrincipalToken,
-    PrincipalTokenMetadata, TokenListState,
+    TokenListState,
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::traits::GroupAccessors;
@@ -93,15 +93,18 @@ pub async fn list_my_tokens(
 ) -> Result<impl Responder, ApiError> {
     let (params, state) = parse_token_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<PrincipalToken>(&params)?;
-    let (tokens, total_count) = requestor
-        .user
-        .tokens_paginated_with_total_count_for_state(&pool, &search_params, state)
+    let (metadata, total_count) =
+        retained_token_metadata_by_principal_id_paginated_with_total_count(
+            PrincipalID::new(requestor.user.id)?,
+            &pool,
+            &search_params,
+            state,
+        )
         .await?;
-    let page = finalize_page(tokens, &params)?;
-    let metadata = PrincipalTokenMetadata::load_for_tokens(&pool, &page.items).await?;
+    let page = finalize_page(metadata, &params)?;
 
     Ok(ApiResponse::paginated_items(
-        metadata,
+        page.items,
         &page.next_cursor,
         total_count,
         effective_page_limit(&params)?,

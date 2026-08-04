@@ -1,11 +1,15 @@
 use crate::db::prelude::*;
 use chrono::{NaiveDateTime, Utc};
-use diesel::sql_types::{BigInt, Bool, Timestamp};
+use diesel::sql_types::{BigInt, Bool, Integer, Timestamp};
 
+use crate::db::traits::authz::load_token_scopes_for_tokens_conn;
 use crate::db::traits::maintenance::maintenance_state_conn;
+use crate::db::traits::token::token_snapshot;
 use crate::db::{DbConnection, DbPool, with_transaction};
 use crate::errors::ApiError;
-use crate::models::TokenRetentionSettings;
+use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_events};
+use crate::models::{PrincipalToken, TokenRetentionSettings, TokenScope};
+use crate::schema::tokens;
 
 const TOKEN_RETENTION_LOCK_KEY: i64 = 4_850_188_191_125_219;
 
@@ -13,6 +17,29 @@ const TOKEN_RETENTION_LOCK_KEY: i64 = 4_850_188_191_125_219;
 struct AdvisoryLockRow {
     #[diesel(sql_type = Bool)]
     locked: bool,
+}
+
+#[derive(Debug, QueryableByName)]
+struct TokenRetentionCandidate {
+    #[diesel(sql_type = Integer)]
+    id: i32,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TokenRetentionBasis {
+    Revocation,
+    ExplicitExpiry,
+    ImplicitExpiry,
+}
+
+impl TokenRetentionBasis {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Revocation => "revocation",
+            Self::ExplicitExpiry => "explicit_expiry",
+            Self::ImplicitExpiry => "implicit_expiry",
+        }
+    }
 }
 
 pub(crate) async fn try_acquire_token_retention_lock(
@@ -58,13 +85,13 @@ async fn purge_expired_token_batch_at(
             return Ok(0);
         }
 
-        Ok(purge_expired_token_batch_conn(
+        purge_expired_token_batch_conn(
             conn,
             cutoffs.explicit_expiry(),
             cutoffs.implicit_issue(),
             batch_size,
         )
-        .await?)
+        .await
     })
     .await
 }
@@ -74,7 +101,7 @@ async fn purge_expired_token_batch_conn(
     explicit_expiry_cutoff: NaiveDateTime,
     implicit_issue_cutoff: NaiveDateTime,
     batch_size: i64,
-) -> Result<usize, diesel::result::Error> {
+) -> Result<usize, ApiError> {
     // Give revoked, explicit-expiry, and implicit-expiry index streams an
     // initial share. Then offer every stream the remaining capacity so a
     // one-sided backlog still uses the configured batch size.
@@ -106,87 +133,136 @@ async fn purge_revoked_tokens(
     conn: &mut DbConnection,
     revocation_cutoff: NaiveDateTime,
     limit: i64,
-) -> Result<usize, diesel::result::Error> {
+) -> Result<usize, ApiError> {
     if limit == 0 {
         return Ok(0);
     }
 
-    diesel::sql_query(
-        "WITH candidates AS (
-             SELECT id
-             FROM tokens
-             WHERE revoked_at IS NOT NULL
-               AND revoked_at <= $1
-             ORDER BY revoked_at ASC, id ASC
-             LIMIT $2
-             FOR UPDATE SKIP LOCKED
-         )
-         DELETE FROM tokens AS terminal
-         USING candidates
-         WHERE terminal.id = candidates.id",
+    let candidates = diesel::sql_query(
+        "SELECT id
+         FROM tokens
+         WHERE revoked_at IS NOT NULL
+           AND revoked_at <= $1
+         ORDER BY revoked_at ASC, id ASC
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED",
     )
     .bind::<Timestamp, _>(revocation_cutoff)
     .bind::<BigInt, _>(limit)
-    .execute(conn)
-    .await
+    .load::<TokenRetentionCandidate>(conn)
+    .await?;
+    purge_selected_tokens(conn, candidates, TokenRetentionBasis::Revocation).await
 }
 
 async fn purge_explicit_expired_tokens(
     conn: &mut DbConnection,
     expiry_cutoff: NaiveDateTime,
     limit: i64,
-) -> Result<usize, diesel::result::Error> {
+) -> Result<usize, ApiError> {
     if limit == 0 {
         return Ok(0);
     }
 
-    diesel::sql_query(
-        "WITH candidates AS (
-             SELECT id
-             FROM tokens
-             WHERE expires_at IS NOT NULL
-               AND expires_at <= $1
-             ORDER BY expires_at ASC, id ASC
-             LIMIT $2
-             FOR UPDATE SKIP LOCKED
-         )
-         DELETE FROM tokens AS expired
-         USING candidates
-         WHERE expired.id = candidates.id",
+    let candidates = diesel::sql_query(
+        "SELECT id
+         FROM tokens
+         WHERE expires_at IS NOT NULL
+           AND expires_at <= $1
+         ORDER BY expires_at ASC, id ASC
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED",
     )
     .bind::<Timestamp, _>(expiry_cutoff)
     .bind::<BigInt, _>(limit)
-    .execute(conn)
-    .await
+    .load::<TokenRetentionCandidate>(conn)
+    .await?;
+    purge_selected_tokens(conn, candidates, TokenRetentionBasis::ExplicitExpiry).await
 }
 
 async fn purge_implicit_expired_tokens(
     conn: &mut DbConnection,
     issue_cutoff: NaiveDateTime,
     limit: i64,
-) -> Result<usize, diesel::result::Error> {
+) -> Result<usize, ApiError> {
     if limit == 0 {
         return Ok(0);
     }
 
-    diesel::sql_query(
-        "WITH candidates AS (
-             SELECT id
-             FROM tokens
-             WHERE expires_at IS NULL
-               AND issued <= $1
-             ORDER BY issued ASC, id ASC
-             LIMIT $2
-             FOR UPDATE SKIP LOCKED
-         )
-         DELETE FROM tokens AS expired
-         USING candidates
-         WHERE expired.id = candidates.id",
+    let candidates = diesel::sql_query(
+        "SELECT id
+         FROM tokens
+         WHERE expires_at IS NULL
+           AND issued <= $1
+         ORDER BY issued ASC, id ASC
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED",
     )
     .bind::<Timestamp, _>(issue_cutoff)
     .bind::<BigInt, _>(limit)
-    .execute(conn)
-    .await
+    .load::<TokenRetentionCandidate>(conn)
+    .await?;
+    purge_selected_tokens(conn, candidates, TokenRetentionBasis::ImplicitExpiry).await
+}
+
+async fn purge_selected_tokens(
+    conn: &mut DbConnection,
+    candidates: Vec<TokenRetentionCandidate>,
+    basis: TokenRetentionBasis,
+) -> Result<usize, ApiError> {
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+
+    let token_ids = candidates
+        .into_iter()
+        .map(|candidate| candidate.id)
+        .collect::<Vec<_>>();
+    let retained = tokens::table
+        .filter(tokens::id.eq_any(&token_ids))
+        .order_by(tokens::id.asc())
+        .load::<PrincipalToken>(conn)
+        .await?;
+    let scopes = load_token_scopes_for_tokens_conn(conn, &retained).await?;
+    let events = retained
+        .iter()
+        .zip(scopes.iter())
+        .map(|(token, scope)| token_purge_event(token, scope.as_ref(), basis))
+        .collect::<Result<Vec<_>, _>>()?;
+    emit_events(conn, &events).await?;
+
+    let deleted = diesel::delete(tokens::table.filter(tokens::id.eq_any(&token_ids)))
+        .execute(conn)
+        .await?;
+    if deleted != token_ids.len() {
+        return Err(ApiError::InternalServerError(format!(
+            "Token retention selected {} locked rows but deleted {deleted}",
+            token_ids.len()
+        )));
+    }
+    Ok(deleted)
+}
+
+fn token_purge_event(
+    token: &PrincipalToken,
+    scope: Option<&TokenScope>,
+    basis: TokenRetentionBasis,
+) -> Result<NewEvent, ApiError> {
+    Ok(NewEvent::new(
+        EntityType::Token,
+        Action::Purged,
+        ActorKind::System,
+        format!(
+            "Token {} purged after retention for principal {}",
+            token.id, token.principal_id
+        ),
+    )?
+    .with_entity_id(token.id)
+    .with_entity_name(token.name.clone().unwrap_or_else(|| token.id.to_string()))
+    .with_before(token_snapshot(token, scope)?)
+    .with_metadata(serde_json::json!({
+        "principal_id": token.principal_id,
+        "retention_basis": basis.as_str(),
+    })))
 }
 
 #[cfg(test)]
@@ -195,13 +271,17 @@ mod tests {
     use diesel::sql_types::{Bool, Text};
     use rstest::rstest;
 
+    use crate::db::traits::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
     use crate::db::traits::user::DeleteUserRecord;
     use crate::db::with_connection;
+    use crate::events::{Action, ActorKind, EntityType, Event};
+    use crate::models::search::QueryOptions;
     use crate::models::{
         MIN_TOKEN_RETENTION_PURGE_BATCH_SIZE, Permissions, PrincipalID,
-        PrincipalTokenCreateRequest, Token, TokenScope,
+        PrincipalTokenCreateRequest, PrincipalTokenMetadata, Token, TokenID, TokenListState,
+        TokenScope,
     };
-    use crate::schema::{token_scopes, tokens};
+    use crate::schema::{events, token_scopes, tokens};
     use crate::tests::{TestMutex, create_test_user, lock_test_mutex, test_mutex};
 
     use super::*;
@@ -276,6 +356,30 @@ mod tests {
         .await
         .unwrap()
             == 1
+    }
+
+    async fn wait_until_token_row_is_locked(pool: &DbPool, token_id: i32) {
+        for _ in 0..100 {
+            let result = with_connection(pool, async |conn| {
+                diesel::sql_query("SELECT id FROM tokens WHERE id = $1 FOR UPDATE NOWAIT")
+                    .bind::<Integer, _>(token_id)
+                    .load::<TokenRetentionCandidate>(conn)
+                    .await
+            })
+            .await;
+            if result.is_err() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("retained metadata read did not lock token {token_id}");
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum RetainedMetadataRead {
+        Point,
+        List,
+        Batch,
     }
 
     #[tokio::test]
@@ -467,7 +571,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn purge_cascades_token_scope_rows() {
+    async fn purge_cascades_scope_rows_after_persisting_an_exact_audit_snapshot() {
         let _lock = lock_test_mutex(&TOKEN_RETENTION_TEST_LOCK).await;
         let pool = crate::tests::get_test_pool();
         let user = create_test_user(&pool).await;
@@ -505,6 +609,134 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(scope_rows, 0);
+
+        let purge_event = with_connection(&pool, async |conn| {
+            events::table
+                .filter(events::entity_type.eq(EntityType::Token.as_str()))
+                .filter(events::entity_id.eq(Some(token_id)))
+                .filter(events::action.eq(Action::Purged.as_str()))
+                .first::<Event>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(purge_event.actor_kind, ActorKind::System.as_str());
+        assert_eq!(
+            purge_event.before.as_ref().unwrap()["scope"]["permissions"],
+            serde_json::json!(["ReadCollection"])
+        );
+        assert_eq!(purge_event.metadata["retention_basis"], "explicit_expiry");
+        assert!(purge_event.before.as_ref().unwrap().get("token").is_none());
+        user.delete_user_record_without_events(&pool).await.unwrap();
+    }
+
+    #[rstest]
+    #[case::point(RetainedMetadataRead::Point)]
+    #[case::list(RetainedMetadataRead::List)]
+    #[case::batch(RetainedMetadataRead::Batch)]
+    #[tokio::test]
+    async fn retained_metadata_scope_projection_blocks_concurrent_purge(
+        #[case] read: RetainedMetadataRead,
+    ) {
+        let _lock = lock_test_mutex(&TOKEN_RETENTION_TEST_LOCK).await;
+        let pool = crate::tests::get_test_pool();
+        let user = create_test_user(&pool).await;
+        let now = Utc::now().naive_utc();
+        let scope =
+            TokenScope::from_request_parts(Some(vec![Permissions::ReadCollection]), None).unwrap();
+        let raw = PrincipalTokenCreateRequest::new(PrincipalID::new(user.id).unwrap())
+            .scope(scope)
+            .create(&pool, None)
+            .await
+            .unwrap();
+        let token_hash = raw.storage_hash();
+        let persisted_token = with_connection(&pool, async |conn| {
+            tokens::table
+                .filter(tokens::token.eq(token_hash))
+                .first::<PrincipalToken>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        let token_id = persisted_token.id;
+        set_persisted_expiry(&pool, &raw, now + Duration::days(1)).await;
+        set_revoked_at(&pool, &raw, now - Duration::days(TEST_RETENTION_DAYS + 1)).await;
+
+        let blocker_pool = pool.clone();
+        let (table_locked_tx, table_locked_rx) = tokio::sync::oneshot::channel();
+        let (release_table_tx, release_table_rx) = tokio::sync::oneshot::channel();
+        let blocker = tokio::spawn(async move {
+            with_transaction(&blocker_pool, async |conn| -> Result<(), ApiError> {
+                diesel::sql_query("LOCK TABLE token_scopes IN ACCESS EXCLUSIVE MODE")
+                    .execute(conn)
+                    .await?;
+                table_locked_tx.send(()).unwrap();
+                release_table_rx.await.unwrap();
+                Ok(())
+            })
+            .await
+            .unwrap();
+        });
+        table_locked_rx.await.unwrap();
+
+        let reader_pool = pool.clone();
+        let principal_id = PrincipalID::new(user.id).unwrap();
+        let reader = tokio::spawn(async move {
+            match read {
+                RetainedMetadataRead::Point => vec![
+                    PrincipalTokenMetadata::load_for_principal_token(
+                        &reader_pool,
+                        principal_id,
+                        TokenID::new(token_id).unwrap(),
+                    )
+                    .await
+                    .unwrap(),
+                ],
+                RetainedMetadataRead::List => {
+                    retained_token_metadata_by_principal_id_paginated_with_total_count(
+                        principal_id,
+                        &reader_pool,
+                        &QueryOptions {
+                            filters: Vec::new(),
+                            sort: Vec::new(),
+                            limit: None,
+                            cursor: None,
+                            include_total: false,
+                        },
+                        TokenListState::Revoked,
+                    )
+                    .await
+                    .unwrap()
+                    .0
+                }
+                RetainedMetadataRead::Batch => {
+                    PrincipalTokenMetadata::load_for_tokens(&reader_pool, &[persisted_token])
+                        .await
+                        .unwrap()
+                }
+            }
+        });
+        wait_until_token_row_is_locked(&pool, token_id).await;
+
+        let deleted_while_reading = purge_expired_token_batch_at(&pool, settings(100), now)
+            .await
+            .unwrap();
+        assert_eq!(deleted_while_reading, 0);
+        assert!(token_exists(&pool, &raw).await);
+
+        release_table_tx.send(()).unwrap();
+        blocker.await.unwrap();
+        let metadata = reader.await.unwrap();
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(
+            metadata[0].scope.as_ref().unwrap().permissions(),
+            Some([Permissions::ReadCollection].as_slice())
+        );
+
+        let deleted_after_read = purge_expired_token_batch_at(&pool, settings(100), now)
+            .await
+            .unwrap();
+        assert_eq!(deleted_after_read, 1);
         user.delete_user_record_without_events(&pool).await.unwrap();
     }
 

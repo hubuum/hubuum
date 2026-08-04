@@ -240,20 +240,12 @@ impl PrincipalTokenMetadata {
     where
         C: BackendContext + ?Sized,
     {
-        let token = crate::db::traits::token::principal_token_by_id_for_principal_db(
+        crate::db::traits::token::principal_token_metadata_by_id_for_principal_db(
             backend.db_pool(),
             token_id.id(),
             principal_id.id(),
         )
-        .await?;
-        Self::load_for_tokens(backend, std::slice::from_ref(&token))
-            .await?
-            .pop()
-            .ok_or_else(|| {
-                ApiError::InternalServerError(
-                    "Token metadata projection returned no token".to_string(),
-                )
-            })
+        .await
     }
 
     pub(crate) fn from_token_and_scope(
@@ -526,6 +518,45 @@ where
         )
     })?;
     Ok(IssuedToken::new(token, expires_at))
+}
+
+impl CursorPaginated for PrincipalTokenMetadata {
+    fn supports_sort(field: &FilterField) -> bool {
+        PrincipalToken::supports_sort(field)
+    }
+
+    fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorValue::Integer(self.id.id() as i64),
+            FilterField::Name => match &self.name {
+                Some(name) => CursorValue::String(name.clone()),
+                None => CursorValue::Null,
+            },
+            FilterField::IssuedAt => CursorValue::DateTime(self.issued),
+            FilterField::ExpiresAt => match self.expires_at {
+                Some(value) => CursorValue::DateTime(value),
+                None => CursorValue::Null,
+            },
+            FilterField::LastUsedAt => match self.last_used_at {
+                Some(value) => CursorValue::DateTime(value),
+                None => CursorValue::Null,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for tokens",
+                    field
+                )));
+            }
+        })
+    }
+
+    fn default_sort() -> Vec<SortParam> {
+        PrincipalToken::default_sort()
+    }
+
+    fn tie_breaker_sort() -> Vec<SortParam> {
+        PrincipalToken::tie_breaker_sort()
+    }
 }
 
 impl CursorPaginated for PrincipalToken {

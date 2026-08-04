@@ -17,9 +17,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   token into a fresh secret with the same descriptive metadata and exact scope.
   Token audit snapshots now retain that hash-free scope and link renewals to
   their source token.
+- Token retention now writes a system-authored `token.purged` audit event with
+  the exact final hash-free token and scope snapshot before deleting each token,
+  including legacy rows whose earlier events predate complete scope snapshots.
 
 ### Changed
 
+- **Breaking (Rust API):** `hubuum_events_core::Action` now includes `Purged`.
+  Downstream exhaustive matches must handle the new variant. Token purge events
+  use this action and identify their retention basis in event metadata.
 - **Breaking (Rust API):** `PrincipalTokenMetadata` now includes the
   server-derived `active` and `expired` lifecycle fields. Downstream struct
   literals must initialize both fields; token-management clients should prefer

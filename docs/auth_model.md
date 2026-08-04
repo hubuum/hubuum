@@ -158,11 +158,15 @@ requires a batch size of at least 10 and checks hourly by default, controlled by
 its scope rows through their foreign keys; task provenance retains the task and
 clears its nullable submitted-token reference.
 
-Token creation, renewal, and revocation audit events do not contain the raw
-token or its stored HMAC hash. Their immutable snapshots include the exact
-permission and resource scope, so the audit history remains meaningful after
-the token row and its scope rows are purged. Audit-event retention is configured
-independently from token retention.
+Token creation, renewal, revocation, and purge audit events do not contain the
+raw token or its stored HMAC hash. Immediately before each physical deletion,
+the purge transaction writes a system-authored `token.purged` event whose
+immutable `before` snapshot includes the exact permission and resource scope
+and whose metadata identifies the retention basis. This also preserves a final
+complete snapshot for legacy tokens whose earlier events did not record scope.
+If the event cannot be persisted, the transaction rolls back without deleting
+the token. Audit-event retention is configured independently from token
+retention.
 
 ---
 

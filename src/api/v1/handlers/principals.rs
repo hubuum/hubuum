@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 use crate::api::openapi::{ApiErrorResponse, LoginResponse};
 use crate::api::response::ApiResponse;
 use crate::db::DbPool;
-use crate::db::traits::RetainedTokens;
+use crate::db::traits::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
 use crate::db::traits::service_account::{
     is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
 };
@@ -263,14 +263,18 @@ pub async fn list_tokens(
 
     let (params, state) = parse_token_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<PrincipalToken>(&params)?;
-    let (tokens, total_count) = pid
-        .tokens_paginated_with_total_count_for_state(&pool, &search_params, state)
+    let (metadata, total_count) =
+        retained_token_metadata_by_principal_id_paginated_with_total_count(
+            pid,
+            &pool,
+            &search_params,
+            state,
+        )
         .await?;
-    let page = finalize_page(tokens, &params)?;
-    let metadata = PrincipalTokenMetadata::load_for_tokens(&pool, &page.items).await?;
+    let page = finalize_page(metadata, &params)?;
 
     Ok(ApiResponse::paginated_items(
-        metadata,
+        page.items,
         &page.next_cursor,
         total_count,
         effective_page_limit(&params)?,

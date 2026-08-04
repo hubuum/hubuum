@@ -41,3 +41,35 @@ pub async fn emit_event(
     }
     Ok(event)
 }
+
+/// Append a bounded batch of events in one statement.
+///
+/// Retention workers use this to make an immutable audit snapshot part of the
+/// same transaction as each bounded deletion batch without issuing one insert
+/// statement per row.
+pub(crate) async fn emit_events(
+    conn: &mut crate::db::DbConnection,
+    new_events: &[NewEvent],
+) -> Result<Vec<Event>, DieselError> {
+    if new_events.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let persisted = diesel::insert_into(events)
+        .values(new_events)
+        .get_results::<Event>(conn)
+        .await?;
+    for event in &persisted {
+        if let (Ok(entity_type), Ok(action)) = (event.entity_type(), event.action()) {
+            crate::logger::log_operation_mutation(
+                entity_type,
+                action,
+                event.entity_id,
+                event.actor_user_id,
+                event.request_id,
+                event.correlation_id.as_deref(),
+            );
+        }
+    }
+    Ok(persisted)
+}

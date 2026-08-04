@@ -304,7 +304,7 @@ impl EntityType {
 
 /// The action an event records. Actions are **non-uniform** per entity type:
 /// relations have no `Updated`; `permission` is grant/revoke; `user_group` is
-/// add/remove; `token` is created/revoked; `remote_target` adds `Invoked`;
+/// add/remove; `token` is created/revoked/purged; `remote_target` adds `Invoked`;
 /// `task` is lifecycle-only (see #87).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -316,6 +316,7 @@ pub enum Action {
     Removed,
     Granted,
     Revoked,
+    Purged,
     Invoked,
     // task lifecycle (#87)
     Queued,
@@ -340,6 +341,7 @@ impl Action {
             Action::Removed => "removed",
             Action::Granted => "granted",
             Action::Revoked => "revoked",
+            Action::Purged => "purged",
             Action::Invoked => "invoked",
             Action::Queued => "queued",
             Action::Started => "started",
@@ -363,6 +365,7 @@ impl Action {
             "removed" => Ok(Action::Removed),
             "granted" => Ok(Action::Granted),
             "revoked" => Ok(Action::Revoked),
+            "purged" => Ok(Action::Purged),
             "invoked" => Ok(Action::Invoked),
             "queued" => Ok(Action::Queued),
             "started" => Ok(Action::Started),
@@ -400,7 +403,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::ClassRelation | E::ObjectRelation => &[A::Created, A::Deleted],
         E::UserGroup => &[A::Added, A::Removed],
         E::Permission => &[A::Granted, A::Revoked],
-        E::Token => &[A::Created, A::Revoked],
+        E::Token => &[A::Created, A::Revoked, A::Purged],
         E::Task => &[
             A::Queued,
             A::Started,
@@ -836,6 +839,7 @@ mod tests {
             Action::Removed,
             Action::Granted,
             Action::Revoked,
+            Action::Purged,
             Action::Invoked,
             Action::Queued,
             Action::Started,
@@ -871,9 +875,10 @@ mod tests {
     }
 
     #[test]
-    fn token_has_no_updated_or_deleted() {
+    fn token_has_lifecycle_actions_but_no_updated_or_deleted() {
         assert!(is_valid_pair(EntityType::Token, Action::Created));
         assert!(is_valid_pair(EntityType::Token, Action::Revoked));
+        assert!(is_valid_pair(EntityType::Token, Action::Purged));
         assert!(!is_valid_pair(EntityType::Token, Action::Updated));
         assert!(!is_valid_pair(EntityType::Token, Action::Deleted));
     }

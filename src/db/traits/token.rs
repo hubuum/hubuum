@@ -1,6 +1,6 @@
 use crate::db::prelude::*;
 
-use crate::db::traits::authz::{load_token_scope_conn, load_token_scopes_for_tokens};
+use crate::db::traits::authz::{load_token_scope_conn, load_token_scopes_for_tokens_conn};
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
@@ -46,9 +46,44 @@ pub(crate) async fn principal_token_metadata_db(
     pool: &DbPool,
     tokens: &[PrincipalToken],
 ) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let token_ids = tokens.iter().map(|token| token.id).collect::<Vec<_>>();
+    with_transaction(pool, async |conn| -> Result<_, ApiError> {
+        let locked = crate::schema::tokens::table
+            .filter(crate::schema::tokens::id.eq_any(&token_ids))
+            .order_by(crate::schema::tokens::id.asc())
+            .for_update()
+            .load::<PrincipalToken>(conn)
+            .await?;
+        let locked_by_id = locked
+            .into_iter()
+            .map(|token| (token.id, token))
+            .collect::<std::collections::HashMap<_, _>>();
+        let ordered = token_ids
+            .iter()
+            .map(|token_id| {
+                locked_by_id.get(token_id).cloned().ok_or_else(|| {
+                    ApiError::NotFound(format!(
+                        "Token {token_id} was purged before metadata could be loaded"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        principal_token_metadata_conn(conn, &ordered).await
+    })
+    .await
+}
+
+pub(crate) async fn principal_token_metadata_conn(
+    conn: &mut DbConnection,
+    tokens: &[PrincipalToken],
+) -> Result<Vec<PrincipalTokenMetadata>, ApiError> {
     let now = chrono::Utc::now().naive_utc();
     let active_after = crate::models::configured_token_lifetime()?.cutoff_from(now)?;
-    let scopes = load_token_scopes_for_tokens(pool, tokens).await?;
+    let scopes = load_token_scopes_for_tokens_conn(conn, tokens).await?;
     tokens
         .iter()
         .zip(scopes)
@@ -58,24 +93,33 @@ pub(crate) async fn principal_token_metadata_db(
         .collect()
 }
 
-pub async fn principal_token_by_id_for_principal_db(
+pub async fn principal_token_metadata_by_id_for_principal_db(
     pool: &DbPool,
     token_id_value: i32,
     principal_id_value: i32,
-) -> Result<PrincipalToken, ApiError> {
+) -> Result<PrincipalTokenMetadata, ApiError> {
     use crate::schema::tokens::dsl::{id, principal_id, tokens};
 
-    with_connection(pool, async |conn| {
-        tokens
+    with_transaction(pool, async |conn| -> Result<_, ApiError> {
+        let token = tokens
             .filter(id.eq(token_id_value))
             .filter(principal_id.eq(principal_id_value))
+            .for_update()
             .first::<PrincipalToken>(conn)
-            .await
+            .await?;
+        principal_token_metadata_conn(conn, std::slice::from_ref(&token))
+            .await?
+            .pop()
+            .ok_or_else(|| {
+                ApiError::InternalServerError(
+                    "Token metadata projection returned no token".to_string(),
+                )
+            })
     })
     .await
 }
 
-fn token_snapshot(
+pub(crate) fn token_snapshot(
     token: &PrincipalToken,
     scope: Option<&TokenScope>,
 ) -> Result<serde_json::Value, ApiError> {
