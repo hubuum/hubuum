@@ -161,6 +161,7 @@ pub async fn update_group(
     requestor: AdminAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
+    let group_id = group_id.into_inner();
     let target_id = group_id.id();
 
     debug!(
@@ -172,7 +173,7 @@ pub async fn update_group(
     let event_context = requestor.event_context(&req);
     let updated = updated_group
         .into_inner()
-        .save(target_id, &pool, Some(&event_context))
+        .save(group_id, &pool, Some(&event_context))
         .await?;
     Ok(ApiResponse::new(
         updated.to_response(&pool).await?,

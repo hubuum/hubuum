@@ -41,6 +41,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Downstream callers must migrate to the builder and stop invoking the private
   helpers. Operators must correct zero, inconsistent, or unrepresentable
   worker-duration values before upgrading; those values now fail startup.
+- **Breaking (Rust API):** `UpdateUser::save`,
+  `UpdateUser::save_without_events`, `UpdateGroup::save`, and
+  `UpdateGroup::save_without_events` now accept validated `UserID` or
+  `GroupID` values instead of raw `i32` identifiers. Library callers must
+  construct the matching ID newtype before invoking these domain update
+  methods.
 
 ### Security
 

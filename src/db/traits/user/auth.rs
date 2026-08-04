@@ -672,6 +672,7 @@ impl LoadUserRecord for UserID {
 mod tests {
     use super::*;
     use crate::db::traits::Status;
+    use crate::models::user::UserID;
     use crate::tests::{TestScope, create_user_with_params};
 
     async fn user_with_tokens(scope: &TestScope, label: &str) -> (User, Vec<Token>) {
@@ -724,7 +725,7 @@ mod tests {
             proper_name: None,
             email: None,
         }
-        .save(user.id, &scope.pool, Some(&context))
+        .save(UserID::new(user.id).unwrap(), &scope.pool, Some(&context))
         .await
         .unwrap();
 
@@ -743,7 +744,7 @@ mod tests {
             proper_name: Some("Updated Name".to_string()),
             email: None,
         }
-        .save(user.id, &scope.pool, Some(&context))
+        .save(UserID::new(user.id).unwrap(), &scope.pool, Some(&context))
         .await
         .unwrap();
 
