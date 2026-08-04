@@ -84,6 +84,15 @@
 - Call out every breaking change explicitly in both the pull request description and its `[Unreleased]` changelog entry, including the upgrade or migration action users must take.
 - When squash-merging a pull request, use its detailed PR description as the squash commit body. Preserve the substantive summary, rationale, behavior notes, and issue references, but remove verification-only sections such as test commands, checklists, and `## Verification` before merging.
 
+### Stacked Pull Requests
+
+- Use GitHub stacked pull requests when two or more changes in this repository form a strict linear dependency and each layer remains a focused, independently reviewable change. Keep foundational schema, types, and shared interfaces lower in the stack, with dependent behavior above them.
+- Keep unrelated, merely sequential, fork-based, or branching work as standalone pull requests targeting `main`. Do not create a stack just to group a campaign of independent changes or reduce the CI queue.
+- Treat stacks as a public-preview GitHub feature. Use the official `github/gh-stack` extension (`gh extension install github/gh-stack`) and check the current GitHub documentation before scripting stack operations.
+- For a new stack, use `gh stack init`, add layers with `gh stack add`, publish with `gh stack submit`, and maintain it with `gh stack view`, `gh stack sync`, and `gh stack rebase`. To adopt an existing correctly ordered chain, use `gh stack link <bottom-pr> <next-pr> ... <top-pr>`.
+- Expect required reviews and pull-request CI to run for every layer. Only optimize duplicate expensive jobs with `github.event.pull_request.stack` after confirming that every required check still resolves correctly.
+- Merge from the bottom upward, or use `gh stack merge` or the stack-aware asynchronous merge API for partial or whole-stack merges. Do not use the legacy pull-request merge API for a stack. Preserve the repository's required squash commit body; when automation needs exact text, pass an explicit commit title and message through the stack-aware asynchronous merge API.
+
 ## Change Discipline
 
 - Keep edits scoped to the task at hand.
