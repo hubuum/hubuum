@@ -1072,16 +1072,18 @@ macro_rules! filter_fields {
         }
 
         impl FilterField {
-            pub fn table_field(&self) -> &'static str {
+            /// Return the JSONB column addressed by this query field.
+            ///
+            /// Most filter fields map to typed SQL columns and therefore have no
+            /// JSONB column. Keeping that distinction in the return type prevents
+            /// callers from turning an ordinary parsed field into a panic.
+            pub fn json_column(&self) -> Option<&'static str> {
                 match self {
-                    FilterField::JsonSchema => "json_schema",
+                    FilterField::JsonSchema => Some("json_schema"),
                     FilterField::JsonData
                     | FilterField::JsonDataFrom
-                    | FilterField::JsonDataTo => "data",
-                    FilterField::Computed(_) => {
-                        panic!("computed query fields should not be used as table fields")
-                    }
-                    _ => panic!("{:?} should not be used as a table field", self),
+                    | FilterField::JsonDataTo => Some("data"),
+                    _ => None,
                 }
             }
 
@@ -1330,6 +1332,18 @@ mod tests {
             std::mem::size_of::<FilterField>() <= 2 * std::mem::size_of::<usize>(),
             "FilterField should keep computed sort state behind indirection"
         );
+    }
+
+    #[test]
+    fn filter_field_json_column_mapping_is_total() {
+        assert_eq!(FilterField::JsonSchema.json_column(), Some("json_schema"));
+        assert_eq!(FilterField::JsonData.json_column(), Some("data"));
+        assert_eq!(FilterField::JsonDataFrom.json_column(), Some("data"));
+        assert_eq!(FilterField::JsonDataTo.json_column(), Some("data"));
+        assert_eq!(FilterField::Id.json_column(), None);
+
+        let computed = FilterField::from_str("computed.shared.rank").unwrap();
+        assert_eq!(computed.json_column(), None);
     }
 
     #[test]

@@ -321,7 +321,10 @@ impl ParsedQueryParamExt for ParsedQueryParam {
     }
 
     fn as_json_sql(&self) -> Result<SQLComponent, ApiError> {
-        self.as_json_sql_for_field_expr(self.field.table_field())
+        let json_column = self.field.json_column().ok_or_else(|| {
+            ApiError::InternalServerError(format!("Attempt to filter '{}' as JSON!", self.field))
+        })?;
+        self.as_json_sql_for_field_expr(json_column)
     }
 
     fn as_json_sql_for_field_expr(&self, jsonb_field_expr: &str) -> Result<SQLComponent, ApiError> {
@@ -1882,9 +1885,23 @@ mod test {
     // Covers docs/querying.md "JSON filtering" (`json_data` aliases target object JSON payload data).
     #[test]
     fn docs_json_data_aliases_map_to_object_data_column() {
-        assert_eq!(FilterField::JsonData.table_field(), "data");
-        assert_eq!(FilterField::JsonDataFrom.table_field(), "data");
-        assert_eq!(FilterField::JsonDataTo.table_field(), "data");
+        assert_eq!(FilterField::JsonData.json_column(), Some("data"));
+        assert_eq!(FilterField::JsonDataFrom.json_column(), Some("data"));
+        assert_eq!(FilterField::JsonDataTo.json_column(), Some("data"));
+    }
+
+    #[test]
+    fn non_json_field_cannot_abort_json_sql_generation() {
+        let error = pq(
+            "name",
+            SearchOperator::Equals { is_negated: false },
+            "value",
+        )
+        .as_json_sql()
+        .unwrap_err();
+
+        assert!(matches!(error, ApiError::InternalServerError(_)));
+        assert_eq!(error.to_string(), "Attempt to filter 'name' as JSON!");
     }
 
     #[test]
