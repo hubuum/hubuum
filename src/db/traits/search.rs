@@ -2,7 +2,7 @@ use diesel::expression::{AppearsOnTable, Expression, SelectableExpression, Valid
 use diesel::pg::Pg;
 use diesel::query_builder::{AstPass, QueryFragment, QueryId};
 use diesel::result::QueryResult;
-use diesel::sql_types::{BigInt, Bool, Integer, Text, Timestamp};
+use diesel::sql_types::{Bool, Integer, Text, Timestamp};
 use std::iter::from_fn;
 
 use crate::errors::ApiError;
@@ -53,7 +53,6 @@ fn bind_sql_value<'b>(out: &mut AstPass<'_, 'b, Pg>, value: &'b SQLValue) -> Que
     match value {
         SQLValue::String(value) => out.push_bind_param::<Text, _>(value),
         SQLValue::Integer(value) => out.push_bind_param::<Integer, _>(value),
-        SQLValue::BigInt(value) => out.push_bind_param::<BigInt, _>(value),
         SQLValue::Date(value) => out.push_bind_param::<Timestamp, _>(value),
         SQLValue::Boolean(value) => out.push_bind_param::<Bool, _>(value),
     }

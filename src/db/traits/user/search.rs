@@ -188,7 +188,6 @@ macro_rules! bind_raw_sql_query {
         for bind_var in spec.bind_variables {
             query = match bind_var {
                 SQLValue::Integer(i) => query.bind::<diesel::sql_types::Integer, _>(i),
-                SQLValue::BigInt(i) => query.bind::<diesel::sql_types::BigInt, _>(i),
                 SQLValue::String(s) => query.bind::<diesel::sql_types::Text, _>(s),
                 SQLValue::Boolean(b) => query.bind::<diesel::sql_types::Bool, _>(b),
                 SQLValue::Date(d) => query.bind::<diesel::sql_types::Timestamp, _>(d),

@@ -45,8 +45,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   unconditional `overwrite`, and numeric `if_revision` write conditions that
   are rechecked by queued workers under row locks.
 
-### Changed
-
 - **Breaking (HTTP API):** entity JSON now contains `revision`; principal
   settings return `{revision, settings}`, SQL permission reads return
   `{collection_id, revision, permissions}`, and group member lists return

@@ -89,7 +89,6 @@ pub(crate) struct SQLComponent {
 pub(crate) enum SQLValue {
     String(String),
     Integer(i32),
-    BigInt(i64),
     Date(NaiveDateTime),
     Boolean(bool),
 }

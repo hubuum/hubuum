@@ -616,7 +616,7 @@ mod tests {
         .await;
         let response = assert_response_status(response, StatusCode::OK).await;
         let tokens: Vec<PrincipalTokenMetadata> = test::read_body_json(response).await;
-        let token = tokens.first().unwrap();
+        let token = tokens.as_slice().first().unwrap();
 
         let response = get_request(
             &context.pool,
@@ -741,10 +741,11 @@ mod tests {
         )
         .await;
         let response = assert_response_status(response, StatusCode::OK).await;
-        let point: PrincipalTokenMetadata = test::read_body_json(response).await;
+        let point_body: serde_json::Value = test::read_body_json(response).await;
+        assert!(point_body.get("active").is_none());
+        assert!(point_body.get("expired").is_none());
+        let point: PrincipalTokenPointResponse = serde_json::from_value(point_body).unwrap();
         assert_eq!(point.id.id(), token_id);
-        assert!(!point.active);
-        assert!(point.expired);
     }
 
     #[rstest]

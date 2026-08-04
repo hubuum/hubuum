@@ -411,7 +411,7 @@ fn validate_event_revisions(document: &BackupDocument) -> Result<(), ApiError> {
             let action = event.get("action").and_then(Value::as_str);
             let valid_shape = match action {
                 Some("created" | "queued" | "added") => !before && after,
-                Some("deleted" | "removed") => before && !after,
+                Some("deleted" | "removed" | "purged") => before && !after,
                 _ => before && after,
             };
             if !valid_shape {
@@ -1118,9 +1118,12 @@ mod tests {
         MAX_PERSONAL_DEFINITIONS, MAX_SHARED_DEFINITIONS, RESTORE_RECONCILIATION_GRACE_SECONDS,
         RestoreSettings, confirmation_is_stale, restore_capability_matches,
         restore_error_for_storage, sha256, validate_computed_field_definitions,
+        validate_event_revisions,
     };
     use crate::errors::ApiError;
-    use crate::models::{BackupDocument, BackupManifest, BackupState, CURRENT_BACKUP_VERSION};
+    use crate::models::{
+        BackupDocument, BackupHistory, BackupManifest, BackupState, CURRENT_BACKUP_VERSION,
+    };
 
     fn computed_definition(class_id: i32, owner_id: Option<i32>, key: String) -> serde_json::Value {
         json!({
@@ -1150,6 +1153,22 @@ mod tests {
                 sections: BTreeMap::from([("computed_field_definitions".to_string(), definitions)]),
             },
             history: None,
+            manifest: BackupManifest::default(),
+        }
+    }
+
+    fn document_with_event(event: serde_json::Value) -> BackupDocument {
+        BackupDocument {
+            backup_version: CURRENT_BACKUP_VERSION,
+            created_at: NaiveDate::from_ymd_opt(2026, 7, 16)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            source_version: "test".to_string(),
+            state: BackupState::default(),
+            history: Some(BackupHistory {
+                sections: BTreeMap::from([("events".to_string(), vec![event])]),
+            }),
             manifest: BackupManifest::default(),
         }
     }
@@ -1239,6 +1258,23 @@ mod tests {
                 .unwrap_err();
 
         assert!(error.to_string().contains("duplicate"));
+    }
+
+    #[rstest]
+    #[case::deleted("deleted")]
+    #[case::removed("removed")]
+    #[case::purged("purged")]
+    fn restore_accepts_revisioned_deletion_event_shapes(#[case] action: &str) {
+        let event = json!({
+            "schema_version": 2,
+            "action": action,
+            "before": {"revision": 7},
+            "after": null,
+            "before_revision": 7,
+            "after_revision": null,
+        });
+
+        assert!(validate_event_revisions(&document_with_event(event)).is_ok());
     }
 
     #[rstest]

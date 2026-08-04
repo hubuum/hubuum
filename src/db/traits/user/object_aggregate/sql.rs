@@ -62,9 +62,6 @@ macro_rules! bind_object_aggregate_query {
                 ObjectAggregateBindValue::Query(crate::models::search::SQLValue::Integer(
                     value,
                 )) => query.bind::<diesel::sql_types::Integer, _>(value),
-                ObjectAggregateBindValue::Query(crate::models::search::SQLValue::BigInt(value)) => {
-                    query.bind::<diesel::sql_types::BigInt, _>(value)
-                }
                 ObjectAggregateBindValue::Query(crate::models::search::SQLValue::Date(value)) => {
                     query.bind::<diesel::sql_types::Timestamp, _>(value)
                 }
