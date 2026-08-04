@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- `HUBUUM_TREETOP_CA_CERT` now loads PEM CA certificate bundles from regular
+  files up to 4 MiB into the Treetop client's trust store, enabling private PKI
+  without disabling TLS certificate validation.
+
 ### Changed
 
 - **Breaking (Rust API):** permission-controller group parameters and

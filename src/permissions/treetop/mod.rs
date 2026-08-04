@@ -1,7 +1,9 @@
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::db::prelude::*;
 use async_trait::async_trait;
+use reqwest::Certificate;
 use treetop_client::{
     Action, AuthorizeBriefResponse, AuthorizeRequest, BatchResult, Client, DecisionBrief,
     Request as TreetopRequest,
@@ -17,6 +19,7 @@ use crate::models::{
 };
 use crate::pagination::{known_count_or_skipped, paginate_in_memory};
 use crate::schema::collections;
+use crate::utilities::bounded_file::{MAX_CERTIFICATE_BUNDLE_BYTES, read_bounded_regular_file};
 
 use super::backend::PermissionBackend;
 use super::observability::{record_authorize_many, record_is_admin, record_reverse_query};
@@ -51,12 +54,6 @@ impl TreetopPermissionBackend {
     /// Returns a fatal `ApiError` if the server is unreachable or unhealthy —
     /// per the spec, we fail-closed-fatal on startup health failures.
     pub async fn connect(url: &str, cfg: &AppConfig, pool: DbPool) -> Result<Self, ApiError> {
-        // Wire AppConfig timeouts + the dev-only accept-invalid-certs flag
-        // through to the upstream ClientBuilder. CA certificate loading
-        // (HUBUUM_TREETOP_CA_CERT) requires constructing a reqwest::Certificate,
-        // and reqwest is not a direct dependency of this crate yet. If an
-        // operator sets that env var we surface an explicit error rather than
-        // silently ignoring it.
         let mut builder = Client::builder(url)
             .connect_timeout(Duration::from_millis(cfg.treetop_connect_timeout_ms))
             .request_timeout(Duration::from_millis(cfg.treetop_request_timeout_ms));
@@ -65,13 +62,10 @@ impl TreetopPermissionBackend {
             builder = builder.danger_accept_invalid_certs(true);
         }
 
-        if cfg.treetop_ca_cert.is_some() {
-            return Err(ApiError::InternalServerError(
-                "HUBUUM_TREETOP_CA_CERT is set but CA certificate loading is not yet wired \
-                 — the project would need to take a direct dependency on reqwest to construct \
-                 the Certificate. Unset the env var or add the wiring."
-                    .to_string(),
-            ));
+        if let Some(path) = cfg.treetop_ca_cert.as_deref() {
+            for certificate in load_treetop_ca_certificates(Path::new(path))? {
+                builder = builder.add_root_certificate(certificate);
+            }
         }
 
         let client = builder.build().map_err(treetop_to_api_error)?;
@@ -140,6 +134,28 @@ impl TreetopPermissionBackend {
         }
         Ok(decisions)
     }
+}
+
+fn load_treetop_ca_certificates(path: &Path) -> Result<Vec<Certificate>, ApiError> {
+    let pem = read_bounded_regular_file(
+        path,
+        "Treetop CA certificate bundle",
+        MAX_CERTIFICATE_BUNDLE_BYTES,
+    )
+    .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
+    let certificates = Certificate::from_pem_bundle(&pem).map_err(|error| {
+        ApiError::InternalServerError(format!(
+            "Failed to parse Treetop CA certificate bundle '{}': {error}",
+            path.display()
+        ))
+    })?;
+    if certificates.is_empty() {
+        return Err(ApiError::InternalServerError(format!(
+            "Treetop CA certificate bundle '{}' contains no certificates",
+            path.display()
+        )));
+    }
+    Ok(certificates)
 }
 
 /// Helper to extract boolean decisions from a Treetop authorize response.
@@ -601,9 +617,50 @@ impl PermissionBackend for TreetopPermissionBackend {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use serde_json::{Value, from_value, json};
+    use uuid::Uuid;
 
     use super::*;
+
+    const TEST_CA_PEM: &str = concat!(
+        "-----BEGIN CERTIFICATE-----\n",
+        "MIIBtjCCAVugAwIBAgITBmyf1XSXNmY/Owua2eiedgPySjAKBggqhkjOPQQDAjA5\n",
+        "MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6b24g\n",
+        "Um9vdCBDQSAzMB4XDTE1MDUyNjAwMDAwMFoXDTQwMDUyNjAwMDAwMFowOTELMAkG\n",
+        "A1UEBhMCVVMxDzANBgNVBAoTBkFtYXpvbjEZMBcGA1UEAxMQQW1hem9uIFJvb3Qg\n",
+        "Q0EgMzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABCmXp8ZBf8ANm+gBG1bG8lKl\n",
+        "ui2yEujSLtf6ycXYqm0fc4E7O5hrOXwzpcVOho6AF2hiRVd9RFgdszflZwjrZt6j\n",
+        "QjBAMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgGGMB0GA1UdDgQWBBSr\n",
+        "ttvXBp43rDCGB5Fwx5zEGbF4wDAKBggqhkjOPQQDAgNJADBGAiEA4IWSoxe3jfkr\n",
+        "BqWTrBqYaGFy+uGh0PsceGCmQ5nFuMQCIQCcAu/xlJyzlvnrxir4tiz+OpAUFteM\n",
+        "YyRIHN8wfdVoOw==\n",
+        "-----END CERTIFICATE-----\n",
+    );
+
+    struct TestCaBundle {
+        path: PathBuf,
+    }
+
+    impl TestCaBundle {
+        fn new(contents: &[u8]) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("hubuum-treetop-ca-{}.pem", Uuid::new_v4()));
+            std::fs::write(&path, contents).expect("test CA bundle should be written");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestCaBundle {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 
     fn response(results: Value, successful: usize, failed: usize) -> AuthorizeBriefResponse {
         from_value(json!({
@@ -613,6 +670,64 @@ mod tests {
             "failed": failed
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn configured_ca_bundle_loads_pem_certificates() {
+        let contents = format!("{TEST_CA_PEM}{TEST_CA_PEM}");
+        let bundle = TestCaBundle::new(contents.as_bytes());
+
+        let certificates =
+            load_treetop_ca_certificates(bundle.path()).expect("test CA bundle should load");
+
+        assert_eq!(certificates.len(), 2);
+    }
+
+    #[test]
+    fn configured_ca_bundle_rejects_files_without_certificates() {
+        let bundle = TestCaBundle::new(b"");
+
+        let error = load_treetop_ca_certificates(bundle.path())
+            .expect_err("empty test CA bundle should be rejected");
+
+        assert_eq!(
+            error,
+            ApiError::InternalServerError(format!(
+                "Treetop CA certificate bundle '{}' contains no certificates",
+                bundle.path().display()
+            ))
+        );
+    }
+
+    #[test]
+    fn configured_ca_bundle_rejects_malformed_pem() {
+        let bundle = TestCaBundle::new(b"not a certificate");
+
+        let error = load_treetop_ca_certificates(bundle.path())
+            .expect_err("malformed test CA bundle should be rejected");
+
+        assert_eq!(
+            error,
+            ApiError::InternalServerError(format!(
+                "Treetop CA certificate bundle '{}' contains no certificates",
+                bundle.path().display()
+            ))
+        );
+    }
+
+    #[test]
+    fn configured_ca_bundle_rejects_oversized_files() {
+        let contents = vec![b'x'; MAX_CERTIFICATE_BUNDLE_BYTES + 1];
+        let bundle = TestCaBundle::new(&contents);
+
+        let error = load_treetop_ca_certificates(bundle.path())
+            .expect_err("oversized test CA bundle should be rejected");
+
+        assert!(matches!(
+            error,
+            ApiError::InternalServerError(message)
+                if message.contains("exceeds the 4194304-byte limit")
+        ));
     }
 
     #[test]

@@ -845,7 +845,7 @@ pub struct AppConfig {
     )]
     pub treetop_request_timeout_ms: u64,
 
-    /// Optional path to a CA certificate to trust for the Treetop client.
+    /// Optional path to a PEM CA certificate bundle to trust for the Treetop client.
     #[clap(long, env = "HUBUUM_TREETOP_CA_CERT", default_value = None)]
     pub treetop_ca_cert: Option<String>,
 
