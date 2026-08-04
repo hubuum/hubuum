@@ -198,6 +198,18 @@ async fn shared_patch_requires_the_current_definition_revision(
     )
     .await;
     let response = assert_response_status(response, StatusCode::CREATED).await;
+    assert!(
+        !response
+            .headers()
+            .contains_key(actix_web::http::header::ETAG),
+        "the composite mutation body must not use the definition ETag"
+    );
+    let created: serde_json::Value = test::read_body_json(response).await;
+    let field_id = created["definition"]["id"].as_i64().unwrap();
+
+    let endpoint = format!("{endpoint}/{field_id}");
+    let response = get_request(&test_context.pool, &test_context.admin_token, &endpoint).await;
+    let response = assert_response_status(response, StatusCode::OK).await;
     let etag = response
         .headers()
         .get(actix_web::http::header::ETAG)
@@ -205,10 +217,7 @@ async fn shared_patch_requires_the_current_definition_revision(
         .to_str()
         .unwrap()
         .to_string();
-    let created: serde_json::Value = test::read_body_json(response).await;
-    let field_id = created["definition"]["id"].as_i64().unwrap();
 
-    let endpoint = format!("{endpoint}/{field_id}");
     let response = patch_request_with_headers(
         &test_context.pool,
         &test_context.admin_token,

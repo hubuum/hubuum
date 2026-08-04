@@ -64,6 +64,46 @@ pub struct ServiceAccountResponse {
     pub revision: ResourceRevision,
 }
 
+/// Strongly tagged point representation of a service account.
+///
+/// The identity-scope name is omitted because that independently revisioned
+/// resource is not covered by the service account's principal revision.
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
+pub struct ServiceAccountPointResponse {
+    pub id: i32,
+    pub identity_scope_id: i32,
+    pub name: String,
+    pub description: String,
+    pub owner_group_id: i32,
+    pub created_by: Option<i32>,
+    pub disabled_at: Option<chrono::NaiveDateTime>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
+}
+
+impl ServiceAccountPointResponse {
+    pub fn from_parts(
+        service_account: ServiceAccount,
+        identity_scope_id: i32,
+        name: String,
+        revision: ResourceRevision,
+    ) -> Self {
+        Self {
+            id: service_account.id,
+            identity_scope_id,
+            name,
+            description: service_account.description,
+            owner_group_id: service_account.owner_group_id,
+            created_by: service_account.created_by,
+            disabled_at: service_account.disabled_at,
+            created_at: service_account.created_at,
+            updated_at: service_account.updated_at,
+            revision,
+        }
+    }
+}
+
 impl ServiceAccountResponse {
     pub fn from_parts(
         sa: &ServiceAccount,

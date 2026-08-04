@@ -37,17 +37,10 @@ async fn sql_collection_permission_set(
     pool: &AppContext,
     collection: &Collection,
 ) -> Result<CollectionPermissionSet, ApiError> {
-    let permissions = collection_model::groups_on(
-        pool,
-        collection.clone(),
-        Vec::new(),
-        parse_query_parameter("")?,
-    )
-    .await?;
     crate::db::traits::collection::collection_permission_set_from_backend(
         pool.db_pool(),
         collection.id,
-        permissions,
+        None,
     )
     .await
 }
@@ -540,14 +533,17 @@ pub async fn get_collection_group_permissions(
     );
 
     if pool.permission_backend().uses_sql_permission_store() {
-        let permission = collection_model::group_on(&pool, collection.id, group_id.id()).await?;
-        let group = group_id.group(pool.db_pool()).await?;
         let permission_set = crate::db::traits::collection::collection_permission_set_from_backend(
             pool.db_pool(),
             collection.id,
-            vec![GroupPermission { group, permission }],
+            Some(group_id.id()),
         )
         .await?;
+        if permission_set.permissions.is_empty() {
+            return Err(ApiError::NotFound(
+                "Permission record not found".to_string(),
+            ));
+        }
         return Ok(Either::Left(ApiResponse::ok_revisioned(permission_set)?));
     }
 
@@ -1355,12 +1351,10 @@ pub async fn get_collection_as_of(
         .await?;
     }
 
-    let etag = row.entity_tag()?;
     let principal_names =
         resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
-    Ok(ApiResponse::new_with_etag(
+    Ok(ApiResponse::new(
         HistoryResponse::new(row, &principal_names),
         StatusCode::OK,
-        etag,
     ))
 }

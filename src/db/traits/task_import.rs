@@ -1928,7 +1928,7 @@ pub async fn apply_permissions_db(
 
     let permission_list = PermissionsList::new(permissions.to_vec());
     match existing {
-        Some(_) => {
+        Some(existing) => {
             let mut update = if replace_existing {
                 UpdatePermission {
                     has_read_collection: Some(false),
@@ -1968,13 +1968,18 @@ pub async fn apply_permissions_db(
             };
             apply_permission_list_to_update(&mut update, permissions);
 
-            diesel::update(
-                permissions_table
-                    .filter(collection_id.eq(collection_id_value))
-                    .filter(group_id.eq(group_id_value)),
+            crate::db::updated_or_current(
+                diesel::update(
+                    permissions_table
+                        .filter(collection_id.eq(collection_id_value))
+                        .filter(group_id.eq(group_id_value)),
+                )
+                .set(&update)
+                .get_result::<Permission>(conn)
+                .await
+                .optional(),
+                async move || Ok(existing),
             )
-            .set(&update)
-            .get_result::<Permission>(conn)
             .await
             .map_err(ApiError::from)
         }

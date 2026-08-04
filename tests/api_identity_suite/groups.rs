@@ -585,6 +585,66 @@ mod tests {
         assert!(persisted.revision > initial.revision);
         assert_eq!(returned.revision, persisted.revision);
         assert_eq!(response_etag, returned.entity_tag().unwrap().to_string());
+        assert!(returned.principal.is_none());
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn membership_delete_returns_the_surviving_membership_revision(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let group = create_test_group(&context.pool).await;
+        let user = create_test_user(&context.pool).await;
+        let endpoint = format!("{GROUPS_ENDPOINT}/{}/members/{}", group.id, user.id);
+
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            &endpoint,
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_response_status(response, StatusCode::CREATED).await;
+
+        let scope = crate::db::traits::identity::identity_scope_by_name(
+            &context.pool,
+            crate::models::LOCAL_IDENTITY_SCOPE,
+        )
+        .await
+        .unwrap();
+        with_connection(&context.pool, async |conn| {
+            use crate::schema::group_membership_sources;
+            diesel::insert_into(group_membership_sources::table)
+                .values((
+                    group_membership_sources::principal_id.eq(user.id),
+                    group_membership_sources::group_id.eq(group.id),
+                    group_membership_sources::source.eq(crate::models::EXTERNAL_MEMBERSHIP_SOURCE),
+                    group_membership_sources::source_scope_id.eq(scope.id),
+                    group_membership_sources::source_key.eq("surviving-source"),
+                ))
+                .execute(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        let before =
+            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
+
+        let response = delete_request(&context.pool, &context.admin_token, &endpoint).await;
+        let response = assert_response_status(response, StatusCode::NO_CONTENT).await;
+        let response_etag = header_value(&response, actix_web::http::header::ETAG.as_str())
+            .expect("surviving membership ETag");
+        let surviving =
+            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
+
+        assert!(surviving.revision > before.revision);
+        assert_eq!(response_etag, surviving.entity_tag().unwrap().to_string());
+        assert_ne!(response_etag, before.entity_tag().unwrap().to_string());
     }
 
     #[rstest]

@@ -387,9 +387,9 @@ impl_id_etag!(
 impl_id_etag!(crate::models::Group, EtagResourceKind::Group);
 impl_id_etag!(crate::models::GroupPointResponse, EtagResourceKind::Group);
 impl_id_etag!(crate::models::Principal, EtagResourceKind::Principal);
-impl_id_etag!(crate::models::UserResponse, EtagResourceKind::User);
+impl_id_etag!(crate::models::UserPointResponse, EtagResourceKind::User);
 impl_id_etag!(
-    crate::models::ServiceAccountResponse,
+    crate::models::ServiceAccountPointResponse,
     EtagResourceKind::ServiceAccount
 );
 impl_id_etag!(crate::models::Collection, EtagResourceKind::Collection);

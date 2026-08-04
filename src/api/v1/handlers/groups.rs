@@ -296,8 +296,7 @@ pub async fn get_group_member(
         requestor = requestor.user.id
     );
 
-    let response =
-        PrincipalMemberResponse::from_membership(&pool, membership, Some(principal)).await?;
+    let response = PrincipalMemberResponse::point(membership);
     ApiResponse::ok_revisioned(response)
 }
 
@@ -355,8 +354,7 @@ pub async fn add_group_member(
         group.add_member(&pool, &principal, Some(&event_context)),
     )
     .await?;
-    let response =
-        PrincipalMemberResponse::from_membership(&pool, membership, Some(principal)).await?;
+    let response = PrincipalMemberResponse::point(membership);
     ApiResponse::revisioned(response, StatusCode::CREATED)
 }
 
@@ -403,5 +401,9 @@ pub async fn delete_group_member(
         group.remove_member(&principal, &pool, Some(&event_context)),
     )
     .await?;
-    Ok(ApiResponse::no_content_with_etag(etag))
+    match crate::db::traits::group::principal_group_by_ids(&pool, principal.id, group.id).await {
+        Ok(surviving) => Ok(ApiResponse::no_content_with_etag(surviving.entity_tag()?)),
+        Err(ApiError::NotFound(_)) => Ok(ApiResponse::no_content()),
+        Err(error) => Err(error),
+    }
 }

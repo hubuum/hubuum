@@ -1,5 +1,7 @@
 -- Remove every trigger that depends on the revision contract before dropping
 -- its functions or columns.
+DROP INDEX IF EXISTS computed_field_class_revision_id_idx;
+
 DO $$
 DECLARE
     table_name TEXT;

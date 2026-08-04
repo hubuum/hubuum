@@ -60,6 +60,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   timestamps, and canonical tagged token points omit `last_used_at`, because
   those operational fields do not advance resource revisions. The fields
   remain available in untagged group and token lists.
+- **Breaking (HTTP API):** canonical tagged user and service-account points use
+  stable `identity_scope_id` values and omit independently mutable provider and
+  synchronization metadata. Tagged group-membership points omit the expanded
+  principal, and SQL permission-set entries expose permission rows with stable
+  `group_id` values instead of expanded groups. Rich metadata remains available
+  from the corresponding untagged list responses.
+- Actor-expanded historical snapshots and shared computed-field mutation
+  responses are intentionally untagged because their composite fields do not
+  share one revision owner. Fetch the canonical point resource before a later
+  conditional mutation.
 - **Breaking (computed fields):** mutation bodies and delete queries no longer
   accept `expected_revision`. Obtain the opaque ETag from a computed-field
   point route and send it in `If-Match` instead.

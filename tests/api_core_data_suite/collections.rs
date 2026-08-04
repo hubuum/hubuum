@@ -3,6 +3,7 @@ mod tests {
     use crate::models::{
         Collection, CollectionID, CollectionPermissionSet, GroupID, GroupPermission, GroupResponse,
         NewCollectionWithAssignee, NewGroup, Permission, Permissions, UpdateCollection,
+        UpdateGroup,
     };
 
     use crate::pagination::{
@@ -370,7 +371,7 @@ mod tests {
         let permission_set: CollectionPermissionSet = test::read_body_json(resp).await;
         let permissions = permission_set.permissions;
         assert_eq!(permissions.len(), 1);
-        let np = permissions[0].permission;
+        let np = permissions[0];
         assert_eq!(np.group_id, admin_group.id);
         assert_eq!(np.collection_id, created_collection.id);
         assert!(np.has_read_collection);
@@ -389,7 +390,6 @@ mod tests {
         assert!(np.has_create_template);
         assert!(np.has_update_template);
         assert!(np.has_delete_template);
-        assert_eq!(permissions[0].group, admin_group);
 
         // Revoke create object permission
         let endpoint = &format!(
@@ -409,7 +409,7 @@ mod tests {
         let permission_set: CollectionPermissionSet = test::read_body_json(resp).await;
         let permissions = permission_set.permissions;
         assert_eq!(permissions.len(), 1);
-        let np = permissions[0].permission;
+        let np = permissions[0];
         assert_eq!(np.group_id, admin_group.id);
         assert_eq!(np.collection_id, created_collection.id);
         assert!(np.has_read_collection);
@@ -428,12 +428,48 @@ mod tests {
         assert!(np.has_create_template);
         assert!(np.has_update_template);
         assert!(np.has_delete_template);
-        assert_eq!(permissions[0].group, admin_group);
 
         created_collection
             .delete_without_events(&context.pool)
             .await
             .unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn permission_set_etag_excludes_mutable_group_fields(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let fixture = context
+            .collection_fixture("stable_permission_set_etag")
+            .await;
+        let endpoint = format!(
+            "{COLLECTION_ENDPOINT}/{}/permissions",
+            fixture.collection.id
+        );
+
+        let response = get_request(&context.pool, &context.admin_token, &endpoint).await;
+        let response = assert_response_status(response, http::StatusCode::OK).await;
+        let original_etag = header_value(&response, http::header::ETAG.as_str()).unwrap();
+        let original_body: serde_json::Value = test::read_body_json(response).await;
+        assert!(original_body["permissions"][0].get("group").is_none());
+
+        UpdateGroup {
+            groupname: Some(context.scoped_name("renamed_permission_owner")),
+        }
+        .save_without_events(GroupID::new(fixture.owner_group.id).unwrap(), &context.pool)
+        .await
+        .unwrap();
+
+        let response = get_request(&context.pool, &context.admin_token, &endpoint).await;
+        let response = assert_response_status(response, http::StatusCode::OK).await;
+        let renamed_etag = header_value(&response, http::header::ETAG.as_str()).unwrap();
+        let renamed_body: serde_json::Value = test::read_body_json(response).await;
+
+        assert_eq!(renamed_body, original_body);
+        assert_eq!(renamed_etag, original_etag);
+        fixture.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -484,7 +520,7 @@ mod tests {
 
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
         let permission_set: CollectionPermissionSet = test::read_body_json(resp).await;
-        let np: Permission = permission_set.permissions[0].permission;
+        let np: Permission = permission_set.permissions[0];
         assert_eq!(np.group_id, normal_group.id);
         assert_eq!(np.collection_id, collection_fixture.collection.id);
         assert!(np.has_read_collection);
@@ -763,8 +799,8 @@ mod tests {
         let permissions = permission_set.permissions;
 
         assert!(permissions.len() >= 2);
-        assert!(permissions.iter().any(|p| p.group.id == group_one.id));
-        assert!(permissions.iter().any(|p| p.group.id == group_two.id));
+        assert!(permissions.iter().any(|p| p.group_id == group_one.id));
+        assert!(permissions.iter().any(|p| p.group_id == group_two.id));
 
         group_one
             .delete_without_events(&context.pool)
@@ -1159,6 +1195,10 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
+        assert!(
+            !resp.headers().contains_key(http::header::ETAG),
+            "actor-expanded history snapshots must remain untagged"
+        );
         let snap: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(snap["description"], created.description);
 

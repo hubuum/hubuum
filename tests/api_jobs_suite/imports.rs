@@ -11,14 +11,15 @@ mod tests {
 
     use crate::db::{DbPool, with_connection};
     use crate::models::{
-        CURRENT_IMPORT_VERSION, CollectionKey, GroupKey, HubuumClassRelation, IdentityScopeKey,
-        ImportAtomicity, ImportClassInput, ImportClassRelationInput, ImportCollectionInput,
-        ImportCollectionPermissionInput, ImportCollisionPolicy, ImportEventSubscriptionInput,
-        ImportGraph, ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput,
-        ImportMode, ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy,
-        ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest, ImportTaskResultResponse,
-        ImportWriteCondition, NewTaskRecord, ObjectRelationLimit, Permissions, ResourceRevision,
-        RestoreTimestamps, TaskEventResponse, TaskKind, TaskResponse, TaskStatus,
+        CURRENT_IMPORT_VERSION, CollectionKey, GroupID, GroupKey, HubuumClassRelation,
+        IdentityScopeKey, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
+        ImportCollectionInput, ImportCollectionPermissionInput, ImportCollisionPolicy,
+        ImportEventSubscriptionInput, ImportGraph, ImportGroupInput, ImportGroupMembershipInput,
+        ImportIdentityScopeInput, ImportMode, ImportObjectInput, ImportObjectRelationInput,
+        ImportPermissionPolicy, ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest,
+        ImportTaskResultResponse, ImportWriteCondition, NewTaskRecord, ObjectRelationLimit,
+        Permissions, ResourceRevision, RestoreTimestamps, TaskEventResponse, TaskKind,
+        TaskResponse, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::schema::collections::dsl::{
@@ -42,6 +43,7 @@ mod tests {
         TestContext, create_test_group, create_test_service_account, ensure_admin_group,
         scoped_token, service_account_token, test_context,
     };
+    use crate::traits::PermissionController;
 
     const IMPORTS_ENDPOINT: &str = "/api/v1/imports";
     type TimestampPair = (NaiveDateTime, NaiveDateTime);
@@ -432,6 +434,51 @@ mod tests {
                 vec![(initial.created_at(), initial.updated_at()); 7]
             );
         }
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn unchanged_permission_overwrite_returns_the_current_row(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let fixture = context
+            .collection_fixture("permission_overwrite_noop")
+            .await;
+        let group = create_test_group(&context.pool).await;
+        fixture
+            .collection
+            .grant_one(
+                &context.pool,
+                GroupID::new(group.id).unwrap(),
+                Permissions::ReadCollection,
+            )
+            .await
+            .unwrap();
+        let before =
+            crate::models::collection::group_on(&context.pool, fixture.collection.id, group.id)
+                .await
+                .unwrap();
+
+        let returned = with_connection(&context.pool, async |conn| {
+            crate::db::traits::task_import::apply_permissions_db(
+                conn,
+                fixture.collection.id,
+                group.id,
+                &[Permissions::ReadCollection],
+                true,
+                None,
+                true,
+            )
+            .await
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(returned.id, before.id);
+        assert_eq!(returned.updated_at, before.updated_at);
+        fixture.cleanup().await.unwrap();
+        group.delete_without_events(&context.pool).await.unwrap();
     }
 
     #[rstest]

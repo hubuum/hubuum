@@ -14,8 +14,8 @@ use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, ManagementAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountResponse,
-    ServiceAccountWithName, UpdateServiceAccount,
+    NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountPointResponse,
+    ServiceAccountResponse, ServiceAccountWithName, UpdateServiceAccount,
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::traits::{AuthzSubject, CanDelete, CanUpdate, SelfAccessors};
@@ -49,15 +49,8 @@ async fn ensure_can_manage(
 async fn response_for(
     pool: &DbPool,
     sa: &ServiceAccount,
-) -> Result<ServiceAccountResponse, ApiError> {
-    let (identity_scope, name, revision) =
-        crate::db::traits::principal::principal_identity_scope_and_name(pool, sa.id).await?;
-    Ok(ServiceAccountResponse::from_parts(
-        sa,
-        identity_scope,
-        name,
-        revision,
-    ))
+) -> Result<ServiceAccountPointResponse, ApiError> {
+    crate::db::traits::principal::load_service_account_point_response(pool, sa.id).await
 }
 
 #[utoipa::path(
@@ -67,7 +60,7 @@ async fn response_for(
     security(("bearer_auth" = [])),
     request_body = NewServiceAccount,
     responses(
-        (status = 201, description = "Service account created", body = ServiceAccountResponse),
+        (status = 201, description = "Service account created", body = ServiceAccountPointResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
@@ -166,7 +159,7 @@ pub async fn list_service_accounts(
     security(("bearer_auth" = [])),
     params(("service_account_id" = i32, Path, description = "Service account id")),
     responses(
-        (status = 200, description = "Service account", body = ServiceAccountResponse),
+        (status = 200, description = "Service account", body = ServiceAccountPointResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Not found", body = ApiErrorResponse)
@@ -191,7 +184,7 @@ pub async fn get_service_account(
     params(("service_account_id" = i32, Path, description = "Service account id")),
     request_body = UpdateServiceAccount,
     responses(
-        (status = 200, description = "Updated service account", body = ServiceAccountResponse),
+        (status = 200, description = "Updated service account", body = ServiceAccountPointResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Not found", body = ApiErrorResponse)
@@ -242,7 +235,7 @@ pub async fn update_service_account(
     security(("bearer_auth" = [])),
     params(("service_account_id" = i32, Path, description = "Service account id")),
     responses(
-        (status = 200, description = "Service account disabled", body = ServiceAccountResponse),
+        (status = 200, description = "Service account disabled", body = ServiceAccountPointResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Not found", body = ApiErrorResponse)

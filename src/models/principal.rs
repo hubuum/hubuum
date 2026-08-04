@@ -274,6 +274,19 @@ pub struct PrincipalMemberResponse {
 }
 
 impl PrincipalMemberResponse {
+    /// Build the strongly tagged membership point representation without
+    /// embedding independently mutable principal data.
+    pub fn point(membership: crate::models::PrincipalGroup) -> Self {
+        Self {
+            principal_id: membership.principal_id,
+            group_id: membership.group_id,
+            created_at: membership.created_at,
+            updated_at: membership.updated_at,
+            revision: membership.revision,
+            principal: None,
+        }
+    }
+
     pub async fn from_membership<C>(
         backend: &C,
         membership: crate::models::PrincipalGroup,
@@ -301,12 +314,8 @@ impl PrincipalMemberResponse {
             None
         };
         Ok(Self {
-            principal_id: membership.principal_id,
-            group_id: membership.group_id,
-            created_at: membership.created_at,
-            updated_at: membership.updated_at,
-            revision: membership.revision,
             principal,
+            ..Self::point(membership)
         })
     }
 

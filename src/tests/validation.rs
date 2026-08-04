@@ -150,3 +150,11 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
         .await
         .expect("Failed to delete collection");
 }
+
+#[test]
+fn resource_revision_rollback_drops_the_persistent_computed_field_index() {
+    const DOWN_MIGRATION: &str =
+        include_str!("../../migrations/2026-08-03-000001_resource_revisions/down.sql");
+
+    assert!(DOWN_MIGRATION.contains("DROP INDEX IF EXISTS computed_field_class_revision_id_idx;"));
+}

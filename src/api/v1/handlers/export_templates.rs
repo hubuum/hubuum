@@ -587,12 +587,10 @@ pub async fn get_template_as_of(
         .await?;
     }
 
-    let etag = row.entity_tag()?;
     let principal_names =
         resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
-    Ok(ApiResponse::new_with_etag(
+    Ok(ApiResponse::new(
         HistoryResponse::new(row, &principal_names),
         StatusCode::OK,
-        etag,
     ))
 }

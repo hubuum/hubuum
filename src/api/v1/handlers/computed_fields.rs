@@ -165,8 +165,7 @@ pub async fn create_shared_computed_field(
         &event_context,
     )
     .await?;
-    let tag_resource = response.definition.clone();
-    ApiResponse::new_with_resource_etag(response, StatusCode::CREATED, &tag_resource)
+    Ok(ApiResponse::new(response, StatusCode::CREATED))
 }
 
 #[utoipa::path(
@@ -228,8 +227,7 @@ pub async fn patch_shared_computed_field(
         ),
     )
     .await?;
-    let tag_resource = response.definition.clone();
-    ApiResponse::new_with_resource_etag(response, StatusCode::OK, &tag_resource)
+    Ok(ApiResponse::new(response, StatusCode::OK))
 }
 
 #[utoipa::path(
@@ -287,14 +285,13 @@ pub async fn delete_shared_computed_field(
         ),
     )
     .await?;
-    ApiResponse::new_with_resource_etag(
+    Ok(ApiResponse::new(
         ComputedFieldDeleteResponse {
             deleted_definition_id: field_id.id(),
             state,
         },
         StatusCode::ACCEPTED,
-        &definition,
-    )
+    ))
 }
 
 async fn preview_source(

@@ -21,7 +21,9 @@ pub struct GroupPermission {
 pub struct CollectionPermissionSet {
     pub collection_id: i32,
     pub revision: ResourceRevision,
-    pub permissions: Vec<GroupPermission>,
+    /// ACL rows contain stable group identifiers without embedding mutable
+    /// group representations that are outside this aggregate's revision.
+    pub permissions: Vec<Permission>,
 }
 
 #[derive(Serialize, Deserialize, Clone, ToSchema)]

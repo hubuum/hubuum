@@ -6,7 +6,9 @@ use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, NewEvent, emit_event};
 use crate::models::{
-    NewPrincipal, Principal, PrincipalKind, PrincipalSettings, PrincipalSettingsResponse, User,
+    NewPrincipal, Principal, PrincipalKind, PrincipalSettings, PrincipalSettingsResponse,
+    ServiceAccount, ServiceAccountPointResponse, User, UserPointResponse, UserResponse,
+    UserWithName,
 };
 
 pub trait InsertPrincipalRecord {
@@ -217,6 +219,102 @@ pub async fn load_principal_with_user(
             .await
     })
     .await
+}
+
+/// Load the rich, untagged user representation in one database snapshot.
+pub async fn load_user_response(
+    pool: &DbPool,
+    user_id_value: i32,
+) -> Result<UserResponse, ApiError> {
+    use crate::schema::{identity_scopes, principals, users};
+
+    let row = with_connection(pool, async |conn| {
+        users::table
+            .inner_join(principals::table.on(principals::id.eq(users::id)))
+            .inner_join(
+                identity_scopes::table.on(identity_scopes::id.eq(principals::identity_scope_id)),
+            )
+            .filter(users::id.eq(user_id_value))
+            .select((
+                User::as_select(),
+                identity_scopes::name,
+                identity_scopes::provider_kind,
+                principals::name,
+                principals::provider_managed,
+                principals::last_sync_attempted_at,
+                principals::last_sync_success_at,
+                principals::revision,
+            ))
+            .first(conn)
+            .await
+    })
+    .await?;
+
+    Ok(UserResponse::from(UserWithName::from_tuple(row)))
+}
+
+/// Load the user point body and its validator revision in one SQL statement.
+pub async fn load_user_point_response(
+    pool: &DbPool,
+    user_id_value: i32,
+) -> Result<UserPointResponse, ApiError> {
+    use crate::schema::{principals, users};
+
+    let (user, identity_scope_id, name, provider_managed, revision) =
+        with_connection(pool, async |conn| {
+            users::table
+                .inner_join(principals::table.on(principals::id.eq(users::id)))
+                .filter(users::id.eq(user_id_value))
+                .select((
+                    User::as_select(),
+                    principals::identity_scope_id,
+                    principals::name,
+                    principals::provider_managed,
+                    principals::revision,
+                ))
+                .first(conn)
+                .await
+        })
+        .await?;
+
+    Ok(UserPointResponse::from_parts(
+        user,
+        identity_scope_id,
+        name,
+        provider_managed,
+        revision,
+    ))
+}
+
+/// Load the service-account point body and revision in one SQL statement.
+pub async fn load_service_account_point_response(
+    pool: &DbPool,
+    service_account_id_value: i32,
+) -> Result<ServiceAccountPointResponse, ApiError> {
+    use crate::schema::{principals, service_accounts};
+
+    let (service_account, identity_scope_id, name, revision) =
+        with_connection(pool, async |conn| {
+            service_accounts::table
+                .inner_join(principals::table.on(principals::id.eq(service_accounts::id)))
+                .filter(service_accounts::id.eq(service_account_id_value))
+                .select((
+                    ServiceAccount::as_select(),
+                    principals::identity_scope_id,
+                    principals::name,
+                    principals::revision,
+                ))
+                .first(conn)
+                .await
+        })
+        .await?;
+
+    Ok(ServiceAccountPointResponse::from_parts(
+        service_account,
+        identity_scope_id,
+        name,
+        revision,
+    ))
 }
 
 pub struct PrincipalIdentityMetadata {

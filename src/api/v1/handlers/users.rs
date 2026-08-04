@@ -6,7 +6,9 @@ use crate::db::{DbPool, with_revision_precondition_scope};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, AdminOrSelfAccess};
 use crate::models::search::parse_query_parameter;
-use crate::models::user::{NewUser, UpdateUser, UserID, UserResponse, UserWithName};
+use crate::models::user::{
+    NewUser, UpdateUser, UserID, UserPointResponse, UserResponse, UserWithName,
+};
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use actix_web::{HttpRequest, Responder, delete, get, patch, post, routes, web};
 use tracing::debug;
@@ -62,7 +64,7 @@ pub async fn get_users(
     security(("bearer_auth" = [])),
     request_body = NewUser,
     responses(
-        (status = 201, description = "User created", body = UserResponse),
+        (status = 201, description = "User created", body = UserPointResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse)
@@ -88,7 +90,7 @@ pub async fn create_user(
         .into_inner()
         .save(&pool, Some(&event_context))
         .await?;
-    let response = user.to_response(&pool).await?;
+    let response = user.to_point_response(&pool).await?;
 
     let location = api_locations::user(user.id)?;
     ApiResponse::created_revisioned(response, location)
@@ -103,7 +105,7 @@ pub async fn create_user(
         ("user_id" = i32, Path, description = "User ID")
     ),
     responses(
-        (status = 200, description = "User", body = UserResponse),
+        (status = 200, description = "User", body = UserPointResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "User not found", body = ApiErrorResponse)
@@ -122,7 +124,7 @@ pub async fn get_user(
         requestor = requestor.user.id
     );
 
-    ApiResponse::ok_revisioned(user.to_response(&pool).await?)
+    ApiResponse::ok_revisioned(user.to_point_response(&pool).await?)
 }
 
 #[utoipa::path(
@@ -135,7 +137,7 @@ pub async fn get_user(
     ),
     request_body = UpdateUser,
     responses(
-        (status = 200, description = "Updated user", body = UserResponse),
+        (status = 200, description = "Updated user", body = UserPointResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Provider-managed user is read-only", body = ApiErrorResponse),
@@ -158,7 +160,7 @@ pub async fn update_user(
         requestor = requestor.user.id
     );
 
-    let current = user_id.user(&pool).await?.to_response(&pool).await?;
+    let current = user_id.user(&pool).await?.to_point_response(&pool).await?;
     let precondition =
         IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
@@ -169,7 +171,7 @@ pub async fn update_user(
             .save(user_id, &pool, Some(&event_context)),
     )
     .await?;
-    ApiResponse::ok_revisioned(user.to_response(&pool).await?)
+    ApiResponse::ok_revisioned(user.to_point_response(&pool).await?)
 }
 
 #[utoipa::path(
@@ -201,7 +203,7 @@ pub async fn delete_user(
     );
 
     let user_id = user_id.into_inner();
-    let current = user_id.user(&pool).await?.to_response(&pool).await?;
+    let current = user_id.user(&pool).await?.to_point_response(&pool).await?;
     let etag = current.entity_tag()?;
     let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
 
@@ -243,10 +245,10 @@ pub async fn anonymize_user(
         target = target_id,
         requestor = requestor.user.id
     );
-    let current = user_id.user(&pool).await?.to_response(&pool).await?;
+    let current = user_id.user(&pool).await?.to_point_response(&pool).await?;
     let precondition =
         IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
     with_revision_precondition_scope(precondition, user_id.anonymize(&pool)).await?;
-    let updated = user_id.user(&pool).await?.to_response(&pool).await?;
+    let updated = user_id.user(&pool).await?.to_point_response(&pool).await?;
     Ok(ApiResponse::no_content_with_etag(updated.entity_tag()?))
 }

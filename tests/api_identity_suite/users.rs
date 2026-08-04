@@ -5,8 +5,10 @@ mod tests {
     use crate::db::traits::{ActiveTokens, Status};
     use crate::db::with_connection;
     use crate::models::group::NewGroup;
-    use crate::models::user::{LoginUser, NewUser, UpdateUser, User, UserID, UserResponse};
-use crate::models::{
+    use crate::models::user::{
+        LoginUser, NewUser, UpdateUser, User, UserID, UserPointResponse, UserResponse,
+    };
+    use crate::models::{
         CollectionID, GroupResponse, Permissions, PrincipalTokenMetadata,
         PrincipalTokenPointResponse, Token, TokenResourceScope,
     };
@@ -97,7 +99,7 @@ use crate::models::{
     async fn assert_user_response_matches(
         pool: &crate::db::DbPool,
         user: &User,
-        response: &UserResponse,
+        response: &UserPointResponse,
     ) {
         assert_eq!(response.id, user.id);
         assert_eq!(response.name, user.name(pool).await.unwrap());
@@ -130,7 +132,7 @@ use crate::models::{
             let body = test::read_body(resp).await;
             let returned_value: serde_json::Value = serde_json::from_slice(&body).unwrap();
             assert!(returned_value.get("password").is_none());
-            let returned_user: UserResponse = serde_json::from_value(returned_value).unwrap();
+            let returned_user: UserPointResponse = serde_json::from_value(returned_value).unwrap();
             assert_user_response_matches(&context.pool, target, &returned_user).await;
         }
     }
@@ -223,11 +225,12 @@ use crate::models::{
         let body = test::read_body(resp).await;
         let created_value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(created_value.get("password").is_none());
-        let created_user_from_create: UserResponse = serde_json::from_value(created_value).unwrap();
+        let created_user_from_create: UserPointResponse =
+            serde_json::from_value(created_value).unwrap();
 
         let resp = get_request(&context.pool, &context.admin_token, created_user_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let created_user_from_get: UserResponse = test::read_body_json(resp).await;
+        let created_user_from_get: UserPointResponse = test::read_body_json(resp).await;
 
         assert_eq!(created_user_from_create, created_user_from_get);
 
@@ -284,7 +287,7 @@ use crate::models::{
         let body = test::read_body(resp).await;
         let patched_value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(patched_value.get("password").is_none());
-        let patched_user: UserResponse = serde_json::from_value(patched_value).unwrap();
+        let patched_user: UserPointResponse = serde_json::from_value(patched_value).unwrap();
 
         assert_eq!(
             patched_user.name,
@@ -327,9 +330,12 @@ use crate::models::{
 
         let resp = get_request(&context.pool, &context.admin_token, &user_url).await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let returned_user: UserResponse = test::read_body_json(resp).await;
-        assert_eq!(returned_user.identity_scope, identity_scope);
-        assert_eq!(returned_user.provider_kind, "ldap");
+        let returned_value: serde_json::Value = test::read_body_json(resp).await;
+        assert!(returned_value.get("identity_scope").is_none());
+        assert!(returned_value.get("provider_kind").is_none());
+        assert!(returned_value.get("last_sync_attempted_at").is_none());
+        assert!(returned_value.get("last_sync_success_at").is_none());
+        let returned_user: UserPointResponse = serde_json::from_value(returned_value).unwrap();
         assert!(returned_user.provider_managed);
 
         let update = UpdateUser {

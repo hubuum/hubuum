@@ -77,6 +77,45 @@ pub struct UserResponse {
     pub revision: ResourceRevision,
 }
 
+/// Strongly tagged point representation of a user.
+///
+/// Directory-provider metadata is intentionally absent: its lifecycle is not
+/// owned by the principal revision used for this representation's ETag.
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
+pub struct UserPointResponse {
+    pub id: i32,
+    pub identity_scope_id: i32,
+    pub provider_managed: bool,
+    pub name: String,
+    pub proper_name: Option<String>,
+    pub email: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
+}
+
+impl UserPointResponse {
+    pub fn from_parts(
+        user: User,
+        identity_scope_id: i32,
+        name: String,
+        provider_managed: bool,
+        revision: ResourceRevision,
+    ) -> Self {
+        Self {
+            id: user.id,
+            identity_scope_id,
+            provider_managed,
+            name,
+            proper_name: user.proper_name,
+            email: user.email,
+            created_at: user.created_at,
+            updated_at: user.updated_at,
+            revision,
+        }
+    }
+}
+
 /// Explicit list/search projection: the `users` row plus the principal name (the
 /// name lives on `principals`). This keeps `User` a faithful `users`-table model
 /// while giving cursor pagination an honest name value — `User` itself never
@@ -293,29 +332,15 @@ impl User {
     where
         C: BackendContext + ?Sized,
     {
-        let (
-            identity_scope,
-            provider_kind,
-            name,
-            provider_managed,
-            last_sync_attempted_at,
-            last_sync_success_at,
-            revision,
-        ) = self.identity_scope_and_name(backend).await?;
-        Ok(UserResponse {
-            id: self.id,
-            identity_scope,
-            provider_kind,
-            provider_managed,
-            name,
-            proper_name: self.proper_name.clone(),
-            email: self.email.clone(),
-            last_sync_attempted_at,
-            last_sync_success_at,
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-            revision,
-        })
+        crate::db::traits::principal::load_user_response(backend.db_pool(), self.id).await
+    }
+
+    /// Build the strongly tagged point representation in one database snapshot.
+    pub async fn to_point_response<C>(&self, backend: &C) -> Result<UserPointResponse, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        crate::db::traits::principal::load_user_point_response(backend.db_pool(), self.id).await
     }
 
     /// Set a new local password and revoke every active bearer token for this
