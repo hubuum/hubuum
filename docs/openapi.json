@@ -45,6 +45,16 @@
               }
             }
           },
+          "400": {
+            "description": "Login fields exceed their supported lengths",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -22916,13 +22926,16 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "maxLength": 255
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 255
           },
           "password": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 4096
           }
         },
         "example": {

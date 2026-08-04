@@ -4,7 +4,7 @@ mod tests {
     use crate::db::traits::ActiveTokens;
     use crate::db::{init_pool, with_connection};
     use crate::middlewares::ProxyTrust;
-    use crate::models::user::LoginUser;
+    use crate::models::user::{LoginUser, MAX_LOGIN_NAME_CHARACTERS};
     use crate::test_support::{
         LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config,
         reset_login_rate_limit as reset_login_rate_limit_for_tests,
@@ -274,6 +274,37 @@ mod tests {
             "{:?}",
             test::read_body(resp).await
         );
+    }
+
+    #[actix_web::test]
+    async fn oversized_login_name_is_rejected() {
+        let _guard = lock_auth_test_state().await;
+        reset_login_rate_limit_for_tests().await;
+        let config = integration_test_config().unwrap();
+        let pool = init_pool(&config.database_url, config.db_pool_size);
+        let app = test::init_service(
+            App::new()
+                .wrap(actix_web::middleware::from_fn(
+                    crate::middlewares::actor_context,
+                ))
+                .app_data(Data::new(pool.clone()))
+                .app_data(crate::tests::app_context(&pool))
+                .configure(api::config),
+        )
+        .await;
+        let login = LoginUser {
+            identity_scope: None,
+            name: "a".repeat(MAX_LOGIN_NAME_CHARACTERS + 1),
+            password: "password".to_string(),
+        };
+
+        let response = test::TestRequest::post()
+            .uri(LOGIN_ENDPOINT)
+            .set_json(&login)
+            .send_request(&app)
+            .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[actix_web::test]

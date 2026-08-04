@@ -61,6 +61,7 @@ pub async fn get_auth_providers() -> Result<impl Responder, ApiError> {
     request_body = LoginUser,
     responses(
         (status = 200, description = "Token and authoritative expiry issued", body = LoginResponse),
+        (status = 400, description = "Login fields exceed their supported lengths", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 429, description = "Too many login attempts", body = ApiErrorResponse),
         (status = 500, description = "Internal server error", body = ApiErrorResponse)
@@ -73,6 +74,7 @@ pub async fn login(
     req_input: web::Json<LoginUser>,
 ) -> Result<impl Responder, ApiError> {
     let login = req_input.into_inner();
+    login.validate()?;
     let identity_scope = login
         .identity_scope
         .clone()

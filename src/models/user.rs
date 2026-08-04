@@ -22,6 +22,10 @@ use crate::traits::{
 
 use tracing::{debug, error, warn};
 
+pub const MAX_LOGIN_IDENTITY_SCOPE_CHARACTERS: usize = 255;
+pub const MAX_LOGIN_NAME_CHARACTERS: usize = 255;
+pub const MAX_LOGIN_PASSWORD_CHARACTERS: usize = 4096;
+
 /// A human user. The id is the principal id; the login/display name lives on
 /// `principals.name`, not here.
 #[derive(Serialize, Deserialize, Queryable, Selectable, Insertable, PartialEq, Clone, ToSchema)]
@@ -590,18 +594,32 @@ impl UserID {
 #[derive(Deserialize, Serialize, ToSchema)]
 #[schema(example = login_user_example)]
 pub struct LoginUser {
+    #[schema(max_length = 255)]
     pub identity_scope: Option<String>,
+    #[schema(max_length = 255)]
     pub name: String,
+    #[schema(max_length = 4096)]
     pub password: String,
 }
 
 impl LoginUser {
+    pub fn validate(&self) -> Result<(), ApiError> {
+        validate_login_field_length(
+            "identity_scope",
+            self.identity_scope.as_deref().unwrap_or_default(),
+            MAX_LOGIN_IDENTITY_SCOPE_CHARACTERS,
+        )?;
+        validate_login_field_length("name", &self.name, MAX_LOGIN_NAME_CHARACTERS)?;
+        validate_login_field_length("password", &self.password, MAX_LOGIN_PASSWORD_CHARACTERS)
+    }
+
     /// Check if the user exists and the plaintext password in the struct
     /// matches the hashed password in the database.
     pub async fn login<C>(self, backend: &C) -> Result<User, ApiError>
     where
         C: BackendContext + ?Sized,
     {
+        self.validate()?;
         // We deliberately map "not found" to a generic auth failure (401) rather
         // than 404 so we do not leak which names exist. Service-account
         // principals have no users row, so they naturally cannot log in here.
@@ -657,6 +675,19 @@ impl LoginUser {
             }
         }
     }
+}
+
+fn validate_login_field_length(
+    field: &str,
+    value: &str,
+    maximum_characters: usize,
+) -> Result<(), ApiError> {
+    if value.chars().nth(maximum_characters).is_some() {
+        return Err(ApiError::BadRequest(format!(
+            "{field} must be at most {maximum_characters} characters"
+        )));
+    }
+    Ok(())
 }
 
 pub fn auth_failure() -> ApiError {
@@ -734,5 +765,52 @@ mod tests {
 
         assert!(output.contains(REDACTED_DEBUG_VALUE));
         assert!(!output.contains(password));
+    }
+
+    #[rstest::rstest]
+    #[case::identity_scope(
+        Some("s".repeat(MAX_LOGIN_IDENTITY_SCOPE_CHARACTERS + 1)),
+        "alice".to_string(),
+        "password".to_string(),
+        "identity_scope"
+    )]
+    #[case::name(
+        None,
+        "a".repeat(MAX_LOGIN_NAME_CHARACTERS + 1),
+        "password".to_string(),
+        "name"
+    )]
+    #[case::password(
+        None,
+        "alice".to_string(),
+        "p".repeat(MAX_LOGIN_PASSWORD_CHARACTERS + 1),
+        "password"
+    )]
+    fn oversized_login_fields_are_rejected(
+        #[case] identity_scope: Option<String>,
+        #[case] name: String,
+        #[case] password: String,
+        #[case] field: &str,
+    ) {
+        let error = LoginUser {
+            identity_scope,
+            name,
+            password,
+        }
+        .validate()
+        .unwrap_err();
+
+        assert!(matches!(error, ApiError::BadRequest(message) if message.contains(field)));
+    }
+
+    #[test]
+    fn login_fields_accept_their_documented_character_limits() {
+        let login = LoginUser {
+            identity_scope: Some("s".repeat(MAX_LOGIN_IDENTITY_SCOPE_CHARACTERS)),
+            name: "a".repeat(MAX_LOGIN_NAME_CHARACTERS),
+            password: "p".repeat(MAX_LOGIN_PASSWORD_CHARACTERS),
+        };
+
+        login.validate().unwrap();
     }
 }
