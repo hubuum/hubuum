@@ -1,6 +1,6 @@
 use actix_web::{HttpRequest, Responder, delete, get, patch, routes, web};
 
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::{ApiResponse, ResponseLocation};
 use crate::db::traits::event_subscription::{
@@ -127,8 +127,7 @@ pub async fn patch_event_sink(
         ));
     }
     let existing = sink_id.instance(&pool).await?;
-    let precondition =
-        IfMatchCondition::from_request(&req)?.database_precondition(&existing.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &existing)?;
     let event_context = admin.event_context(&req);
     let updated: EventSink = with_revision_precondition_scope(
         precondition,
@@ -164,7 +163,7 @@ pub async fn delete_event_sink(
     let sink_id = sink_id.into_inner();
     let existing = sink_id.instance(&pool).await?;
     let etag = existing.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = admin.event_context(&req);
     with_revision_precondition_scope(
         precondition,

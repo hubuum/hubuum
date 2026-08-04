@@ -9,6 +9,7 @@
 
 use crate::db::prelude::*;
 
+use crate::api::etag::RevisionOwner;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
@@ -195,7 +196,7 @@ impl UpdateExportTemplateRecord for UpdateExportTemplateRow {
                 .await?;
             crate::db::assert_locked_revision_precondition(
                 conn,
-                &format!("export_templates:{}", before.id()),
+                &RevisionOwner::ExportTemplate.key(before.id()),
                 before.revision(),
             )
             .await?;

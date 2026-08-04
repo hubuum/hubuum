@@ -1,5 +1,6 @@
 use crate::db::prelude::*;
 
+use crate::api::etag::RevisionOwner;
 use crate::apply_query_options;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -172,7 +173,7 @@ impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
                 .await?;
             crate::db::assert_locked_revision_precondition(
                 conn,
-                &format!("remote_targets:{}", before.id),
+                &RevisionOwner::RemoteTarget.key(before.id),
                 before.revision,
             )
             .await?;

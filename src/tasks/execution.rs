@@ -691,8 +691,8 @@ pub(super) async fn observed_revision_for_planned_item(
             d::computed_field_definitions
                 .filter(d::class_id.eq(class.id))
                 .filter(d::visibility.eq(visibility))
-                .filter(d::owner_user_id.eq(owner_id))
                 .filter(d::key.eq(&input.key))
+                .filter(d::owner_user_id.is_not_distinct_from(owner_id))
                 .select(d::revision)
                 .first(conn)
                 .await

@@ -1,5 +1,6 @@
 use crate::db::prelude::*;
 
+use crate::api::etag::RevisionOwner;
 use crate::db::traits::identity::{identity_scope_by_name, identity_scope_id_by_name_conn};
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -64,10 +65,10 @@ async fn insert_effective_membership(
     conn: &mut DbConnection,
     principal: i32,
     group: i32,
-) -> Result<(PrincipalGroup, bool), ApiError> {
+) -> Result<bool, ApiError> {
     use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
 
-    let owner_key = format!("group_memberships:{principal}:{group}");
+    let owner_key = RevisionOwner::membership_key(principal, group);
     let current = group_memberships
         .filter(principal_id.eq(principal))
         .filter(group_id.eq(group))
@@ -78,10 +79,10 @@ async fn insert_effective_membership(
     if let Some(membership) = current {
         crate::db::assert_locked_revision_precondition(conn, &owner_key, membership.revision)
             .await?;
-        return Ok((membership, false));
+        return Ok(false);
     }
 
-    crate::db::assert_revision_precondition_allows_insert(&owner_key)?;
+    crate::db::assert_revision_precondition_allows_missing_target(&owner_key)?;
 
     let inserted = diesel::insert_into(group_memberships)
         .values((
@@ -89,13 +90,21 @@ async fn insert_effective_membership(
             crate::schema::group_memberships::group_id.eq(group),
         ))
         .on_conflict_do_nothing()
-        .get_result(conn)
+        .get_result::<PrincipalGroup>(conn)
         .await
         .optional()?;
     match inserted {
-        Some(membership) => Ok((membership, true)),
-        None => Ok((load_principal_group(conn, principal, group).await?, false)),
+        Some(_) => Ok(true),
+        None => {
+            load_principal_group(conn, principal, group).await?;
+            Ok(false)
+        }
     }
+}
+
+struct ManualMembershipInsert {
+    membership: PrincipalGroup,
+    effective_membership_created: bool,
 }
 
 async fn insert_manual_membership_source(
@@ -125,25 +134,39 @@ async fn insert_manual_membership(
     conn: &mut DbConnection,
     principal: i32,
     group: i32,
-) -> Result<(PrincipalGroup, bool), ApiError> {
-    let (_, inserted) = insert_effective_membership(conn, principal, group).await?;
+) -> Result<ManualMembershipInsert, ApiError> {
+    let effective_membership_created = insert_effective_membership(conn, principal, group).await?;
     insert_manual_membership_source(conn, principal, group).await?;
     // The source row owns the effective membership revision and may have
     // advanced it. Always return the final committed representation.
-    Ok((
-        load_principal_group(conn, principal, group).await?,
-        inserted,
-    ))
+    Ok(ManualMembershipInsert {
+        membership: load_principal_group(conn, principal, group).await?,
+        effective_membership_created,
+    })
 }
 
 async fn remove_manual_membership_source(
     conn: &mut DbConnection,
     principal: i32,
     group: i32,
-) -> Result<bool, ApiError> {
+) -> Result<Option<PrincipalGroup>, ApiError> {
     use crate::schema::{group_membership_sources, group_memberships};
 
     ensure_group_allows_local_write(conn, group).await?;
+    let owner_key = RevisionOwner::membership_key(principal, group);
+    let membership = group_memberships::table
+        .filter(group_memberships::principal_id.eq(principal))
+        .filter(group_memberships::group_id.eq(group))
+        .for_update()
+        .first::<PrincipalGroup>(conn)
+        .await
+        .optional()?;
+    let Some(membership) = membership else {
+        crate::db::assert_revision_precondition_allows_missing_target(&owner_key)?;
+        return Ok(None);
+    };
+    crate::db::assert_locked_revision_precondition(conn, &owner_key, membership.revision).await?;
+
     let local_scope_id = identity_scope_id_by_name_conn(conn, LOCAL_IDENTITY_SCOPE).await?;
     diesel::delete(
         group_membership_sources::table
@@ -170,9 +193,9 @@ async fn remove_manual_membership_source(
         )
         .execute(conn)
         .await?;
-        return Ok(deleted > 0);
+        return Ok((deleted > 0).then_some(membership));
     }
-    Ok(false)
+    Ok(None)
 }
 
 async fn ensure_group_allows_local_write(
@@ -239,13 +262,42 @@ async fn lock_group_for_delete(conn: &mut DbConnection, group_id: i32) -> Result
         .await?;
     crate::db::assert_locked_revision_precondition(
         conn,
-        &format!("groups:{}", group.id),
+        &RevisionOwner::Group.key(group.id),
         group.revision,
     )
     .await?;
     ensure_group_has_no_owned_service_accounts(conn, group.id).await?;
     ensure_group_allows_local_write(conn, group.id).await?;
     Ok(group)
+}
+
+async fn delete_group_by_id(
+    pool: &DbPool,
+    group_id: i32,
+    context: Option<&EventContext>,
+) -> Result<usize, ApiError> {
+    use crate::schema::groups::dsl::{groups, id};
+
+    with_transaction(pool, async |conn| -> Result<usize, ApiError> {
+        let group = lock_group_for_delete(conn, group_id).await?;
+        let deleted = diesel::delete(groups.filter(id.eq(group.id)))
+            .execute(conn)
+            .await?;
+
+        if let Some(context) = context {
+            let event = group_event(
+                &group,
+                Action::Deleted,
+                context,
+                format!("Group '{}' deleted", group.groupname),
+            )?
+            .with_before(group_snapshot(&group));
+            emit_event(conn, &event).await?;
+        }
+
+        Ok(deleted)
+    })
+    .await
 }
 
 pub trait LoadGroupRecord {
@@ -302,15 +354,7 @@ pub trait DeleteGroupRecord {
 
 impl DeleteGroupRecord for GroupID {
     async fn delete_group_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        use crate::schema::groups::dsl::{groups, id};
-
-        with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-            lock_group_for_delete(conn, self.id()).await?;
-            Ok(diesel::delete(groups.filter(id.eq(self.id())))
-                .execute(conn)
-                .await?)
-        })
-        .await
+        delete_group_by_id(pool, self.id(), None).await
     }
 
     async fn delete_group_record(
@@ -318,42 +362,13 @@ impl DeleteGroupRecord for GroupID {
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
-        let Some(context) = context else {
-            return self.delete_group_record_without_events(pool).await;
-        };
-
-        use crate::schema::groups::dsl::{groups, id};
-
-        with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-            let group = lock_group_for_delete(conn, self.id()).await?;
-            let deleted = diesel::delete(groups.filter(id.eq(self.id())))
-                .execute(conn)
-                .await?;
-            let event = group_event(
-                &group,
-                Action::Deleted,
-                context,
-                format!("Group '{}' deleted", group.groupname),
-            )?
-            .with_before(group_snapshot(&group));
-            emit_event(conn, &event).await?;
-            Ok(deleted)
-        })
-        .await
+        delete_group_by_id(pool, self.id(), context).await
     }
 }
 
 impl DeleteGroupRecord for Group {
     async fn delete_group_record_without_events(&self, pool: &DbPool) -> Result<usize, ApiError> {
-        use crate::schema::groups::dsl::{groups, id};
-
-        with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-            lock_group_for_delete(conn, self.id).await?;
-            Ok(diesel::delete(groups.filter(id.eq(self.id)))
-                .execute(conn)
-                .await?)
-        })
-        .await
+        delete_group_by_id(pool, self.id, None).await
     }
 
     async fn delete_group_record(
@@ -361,28 +376,7 @@ impl DeleteGroupRecord for Group {
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError> {
-        let Some(context) = context else {
-            return self.delete_group_record_without_events(pool).await;
-        };
-
-        use crate::schema::groups::dsl::{groups, id};
-
-        with_transaction(pool, async |conn| -> Result<usize, ApiError> {
-            let before = lock_group_for_delete(conn, self.id).await?;
-            let deleted = diesel::delete(groups.filter(id.eq(self.id)))
-                .execute(conn)
-                .await?;
-            let event = group_event(
-                &before,
-                Action::Deleted,
-                context,
-                format!("Group '{}' deleted", before.groupname),
-            )?
-            .with_before(group_snapshot(&before));
-            emit_event(conn, &event).await?;
-            Ok(deleted)
-        })
-        .await
+        delete_group_by_id(pool, self.id, context).await
     }
 }
 
@@ -536,7 +530,7 @@ impl UpdateGroupRecord for UpdateGroup {
                 .await?;
             crate::db::assert_locked_revision_precondition(
                 conn,
-                &format!("groups:{}", before.id),
+                &RevisionOwner::Group.key(before.id),
                 before.revision,
             )
             .await?;
@@ -725,7 +719,7 @@ impl GroupMembersBackend for Group {
         pool: &DbPool,
     ) -> Result<(), ApiError> {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let _ = remove_manual_membership_source(conn, member_principal_id, self.id).await?;
+            remove_manual_membership_source(conn, member_principal_id, self.id).await?;
             Ok(())
         })
         .await?;
@@ -745,13 +739,10 @@ impl GroupMembersBackend for Group {
         };
 
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let membership = load_principal_group(conn, member_principal_id, self.id)
-                .await
-                .optional()?;
-            let removed_effective =
+            let removed_membership =
                 remove_manual_membership_source(conn, member_principal_id, self.id).await?;
 
-            if let Some(membership) = membership.filter(|_| removed_effective) {
+            if let Some(membership) = removed_membership {
                 let event = NewEvent::new(
                     EntityType::UserGroup,
                     Action::Removed,
@@ -776,6 +767,44 @@ impl GroupMembersBackend for Group {
     }
 }
 
+async fn save_manual_membership(
+    pool: &DbPool,
+    principal_id: i32,
+    group_id: i32,
+    context: Option<&EventContext>,
+) -> Result<PrincipalGroup, ApiError> {
+    with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
+        let ManualMembershipInsert {
+            membership,
+            effective_membership_created,
+        } = insert_manual_membership(conn, principal_id, group_id).await?;
+
+        if let Some(context) = context
+            && effective_membership_created
+        {
+            let event = NewEvent::new(
+                EntityType::UserGroup,
+                Action::Added,
+                context.actor_kind(),
+                format!(
+                    "Principal {} added to group {}",
+                    membership.principal_id, membership.group_id
+                ),
+            )?
+            .with_context(context)
+            .with_after(membership_snapshot(&membership))
+            .with_metadata(user_group_metadata(
+                membership.principal_id,
+                membership.group_id,
+            ));
+            emit_event(conn, &event).await?;
+        }
+
+        Ok(membership)
+    })
+    .await
+}
+
 pub trait SavePrincipalGroupRecord {
     async fn save_principal_group_record_without_events(
         &self,
@@ -797,12 +826,7 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
         &self,
         pool: &DbPool,
     ) -> Result<PrincipalGroup, ApiError> {
-        with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
-            let (membership, _) =
-                insert_manual_membership(conn, self.principal_id, self.group_id).await?;
-            Ok(membership)
-        })
-        .await
+        save_manual_membership(pool, self.principal_id, self.group_id, None).await
     }
 
     async fn save_principal_group_record(
@@ -810,34 +834,7 @@ impl SavePrincipalGroupRecord for NewPrincipalGroup {
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<PrincipalGroup, ApiError> {
-        let Some(context) = context else {
-            return self.save_principal_group_record_without_events(pool).await;
-        };
-
-        with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
-            let (membership, inserted) =
-                insert_manual_membership(conn, self.principal_id, self.group_id).await?;
-            if inserted {
-                let event = NewEvent::new(
-                    EntityType::UserGroup,
-                    Action::Added,
-                    context.actor_kind(),
-                    format!(
-                        "Principal {} added to group {}",
-                        membership.principal_id, membership.group_id
-                    ),
-                )?
-                .with_context(context)
-                .with_after(membership_snapshot(&membership))
-                .with_metadata(user_group_metadata(
-                    membership.principal_id,
-                    membership.group_id,
-                ));
-                emit_event(conn, &event).await?;
-            }
-            Ok(membership)
-        })
-        .await
+        save_manual_membership(pool, self.principal_id, self.group_id, context).await
     }
 }
 
@@ -846,12 +843,7 @@ impl SavePrincipalGroupRecord for PrincipalGroup {
         &self,
         pool: &DbPool,
     ) -> Result<PrincipalGroup, ApiError> {
-        with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
-            let (membership, _) =
-                insert_manual_membership(conn, self.principal_id, self.group_id).await?;
-            Ok(membership)
-        })
-        .await
+        save_manual_membership(pool, self.principal_id, self.group_id, None).await
     }
 
     async fn save_principal_group_record(
@@ -859,34 +851,7 @@ impl SavePrincipalGroupRecord for PrincipalGroup {
         pool: &DbPool,
         context: Option<&EventContext>,
     ) -> Result<PrincipalGroup, ApiError> {
-        let Some(context) = context else {
-            return self.save_principal_group_record_without_events(pool).await;
-        };
-
-        with_transaction(pool, async |conn| -> Result<PrincipalGroup, ApiError> {
-            let (membership, inserted) =
-                insert_manual_membership(conn, self.principal_id, self.group_id).await?;
-            if inserted {
-                let event = NewEvent::new(
-                    EntityType::UserGroup,
-                    Action::Added,
-                    context.actor_kind(),
-                    format!(
-                        "Principal {} added to group {}",
-                        membership.principal_id, membership.group_id
-                    ),
-                )?
-                .with_context(context)
-                .with_after(membership_snapshot(&membership))
-                .with_metadata(user_group_metadata(
-                    membership.principal_id,
-                    membership.group_id,
-                ));
-                emit_event(conn, &event).await?;
-            }
-            Ok(membership)
-        })
-        .await
+        save_manual_membership(pool, self.principal_id, self.group_id, context).await
     }
 }
 
@@ -921,7 +886,7 @@ pub trait DeletePrincipalGroupRecord {
 impl DeletePrincipalGroupRecord for PrincipalGroup {
     async fn delete_principal_group_record(&self, pool: &DbPool) -> Result<(), ApiError> {
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
-            let _ = remove_manual_membership_source(conn, self.principal_id, self.group_id).await?;
+            remove_manual_membership_source(conn, self.principal_id, self.group_id).await?;
             Ok(())
         })
         .await?;

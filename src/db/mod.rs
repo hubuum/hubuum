@@ -512,8 +512,9 @@ pub(crate) async fn assert_locked_revision_precondition(
 
 /// Reject a conditional mutation when the authoritative row disappeared
 /// before it could be locked. `If-Match` (including `*`) requires the selected
-/// resource to still exist; an unconditional mutation may create it.
-pub(crate) fn assert_revision_precondition_allows_insert(
+/// resource to still exist; unconditional callers retain their ordinary
+/// missing-target behavior.
+pub(crate) fn assert_revision_precondition_allows_missing_target(
     owner_key: &str,
 ) -> Result<(), crate::errors::ApiError> {
     if ambient_revision_precondition()
@@ -526,6 +527,23 @@ pub(crate) fn assert_revision_precondition_allows_insert(
         ));
     }
     Ok(())
+}
+
+/// Require an authoritative row that was resolved before entering the
+/// mutation transaction. If a matching conditional request lost the row
+/// before it could be locked, report a stale resource instead of an ordinary
+/// not-found response.
+pub(crate) fn require_existing_revision_target<T>(
+    target: Option<T>,
+    owner_key: &str,
+) -> Result<T, crate::errors::ApiError> {
+    match target {
+        Some(target) => Ok(target),
+        None => {
+            assert_revision_precondition_allows_missing_target(owner_key)?;
+            Err(diesel::result::Error::NotFound.into())
+        }
+    }
 }
 
 /// Apply transaction-local provenance settings consumed by history triggers.
@@ -581,6 +599,45 @@ async fn set_local_statement_timeout(
     Ok(())
 }
 
+struct TransactionLocalContext {
+    statement_timeout: Option<StatementTimeoutMs>,
+    provenance: Option<MutationProvenance>,
+    revision_precondition: Option<RevisionPrecondition>,
+}
+
+impl TransactionLocalContext {
+    fn ambient() -> Self {
+        Self::with_statement_timeout(ambient_statement_timeout())
+    }
+
+    fn with_statement_timeout(statement_timeout: Option<StatementTimeoutMs>) -> Self {
+        Self {
+            statement_timeout,
+            provenance: ambient_mutation_provenance(),
+            revision_precondition: ambient_revision_precondition(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.statement_timeout.is_none()
+            && self.provenance.is_none()
+            && self.revision_precondition.is_none()
+    }
+
+    async fn apply(&self, conn: &mut DbConnection) -> Result<(), diesel::result::Error> {
+        if let Some(statement_timeout) = self.statement_timeout {
+            set_local_statement_timeout(conn, statement_timeout).await?;
+        }
+        if let Some(provenance) = &self.provenance {
+            set_local_mutation_provenance(conn, provenance).await?;
+        }
+        if let Some(precondition) = &self.revision_precondition {
+            set_local_revision_precondition(conn, precondition).await?;
+        }
+        Ok(())
+    }
+}
+
 /// Run database work on a single pooled connection without starting an explicit transaction.
 ///
 /// Use this for:
@@ -622,17 +679,12 @@ where
     E: Send,
     ApiError: From<E>,
 {
-    let statement_timeout = ambient_statement_timeout();
-    let provenance = ambient_mutation_provenance();
-    let precondition = ambient_revision_precondition();
-    with_connection_context(&pool, statement_timeout, provenance, precondition, f).await
+    with_connection_context(&pool, TransactionLocalContext::ambient(), f).await
 }
 
 async fn with_connection_context<F, R, E>(
     pool: &DbPool,
-    statement_timeout: Option<StatementTimeoutMs>,
-    provenance: Option<MutationProvenance>,
-    precondition: Option<RevisionPrecondition>,
+    context: TransactionLocalContext,
     f: F,
 ) -> Result<R, ApiError>
 where
@@ -646,19 +698,11 @@ where
     let call_site = ambient_db_call_site();
     let mut conn = acquire_connection(pool).await?;
     let start = std::time::Instant::now();
-    let result = if statement_timeout.is_none() && provenance.is_none() && precondition.is_none() {
+    let result = if context.is_empty() {
         f(&mut conn).await.map_err(ApiError::from)
     } else {
         conn.transaction::<R, ApiError, _>(async move |conn| {
-            if let Some(statement_timeout) = statement_timeout {
-                set_local_statement_timeout(conn, statement_timeout).await?;
-            }
-            if let Some(provenance) = provenance {
-                set_local_mutation_provenance(conn, &provenance).await?;
-            }
-            if let Some(precondition) = precondition {
-                set_local_revision_precondition(conn, &precondition).await?;
-            }
+            context.apply(conn).await?;
             f(conn).await.map_err(ApiError::from)
         })
         .await
@@ -730,9 +774,7 @@ where
 {
     with_connection_context(
         pool,
-        statement_timeout,
-        ambient_mutation_provenance(),
-        ambient_revision_precondition(),
+        TransactionLocalContext::with_statement_timeout(statement_timeout),
         f,
     )
     .await
@@ -766,23 +808,13 @@ where
     E: Send,
     ApiError: From<E>,
 {
-    let statement_timeout = ambient_statement_timeout();
-    let provenance = ambient_mutation_provenance();
-    let precondition = ambient_revision_precondition();
+    let context = TransactionLocalContext::ambient();
     let call_site = ambient_db_call_site();
     let mut conn = acquire_connection(pool).await?;
     let start = std::time::Instant::now();
     let result = crate::logger::defer_operation_mutation_logs_until_commit(
         conn.transaction::<R, ApiError, _>(async move |conn| {
-            if let Some(statement_timeout) = statement_timeout {
-                set_local_statement_timeout(conn, statement_timeout).await?;
-            }
-            if let Some(provenance) = provenance {
-                set_local_mutation_provenance(conn, &provenance).await?;
-            }
-            if let Some(precondition) = precondition {
-                set_local_revision_precondition(conn, &precondition).await?;
-            }
+            context.apply(conn).await?;
             f(conn).await.map_err(ApiError::from)
         }),
     )

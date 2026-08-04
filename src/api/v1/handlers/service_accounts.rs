@@ -1,7 +1,7 @@
 use actix_web::{HttpRequest, Responder, delete, get, patch, post, routes, web};
 use tracing::debug;
 
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -212,8 +212,7 @@ pub async fn update_service_account(
     }
 
     let current = sa.to_point_response(&pool).await?;
-    let precondition =
-        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let updated =
         with_revision_precondition_scope(precondition, update.update(&pool, id, &event_context))
@@ -246,8 +245,7 @@ pub async fn disable_service_account(
     ensure_can_manage(&pool, &requestor, &sa).await?;
 
     let current = sa.to_point_response(&pool).await?;
-    let precondition =
-        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let disabled =
         with_revision_precondition_scope(precondition, id.disable(&pool, &event_context)).await?;
@@ -286,7 +284,7 @@ pub async fn delete_service_account(
     ensure_can_manage(&pool, &requestor, &sa).await?;
     let current = sa.to_point_response(&pool).await?;
     let etag = current.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(precondition, id.delete(&pool, &event_context)).await?;
     Ok(ApiResponse::no_content_with_etag(etag))

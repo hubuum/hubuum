@@ -1,4 +1,4 @@
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -161,8 +161,7 @@ pub async fn update_user(
     );
 
     let current = user_id.user(&pool).await?.to_point_response(&pool).await?;
-    let precondition =
-        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let user = with_revision_precondition_scope(
         precondition,
@@ -205,7 +204,7 @@ pub async fn delete_user(
     let user_id = user_id.into_inner();
     let current = user_id.user(&pool).await?.to_point_response(&pool).await?;
     let etag = current.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(&req, &etag)?;
 
     let event_context = requestor.event_context(&req);
     let delete_result =
@@ -246,8 +245,7 @@ pub async fn anonymize_user(
         requestor = requestor.user.id
     );
     let current = user_id.user(&pool).await?.to_point_response(&pool).await?;
-    let precondition =
-        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
     with_revision_precondition_scope(precondition, user_id.anonymize(&pool)).await?;
     let updated = user_id.user(&pool).await?.to_point_response(&pool).await?;
     Ok(ApiResponse::no_content_with_etag(updated.entity_tag()?))

@@ -2,6 +2,7 @@ use crate::db::prelude::*;
 use crate::models::token_scope::TokenScope;
 use serde::Serialize;
 
+use crate::api::etag::RevisionOwner;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
@@ -44,7 +45,7 @@ async fn lock_permission_owner(
         .await?;
     crate::db::assert_locked_revision_precondition(
         conn,
-        &format!("collection_authorization_state:{target_collection_id}"),
+        &RevisionOwner::CollectionPermissions.key(target_collection_id),
         owner_revision,
     )
     .await?;

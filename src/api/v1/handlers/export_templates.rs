@@ -1,7 +1,7 @@
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use tracing::{debug, info};
 
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -340,8 +340,7 @@ pub async fn patch_template(
         );
     }
 
-    let precondition =
-        IfMatchCondition::from_request(&req)?.database_precondition(&existing.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &existing)?;
     let event_context = requestor.event_context(&req);
     let updated = with_revision_precondition_scope(
         precondition,
@@ -394,7 +393,7 @@ pub async fn delete_template(
     );
 
     let etag = template.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(precondition, template_id.delete(&pool, &event_context))
         .await?;

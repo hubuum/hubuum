@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition_for_tag};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::traits::authz::scope_allows;
@@ -243,7 +243,7 @@ async fn delete_class_relation(
     .await?;
 
     let etag = relation.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(precondition, relation_id.delete(&pool, &event_context))
         .await?;
@@ -467,7 +467,7 @@ async fn delete_object_relation(
     .await?;
 
     let etag = relation.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(precondition, relation_id.delete(&pool, &event_context))
         .await?;

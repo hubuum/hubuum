@@ -2,7 +2,7 @@ use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, pu
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{RevisionedResource, revision_precondition};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::principals::{
@@ -202,8 +202,7 @@ pub async fn put_my_settings(
 ) -> Result<impl Responder, ApiError> {
     let principal_id = PrincipalID::new(requestor.principal.id)?;
     let current = principal_id.settings(&pool).await?;
-    let condition = IfMatchCondition::from_request(&req)?;
-    let precondition = condition.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let settings = with_revision_precondition_scope(
         precondition,
@@ -242,8 +241,7 @@ pub async fn patch_my_settings(
 ) -> Result<impl Responder, ApiError> {
     let principal_id = PrincipalID::new(requestor.principal.id)?;
     let current = principal_id.settings(&pool).await?;
-    let condition = IfMatchCondition::from_request(&req)?;
-    let precondition = condition.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let settings = with_revision_precondition_scope(
         precondition,
@@ -271,8 +269,7 @@ pub async fn delete_my_settings(
 ) -> Result<impl Responder, ApiError> {
     let principal_id = PrincipalID::new(requestor.principal.id)?;
     let current = principal_id.settings(&pool).await?;
-    let condition = IfMatchCondition::from_request(&req)?;
-    let precondition = condition.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let reset = with_revision_precondition_scope(
         precondition,

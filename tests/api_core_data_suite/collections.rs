@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use crate::api::etag::{IfMatchCondition, RevisionedResource};
+    use crate::db::with_revision_precondition_scope;
     use crate::models::{
         Collection, CollectionID, CollectionPermissionSet, GroupID, GroupPermission, GroupResponse,
         NewCollectionWithAssignee, NewGroup, Permission, Permissions, UpdateCollection,
@@ -20,7 +22,7 @@ mod tests {
         CollectionFixture, TestContext, create_test_group, create_test_user, ensure_admin_group,
         test_context,
     };
-    use crate::traits::{CanDelete, PermissionController};
+    use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController};
     use crate::{assert_contains, assert_contains_all};
     use actix_web::{http, test};
     use rstest::rstest;
@@ -118,6 +120,90 @@ mod tests {
         assert_response_status(response, http::StatusCode::PRECONDITION_FAILED).await;
 
         fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn stale_collection_delete_precedes_child_validation(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let fixture = context.collection_fixture("stale_collection_delete").await;
+        let child = NewCollectionWithAssignee {
+            name: context.scoped_name("stale_collection_delete_child"),
+            description: "Child collection".to_string(),
+            group_id: GroupID::new(fixture.owner_group.id).unwrap(),
+            parent_collection_id: Some(CollectionID::new(fixture.collection.id).unwrap()),
+        }
+        .save_without_events(&context.pool)
+        .await
+        .unwrap();
+        let stale_tag = fixture.collection.entity_tag().unwrap();
+        let precondition = IfMatchCondition::Tags(vec![stale_tag.clone()])
+            .database_precondition(&stale_tag)
+            .unwrap();
+
+        UpdateCollection {
+            name: None,
+            description: Some("A newer description".to_string()),
+        }
+        .update_without_events(
+            &context.pool,
+            CollectionID::new(fixture.collection.id).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let error = with_revision_precondition_scope(
+            precondition,
+            fixture.collection.delete_without_events(&context.pool),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            crate::errors::ApiError::PreconditionFailed(_, _)
+        ));
+
+        child.delete_without_events(&context.pool).await.unwrap();
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn conditional_collection_delete_reports_a_vanished_target_as_stale(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let fixture = context
+            .collection_fixture("vanished_collection_delete")
+            .await;
+        let tag = fixture.collection.entity_tag().unwrap();
+        let precondition = IfMatchCondition::Tags(vec![tag.clone()])
+            .database_precondition(&tag)
+            .unwrap();
+
+        fixture
+            .collection
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
+        let error = with_revision_precondition_scope(
+            precondition,
+            fixture.collection.delete_without_events(&context.pool),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::errors::ApiError::PreconditionFailed(_, _)
+        ));
+        fixture
+            .owner_group
+            .delete_without_events(&context.pool)
+            .await
+            .unwrap();
     }
 
     #[rstest]
@@ -469,6 +555,51 @@ mod tests {
 
         assert_eq!(renamed_body, original_body);
         assert_eq!(renamed_etag, original_etag);
+        fixture.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn permission_scoped_group_list_filters_by_revision(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let fixture = context
+            .collection_fixture("permission_group_revision_filter")
+            .await;
+        let group = create_test_group(&context.pool).await;
+        fixture
+            .collection
+            .grant_one(
+                &context.pool,
+                GroupID::new(group.id).unwrap(),
+                Permissions::ReadCollection,
+            )
+            .await
+            .unwrap();
+        let updated = UpdateGroup {
+            groupname: Some(context.scoped_name("permission_group_revision_updated")),
+        }
+        .save_without_events(GroupID::new(group.id).unwrap(), &context.pool)
+        .await
+        .unwrap();
+
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!(
+                "{COLLECTION_ENDPOINT}/{}/has_permissions/ReadCollection?revision={}",
+                fixture.collection.id, updated.revision
+            ),
+        )
+        .await;
+        let response = assert_response_status(response, http::StatusCode::OK).await;
+        let groups: Vec<GroupResponse> = test::read_body_json(response).await;
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].id, updated.id);
+
+        group.delete_without_events(&context.pool).await.unwrap();
         fixture.cleanup().await.unwrap();
     }
 

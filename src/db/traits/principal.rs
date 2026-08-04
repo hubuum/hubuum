@@ -1,6 +1,7 @@
 use hubuum_events_core::EventContext;
 use serde_json::json;
 
+use crate::api::etag::RevisionOwner;
 use crate::db::prelude::*;
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -73,7 +74,7 @@ pub(crate) async fn lock_principal_revision_conn(
         .await?;
     crate::db::assert_locked_revision_precondition(
         conn,
-        &format!("principals:{principal_id_value}"),
+        &RevisionOwner::Principal.key(principal_id_value),
         owner_revision,
     )
     .await?;
@@ -138,7 +139,7 @@ pub async fn mutate_principal_settings(
                 .await?;
             crate::db::assert_locked_revision_precondition(
                 conn,
-                &format!("principals:{principal_id_value}"),
+                &RevisionOwner::Principal.key(principal_id_value),
                 before_revision,
             )
             .await?;

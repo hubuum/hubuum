@@ -1,6 +1,7 @@
 use crate::db::prelude::*;
 use serde_json::json;
 
+use crate::api::etag::RevisionOwner;
 use crate::apply_query_options;
 use crate::db::{DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
@@ -116,7 +117,7 @@ async fn update_event_sink_record_impl(
             .await?;
         crate::db::assert_locked_revision_precondition(
             conn,
-            &format!("event_sinks:{}", before.id),
+            &RevisionOwner::EventSink.key(before.id),
             before.revision,
         )
         .await?;
@@ -299,7 +300,7 @@ async fn update_event_subscription_record_impl(
                 .await?;
             crate::db::assert_locked_revision_precondition(
                 conn,
-                &format!("event_subscriptions:{}", before.id),
+                &RevisionOwner::EventSubscription.key(before.id),
                 before.revision,
             )
             .await?;

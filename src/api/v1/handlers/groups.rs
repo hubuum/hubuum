@@ -1,4 +1,6 @@
-use crate::api::etag::{IfMatchCondition, RevisionedResource};
+use crate::api::etag::{
+    IfMatchCondition, RevisionedResource, revision_precondition, revision_precondition_for_tag,
+};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -168,8 +170,7 @@ pub async fn update_group(
     );
 
     let current = group_id.group(&pool).await?;
-    let precondition =
-        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
+    let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let updated = with_revision_precondition_scope(
         precondition,
@@ -212,7 +213,7 @@ pub async fn delete_group(
 
     let group = group_id.group(&pool).await?;
     let etag = group.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(precondition, group_id.delete(&pool, Some(&event_context)))
         .await?;
@@ -393,8 +394,7 @@ pub async fn delete_group_member(
 
     let membership =
         crate::db::traits::group::principal_group_by_ids(&pool, principal.id, group.id).await?;
-    let etag = membership.entity_tag()?;
-    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
+    let precondition = revision_precondition(&req, &membership)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(
         precondition,
