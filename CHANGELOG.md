@@ -77,6 +77,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - External permission-backed list filtering now bounds in-process
   authorization working sets and avoids retaining authorized rows outside the
   requested page, reducing peak memory use for large candidate sets.
+- Outbound HTTP client construction no longer holds the process-wide client
+  cache lock, allowing unrelated first-time integration destinations to
+  initialize concurrently.
 
 ### Security
 
