@@ -114,6 +114,14 @@ Pull request validation is selected from the complete base-to-head diff:
   a binary. `docs/querying.md` is treated as a test input because the API test
   suite compiles and validates its documented operator lists.
 
+The OpenAPI contract check is blocking at every CI tier where API inputs
+change. It separately verifies exact generated-document drift and semantic
+compatibility with the latest stable release, then uploads generated, baseline,
+diff, JSON, and Markdown evidence. The policy scripts, severity configuration,
+and breaking-change exception file are themselves classified as OpenAPI inputs.
+See [the release guide](releasing.md#openapi-compatibility-gate) for the baseline
+and intentional-break rules.
+
 The `ci:full` pull request label forces the complete CI and benchmark suites,
 including on a draft or documentation-only pull request. The `ci:benchmarks`
 label forces all benchmark jobs without expanding the main CI tier. Adding or

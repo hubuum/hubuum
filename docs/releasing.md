@@ -9,6 +9,8 @@ This repository uses the CI workflow in
 - `CHANGELOG.md` must contain a section for the release version.
 - `docs/openapi.json` must be regenerated for the release version.
 - A version bump in `Cargo.toml` must come with matching changelog and OpenAPI updates.
+- The candidate OpenAPI contract must have no unaccepted breaks from the
+  immediately preceding stable release.
 
 ## Scripted release flow
 
@@ -50,11 +52,62 @@ The helper script:
 Once the tag is pushed, the CI workflow will:
 
 - verify the tagged commit already passed CI on `main`
+- regenerate OpenAPI and compare it with the immediately preceding stable tag
 - verify that the tag, `Cargo.toml`, changelog, and OpenAPI versions match
 - publish GitHub release archives and SHA-256 checksums for Linux x86_64, Linux ARM64,
   Windows x86_64, and macOS ARM64
 - use the matching changelog section as the GitHub Release notes
 - publish AMD64 and ARM64 GHCR images for the release tag
+
+## OpenAPI compatibility gate
+
+The `OpenAPI contract` job treats two independent failures as release
+blockers. The generated document must exactly match `docs/openapi.json`, and
+the generated candidate must be compatible with the latest stable release. A
+tag build excludes its own tag while resolving the baseline, so it compares
+with the immediately preceding stable release. If the repository has no stable
+release yet, the structured report records an explicit skipped baseline rather
+than silently choosing another source.
+
+The job installs checksum-pinned `oasdiff`, records its version and binary
+digest, and publishes one `openapi-contract` artifact containing:
+
+- the generated OpenAPI document and exact drift diff;
+- the baseline document, tag, source URL, and SHA-256 digest;
+- raw structural and classified changes;
+- `compatibility.json`; and
+- `summary.md`, grouped into additive, behavioral, and breaking changes.
+
+Breaking findings fail the job unless each fingerprint is listed in
+`.github/openapi-breaking-exceptions.json`. An exception must name the exact
+baseline, have a future expiry date, explain the decision, provide client
+migration guidance, and point to matching text in the `[Unreleased]` changelog.
+Exceptions are never wildcards: every fingerprint must still be present, and
+unused fingerprints fail while their baseline is current. An exception for an
+older baseline becomes inactive automatically when a new stable release is
+published.
+
+During normal development the policy validates `[Unreleased]`. After
+`release.sh prepare` moves those notes into the new version section, release-PR
+and tag checks also validate that exact candidate-version section. This keeps
+the documented approval attached to the release without weakening ordinary PR
+checks or searching unrelated historical notes.
+
+For an intentional pre-1.0 break:
+
+1. Add a clearly marked breaking entry and migration steps to `[Unreleased]`.
+2. Run the compatibility check to obtain the exact finding fingerprints.
+3. Add the smallest coherent exception group with those fingerprints, the
+   current stable baseline, rationale, migration text, changelog marker, and a
+   review expiry.
+4. Review the uploaded Markdown and JSON reports before merging.
+
+Run the policy fixtures locally with:
+
+```bash
+oasdiff_bin="$(scripts/install-oasdiff.sh /tmp/hubuum-oasdiff)"
+OASDIFF_BIN="$oasdiff_bin" scripts/test-openapi-compatibility.sh
+```
 
 ## Native archives
 
