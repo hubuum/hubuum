@@ -147,6 +147,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Stable release archives now include CycloneDX SBOMs, signed authoritative
+  checksums, and SLSA provenance. Published container platforms include Rust
+  and Alpine SBOM data, signed provenance, keyless manifest signatures, and
+  blocking scans for fixed HIGH or CRITICAL vulnerabilities. CI also enforces
+  Rust advisory, license, immutable-input, and time-bounded exception policies.
 - **Breaking (Rust API):** persisted task, event, import-result, and
   export-output rows no longer implement broad Serde or `Debug` traits that
   could expose raw stored content. `TaskRecord` retains redacted debug output

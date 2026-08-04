@@ -33,6 +33,19 @@ for path in "$@"; do
     .markdownlint.json)
       markdown=true
       ;;
+    SECURITY.md | docs/supply-chain-security.md)
+      code=true
+      container=true
+      artifacts=true
+      ;;
+    .github/workflows/supply-chain.yml | .github/supply-chain-* | \
+      deny.toml | .trivyignore | scripts/check-supply-chain-policy.py | \
+      scripts/generate-container-evidence.sh | scripts/generate-release-sbom.py | \
+      scripts/run-cargo-deny.sh | scripts/test-generate-release-sbom.sh)
+      code=true
+      container=true
+      artifacts=true
+      ;;
     *.md | docs/* | LICENSE | .gitattributes | .gitignore | \
       .env.example | .env.*.example | .agents/* | .codex/* | \
       .github/ISSUE_TEMPLATE/* | .github/PULL_REQUEST_TEMPLATE*)
