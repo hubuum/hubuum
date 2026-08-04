@@ -11,8 +11,8 @@ mod tests {
     use crate::models::group::{Group, GroupResponse, NewGroup, UpdateGroup};
     use crate::models::user::{NewUser, User};
     use crate::models::{
-        MembershipPrincipalResponse, Principal, PrincipalGroup, PrincipalID, PrincipalKind,
-        PrincipalMemberResponse,
+        IdentityScope, MembershipPrincipalResponse, NewIdentityScope, Principal, PrincipalGroup,
+        PrincipalID, PrincipalKind, PrincipalMemberResponse,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
@@ -23,6 +23,43 @@ mod tests {
 
     const GROUPS_ENDPOINT: &str = "/api/v1/iam/groups";
     const PRINCIPALS_ENDPOINT: &str = "/api/v1/iam/principals";
+
+    #[rstest]
+    #[actix_web::test]
+    async fn legacy_identity_scope_upsert_returns_an_unchanged_row(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        use crate::schema::identity_scopes;
+
+        let context = test_context;
+        let scope_name = context.scoped_name("legacy_identity_scope_upsert");
+        let created = ensure_identity_scope(
+            &context.pool,
+            &scope_name,
+            crate::models::LDAP_PROVIDER_KIND,
+        )
+        .await
+        .unwrap();
+
+        let returned = with_connection(&context.pool, async |conn| {
+            diesel::insert_into(identity_scopes::table)
+                .values(NewIdentityScope {
+                    name: &scope_name,
+                    provider_kind: crate::models::LDAP_PROVIDER_KIND,
+                })
+                .on_conflict(identity_scopes::name)
+                .do_update()
+                .set(identity_scopes::provider_kind.eq(crate::models::LDAP_PROVIDER_KIND))
+                .get_result::<IdentityScope>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(returned.id, created.id);
+        assert_eq!(returned.revision, created.revision);
+        assert_eq!(returned.updated_at, created.updated_at);
+    }
 
     async fn check_show_group(
         context: &TestContext,

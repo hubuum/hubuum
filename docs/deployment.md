@@ -71,11 +71,12 @@ compatible with the old application version for the duration of the rolling
 update; a migration that blocks application queries can still cause request
 latency even though an HTTP replica remains online.
 
-The resource-revision release is an explicit exception: deploy its migration,
-API replicas, and workers as one coordinated release. Quiesce backup and
-restore operations during the transition because backup v4 and import v2
-intentionally reject their older formats. Do not run old writers after the
-revision triggers are installed.
+The resource-revision release supports the ordinary adjacent-release API
+overlap certified by CI: drain old workers first, run the migration while an
+old API replica serves requests, and then roll API replicas. Quiesce backup,
+restore, and import operations during the transition because backup v4 and
+import v2 intentionally reject their older formats. Do not start new workers
+until the candidate schema is ready.
 
 The standby owns its own database pool and application memory. Capacity-plan
 external PostgreSQL servers for both API pools, the primary's task-lease
@@ -371,6 +372,16 @@ its API and has no API-only standby to own traffic before migration, so the
 task-lease and task-provenance migrations cannot safely transfer an in-flight
 task to a new worker. The tested idle-queue upgrade preserves HTTP
 availability; it does not promise uninterrupted background task execution.
+
+A separate release-blocking test resolves the latest stable release by
+immutable image digest. It seeds users, groups, scoped credentials, nested
+collections, classes, objects, relations, computed fields, events, exports,
+remote targets, and asynchronous work through that release; drains its worker;
+and measures candidate migration availability. It then exercises both API
+versions against the migrated schema and proves an `N-1` application rollback
+before restoring the candidate. This certifies only adjacent application
+rollback and does not downgrade PostgreSQL or promise compatibility with older
+application generations.
 
 ### Re-running The Installer To Update
 

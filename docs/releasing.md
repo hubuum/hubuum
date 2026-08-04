@@ -9,6 +9,8 @@ This repository uses the CI workflow in
 - `CHANGELOG.md` must contain a section for the release version.
 - `docs/openapi.json` must be regenerated for the release version.
 - A version bump in `Cargo.toml` must come with matching changelog and OpenAPI updates.
+- The candidate must pass the adjacent stable release upgrade and application
+  rollback harness against an immutable release-image digest.
 
 ## Scripted release flow
 
@@ -50,11 +52,35 @@ The helper script:
 Once the tag is pushed, the CI workflow will:
 
 - verify the tagged commit already passed CI on `main`
+- resolve the latest stable release, migrate its representative data under live
+  API probes, exercise a mixed-version interval, and restore its application
+  image against the migrated database before publishing
 - verify that the tag, `Cargo.toml`, changelog, and OpenAPI versions match
 - publish GitHub release archives and SHA-256 checksums for Linux x86_64, Linux ARM64,
   Windows x86_64, and macOS ARM64
 - use the matching changelog section as the GitHub Release notes
 - publish AMD64 and ARM64 GHCR images for the release tag
+
+## Certified Upgrade And Rollback Window
+
+CI certifies exactly one adjacent application transition: the latest stable
+release (`N-1`) to the candidate (`N`). It resolves `N-1` through the GitHub
+release API, pulls the release image, records its immutable digest, and tests it
+with the candidate against one PostgreSQL database. The report records the
+candidate SHA, migration set and duration, maximum observed API latency and
+outage, each test phase, and failure logs.
+
+The certified sequence drains old workers, keeps the old API under ordinary
+read probes while candidate migrations run, starts both API versions for
+cross-version reads and writes, completes the candidate rollout, and then
+restarts the `N-1` API against the migrated schema. That last step is an
+application rollback only. Hubuum does not automatically downgrade the
+database, and releases older than `N-1` are outside this compatibility promise.
+
+Backup, restore, and import document formats may change at a release boundary.
+Quiesce those operations while versions overlap and use the document format
+accepted by the application version that will process it. A successful API
+rollback does not make a newer backup or import document readable by `N-1`.
 
 ## Native archives
 

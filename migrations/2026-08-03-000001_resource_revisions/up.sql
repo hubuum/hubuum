@@ -2,20 +2,108 @@
 -- restore an exact value only while hubuum.restore_revisions is transaction
 -- locally enabled.
 
-ALTER TABLE identity_scopes ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE principals ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE groups ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE collections ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE group_memberships ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE hubuumclass ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE hubuumobject ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE hubuumclass_relation ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE hubuumobject_relation ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE export_templates ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE remote_targets ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE event_sinks ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE event_subscriptions ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
-ALTER TABLE tokens ADD COLUMN revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0);
+-- Add the history-side column first so an old temporal trigger can continue to
+-- insert rows during the later metadata-only expansion of each live table.
+DO $$
+DECLARE
+    table_name TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'collections_history',
+        'hubuumclass_history',
+        'hubuumclass_relation_history',
+        'hubuumobject_history',
+        'hubuumobject_relation_history',
+        'export_templates_history',
+        'remote_targets_history'
+    ]
+    LOOP
+        EXECUTE format('ALTER TABLE %I ADD COLUMN revision BIGINT DEFAULT 1', table_name);
+    END LOOP;
+END $$;
+
+DO $$
+DECLARE
+    table_name TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'principals',
+        'identity_scopes',
+        'groups',
+        'collections',
+        'group_memberships',
+        'hubuumclass',
+        'hubuumobject',
+        'hubuumclass_relation',
+        'hubuumobject_relation',
+        'export_templates',
+        'remote_targets',
+        'event_sinks',
+        'event_subscriptions',
+        'tokens'
+    ]
+    LOOP
+        EXECUTE format('ALTER TABLE %I ADD COLUMN revision BIGINT DEFAULT 1', table_name);
+    END LOOP;
+END $$;
+
+DO $$
+DECLARE
+    table_name TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'principals', 'identity_scopes', 'groups', 'collections',
+        'group_memberships', 'hubuumclass', 'hubuumobject',
+        'hubuumclass_relation', 'hubuumobject_relation', 'export_templates',
+        'remote_targets', 'event_sinks', 'event_subscriptions', 'tokens'
+    ]
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %I ADD CONSTRAINT %I CHECK (revision > 0) NOT VALID',
+            table_name,
+            table_name || '_revision_positive'
+        );
+    END LOOP;
+END $$;
+
+-- Validation scans may be long on a real installation. They run separately
+-- from the metadata-only ACCESS EXCLUSIVE phases so ordinary reads continue.
+DO $$
+DECLARE
+    table_name TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'principals', 'identity_scopes', 'groups', 'collections',
+        'group_memberships', 'hubuumclass', 'hubuumobject',
+        'hubuumclass_relation', 'hubuumobject_relation', 'export_templates',
+        'remote_targets', 'event_sinks', 'event_subscriptions', 'tokens'
+    ]
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %I VALIDATE CONSTRAINT %I',
+            table_name,
+            table_name || '_revision_positive'
+        );
+    END LOOP;
+END $$;
+
+DO $$
+DECLARE
+    table_name TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'principals', 'identity_scopes', 'groups', 'collections',
+        'group_memberships', 'hubuumclass', 'hubuumobject',
+        'hubuumclass_relation', 'hubuumobject_relation', 'export_templates',
+        'remote_targets', 'event_sinks', 'event_subscriptions', 'tokens'
+    ]
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN revision SET NOT NULL', -- HUBUUM-COMPAT: SET-NOT-NULL-AFTER-BACKFILL
+            table_name
+        );
+    END LOOP;
+END $$;
 
 CREATE TABLE collection_authorization_state (
     collection_id INT PRIMARY KEY REFERENCES collections(id) ON DELETE CASCADE,
@@ -28,10 +116,11 @@ SELECT id FROM collections;
 -- The seven temporal resources predate revisions. An insert starts at one,
 -- every stored update advances once, and a delete tombstone retains the last
 -- live revision.
+-- Backfills hold row locks but do not retain the earlier DDL locks, so temporal
+-- reads can continue while an installation with substantial history is ranked.
 DO $$
 DECLARE
     table_name TEXT;
-    base_table TEXT;
 BEGIN
     FOREACH table_name IN ARRAY ARRAY[
         'collections_history',
@@ -43,7 +132,6 @@ BEGIN
         'remote_targets_history'
     ]
     LOOP
-        EXECUTE format('ALTER TABLE %I ADD COLUMN revision BIGINT', table_name);
         EXECUTE format(
             'WITH ranked AS (
                  SELECT history_id,
@@ -58,18 +146,85 @@ BEGIN
             table_name,
             table_name
         );
-        EXECUTE format(
-            'ALTER TABLE %I ALTER COLUMN revision SET NOT NULL, ADD CHECK (revision > 0)',
-            table_name
-        );
-        EXECUTE format(
-            'CREATE INDEX %I ON %I (id, revision, history_id)',
-            table_name || '_id_revision_idx',
-            table_name
-        );
+    END LOOP;
+END $$;
 
+DO $$
+DECLARE
+    table_name TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'collections_history', 'hubuumclass_history',
+        'hubuumclass_relation_history', 'hubuumobject_history',
+        'hubuumobject_relation_history', 'export_templates_history',
+        'remote_targets_history'
+    ]
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %I ADD CONSTRAINT %I CHECK (revision > 0) NOT VALID',
+            table_name,
+            table_name || '_revision_positive'
+        );
+    END LOOP;
+END $$;
+
+DO $$
+DECLARE
+    table_name TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'collections_history', 'hubuumclass_history',
+        'hubuumclass_relation_history', 'hubuumobject_history',
+        'hubuumobject_relation_history', 'export_templates_history',
+        'remote_targets_history'
+    ]
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %I VALIDATE CONSTRAINT %I',
+            table_name,
+            table_name || '_revision_positive'
+        );
+    END LOOP;
+END $$;
+
+DO $$
+DECLARE
+    table_name TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'collections_history', 'hubuumclass_history',
+        'hubuumclass_relation_history', 'hubuumobject_history',
+        'hubuumobject_relation_history', 'export_templates_history',
+        'remote_targets_history'
+    ]
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN revision SET NOT NULL', -- HUBUUM-COMPAT: SET-NOT-NULL-AFTER-BACKFILL
+            table_name
+        );
+    END LOOP;
+END $$;
+
+-- Copy the open history revision to the live row without disabling triggers.
+-- The transaction-local restore flag suppresses history writes while retaining
+-- MVCC read availability during a potentially large update.
+DO $$
+DECLARE
+    table_name TEXT;
+    base_table TEXT;
+BEGIN
+    PERFORM set_config('hubuum.restore_history', 'on', true);
+    FOREACH table_name IN ARRAY ARRAY[
+        'collections_history',
+        'hubuumclass_history',
+        'hubuumclass_relation_history',
+        'hubuumobject_history',
+        'hubuumobject_relation_history',
+        'export_templates_history',
+        'remote_targets_history'
+    ]
+    LOOP
         base_table := replace(table_name, '_history', '');
-        EXECUTE format('ALTER TABLE %I DISABLE TRIGGER USER', base_table);
         EXECUTE format(
             'UPDATE %I live
                 SET revision = history.revision
@@ -78,13 +233,18 @@ BEGIN
             base_table,
             table_name
         );
-        EXECUTE format('ALTER TABLE %I ENABLE TRIGGER USER', base_table);
     END LOOP;
 END $$;
 
 ALTER TABLE events
-    ADD COLUMN before_revision BIGINT NULL CHECK (before_revision > 0),
-    ADD COLUMN after_revision BIGINT NULL CHECK (after_revision > 0);
+    ADD COLUMN before_revision BIGINT NULL,
+    ADD COLUMN after_revision BIGINT NULL;
+ALTER TABLE events
+    ADD CONSTRAINT events_before_revision_positive CHECK (before_revision > 0) NOT VALID;
+ALTER TABLE events
+    ADD CONSTRAINT events_after_revision_positive CHECK (after_revision > 0) NOT VALID;
+ALTER TABLE events VALIDATE CONSTRAINT events_before_revision_positive;
+ALTER TABLE events VALIDATE CONSTRAINT events_after_revision_positive;
 
 CREATE OR REPLACE FUNCTION hubuum_revision_owner_first(owner_key TEXT)
 RETURNS BOOLEAN
@@ -164,6 +324,7 @@ DECLARE
     internal_bump BOOLEAN := current_setting('hubuum.internal_revision_bump', true) IS NOT DISTINCT FROM 'on';
     has_updated_at BOOLEAN := TG_ARGV[0] = 'updated_at';
     coalesced BOOLEAN := TG_ARGV[1] = 'coalesce';
+    return_unchanged BOOLEAN := TG_ARGV[1] = 'direct_return_unchanged';
     ignored_fields TEXT[] := ARRAY['revision', 'created_at', 'updated_at'];
     domain_old JSONB;
     domain_new JSONB;
@@ -222,6 +383,13 @@ BEGIN
         operational_old := to_jsonb(OLD) - ARRAY['revision', 'created_at', 'updated_at'];
         operational_new := to_jsonb(NEW) - ARRAY['revision', 'created_at', 'updated_at'];
         IF operational_old = operational_new THEN
+            IF return_unchanged THEN
+                NEW.revision := OLD.revision;
+                IF has_updated_at THEN
+                    NEW.updated_at := OLD.updated_at;
+                END IF;
+                RETURN NEW;
+            END IF;
             RETURN NULL;
         END IF;
         NEW.revision := OLD.revision;
@@ -348,7 +516,7 @@ DECLARE
     table_name TEXT;
 BEGIN
     FOREACH table_name IN ARRAY ARRAY[
-        'identity_scopes', 'principals', 'groups', 'collections',
+        'principals', 'identity_scopes', 'groups', 'collections',
         'group_memberships', 'hubuumclass', 'hubuumobject',
         'hubuumclass_relation', 'hubuumobject_relation', 'export_templates',
         'remote_targets', 'event_sinks', 'event_subscriptions'
@@ -371,7 +539,7 @@ DROP TRIGGER IF EXISTS export_templates_skip_unchanged_temporal_update_trg ON ex
 DROP TRIGGER IF EXISTS remote_targets_skip_unchanged_temporal_update_trg ON remote_targets;
 
 CREATE TRIGGER identity_scopes_revision BEFORE INSERT OR UPDATE ON identity_scopes
-FOR EACH ROW EXECUTE FUNCTION hubuum_manage_resource_revision('updated_at', 'direct');
+FOR EACH ROW EXECUTE FUNCTION hubuum_manage_resource_revision('updated_at', 'direct_return_unchanged');
 CREATE TRIGGER principals_revision BEFORE INSERT OR UPDATE ON principals
 FOR EACH ROW EXECUTE FUNCTION hubuum_manage_resource_revision(
     'updated_at', 'coalesce', 'last_sync_attempted_at', 'last_sync_success_at'
@@ -538,21 +706,3 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
-CREATE INDEX identity_scopes_revision_id_idx ON identity_scopes (revision, id);
-CREATE INDEX principals_revision_id_idx ON principals (revision, id);
-CREATE INDEX groups_revision_id_idx ON groups (revision, id);
-CREATE INDEX collections_parent_revision_id_idx ON collections (parent_collection_id, revision, id);
-CREATE INDEX hubuumclass_collection_revision_id_idx ON hubuumclass (collection_id, revision, id);
-CREATE INDEX hubuumobject_class_revision_id_idx ON hubuumobject (hubuum_class_id, revision, id);
-CREATE INDEX hubuumclass_relation_revision_id_idx ON hubuumclass_relation (revision, id);
-CREATE INDEX hubuumobject_relation_revision_id_idx ON hubuumobject_relation (revision, id);
-CREATE INDEX export_templates_collection_revision_id_idx ON export_templates (collection_id, revision, id);
-CREATE INDEX remote_targets_collection_revision_id_idx ON remote_targets (collection_id, revision, id);
-CREATE INDEX event_sinks_revision_id_idx ON event_sinks (revision, id);
-CREATE INDEX event_subscriptions_collection_revision_id_idx ON event_subscriptions (collection_id, revision, id);
-CREATE INDEX computed_field_class_revision_id_idx ON computed_field_definitions (class_id, revision, id);
-CREATE INDEX tokens_principal_revision_id_idx ON tokens (principal_id, revision, id);
-CREATE INDEX group_memberships_group_revision_idx ON group_memberships (group_id, revision, principal_id);
-CREATE INDEX events_before_revision_id_idx ON events (before_revision, id) WHERE before_revision IS NOT NULL;
-CREATE INDEX events_after_revision_id_idx ON events (after_revision, id) WHERE after_revision IS NOT NULL;

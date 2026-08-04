@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS hubuumclass_history_id_revision_idx;

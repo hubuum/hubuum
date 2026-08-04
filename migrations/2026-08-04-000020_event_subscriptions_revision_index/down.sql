@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS event_subscriptions_collection_revision_id_idx;
