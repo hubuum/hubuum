@@ -3,6 +3,7 @@ mod tests {
     use crate::api::etag::{IfMatchCondition, RevisionedResource};
     use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test};
+    use chrono::SubsecRound;
     use rstest::rstest;
 
     use crate::db::traits::identity::ensure_identity_scope;
@@ -654,7 +655,7 @@ mod tests {
     ) {
         let context = test_context;
         let group = create_test_group(&context.pool).await;
-        let sync_time = chrono::Utc::now().naive_utc();
+        let sync_time = chrono::Utc::now().naive_utc().trunc_subsecs(6);
         with_connection(&context.pool, async |conn| {
             use crate::schema::groups;
             diesel::update(groups::table.filter(groups::id.eq(group.id)))
