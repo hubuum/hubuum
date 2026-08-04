@@ -124,7 +124,11 @@ inside the configured max-stale window. Further requests back off for the scope
 refresh TTL before retrying the provider, so one outage does not serialize
 every request on repeated LDAP timeouts. Once the cache exceeds
 `max_stale_seconds`, requests fail with `503 Service Unavailable` during that
-backoff instead of using stale membership.
+backoff instead of using stale membership. Both durations must be positive and
+representable, and `max_stale_seconds` must be greater than or equal to
+`refresh_ttl_seconds`; invalid policies are rejected during startup. A sync
+timestamp ahead of the server clock is never treated as fresh or as an active
+retry backoff.
 
 ## Users And Groups
 

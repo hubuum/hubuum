@@ -112,6 +112,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   echoing credential-bearing source lines. Deployments must replace larger or
   non-regular sources with a bounded regular file; no database migration is
   required.
+- **Breaking:** External identity refresh policy now rejects unrepresentable
+  durations and stale windows shorter than the refresh TTL. Before upgrading,
+  raise `max_stale_seconds` or lower `refresh_ttl_seconds` wherever the stale
+  window is shorter. Future-dated provider sync timestamps also fail closed
+  instead of extending cached authorization state.
 - **Breaking (HTTP and Rust API):** Event-delivery API responses no longer
   expose the internal `claim_token` worker lease capability. API clients must
   stop deserializing or depending on this field. The persistence-only

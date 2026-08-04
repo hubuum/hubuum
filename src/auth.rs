@@ -128,46 +128,72 @@ struct RefreshPolicy {
 
 impl RefreshPolicy {
     fn new(refresh_ttl_seconds: i64, max_stale_seconds: i64) -> Result<Self, ApiError> {
+        let refresh_ttl = RefreshTtl::new(refresh_ttl_seconds)?;
+        let max_stale = MaxStale::new(max_stale_seconds)?;
+        if max_stale.duration() < refresh_ttl.duration() {
+            return Err(ApiError::BadRequest(
+                "ldap max_stale_seconds must be greater than or equal to refresh_ttl_seconds"
+                    .to_string(),
+            ));
+        }
         Ok(Self {
-            refresh_ttl: RefreshTtl::new(refresh_ttl_seconds)?,
-            max_stale: MaxStale::new(max_stale_seconds)?,
+            refresh_ttl,
+            max_stale,
         })
     }
 }
 
 #[derive(Clone, Copy)]
-struct RefreshTtl(chrono::Duration);
+struct RefreshDuration(chrono::Duration);
 
-impl RefreshTtl {
-    fn new(seconds: i64) -> Result<Self, ApiError> {
+impl RefreshDuration {
+    fn new(seconds: i64, field: &str) -> Result<Self, ApiError> {
         if seconds <= 0 {
-            return Err(ApiError::BadRequest(
-                "ldap refresh_ttl_seconds must be positive".to_string(),
-            ));
+            return Err(ApiError::BadRequest(format!(
+                "ldap {field} must be positive"
+            )));
         }
-        Ok(Self(chrono::Duration::seconds(seconds)))
+        chrono::Duration::try_seconds(seconds)
+            .map(Self)
+            .ok_or_else(|| ApiError::BadRequest(format!("ldap {field} is too large")))
     }
 
     fn contains(self, elapsed: chrono::Duration) -> bool {
-        elapsed < self.0
+        elapsed >= chrono::Duration::zero() && elapsed < self.0
     }
 }
 
 #[derive(Clone, Copy)]
-struct MaxStale(chrono::Duration);
+struct RefreshTtl(RefreshDuration);
 
-impl MaxStale {
+impl RefreshTtl {
     fn new(seconds: i64) -> Result<Self, ApiError> {
-        if seconds <= 0 {
-            return Err(ApiError::BadRequest(
-                "ldap max_stale_seconds must be positive".to_string(),
-            ));
-        }
-        Ok(Self(chrono::Duration::seconds(seconds)))
+        RefreshDuration::new(seconds, "refresh_ttl_seconds").map(Self)
     }
 
     fn contains(self, elapsed: chrono::Duration) -> bool {
-        elapsed < self.0
+        self.0.contains(elapsed)
+    }
+
+    fn duration(self) -> chrono::Duration {
+        self.0.0
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MaxStale(RefreshDuration);
+
+impl MaxStale {
+    fn new(seconds: i64) -> Result<Self, ApiError> {
+        RefreshDuration::new(seconds, "max_stale_seconds").map(Self)
+    }
+
+    fn contains(self, elapsed: chrono::Duration) -> bool {
+        self.0.contains(elapsed)
+    }
+
+    fn duration(self) -> chrono::Duration {
+        self.0.0
     }
 }
 
@@ -900,6 +926,28 @@ mod tests {
     }
 
     #[test]
+    fn future_success_timestamp_requires_external_refresh() {
+        let current = timestamp();
+        let future_success = current + chrono::Duration::seconds(1);
+
+        assert_eq!(
+            refresh_status_at(current, Some(future_success), None, refresh_ttl(300)),
+            RefreshStatus::Due
+        );
+    }
+
+    #[test]
+    fn future_attempt_timestamp_does_not_create_retry_backoff() {
+        let current = timestamp();
+        let future_attempt = current + chrono::Duration::seconds(1);
+
+        assert_eq!(
+            refresh_status_at(current, None, Some(future_attempt), refresh_ttl(300)),
+            RefreshStatus::Due
+        );
+    }
+
+    #[test]
     fn retry_backoff_rejects_cache_beyond_max_stale() {
         let current = timestamp();
         let state = ExternalUserState {
@@ -933,6 +981,33 @@ mod tests {
 
         assert!(matches!(error, ApiError::BadRequest(_)));
         assert_eq!(error.to_string(), "ldap max_stale_seconds must be positive");
+    }
+
+    #[rstest::rstest]
+    #[case::refresh_ttl(i64::MAX, 3600, "ldap refresh_ttl_seconds is too large")]
+    #[case::max_stale(300, i64::MAX, "ldap max_stale_seconds is too large")]
+    fn refresh_policy_rejects_unrepresentable_durations(
+        #[case] refresh_ttl_seconds: i64,
+        #[case] max_stale_seconds: i64,
+        #[case] expected: &str,
+    ) {
+        let error = RefreshPolicy::new(refresh_ttl_seconds, max_stale_seconds)
+            .err()
+            .unwrap();
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert_eq!(error.to_string(), expected);
+    }
+
+    #[test]
+    fn refresh_policy_rejects_a_stale_window_below_the_refresh_ttl() {
+        let error = RefreshPolicy::new(300, 299).err().unwrap();
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        assert_eq!(
+            error.to_string(),
+            "ldap max_stale_seconds must be greater than or equal to refresh_ttl_seconds"
+        );
     }
 
     #[test]
