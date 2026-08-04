@@ -56,6 +56,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- **Breaking (Rust API):** persisted task, event, import-result, and
+  export-output rows no longer implement broad Serde or `Debug` traits that
+  could expose raw stored content. `TaskRecord` retains redacted debug output
+  that hides request, idempotency, token-scope, and worker-lease material.
+  Library callers must use the corresponding task response types for public
+  payloads.
 - **Breaking (HTTP and Rust API):** Event-delivery API responses no longer
   expose the internal `claim_token` worker lease capability. API clients must
   stop deserializing or depending on this field. The persistence-only
