@@ -12,6 +12,9 @@ For single-host container deployments, pass the host file to
 `install-single-host.sh --auth-config`; the installer mounts it read-only and
 sets the container path automatically. See
 [Single-Host Container Deployment](deployment.md#external-authentication-configuration).
+The configuration source must be a regular UTF-8 file no larger than 1 MiB.
+Parse errors identify the line and column but deliberately omit the source line
+because it may contain credentials such as `bind_password`.
 
 ```toml
 [[ldap]]
