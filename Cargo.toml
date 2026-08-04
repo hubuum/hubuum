@@ -200,7 +200,7 @@ path = "tests/api_platform.rs"
 required-features = ["integration-test-support"]
 
 [[bench]]
-name = "json_sql_filters_callgrind"
+name = "json_predicate_construction_callgrind"
 harness = false
 
 [[bench]]

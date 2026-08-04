@@ -3,9 +3,10 @@ use diesel::pg::Pg;
 use diesel::query_builder::{AstPass, QueryFragment, QueryId};
 use diesel::result::QueryResult;
 use diesel::sql_types::{Bool, Integer, Text, Timestamp};
+use std::iter::from_fn;
 
 use crate::errors::ApiError;
-use crate::models::search::{ParsedQueryParam, ParsedQueryParamExt, SQLComponent, SQLValue};
+use crate::models::search::{ParsedQueryParam, ParsedQueryParamSqlExt, SQLComponent, SQLValue};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct JsonSqlPredicate {
@@ -58,7 +59,7 @@ fn bind_sql_value<'b>(out: &mut AstPass<'_, 'b, Pg>, value: &'b SQLValue) -> Que
 }
 
 pub(crate) fn dynamic_sql_predicate(component: SQLComponent) -> Result<JsonSqlPredicate, ApiError> {
-    let placeholder_count = bind_placeholder_offsets(&component.sql).len();
+    let placeholder_count = bind_placeholder_offsets(&component.sql).count();
     if placeholder_count != component.bind_variables.len() {
         return Err(ApiError::InternalServerError(format!(
             "Dynamic SQL predicate has {placeholder_count} placeholders but {} bind values",
@@ -71,26 +72,28 @@ pub(crate) fn dynamic_sql_predicate(component: SQLComponent) -> Result<JsonSqlPr
     })
 }
 
-fn bind_placeholder_offsets(sql: &str) -> Vec<usize> {
-    let mut offsets = Vec::new();
+fn bind_placeholder_offsets(sql: &str) -> impl Iterator<Item = usize> + '_ {
     let mut characters = sql.char_indices().peekable();
     let mut in_single_quoted_string = false;
-    while let Some((offset, character)) = characters.next() {
-        if character == '\'' {
-            if in_single_quoted_string
-                && characters
-                    .peek()
-                    .is_some_and(|(_, next_character)| *next_character == '\'')
-            {
-                let _ = characters.next();
-            } else {
-                in_single_quoted_string = !in_single_quoted_string;
+
+    from_fn(move || {
+        while let Some((offset, character)) = characters.next() {
+            if character == '\'' {
+                if in_single_quoted_string
+                    && characters
+                        .peek()
+                        .is_some_and(|(_, next_character)| *next_character == '\'')
+                {
+                    let _ = characters.next();
+                } else {
+                    in_single_quoted_string = !in_single_quoted_string;
+                }
+            } else if character == '?' && !in_single_quoted_string {
+                return Some(offset);
             }
-        } else if character == '?' && !in_single_quoted_string {
-            offsets.push(offset);
         }
-    }
-    offsets
+        None
+    })
 }
 
 pub trait JsonPredicateExt {
@@ -111,6 +114,19 @@ mod tests {
     fn bind_placeholders_ignore_question_marks_in_sql_strings() {
         let sql = "scope = '[{\"path\":\"/answer?\"}]' AND escaped = 'it''s?' AND value = ?";
 
-        assert_eq!(bind_placeholder_offsets(sql), vec![sql.len() - 1]);
+        assert_eq!(
+            bind_placeholder_offsets(sql).collect::<Vec<_>>(),
+            vec![sql.len() - 1]
+        );
+    }
+
+    #[test]
+    fn bind_placeholders_returns_each_unquoted_offset() {
+        let sql = "first = ? AND second = ?";
+
+        assert_eq!(
+            bind_placeholder_offsets(sql).collect::<Vec<_>>(),
+            vec![8, 23]
+        );
     }
 }
