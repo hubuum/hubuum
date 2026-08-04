@@ -93,6 +93,7 @@ impl ObjectGraphRow {
             description: self.descendant_description.clone(),
             created_at: self.descendant_created_at,
             updated_at: self.descendant_updated_at,
+            revision: self.descendant_revision,
             path: self.path.clone(),
         }
     }
@@ -109,6 +110,7 @@ impl RelatedObjectGraphRow {
             description: self.descendant_description.clone(),
             created_at: self.descendant_created_at,
             updated_at: self.descendant_updated_at,
+            revision: self.descendant_revision,
             path: self.path.clone(),
         }
     }
@@ -125,6 +127,7 @@ impl RelatedObjectIncludeRow {
             description: self.descendant_description.clone(),
             created_at: self.descendant_created_at,
             updated_at: self.descendant_updated_at,
+            revision: self.descendant_revision,
             path: self.path.clone(),
         }
     }
@@ -141,6 +144,7 @@ impl RelatedObjectForRootRow {
             description: self.descendant_description.clone(),
             created_at: self.descendant_created_at,
             updated_at: self.descendant_updated_at,
+            revision: self.descendant_revision,
             path: self.path.clone(),
         }
     }

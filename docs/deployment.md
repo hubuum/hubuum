@@ -71,6 +71,12 @@ compatible with the old application version for the duration of the rolling
 update; a migration that blocks application queries can still cause request
 latency even though an HTTP replica remains online.
 
+The resource-revision release is an explicit exception: deploy its migration,
+API replicas, and workers as one coordinated release. Quiesce backup and
+restore operations during the transition because backup v4 and import v2
+intentionally reject their older formats. Do not run old writers after the
+revision triggers are installed.
+
 The standby owns its own database pool and application memory. Capacity-plan
 external PostgreSQL servers for both API pools, the primary's task-lease
 connection, migration/administration work, and operational headroom. See

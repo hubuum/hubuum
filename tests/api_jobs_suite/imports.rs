@@ -17,8 +17,8 @@ mod tests {
         ImportGraph, ImportGroupInput, ImportGroupMembershipInput, ImportIdentityScopeInput,
         ImportMode, ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy,
         ImportPrincipalInput, ImportPrincipalSubtype, ImportRequest, ImportTaskResultResponse,
-        NewTaskRecord, ObjectRelationLimit, Permissions, RestoreTimestamps, TaskEventResponse,
-        TaskKind, TaskResponse, TaskStatus,
+        ImportWriteCondition, NewTaskRecord, ObjectRelationLimit, Permissions, ResourceRevision,
+        RestoreTimestamps, TaskEventResponse, TaskKind, TaskResponse, TaskStatus,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
     use crate::schema::collections::dsl::{
@@ -96,6 +96,7 @@ mod tests {
                     description: "Timestamp import collection".to_string(),
                     parent_collection_ref: None,
                     parent_collection_key: None,
+                    condition: None,
                     timestamps: Some(timestamps.clone()),
                 }],
                 classes: names
@@ -110,6 +111,7 @@ mod tests {
                         validate_schema: Some(false),
                         collection_ref: Some("collection:timestamps".to_string()),
                         collection_key: None,
+                        condition: None,
                         timestamps: Some(timestamps.clone()),
                     })
                     .collect(),
@@ -124,6 +126,7 @@ mod tests {
                         data: serde_json::json!({"index": index}),
                         class_ref: Some(format!("class:timestamps:{index}")),
                         class_key: None,
+                        condition: None,
                         timestamps: Some(timestamps.clone()),
                     })
                     .collect(),
@@ -137,6 +140,7 @@ mod tests {
                     reverse_template_alias: None,
                     from_max_relations: None,
                     to_max_relations: None,
+                    condition: None,
                     timestamps: Some(timestamps.clone()),
                 }],
                 object_relations: vec![ImportObjectRelationInput {
@@ -145,6 +149,7 @@ mod tests {
                     from_object_key: None,
                     to_object_ref: Some("object:timestamps:1".to_string()),
                     to_object_key: None,
+                    condition: None,
                     timestamps: Some(timestamps),
                 }],
                 ..ImportGraph::default()
@@ -266,7 +271,7 @@ mod tests {
         mode: ImportMode,
     ) -> ImportRequest {
         ImportRequest {
-            version: 1,
+            version: CURRENT_IMPORT_VERSION,
             dry_run: Some(false),
             mode: Some(mode),
             graph: ImportGraph {
@@ -274,6 +279,7 @@ mod tests {
                     ref_: Some("collection:primary".to_string()),
                     name,
                     description: description.to_string(),
+                    condition: None,
                     timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
@@ -294,7 +300,7 @@ mod tests {
         let user_name = context.scoped_name("import_identity_user");
         let collection_name = context.scoped_name("import_identity_collection");
         let body = ImportRequest {
-            version: 1,
+            version: CURRENT_IMPORT_VERSION,
             dry_run: Some(false),
             mode: Some(ImportMode {
                 atomicity: Some(ImportAtomicity::Strict),
@@ -306,6 +312,7 @@ mod tests {
                     ref_: Some("identity:benchmark".to_string()),
                     name: scope_name.clone(),
                     provider_kind: "local".to_string(),
+                    condition: None,
                     timestamps: None,
                 }],
                 groups: vec![ImportGroupInput {
@@ -318,6 +325,7 @@ mod tests {
                     external_key: None,
                     last_sync_attempted_at: None,
                     last_sync_success_at: None,
+                    condition: None,
                     timestamps: None,
                 }],
                 principals: vec![ImportPrincipalInput {
@@ -339,6 +347,7 @@ mod tests {
                         email: None,
                         anonymized_at: None,
                     },
+                    condition: None,
                     timestamps: None,
                 }],
                 group_memberships: vec![ImportGroupMembershipInput {
@@ -348,12 +357,14 @@ mod tests {
                     group_ref: Some("group:benchmark".to_string()),
                     group_key: None,
                     sources: Vec::new(),
+                    condition: None,
                     timestamps: None,
                 }],
                 collections: vec![ImportCollectionInput {
                     ref_: Some("collection:benchmark".to_string()),
                     name: collection_name,
                     description: "Benchmark collection".to_string(),
+                    condition: None,
                     timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
@@ -368,6 +379,7 @@ mod tests {
                     },
                     permissions: vec![Permissions::ReadCollection, Permissions::ReadClass],
                     replace_existing: Some(false),
+                    condition: None,
                 }],
                 ..ImportGraph::default()
             },
@@ -390,7 +402,7 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
-    async fn core_graph_import_overwrite_restores_timestamps(
+    async fn core_graph_timestamp_only_overwrite_is_a_noop(
         #[future(awt)] test_context: TestContext,
     ) {
         let context = test_context;
@@ -398,23 +410,9 @@ mod tests {
         let initial = restore_timestamps("2020-01-02T03:04:05", "2020-02-03T04:05:06");
         let restored = restore_timestamps("2020-01-02T03:04:05", "2021-06-07T08:09:10");
 
-        for (body, expected) in [
-            (
-                core_timestamp_import_request(
-                    &names,
-                    initial.clone(),
-                    ImportCollisionPolicy::Abort,
-                ),
-                initial,
-            ),
-            (
-                core_timestamp_import_request(
-                    &names,
-                    restored.clone(),
-                    ImportCollisionPolicy::Overwrite,
-                ),
-                restored,
-            ),
+        for body in [
+            core_timestamp_import_request(&names, initial.clone(), ImportCollisionPolicy::Abort),
+            core_timestamp_import_request(&names, restored, ImportCollisionPolicy::Overwrite),
         ] {
             let response = post_request_with_headers(
                 &context.pool,
@@ -431,7 +429,7 @@ mod tests {
             let timestamps = load_core_timestamp_pairs(&context.pool, &names).await;
             assert_eq!(
                 timestamps,
-                vec![(expected.created_at(), expected.updated_at()); 7]
+                vec![(initial.created_at(), initial.updated_at()); 7]
             );
         }
     }
@@ -459,6 +457,7 @@ mod tests {
                     description: "Relation cardinality import".to_string(),
                     parent_collection_ref: None,
                     parent_collection_key: None,
+                    condition: None,
                     timestamps: None,
                 }],
                 classes: vec![
@@ -470,6 +469,7 @@ mod tests {
                         validate_schema: Some(false),
                         collection_ref: Some("collection:cardinality".to_string()),
                         collection_key: None,
+                        condition: None,
                         timestamps: None,
                     },
                     ImportClassInput {
@@ -480,6 +480,7 @@ mod tests {
                         validate_schema: Some(false),
                         collection_ref: Some("collection:cardinality".to_string()),
                         collection_key: None,
+                        condition: None,
                         timestamps: None,
                     },
                 ],
@@ -493,6 +494,7 @@ mod tests {
                     reverse_template_alias: Some("jacks".to_string()),
                     from_max_relations: Some(ObjectRelationLimit::new(1).unwrap()),
                     to_max_relations: None,
+                    condition: None,
                     timestamps: None,
                 }],
                 ..ImportGraph::default()
@@ -551,7 +553,7 @@ mod tests {
     ) {
         let context = test_context;
         let body = ImportRequest {
-            version: 1,
+            version: CURRENT_IMPORT_VERSION,
             dry_run: Some(true),
             mode: Some(ImportMode {
                 atomicity: Some(ImportAtomicity::Strict),
@@ -569,6 +571,7 @@ mod tests {
                     external_key: None,
                     last_sync_attempted_at: None,
                     last_sync_success_at: None,
+                    condition: None,
                     timestamps: None,
                 }],
                 ..ImportGraph::default()
@@ -606,7 +609,7 @@ mod tests {
     async fn import_rejects_duplicate_extended_refs(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let body = ImportRequest {
-            version: 1,
+            version: CURRENT_IMPORT_VERSION,
             dry_run: Some(true),
             mode: Some(ImportMode {
                 atomicity: Some(ImportAtomicity::BestEffort),
@@ -619,12 +622,14 @@ mod tests {
                         ref_: Some("identity:duplicate".to_string()),
                         name: context.scoped_name("duplicate_identity_scope_one"),
                         provider_kind: "local".to_string(),
+                        condition: None,
                         timestamps: None,
                     },
                     ImportIdentityScopeInput {
                         ref_: Some("identity:duplicate".to_string()),
                         name: context.scoped_name("duplicate_identity_scope_two"),
                         provider_kind: "local".to_string(),
+                        condition: None,
                         timestamps: None,
                     },
                 ],
@@ -670,7 +675,7 @@ mod tests {
     ) {
         let context = test_context;
         let body = ImportRequest {
-            version: 1,
+            version: CURRENT_IMPORT_VERSION,
             dry_run: Some(false),
             mode: None,
             graph: ImportGraph {
@@ -687,6 +692,7 @@ mod tests {
                     filter: serde_json::json!({"collection_ids": "invalid"}),
                     routing: serde_json::json!({}),
                     enabled: true,
+                    condition: None,
                     timestamps: None,
                 }],
                 ..ImportGraph::default()
@@ -717,7 +723,7 @@ mod tests {
         let object_name = context.scoped_name("import_object");
 
         let body = ImportRequest {
-            version: 1,
+            version: CURRENT_IMPORT_VERSION,
             dry_run: Some(false),
             mode: Some(ImportMode {
                 atomicity: Some(ImportAtomicity::Strict),
@@ -729,6 +735,7 @@ mod tests {
                     ref_: Some("collection:primary".to_string()),
                     name: import_collection_name.clone(),
                     description: "Imported collection".to_string(),
+                    condition: None,
                     timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
@@ -737,6 +744,7 @@ mod tests {
                     ref_: Some("class:primary".to_string()),
                     name: import_class_name.clone(),
                     description: "Imported class".to_string(),
+                    condition: None,
                     timestamps: None,
                     json_schema: None,
                     validate_schema: Some(false),
@@ -747,6 +755,7 @@ mod tests {
                     ref_: Some("object:primary".to_string()),
                     name: object_name.clone(),
                     description: "Imported object".to_string(),
+                    condition: None,
                     timestamps: None,
                     data: serde_json::json!({"hostname": object_name}),
                     class_ref: Some("class:primary".to_string()),
@@ -762,6 +771,7 @@ mod tests {
                     },
                     permissions: vec![Permissions::ReadCollection, Permissions::ReadClass],
                     replace_existing: Some(false),
+                    condition: None,
                 }],
                 ..ImportGraph::default()
             },
@@ -925,7 +935,7 @@ mod tests {
         let idempotency = context.scoped_name("same-task");
 
         let body = ImportRequest {
-            version: 1,
+            version: CURRENT_IMPORT_VERSION,
             dry_run: Some(true),
             mode: None,
             graph: ImportGraph {
@@ -933,6 +943,7 @@ mod tests {
                     ref_: Some("collection:dry".to_string()),
                     name: import_collection_name,
                     description: "Dry run collection".to_string(),
+                    condition: None,
                     timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
@@ -982,7 +993,7 @@ mod tests {
         for iteration in 0..10 {
             let idempotency = context.scoped_name(&format!("same-task-concurrent-{iteration}"));
             let body = ImportRequest {
-                version: 1,
+                version: CURRENT_IMPORT_VERSION,
                 dry_run: Some(true),
                 mode: None,
                 graph: ImportGraph {
@@ -992,6 +1003,7 @@ mod tests {
                             "idempotent_import_collection_concurrent_{iteration}"
                         )),
                         description: "Dry run collection".to_string(),
+                        condition: None,
                         timestamps: None,
                         parent_collection_ref: None,
                         parent_collection_key: None,
@@ -1062,7 +1074,7 @@ mod tests {
         .unwrap();
 
         let body = ImportRequest {
-            version: 1,
+            version: CURRENT_IMPORT_VERSION,
             dry_run: Some(true),
             mode: None,
             graph: ImportGraph {
@@ -1070,6 +1082,7 @@ mod tests {
                     ref_: Some("collection:conflict".to_string()),
                     name: context.scoped_name("idempotency_conflict_collection"),
                     description: "Dry run collection".to_string(),
+                    condition: None,
                     timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
@@ -1122,7 +1135,7 @@ mod tests {
         let first_task: TaskResponse = test::read_body_json(first).await;
 
         let changed_body = ImportRequest {
-            version: 1,
+            version: CURRENT_IMPORT_VERSION,
             dry_run: Some(true),
             mode: None,
             graph: ImportGraph {
@@ -1130,6 +1143,7 @@ mod tests {
                     ref_: Some("collection:conflict".to_string()),
                     name: context.scoped_name("idempotency_conflict_collection_changed"),
                     description: "Changed dry run collection".to_string(),
+                    condition: None,
                     timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
@@ -1160,7 +1174,7 @@ mod tests {
     async fn test_import_rejects_unsupported_version(#[future(awt)] test_context: TestContext) {
         let context = test_context;
         let body = ImportRequest {
-            version: 2,
+            version: 1,
             dry_run: Some(true),
             mode: None,
             graph: ImportGraph {
@@ -1168,6 +1182,7 @@ mod tests {
                     ref_: Some("collection:unsupported".to_string()),
                     name: context.scoped_name("unsupported_import_version"),
                     description: "unsupported".to_string(),
+                    condition: None,
                     timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
@@ -1202,7 +1217,7 @@ mod tests {
         let context = test_context;
         let delegate_group = create_test_group(&context.pool).await;
         let body = ImportRequest {
-            version: 1,
+            version: CURRENT_IMPORT_VERSION,
             dry_run: Some(false),
             mode: Some(ImportMode {
                 atomicity: Some(ImportAtomicity::Strict),
@@ -1214,6 +1229,7 @@ mod tests {
                     ref_: Some("collection:page".to_string()),
                     name: context.scoped_name("paged_import_collection"),
                     description: "Imported collection".to_string(),
+                    condition: None,
                     timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,
@@ -1222,6 +1238,7 @@ mod tests {
                     ref_: Some("class:page".to_string()),
                     name: context.scoped_name("paged_import_class"),
                     description: "Imported class".to_string(),
+                    condition: None,
                     timestamps: None,
                     json_schema: None,
                     validate_schema: Some(false),
@@ -1232,6 +1249,7 @@ mod tests {
                     ref_: Some("object:page".to_string()),
                     name: context.scoped_name("paged_import_object"),
                     description: "Imported object".to_string(),
+                    condition: None,
                     timestamps: None,
                     data: serde_json::json!({"hostname": "paged"}),
                     class_ref: Some("class:page".to_string()),
@@ -1247,6 +1265,7 @@ mod tests {
                     },
                     permissions: vec![Permissions::ReadCollection],
                     replace_existing: Some(false),
+                    condition: None,
                 }],
                 ..ImportGraph::default()
             },
@@ -1420,6 +1439,123 @@ mod tests {
 
     #[rstest]
     #[actix_web::test]
+    async fn dry_run_reports_the_observed_resource_revision(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let fixture = context
+            .collection_fixture("dry_run_observed_revision")
+            .await;
+        let mut body = collection_import_request(
+            fixture.collection.name.clone(),
+            "dry-run-only update",
+            ImportMode {
+                atomicity: Some(ImportAtomicity::Strict),
+                collision_policy: Some(ImportCollisionPolicy::Overwrite),
+                permission_policy: Some(ImportPermissionPolicy::Abort),
+            },
+        );
+        body.dry_run = Some(true);
+        body.graph.collections[0].condition = Some(ImportWriteCondition::Overwrite);
+
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &body,
+            Vec::new(),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(response).await;
+        wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
+
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/imports/{}/results", task.id),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let results: Vec<ImportTaskResultResponse> = test::read_body_json(response).await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].observed_revision,
+            Some(fixture.collection.revision)
+        );
+
+        let description = with_connection(&context.pool, async |conn| {
+            collections
+                .filter(collection_id_field.eq(fixture.collection.id))
+                .select(collection_description)
+                .first::<String>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(description, fixture.collection.description);
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn best_effort_import_reports_stale_revision_without_overwriting(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let fixture = context
+            .collection_fixture("best_effort_stale_revision")
+            .await;
+        let mut body = collection_import_request(
+            fixture.collection.name.clone(),
+            "must not be written",
+            ImportMode {
+                atomicity: Some(ImportAtomicity::BestEffort),
+                collision_policy: Some(ImportCollisionPolicy::Overwrite),
+                permission_policy: Some(ImportPermissionPolicy::Continue),
+            },
+        );
+        body.graph.collections[0].condition = Some(ImportWriteCondition::IfRevision {
+            expected_revision: ResourceRevision::new(fixture.collection.revision.get() + 1)
+                .unwrap(),
+        });
+
+        let response = post_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            IMPORTS_ENDPOINT,
+            &body,
+            Vec::new(),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::ACCEPTED).await;
+        let task: TaskResponse = test::read_body_json(response).await;
+        wait_for_task(&context, task.id, &[TaskStatus::Failed]).await;
+
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("/api/v1/imports/{}/results", task.id),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let results: Vec<ImportTaskResultResponse> = test::read_body_json(response).await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].outcome, "stale_revision");
+
+        let description = with_connection(&context.pool, async |conn| {
+            collections
+                .filter(collection_id_field.eq(fixture.collection.id))
+                .select(collection_description)
+                .first::<String>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(description, fixture.collection.description);
+    }
+
+    #[rstest]
+    #[actix_web::test]
     async fn test_normal_user_import_applies_collection_permissions(
         #[future(awt)] test_context: TestContext,
     ) {
@@ -1452,6 +1588,7 @@ mod tests {
                         ref_: Some("class:allowed".to_string()),
                         name: allowed_class.clone(),
                         description: "allowed".to_string(),
+                        condition: None,
                         timestamps: None,
                         json_schema: None,
                         validate_schema: Some(false),
@@ -1465,6 +1602,7 @@ mod tests {
                         ref_: Some("class:forbidden".to_string()),
                         name: forbidden_class.clone(),
                         description: "forbidden".to_string(),
+                        condition: None,
                         timestamps: None,
                         json_schema: None,
                         validate_schema: Some(false),
@@ -1650,7 +1788,7 @@ mod tests {
     ) {
         let context = test_context;
         let body = ImportRequest {
-            version: 1,
+            version: CURRENT_IMPORT_VERSION,
             dry_run: Some(true),
             mode: None,
             graph: ImportGraph {
@@ -1658,6 +1796,7 @@ mod tests {
                     ref_: Some("collection:private".to_string()),
                     name: context.scoped_name("private_task_collection"),
                     description: "private".to_string(),
+                    condition: None,
                     timestamps: None,
                     parent_collection_ref: None,
                     parent_collection_key: None,

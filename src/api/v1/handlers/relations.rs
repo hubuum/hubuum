@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::db::traits::authz::scope_allows;
@@ -7,6 +8,7 @@ use crate::db::traits::relations::{
     class_relation_authorization_resources, object_relation_authorization_resources,
 };
 use crate::db::traits::user::UserSearchBackend;
+use crate::db::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::{QueryParamsExt, parse_query_parameter};
@@ -146,7 +148,7 @@ async fn get_class_relation(
     )
     .await?;
 
-    Ok(ApiResponse::new(relation, StatusCode::OK))
+    ApiResponse::ok_revisioned(relation)
 }
 
 #[utoipa::path(
@@ -195,7 +197,7 @@ async fn create_class_relation(
     let event_context = requestor.event_context(&req);
     let relation = relation.save(&pool, &event_context).await?;
 
-    Ok(ApiResponse::new(relation, StatusCode::CREATED))
+    ApiResponse::revisioned(relation, StatusCode::CREATED)
 }
 
 #[utoipa::path(
@@ -240,10 +242,13 @@ async fn delete_class_relation(
     )
     .await?;
 
+    let etag = relation.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(&req);
-    relation_id.delete(&pool, &event_context).await?;
+    with_revision_precondition_scope(precondition, relation_id.delete(&pool, &event_context))
+        .await?;
 
-    Ok(ApiResponse::no_content())
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 #[utoipa::path(
@@ -367,7 +372,7 @@ async fn get_object_relation(
     )
     .await?;
 
-    Ok(ApiResponse::new(relation, StatusCode::OK))
+    ApiResponse::ok_revisioned(relation)
 }
 
 #[utoipa::path(
@@ -416,7 +421,7 @@ async fn create_object_relation(
     let event_context = requestor.event_context(&req);
     let relation = relation.save(&pool, &event_context).await?;
 
-    Ok(ApiResponse::new(relation, StatusCode::CREATED))
+    ApiResponse::revisioned(relation, StatusCode::CREATED)
 }
 
 #[utoipa::path(
@@ -461,8 +466,11 @@ async fn delete_object_relation(
     )
     .await?;
 
+    let etag = relation.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(&req);
-    relation_id.delete(&pool, &event_context).await?;
+    with_revision_precondition_scope(precondition, relation_id.delete(&pool, &event_context))
+        .await?;
 
-    Ok(ApiResponse::no_content())
+    Ok(ApiResponse::no_content_with_etag(etag))
 }

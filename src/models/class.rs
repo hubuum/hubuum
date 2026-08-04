@@ -6,6 +6,7 @@ use utoipa::ToSchema;
 use crate::db::DbPool;
 use crate::db::traits::class::total_class_count_from_backend;
 use crate::errors::ApiError;
+use crate::models::ResourceRevision;
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::hubuumclass;
 use crate::traits::{BackendContext, SelfAccessors};
@@ -21,6 +22,7 @@ pub struct HubuumClass {
     pub description: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 #[derive(Serialize, Deserialize, Insertable, Clone, Debug, ToSchema)]
@@ -110,6 +112,7 @@ pub struct HubuumClassWithPath {
     pub description: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
     pub path: Vec<i32>,
 }
 
@@ -247,6 +250,7 @@ pub struct HubuumClassHistory {
     pub actor_kind: Option<String>,
     pub initiator_user_id: Option<i32>,
     pub task_id: Option<i32>,
+    pub revision: ResourceRevision,
 }
 
 crate::impl_history_pagination!(HubuumClassHistory, "hubuumclass_history");

@@ -67,7 +67,7 @@ pub async fn ensure_identity_scope(
 ) -> Result<IdentityScope, ApiError> {
     use crate::schema::identity_scopes::dsl::{identity_scopes as scopes, name};
     with_connection(pool, async |conn| {
-        diesel::insert_into(scopes)
+        let written = diesel::insert_into(scopes)
             .values(NewIdentityScope {
                 name: scope_name,
                 provider_kind: provider,
@@ -77,6 +77,16 @@ pub async fn ensure_identity_scope(
             .set(identity_scopes::provider_kind.eq(provider))
             .get_result::<IdentityScope>(conn)
             .await
+            .optional()?;
+        match written {
+            Some(scope) => Ok(scope),
+            None => {
+                scopes
+                    .filter(name.eq(scope_name))
+                    .first::<IdentityScope>(conn)
+                    .await
+            }
+        }
     })
     .await
 }

@@ -1,14 +1,18 @@
 #[cfg(test)]
 mod tests {
+    use crate::api::etag::{IfMatchCondition, RevisionedResource};
     use crate::db::prelude::*;
     use actix_web::{http::StatusCode, test};
     use rstest::rstest;
 
     use crate::db::traits::identity::ensure_identity_scope;
-    use crate::db::with_connection;
+    use crate::db::{with_connection, with_revision_precondition_scope};
     use crate::models::group::{Group, GroupResponse, NewGroup, UpdateGroup};
     use crate::models::user::{NewUser, User};
-    use crate::models::{Principal, PrincipalID, PrincipalKind, PrincipalMemberResponse};
+    use crate::models::{
+        MembershipPrincipalResponse, Principal, PrincipalGroup, PrincipalID, PrincipalKind,
+        PrincipalMemberResponse,
+    };
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -263,9 +267,11 @@ mod tests {
         .unwrap();
 
         let responses =
-            PrincipalMemberResponse::from_principals(&context.pool, vec![local, external])
-                .await
-                .unwrap();
+            futures::future::try_join_all(vec![local, external].into_iter().map(|principal| {
+                MembershipPrincipalResponse::from_principal(&context.pool, principal)
+            }))
+            .await
+            .unwrap();
 
         assert_eq!(
             responses[0].identity_scope,
@@ -367,7 +373,10 @@ mod tests {
             &(),
         )
         .await;
-        let _ = assert_response_status(resp, StatusCode::NO_CONTENT).await;
+        let resp = assert_response_status(resp, StatusCode::CREATED).await;
+        let membership: PrincipalMemberResponse = test::read_body_json(resp).await;
+        assert_eq!(membership.principal_id, user.id);
+        assert_eq!(membership.group_id, group.id);
 
         let resp = get_request(
             &context.pool,
@@ -486,6 +495,151 @@ mod tests {
             .delete_without_events(&context.pool)
             .await
             .unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn conditional_membership_add_does_not_recreate_a_deleted_membership(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let group = create_test_group(&context.pool).await;
+        let user = create_test_user(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &user)
+            .await
+            .unwrap();
+        let membership =
+            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
+        let tag = membership.entity_tag().unwrap();
+        let precondition = IfMatchCondition::Tags(vec![tag.clone()])
+            .database_precondition(&tag)
+            .unwrap();
+
+        group
+            .remove_member_without_events(&user, &context.pool)
+            .await
+            .unwrap();
+        let error = with_revision_precondition_scope(
+            precondition,
+            group.add_member_without_events(&context.pool, &user),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::errors::ApiError::PreconditionFailed(_, _)
+        ));
+        assert!(matches!(
+            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
+                .await,
+            Err(crate::errors::ApiError::NotFound(_))
+        ));
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn membership_add_returns_the_revision_after_adding_the_manual_source(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let group = create_test_group(&context.pool).await;
+        let user = create_test_user(&context.pool).await;
+        let initial = with_connection(&context.pool, async |conn| {
+            use crate::schema::group_memberships;
+            diesel::insert_into(group_memberships::table)
+                .values((
+                    group_memberships::principal_id.eq(user.id),
+                    group_memberships::group_id.eq(group.id),
+                ))
+                .get_result::<PrincipalGroup>(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        let response = post_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{GROUPS_ENDPOINT}/{}/members/{}", group.id, user.id),
+            &serde_json::json!({}),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::CREATED).await;
+        let response_etag = response
+            .headers()
+            .get(actix_web::http::header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let returned: PrincipalMemberResponse = test::read_body_json(response).await;
+        let persisted =
+            crate::db::traits::group::principal_group_by_ids(&context.pool, user.id, group.id)
+                .await
+                .unwrap();
+
+        assert!(persisted.revision > initial.revision);
+        assert_eq!(returned.revision, persisted.revision);
+        assert_eq!(response_etag, returned.entity_tag().unwrap().to_string());
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn tagged_group_points_exclude_revision_exempt_sync_bookkeeping(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let group = create_test_group(&context.pool).await;
+        let sync_time = chrono::Utc::now().naive_utc();
+        with_connection(&context.pool, async |conn| {
+            use crate::schema::groups;
+            diesel::update(groups::table.filter(groups::id.eq(group.id)))
+                .set((
+                    groups::last_sync_attempted_at.eq(Some(sync_time)),
+                    groups::last_sync_success_at.eq(Some(sync_time)),
+                ))
+                .execute(conn)
+                .await
+        })
+        .await
+        .unwrap();
+
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{GROUPS_ENDPOINT}/{}", group.id),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert!(
+            response
+                .headers()
+                .contains_key(actix_web::http::header::ETAG)
+        );
+        let body: serde_json::Value = test::read_body_json(response).await;
+        assert!(body.get("last_sync_attempted_at").is_none());
+        assert!(body.get("last_sync_success_at").is_none());
+
+        let response = get_request(
+            &context.pool,
+            &context.admin_token,
+            &format!("{GROUPS_ENDPOINT}?id={}", group.id),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let body: Vec<serde_json::Value> = test::read_body_json(response).await;
+        assert_eq!(
+            body[0]["last_sync_attempted_at"],
+            serde_json::json!(sync_time)
+        );
+        assert_eq!(
+            body[0]["last_sync_success_at"],
+            serde_json::json!(sync_time)
+        );
     }
 
     #[rstest]

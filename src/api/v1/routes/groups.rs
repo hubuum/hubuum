@@ -9,6 +9,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(groups::update_group)
         .service(groups::delete_group)
         .service(groups::get_group_members)
+        .service(groups::get_group_member)
         .service(groups::add_group_member)
         .service(groups::delete_group_member);
 }

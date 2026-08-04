@@ -104,10 +104,15 @@ async fn load_json_rows(
 async fn snapshot_state(conn: &mut DbConnection) -> Result<BackupState, ApiError> {
     let mut sections = BTreeMap::new();
     for table in BACKUP_STATE_SECTIONS {
-        sections.insert(
-            (*table).to_string(),
-            load_json_rows(conn, table, SnapshotFilter::All).await?,
-        );
+        let mut rows = load_json_rows(conn, table, SnapshotFilter::All).await?;
+        if *table == "users" {
+            for row in &mut rows {
+                if let Some(object) = row.as_object_mut() {
+                    object.insert("password".to_string(), Value::Null);
+                }
+            }
+        }
+        sections.insert((*table).to_string(), rows);
     }
     Ok(BackupState { sections })
 }

@@ -140,6 +140,7 @@ pub(crate) fn token_snapshot(
         "permission_scoped": token.permission_scoped,
         "resource_scoped": token.resource_scoped,
         "scope": scope,
+        "revision": token.revision,
     }))
 }
 
@@ -224,16 +225,24 @@ pub async fn revoke_token_by_id_for_principal_db(
         let before = tokens
             .filter(id.eq(token_id))
             .filter(principal_id.eq(principal))
-            .filter(revoked_at.is_null())
             .for_update()
             .first::<PrincipalToken>(conn)
             .await
             .optional()?;
 
-        let before_scope = match before.as_ref() {
-            Some(token) => load_token_scope_conn(conn, token).await?,
-            None => None,
+        let Some(before) = before else {
+            return Ok(0);
         };
+        crate::db::assert_locked_revision_precondition(
+            conn,
+            &format!("tokens:{}", before.id),
+            before.revision,
+        )
+        .await?;
+        if before.revoked_at.is_some() {
+            return Ok(1);
+        }
+        let before_scope = load_token_scope_conn(conn, &before).await?;
 
         let updated = diesel::update(
             tokens
@@ -246,7 +255,7 @@ pub async fn revoke_token_by_id_for_principal_db(
         .await
         .optional()?;
 
-        if let (Some(before), Some(after)) = (before, updated) {
+        if let Some(after) = updated {
             let event = token_event(
                 &after,
                 Action::Revoked,

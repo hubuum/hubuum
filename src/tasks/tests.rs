@@ -40,10 +40,11 @@ use crate::models::{
     ImportClassRelationInput, ImportCollectionInput, ImportCollisionPolicy,
     ImportExportTemplateInput, ImportGraph, ImportGroupMembershipInput, ImportIdentityScopeInput,
     ImportMembershipSourceInput, ImportMode, ImportObjectInput, ImportObjectRelationInput,
-    ImportPermissionPolicy, ImportRemoteTargetInput, ImportRequest, NewCollectionWithAssignee,
-    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-    NewImportTaskResultRecord, NewTaskRecord, ObjectKey, Permissions, RemoteAuthConfig,
-    RemoteHttpMethod, RemoteTargetSubjectType, RestoreTimestamps, TaskKind, TaskStatus,
+    ImportPermissionPolicy, ImportRemoteTargetInput, ImportRequest, ImportWriteCondition,
+    NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
+    NewHubuumObjectRelation, NewImportTaskResultRecord, NewTaskRecord, ObjectKey, Permissions,
+    RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType, ResourceRevision,
+    RestoreTimestamps, TaskKind, TaskStatus,
 };
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::types::{ResourceAttrs, ResourceKind};
@@ -102,6 +103,7 @@ async fn import_planning_query_growth_is_bounded_per_object_in_one_class() {
                     ref_: Some(format!("object:query-budget-{index}")),
                     name: object.name.clone(),
                     description: "planned import update".to_string(),
+                    condition: None,
                     timestamps: None,
                     data: serde_json::json!({"index": index, "planned": true}),
                     class_ref: None,
@@ -207,6 +209,7 @@ async fn import_planning_uses_the_task_execution_permission_backend() {
                 ref_: Some("collection:existing".to_string()),
                 name: fixture.collection.name.clone(),
                 description: "updated by import".to_string(),
+                condition: None,
                 timestamps: None,
                 parent_collection_ref: None,
                 parent_collection_key: None,
@@ -347,6 +350,7 @@ async fn relation_timestamp_overwrite_requires_update_permission(
                 reverse_template_alias: None,
                 from_max_relations: None,
                 to_max_relations: None,
+                condition: None,
                 timestamps: Some(timestamps),
             });
         }
@@ -357,6 +361,7 @@ async fn relation_timestamp_overwrite_requires_update_permission(
                 from_object_key: Some(object_key(0)),
                 to_object_ref: None,
                 to_object_key: Some(object_key(1)),
+                condition: None,
                 timestamps: Some(timestamps),
             });
         }
@@ -407,6 +412,7 @@ fn extended_import_request(name: String) -> ImportRequest {
                 ref_: Some("identity:backend-test".to_string()),
                 name,
                 provider_kind: "local".to_string(),
+                condition: None,
                 timestamps: None,
             }],
             ..ImportGraph::default()
@@ -470,6 +476,7 @@ async fn imported_collection_timestamps_are_written_in_the_initial_history_entry
                 description: "Imported collection history".to_string(),
                 parent_collection_ref: None,
                 parent_collection_key: None,
+                condition: None,
                 timestamps: Some(timestamps.clone()),
             },
             Some(parent.collection.id),
@@ -546,6 +553,7 @@ async fn unchanged_temporal_import_overwrite_does_not_append_history(
                 relation_context: None,
                 default_missing_data_policy: None,
                 default_limits: None,
+                condition: None,
                 timestamps: Some(timestamps.clone()),
             };
             let id =
@@ -581,6 +589,7 @@ async fn unchanged_temporal_import_overwrite_does_not_append_history(
                 allowed_subject_types: vec![RemoteTargetSubjectType::Collection],
                 timeout_ms: 1_000,
                 enabled: true,
+                condition: None,
                 timestamps: Some(timestamps.clone()),
             };
             let id =
@@ -629,6 +638,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         description: "Unchanged core import collection".to_string(),
         parent_collection_ref: None,
         parent_collection_key: None,
+        condition: None,
         timestamps: Some(timestamps.clone()),
     };
     let class_inputs = [0, 1].map(|index| ImportClassInput {
@@ -639,6 +649,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         validate_schema: Some(false),
         collection_ref: None,
         collection_key: None,
+        condition: None,
         timestamps: Some(timestamps.clone()),
     });
     let object_inputs = [0, 1].map(|index| ImportObjectInput {
@@ -648,6 +659,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
         data: serde_json::json!({"index": index}),
         class_ref: None,
         class_key: None,
+        condition: None,
         timestamps: Some(timestamps.clone()),
     });
 
@@ -673,10 +685,12 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
                 to_max_relations: None,
             },
             Some(&timestamps),
+            None,
         )
         .await?;
         let object_relation =
-            create_object_relation_db(conn, &objects[0], &objects[1], Some(&timestamps)).await?;
+            create_object_relation_db(conn, &objects[0], &objects[1], Some(&timestamps), None)
+                .await?;
 
         let history_count = match entity {
             CoreTemporalEntity::Collection => {
@@ -712,6 +726,7 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
                     classes[0].id,
                     classes[1].id,
                     &timestamps,
+                    None,
                 )
                 .await?;
                 use crate::schema::hubuumclass_relation_history::dsl as h;
@@ -722,8 +737,14 @@ async fn unchanged_core_import_overwrite_returns_current_row_without_history(
                     .await?
             }
             CoreTemporalEntity::ObjectRelation => {
-                update_object_relation_timestamps_db(conn, &objects[0], &objects[1], &timestamps)
-                    .await?;
+                update_object_relation_timestamps_db(
+                    conn,
+                    &objects[0],
+                    &objects[1],
+                    &timestamps,
+                    None,
+                )
+                .await?;
                 use crate::schema::hubuumobject_relation_history::dsl as h;
                 h::hubuumobject_relation_history
                     .filter(h::id.eq(object_relation.id))
@@ -776,6 +797,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
                 description: "Database timestamp collection".to_string(),
                 parent_collection_ref: None,
                 parent_collection_key: None,
+                condition: None,
                 timestamps: None,
             },
             Some(parent.collection.id),
@@ -794,6 +816,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
                     validate_schema: Some(false),
                     collection_ref: None,
                     collection_key: None,
+                    condition: None,
                     timestamps: None,
                 },
                 collection.id,
@@ -808,6 +831,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
                     data: serde_json::json!({"index": index}),
                     class_ref: None,
                     class_key: None,
+                    condition: None,
                     timestamps: None,
                 },
                 &class,
@@ -827,10 +851,11 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
                 to_max_relations: None,
             },
             None,
+            None,
         )
         .await?;
         let object_relation =
-            create_object_relation_db(conn, &objects[0], &objects[1], None).await?;
+            create_object_relation_db(conn, &objects[0], &objects[1], None, None).await?;
         let actual = [
             (collection.created_at, collection.updated_at),
             (classes[0].created_at, classes[0].updated_at),
@@ -907,6 +932,7 @@ async fn test_identity_scope_overwrite_preserves_imported_timestamps() {
                 ref_: None,
                 name: name.clone(),
                 provider_kind: "local".to_string(),
+                condition: None,
                 timestamps: Some(initial),
             },
             false,
@@ -918,6 +944,7 @@ async fn test_identity_scope_overwrite_preserves_imported_timestamps() {
                 ref_: None,
                 name: name.clone(),
                 provider_kind: "oidc".to_string(),
+                condition: None,
                 timestamps: Some(restored.clone()),
             },
             true,
@@ -949,6 +976,48 @@ async fn test_identity_scope_overwrite_preserves_imported_timestamps() {
     .unwrap();
 }
 
+#[tokio::test]
+async fn identity_scope_import_rejects_a_stale_expected_revision() {
+    let context = TestContext::new().await;
+    let name = context.scoped_name("identity_scope_stale_revision");
+
+    let error = with_connection(&context.pool, async |conn| {
+        upsert_identity_scope_db(
+            conn,
+            &ImportIdentityScopeInput {
+                ref_: None,
+                name: name.clone(),
+                provider_kind: "local".to_string(),
+                condition: None,
+                timestamps: None,
+            },
+            false,
+        )
+        .await?;
+        upsert_identity_scope_db(
+            conn,
+            &ImportIdentityScopeInput {
+                ref_: None,
+                name,
+                provider_kind: "oidc".to_string(),
+                condition: Some(ImportWriteCondition::IfRevision {
+                    expected_revision: ResourceRevision::new(2).unwrap(),
+                }),
+                timestamps: None,
+            },
+            true,
+        )
+        .await
+    })
+    .await
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        ApiError::PreconditionFailed(message, _) if message.contains("stale_revision")
+    ));
+}
+
 #[rstest]
 #[case::export_template(ClassBoundImport::ExportTemplate)]
 #[case::remote_target(ClassBoundImport::RemoteTarget)]
@@ -966,6 +1035,7 @@ async fn imported_class_binding_must_match_target_collection(#[case] kind: Class
                 ref_: None,
                 name: context.scoped_name("import_class_scope_class"),
                 description: "Class in another collection".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -1012,6 +1082,7 @@ async fn imported_class_binding_must_match_target_collection(#[case] kind: Class
                 relation_context: None,
                 default_missing_data_policy: None,
                 default_limits: None,
+                condition: None,
                 timestamps: None,
             },
             overwrite: false,
@@ -1033,6 +1104,7 @@ async fn imported_class_binding_must_match_target_collection(#[case] kind: Class
                 allowed_subject_types: vec![RemoteTargetSubjectType::Object],
                 timeout_ms: 1_000,
                 enabled: true,
+                condition: None,
                 timestamps: None,
             },
             overwrite: false,
@@ -1083,6 +1155,7 @@ async fn imported_templates_use_effective_collection_loader(
         include: None,
         relation_context: None,
         default_missing_data_policy: None,
+        condition: None,
         default_limits: None,
         timestamps: None,
     };
@@ -1148,6 +1221,7 @@ async fn membership_import_honors_collision_policy(
             source_key: "operators".to_string(),
             timestamps: Some(timestamps.clone()),
         }],
+        condition: None,
         timestamps: Some(timestamps),
     };
 
@@ -1196,7 +1270,9 @@ async fn membership_import_honors_collision_policy(
         Err(ApiError::Conflict(_)) => "conflict",
         Err(error) => panic!("unexpected membership collision result: {error}"),
     };
-    let expected_timestamps = if overwrite { restored } else { initial };
+    // Timestamp-only imports are semantic no-ops. Imported timestamps are
+    // preserved only when creation or an effective domain change occurs.
+    let expected_timestamps = initial;
 
     assert_eq!(
         (actual_outcome, result.1, result.2),
@@ -1231,6 +1307,7 @@ async fn test_execute_import_strict_rolls_back_on_runtime_failure() {
                 ref_: Some("collection:ok".to_string()),
                 name: collection.clone(),
                 description: "Rollback collection".to_string(),
+                condition: None,
                 timestamps: None,
                 parent_collection_ref: None,
                 parent_collection_key: None,
@@ -1247,6 +1324,7 @@ async fn test_execute_import_strict_rolls_back_on_runtime_failure() {
                 ref_: Some("class:bad".to_string()),
                 name: class.clone(),
                 description: "Fails at runtime".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -1302,6 +1380,7 @@ async fn test_execute_import_best_effort_keeps_successful_items() {
                 ref_: Some("collection:one".to_string()),
                 name: collection_one.clone(),
                 description: "Best effort collection one".to_string(),
+                condition: None,
                 timestamps: None,
                 parent_collection_ref: None,
                 parent_collection_key: None,
@@ -1318,6 +1397,7 @@ async fn test_execute_import_best_effort_keeps_successful_items() {
                 ref_: Some("class:bad".to_string()),
                 name: "bad".to_string(),
                 description: "Fails at runtime".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -1336,6 +1416,7 @@ async fn test_execute_import_best_effort_keeps_successful_items() {
                 ref_: Some("collection:two".to_string()),
                 name: collection_two.clone(),
                 description: "Best effort collection two".to_string(),
+                condition: None,
                 timestamps: None,
                 parent_collection_ref: None,
                 parent_collection_key: None,
@@ -1391,6 +1472,7 @@ async fn test_execute_import_best_effort_continues_after_non_policy_runtime_erro
                 ref_: Some("collection:one".to_string()),
                 name: collection_one.clone(),
                 description: "Best effort collection one".to_string(),
+                condition: None,
                 timestamps: None,
                 parent_collection_ref: None,
                 parent_collection_key: None,
@@ -1407,6 +1489,7 @@ async fn test_execute_import_best_effort_continues_after_non_policy_runtime_erro
                 ref_: Some("class:bad".to_string()),
                 name: "bad".to_string(),
                 description: "Fails at runtime".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -1425,6 +1508,7 @@ async fn test_execute_import_best_effort_continues_after_non_policy_runtime_erro
                 ref_: Some("collection:two".to_string()),
                 name: collection_two.clone(),
                 description: "Best effort collection two".to_string(),
+                condition: None,
                 timestamps: None,
                 parent_collection_ref: None,
                 parent_collection_key: None,
@@ -1479,6 +1563,7 @@ async fn test_execute_import_strict_preserves_underlying_error_variant() {
                 ref_: Some("collection:missing".to_string()),
                 name: "missing".to_string(),
                 description: "missing".to_string(),
+                condition: None,
                 timestamps: None,
                 parent_collection_ref: None,
                 parent_collection_key: None,
@@ -1613,6 +1698,7 @@ async fn test_plan_collection_rejects_duplicate_name_within_request() {
         ref_: Some("collection:one".to_string()),
         name: context.scoped_name("duplicate_collection"),
         description: "first".to_string(),
+        condition: None,
         timestamps: None,
         parent_collection_ref: None,
         parent_collection_key: None,
@@ -1662,6 +1748,7 @@ async fn test_plan_collection_allows_duplicate_names_under_different_parents() {
         ref_: Some("collection:one".to_string()),
         name: child_name.clone(),
         description: "first".to_string(),
+        condition: None,
         timestamps: None,
         parent_collection_ref: None,
         parent_collection_key: Some(CollectionKey {
@@ -1673,6 +1760,7 @@ async fn test_plan_collection_allows_duplicate_names_under_different_parents() {
         ref_: Some("collection:two".to_string()),
         name: child_name,
         description: "second".to_string(),
+        condition: None,
         timestamps: None,
         parent_collection_ref: None,
         parent_collection_key: Some(CollectionKey {
@@ -1727,6 +1815,7 @@ async fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() 
         ref_: Some("class:one".to_string()),
         name: context.scoped_name("duplicate_class"),
         description: "first".to_string(),
+        condition: None,
         timestamps: None,
         json_schema: None,
         validate_schema: Some(false),
@@ -1773,6 +1862,7 @@ async fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object(
                 ref_: None,
                 name: context.scoped_name("duplicate_virtual_object_class"),
                 description: "existing class".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -1804,6 +1894,7 @@ async fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object(
         ref_: Some("object:one".to_string()),
         name: context.scoped_name("duplicate_object"),
         description: "first".to_string(),
+        condition: None,
         timestamps: None,
         data: serde_json::json!({"hostname":"first"}),
         class_ref: Some("class:existing".to_string()),
@@ -1876,6 +1967,7 @@ async fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
         ref_: Some("class:shared".to_string()),
         name: context.scoped_name("duplicate_class_ref_one"),
         description: "first".to_string(),
+        condition: None,
         timestamps: None,
         json_schema: None,
         validate_schema: Some(false),
@@ -1923,6 +2015,7 @@ async fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object()
                 ref_: None,
                 name: context.scoped_name("duplicate_object_ref_class_one"),
                 description: "first class".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -1945,6 +2038,7 @@ async fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object()
                 ref_: None,
                 name: context.scoped_name("duplicate_object_ref_class_two"),
                 description: "second class".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -1981,6 +2075,7 @@ async fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object()
         ref_: Some("object:shared".to_string()),
         name: context.scoped_name("duplicate_object_ref_one"),
         description: "first".to_string(),
+        condition: None,
         timestamps: None,
         data: serde_json::json!({"hostname":"first"}),
         class_ref: Some("class:one".to_string()),
@@ -2184,6 +2279,7 @@ async fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
                 ref_: None,
                 name: class_name_value.clone(),
                 description: "cached class".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -2240,6 +2336,7 @@ async fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
                 ref_: None,
                 name: class_name_value.clone(),
                 description: "cached class".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -2263,6 +2360,7 @@ async fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
                 ref_: None,
                 name: object_name_value.clone(),
                 description: "cached object".to_string(),
+                condition: None,
                 timestamps: None,
                 data: serde_json::json!({"hostname":"cached"}),
                 class_ref: None,
@@ -2325,6 +2423,7 @@ async fn test_update_collection_refreshes_runtime_ref_for_following_items() {
             ref_: Some("collection:existing".to_string()),
             name: fixture.collection.name.clone(),
             description: updated_description.clone(),
+            condition: None,
             timestamps: None,
             parent_collection_ref: None,
             parent_collection_key: None,
@@ -2335,6 +2434,7 @@ async fn test_update_collection_refreshes_runtime_ref_for_following_items() {
         ref_: Some("class:child".to_string()),
         name: context.scoped_name("class_after_collection_update"),
         description: "child".to_string(),
+        condition: None,
         timestamps: None,
         json_schema: None,
         validate_schema: Some(false),
@@ -2378,6 +2478,7 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
                 ref_: None,
                 name: class_name_value.clone(),
                 description: "existing class".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -2400,6 +2501,7 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
             ref_: Some("class:existing".to_string()),
             name: class.name.clone(),
             description: "updated class".to_string(),
+            condition: None,
             timestamps: None,
             json_schema: None,
             validate_schema: Some(false),
@@ -2415,6 +2517,7 @@ async fn test_update_class_refreshes_runtime_ref_for_following_items() {
         ref_: Some("object:child".to_string()),
         name: context.scoped_name("object_after_class_update"),
         description: "child".to_string(),
+        condition: None,
         timestamps: None,
         data: serde_json::json!({"hostname":"child"}),
         class_ref: Some("class:existing".to_string()),
@@ -2459,6 +2562,7 @@ async fn test_plan_class_update_preserves_existing_schema_for_following_objects(
                 ref_: None,
                 name: class_name_value.clone(),
                 description: "existing class".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: Some(schema.clone()),
                 validate_schema: Some(true),
@@ -2503,6 +2607,7 @@ async fn test_plan_class_update_preserves_existing_schema_for_following_objects(
             ref_: Some("class:existing".to_string()),
             name: class.name.clone(),
             description: "updated description".to_string(),
+            condition: None,
             timestamps: None,
             json_schema: None,
             validate_schema: None,
@@ -2522,6 +2627,7 @@ async fn test_plan_class_update_preserves_existing_schema_for_following_objects(
             ref_: Some("object:invalid".to_string()),
             name: context.scoped_name("invalid_object_after_class_update"),
             description: "invalid".to_string(),
+            condition: None,
             timestamps: None,
             data: serde_json::json!({"hostname": 42}),
             class_ref: Some("class:existing".to_string()),
@@ -2546,6 +2652,7 @@ async fn test_update_object_refreshes_runtime_ref_for_following_items() {
                 ref_: None,
                 name: class_name_value.clone(),
                 description: "existing class".to_string(),
+                condition: None,
                 timestamps: None,
                 json_schema: None,
                 validate_schema: Some(false),
@@ -2570,6 +2677,7 @@ async fn test_update_object_refreshes_runtime_ref_for_following_items() {
                 ref_: None,
                 name: object_name_value.clone(),
                 description: "existing object".to_string(),
+                condition: None,
                 timestamps: None,
                 data: serde_json::json!({"hostname":"existing"}),
                 class_ref: None,
@@ -2595,6 +2703,7 @@ async fn test_update_object_refreshes_runtime_ref_for_following_items() {
             ref_: Some("object:existing".to_string()),
             name: object.name.clone(),
             description: "updated object".to_string(),
+            condition: None,
             timestamps: None,
             data: serde_json::json!({"hostname":"updated"}),
             class_ref: None,

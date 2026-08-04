@@ -22,7 +22,8 @@ mod tests {
     use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
     use crate::permissions::{ResourceAttrs, ResourceKind};
     use crate::tests::api_operations::{
-        get_request, get_request_with_permission_backend, patch_request, post_request,
+        get_request, get_request_with_permission_backend, patch_request,
+        patch_request_with_headers, post_request,
     };
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{

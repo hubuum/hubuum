@@ -37,6 +37,7 @@ const TRUNCATE_TABLES: &[&str] = &[
     "export_templates_history",
     "export_templates",
     "permissions",
+    "collection_authorization_state",
     "hubuumobject_relation_history",
     "hubuumobject_relation",
     "hubuumobject_history",
@@ -346,6 +347,9 @@ pub(crate) async fn apply_restore_db(
             .execute(conn)
             .await?;
         diesel::sql_query("SELECT set_config('hubuum.restore_events', 'on', true)")
+            .execute(conn)
+            .await?;
+        diesel::sql_query("SELECT set_config('hubuum.restore_revisions', 'on', true)")
             .execute(conn)
             .await?;
 

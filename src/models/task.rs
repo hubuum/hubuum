@@ -12,7 +12,9 @@ use crate::errors::ApiError;
 use crate::events::{Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance};
 use crate::models::principal::PrincipalID;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{BackupOutputLookup, REDACTED_DEBUG_VALUE, redacted_debug_option};
+use crate::models::{
+    BackupOutputLookup, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option,
+};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::{backup_task_outputs, export_task_outputs, import_task_results, tasks};
 use crate::traits::SelfAccessors;
@@ -472,6 +474,8 @@ pub struct ImportTaskResultResponse {
     pub identifier: Option<String>,
     pub outcome: String,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_revision: Option<ResourceRevision>,
     pub details: Option<serde_json::Value>,
     pub created_at: NaiveDateTime,
 }
@@ -753,6 +757,19 @@ impl TryFrom<Event> for TaskEventRecord {
 
 impl From<ImportTaskResultRecord> for ImportTaskResultResponse {
     fn from(value: ImportTaskResultRecord) -> Self {
+        let mut details = value.details;
+        let observed_revision = details
+            .as_mut()
+            .and_then(serde_json::Value::as_object_mut)
+            .and_then(|details| details.remove("observed_revision"))
+            .and_then(|revision| serde_json::from_value(revision).ok());
+        if details
+            .as_ref()
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(serde_json::Map::is_empty)
+        {
+            details = None;
+        }
         Self {
             id: value.id,
             task_id: value.task_id,
@@ -762,7 +779,8 @@ impl From<ImportTaskResultRecord> for ImportTaskResultResponse {
             identifier: value.identifier,
             outcome: value.outcome,
             error: value.error,
-            details: value.details,
+            observed_revision,
+            details,
             created_at: value.created_at,
         }
     }

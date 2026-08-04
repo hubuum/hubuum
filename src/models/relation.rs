@@ -4,7 +4,7 @@ use diesel::deserialize::{self, FromSql, FromSqlRow};
 use diesel::expression::AsExpression;
 use diesel::pg::{Pg, PgValue};
 use diesel::serialize::{self, Output, ToSql};
-use diesel::sql_types::{Array, Bool, Integer, Jsonb, Nullable, Text, Timestamp};
+use diesel::sql_types::{Array, BigInt, Bool, Integer, Jsonb, Nullable, Text, Timestamp};
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -13,7 +13,9 @@ use utoipa::openapi::{KnownFormat, ObjectBuilder, RefOr, SchemaFormat};
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::{HubuumClassID, HubuumClassWithPath, HubuumObjectID, HubuumObjectWithPath};
+use crate::models::{
+    HubuumClassID, HubuumClassWithPath, HubuumObjectID, HubuumObjectWithPath, ResourceRevision,
+};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::traits::SelfAccessors;
 use crate::utilities::aliases::normalize_template_alias;
@@ -102,6 +104,7 @@ pub struct HubuumClassRelation {
     /// Maximum relations allowed for each object in `to_hubuum_class_id`.
     /// `None` means unlimited.
     pub to_max_relations: Option<ObjectRelationLimit>,
+    pub revision: ResourceRevision,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Insertable, ToSchema)]
@@ -204,6 +207,7 @@ pub struct HubuumObjectRelation {
     pub class_relation_id: i32,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 #[derive(Debug, Serialize, Deserialize, Insertable, ToSchema)]
@@ -282,6 +286,10 @@ pub struct ClassGraphRow {
     pub ancestor_updated_at: chrono::NaiveDateTime,
     #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = BigInt)]
+    pub ancestor_revision: ResourceRevision,
+    #[diesel(sql_type = BigInt)]
+    pub descendant_revision: ResourceRevision,
 }
 
 #[derive(Debug, Queryable, Serialize, Deserialize, Clone)]
@@ -304,6 +312,8 @@ pub struct ObjectGraphRow {
     pub descendant_created_at: chrono::NaiveDateTime,
     pub ancestor_updated_at: chrono::NaiveDateTime,
     pub descendant_updated_at: chrono::NaiveDateTime,
+    pub ancestor_revision: ResourceRevision,
+    pub descendant_revision: ResourceRevision,
 }
 
 #[derive(Debug, QueryableByName, Serialize, Deserialize, Clone)]
@@ -344,6 +354,10 @@ pub struct RelatedObjectGraphRow {
     pub ancestor_updated_at: chrono::NaiveDateTime,
     #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = BigInt)]
+    pub ancestor_revision: ResourceRevision,
+    #[diesel(sql_type = BigInt)]
+    pub descendant_revision: ResourceRevision,
 }
 
 #[derive(Debug, QueryableByName, Serialize, Deserialize, Clone)]
@@ -386,6 +400,10 @@ pub struct RelatedObjectIncludeRow {
     pub ancestor_updated_at: chrono::NaiveDateTime,
     #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = BigInt)]
+    pub ancestor_revision: ResourceRevision,
+    #[diesel(sql_type = BigInt)]
+    pub descendant_revision: ResourceRevision,
 }
 
 #[derive(Debug, QueryableByName, Serialize, Deserialize, Clone)]
@@ -412,6 +430,8 @@ pub struct RelatedObjectForRootRow {
     pub descendant_created_at: chrono::NaiveDateTime,
     #[diesel(sql_type = Timestamp)]
     pub descendant_updated_at: chrono::NaiveDateTime,
+    #[diesel(sql_type = BigInt)]
+    pub descendant_revision: ResourceRevision,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]

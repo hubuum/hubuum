@@ -6,8 +6,9 @@ mod tests {
     use crate::db::with_connection;
     use crate::models::group::NewGroup;
     use crate::models::user::{LoginUser, NewUser, UpdateUser, User, UserID, UserResponse};
-    use crate::models::{
-        CollectionID, GroupResponse, Permissions, PrincipalTokenMetadata, Token, TokenResourceScope,
+use crate::models::{
+        CollectionID, GroupResponse, Permissions, PrincipalTokenMetadata,
+        PrincipalTokenPointResponse, Token, TokenResourceScope,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::test_support::sync_external_user;
@@ -590,6 +591,44 @@ mod tests {
         let tokens: Vec<crate::models::PrincipalTokenMetadata> = test::read_body_json(resp).await;
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].principal_id.id(), test_user.id);
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn tagged_token_points_exclude_revision_exempt_activity(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let user = create_test_user(&context.pool).await;
+        let auth_token = user.create_token(&context.pool).await.unwrap().get_token();
+
+        let response = get_request(
+            &context.pool,
+            &auth_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens", user.id),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        let tokens: Vec<PrincipalTokenMetadata> = test::read_body_json(response).await;
+        let token = tokens.first().unwrap();
+
+        let response = get_request(
+            &context.pool,
+            &auth_token,
+            &format!("{PRINCIPALS_ENDPOINT}/{}/tokens/{}", user.id, token.id.id()),
+        )
+        .await;
+        let response = assert_response_status(response, StatusCode::OK).await;
+        assert!(
+            response
+                .headers()
+                .contains_key(actix_web::http::header::ETAG)
+        );
+        let body: serde_json::Value = test::read_body_json(response).await;
+        assert!(body.get("last_used_at").is_none());
+        let point: PrincipalTokenPointResponse = serde_json::from_value(body).unwrap();
+        assert_eq!(point.id, token.id);
+        assert_eq!(point.revision, token.revision);
     }
 
     #[rstest]

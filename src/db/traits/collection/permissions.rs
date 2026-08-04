@@ -1,8 +1,36 @@
 use super::*;
 use crate::db::traits::authz::AuthzSubject;
+use crate::models::CollectionPermissionSet;
 use crate::models::token_scope::TokenScope;
 use diesel_async::RunQueryDsl;
 use std::collections::HashMap;
+
+/// Load the revision owner for a collection's complete SQL permission set and
+/// attach the caller-selected permission rows to its public representation.
+pub async fn collection_permission_set_from_backend(
+    pool: &DbPool,
+    collection_id: i32,
+    permissions: Vec<GroupPermission>,
+) -> Result<CollectionPermissionSet, ApiError> {
+    use crate::schema::collection_authorization_state::dsl::{
+        collection_authorization_state, collection_id as owner_collection_id, revision,
+    };
+
+    let owner_revision = with_connection(pool, async |conn| {
+        collection_authorization_state
+            .filter(owner_collection_id.eq(collection_id))
+            .select(revision)
+            .first(conn)
+            .await
+    })
+    .await?;
+
+    Ok(CollectionPermissionSet {
+        collection_id,
+        revision: owner_revision,
+        permissions,
+    })
+}
 
 async fn build_effective_group_permissions(
     conn: &mut crate::db::DbConnection,

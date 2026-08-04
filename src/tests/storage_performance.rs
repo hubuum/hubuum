@@ -358,10 +358,14 @@ async fn collection_no_op_update_does_not_write_or_emit_an_event() {
         fixture.collection
     );
 
-    assert_eq!(queries.total_queries(), 3, "{:#?}", queries.query_counts());
-    assert_eq!(queries.domain_queries(), 1, "{:#?}", queries.query_counts());
+    assert_eq!(queries.total_queries(), 4, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 2, "{:#?}", queries.query_counts());
     assert_eq!(queries.control_queries(), 2);
     assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(
+        queries.queries_matching("SELECT hubuum_assert_revision_precondition"),
+        1
+    );
     assert_eq!(queries.queries_matching("UPDATE \"collections\""), 0);
     assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 0);
 
@@ -521,10 +525,14 @@ async fn changed_collection_update_writes_once_and_emits_one_event() {
         "changed query budget description"
     );
 
-    assert_eq!(queries.total_queries(), 5, "{:#?}", queries.query_counts());
-    assert_eq!(queries.domain_queries(), 3, "{:#?}", queries.query_counts());
+    assert_eq!(queries.total_queries(), 6, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 4, "{:#?}", queries.query_counts());
     assert_eq!(queries.control_queries(), 2);
     assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(
+        queries.queries_matching("SELECT hubuum_assert_revision_precondition"),
+        1
+    );
     assert_eq!(queries.queries_matching("UPDATE \"collections\""), 1);
     assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 1);
 

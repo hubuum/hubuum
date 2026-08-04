@@ -5,6 +5,8 @@ Hubuum list endpoints share a common query interface for filtering, sorting, and
 The response body for list endpoints remains a plain JSON array. Pagination metadata is returned in response headers.
 
 For endpoint-specific field support, see [query_support_matrix.md](query_support_matrix.md).
+The mutation-side contract is documented in
+[Resource revisions and conditional mutations](resource_revisions.md).
 
 ## Query syntax
 
@@ -55,6 +57,24 @@ negative ranges such as `-6--2`. A single filter may expand to at most 1,024
 unique integers; larger ranges are rejected before they are materialized. Some
 operators and endpoints enforce smaller limits. Prefer `between` for one large
 continuous interval.
+
+Revisioned resource and temporal-history lists expose the positive `BIGINT`
+field `revision`. It supports exact, `in`, comparison, and `between` filters,
+plus ascending or descending sorting:
+
+```text
+revision=17
+revision__in=15,16,17
+revision__gte=10&revision__lt=20
+revision__between=10,20
+sort=-revision
+```
+
+Revision parsing is independent of 32-bit resource IDs. Zero, negative,
+overflowing, malformed, and oversized list values return `400 Bad Request`.
+Audit events additionally support `before_revision` and `after_revision`
+filters, but do not support a global revision sort because event revisions
+belong to different resources.
 
 ### Array fields
 

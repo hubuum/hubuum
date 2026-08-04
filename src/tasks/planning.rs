@@ -32,8 +32,26 @@ use crate::models::{
     Collection, CollectionID, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
     ImportCollectionInput, ImportCollectionPermissionInput, ImportCollisionPolicy, ImportMode,
     ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
-    ImportRequest, Permissions, RestoreTimestamps,
+    ImportRequest, ImportWriteCondition, Permissions, RestoreTimestamps,
 };
+
+fn import_item_allows_overwrite(
+    condition: Option<ImportWriteCondition>,
+    mode: &ImportMode,
+) -> bool {
+    condition
+        .map(ImportWriteCondition::allows_overwrite)
+        .unwrap_or_else(|| {
+            matches!(
+                mode.collision_policy,
+                Some(ImportCollisionPolicy::Overwrite)
+            )
+        })
+}
+
+fn import_item_requires_existing(condition: Option<ImportWriteCondition>) -> bool {
+    condition.is_some_and(|condition| condition.expected_revision().is_some())
+}
 use crate::permissions::PrincipalRef;
 use crate::traits::BackendContext;
 
@@ -42,6 +60,7 @@ fn extended_graph_items(request: &ImportRequest) -> usize {
         + request.graph.groups.len()
         + request.graph.principals.len()
         + request.graph.group_memberships.len()
+        + request.graph.computed_fields.len()
         + request.graph.export_templates.len()
         + request.graph.remote_targets.len()
         + request.graph.event_sinks.len()
@@ -98,6 +117,16 @@ fn duplicate_extended_ref(request: &ImportRequest) -> Option<(&'static str, Stri
                     .map(|input| input.ref_.as_deref()),
             ),
         ),
+        (
+            "computed_field",
+            duplicate_ref(
+                request
+                    .graph
+                    .computed_fields
+                    .iter()
+                    .map(|input| input.ref_.as_deref()),
+            ),
+        ),
     ]
     .into_iter()
     .find_map(|(kind, reference)| reference.map(|reference| (kind, reference)))
@@ -120,7 +149,7 @@ const DRY_RUN_ROLLBACK: &str = "hubuum import dry-run rollback";
 fn preflight_failure_kind(error: &ApiError) -> FailureKind {
     match error {
         ApiError::Forbidden(_) | ApiError::Unauthorized(_) => FailureKind::Permission,
-        ApiError::Conflict(_) => FailureKind::Collision,
+        ApiError::Conflict(_) | ApiError::PreconditionFailed(_, _) => FailureKind::Collision,
         ApiError::NotFound(_) | ApiError::Gone(_) => FailureKind::Resolution,
         ApiError::BadRequest(_)
         | ApiError::ValidationError(_)
@@ -163,20 +192,35 @@ async fn preflight_dry_run(
 
             let transaction = conn
                 .transaction::<(), ApiError, _>(async |conn| {
-                    for item in planned_items {
-                        let result = match &item.execution {
+                    for mut item in planned_items {
+                        let observed_revision = match &item.execution {
                             Some(execution) => {
-                                conn.transaction::<(), ApiError, _>(async |conn| {
-                                    super::execution::execute_planned_item(
-                                        conn,
-                                        &mut runtime,
-                                        execution,
-                                    )
-                                    .await
-                                })
+                                super::execution::observed_revision_for_planned_item(
+                                    conn, &runtime, execution,
+                                )
                                 .await
                             }
-                            None => Ok(()),
+                            None => Ok(None),
+                        };
+                        let result = match observed_revision {
+                            Ok(observed_revision) => {
+                                item.result.set_observed_revision(observed_revision);
+                                match &item.execution {
+                                    Some(execution) => {
+                                        conn.transaction::<(), ApiError, _>(async |conn| {
+                                            super::execution::execute_planned_item(
+                                                conn,
+                                                &mut runtime,
+                                                execution,
+                                            )
+                                            .await
+                                        })
+                                        .await
+                                    }
+                                    None => Ok(()),
+                                }
+                            }
+                            Err(error) => Err(error),
                         };
                         match result {
                             Ok(()) => valid_items.push(item),
@@ -444,11 +488,6 @@ where
     let mut planned_items = Vec::with_capacity(request.total_items() as usize);
     let mut failures = Vec::new();
     let mut aborted = false;
-    let overwrite = matches!(
-        mode.collision_policy,
-        Some(ImportCollisionPolicy::Overwrite)
-    );
-
     if extended_graph_items(request) > 0 {
         let authorized = scopes.is_none()
             && is_import_admin(backend, user, &mut state)
@@ -494,7 +533,7 @@ where
                 input.name.clone(),
                 PlannedExecution::UpsertIdentityScope {
                     input: input.clone(),
-                    overwrite,
+                    overwrite: import_item_allows_overwrite(input.condition, &mode),
                 },
             ));
         }
@@ -532,7 +571,7 @@ where
                 identifier,
                 PlannedExecution::UpsertGroup {
                     input: input.clone(),
-                    overwrite,
+                    overwrite: import_item_allows_overwrite(input.condition, &mode),
                 },
             ));
         }
@@ -548,7 +587,7 @@ where
                 input.name.clone(),
                 PlannedExecution::UpsertPrincipal {
                     input: input.clone(),
-                    overwrite,
+                    overwrite: import_item_allows_overwrite(input.condition, &mode),
                 },
             ));
         }
@@ -563,7 +602,7 @@ where
                 input.name.clone(),
                 PlannedExecution::UpsertPrincipal {
                     input: input.clone(),
-                    overwrite,
+                    overwrite: import_item_allows_overwrite(input.condition, &mode),
                 },
             ));
         }
@@ -577,7 +616,7 @@ where
                     .unwrap_or_else(|| "membership".to_string()),
                 PlannedExecution::UpsertGroupMembership {
                     input: input.clone(),
-                    overwrite,
+                    overwrite: import_item_allows_overwrite(input.condition, &mode),
                 },
             ));
         }
@@ -810,6 +849,18 @@ where
         elapsed = ?collection_permission_start.elapsed()
     );
 
+    for input in &request.graph.computed_fields {
+        planned_items.push(plan_system_item(
+            "computed_field",
+            input.ref_.clone(),
+            input.key.clone(),
+            PlannedExecution::UpsertComputedField {
+                input: input.clone(),
+                overwrite: import_item_allows_overwrite(input.condition, &mode),
+            },
+        ));
+    }
+
     for input in &request.graph.export_templates {
         planned_items.push(plan_system_item(
             "export_template",
@@ -817,7 +868,7 @@ where
             input.name.clone(),
             PlannedExecution::UpsertExportTemplate {
                 input: input.clone(),
-                overwrite,
+                overwrite: import_item_allows_overwrite(input.condition, &mode),
             },
         ));
     }
@@ -828,7 +879,7 @@ where
             input.name.clone(),
             PlannedExecution::UpsertRemoteTarget {
                 input: input.clone(),
-                overwrite,
+                overwrite: import_item_allows_overwrite(input.condition, &mode),
             },
         ));
     }
@@ -839,7 +890,7 @@ where
             input.name.clone(),
             PlannedExecution::UpsertEventSink {
                 input: input.clone(),
-                overwrite,
+                overwrite: import_item_allows_overwrite(input.condition, &mode),
             },
         ));
     }
@@ -850,7 +901,7 @@ where
             input.name.clone(),
             PlannedExecution::UpsertEventSubscription {
                 input: input.clone(),
-                overwrite,
+                overwrite: import_item_allows_overwrite(input.condition, &mode),
             },
         ));
     }
@@ -954,6 +1005,7 @@ where
                 created_at: Utc::now().naive_utc(),
                 updated_at: Utc::now().naive_utc(),
                 parent_collection_id: collection.parent_collection_id,
+                revision: crate::models::ResourceRevision::INITIAL,
             })
         } else {
             with_connection(pool, async |conn| {
@@ -996,7 +1048,7 @@ where
             message,
         })?;
 
-        if matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort)) {
+        if !import_item_allows_overwrite(input.condition, mode) {
             return Err(PlanningFailure {
                 kind: FailureKind::Collision,
                 item: planned_result(
@@ -1031,6 +1083,18 @@ where
             }),
         })
     } else {
+        if import_item_requires_existing(input.condition) {
+            return Err(PlanningFailure {
+                kind: FailureKind::Collision,
+                item: planned_result(
+                    "collection",
+                    "update",
+                    input.ref_.clone(),
+                    Some(input.name.clone()),
+                ),
+                message: "stale_revision: conditional import target does not exist".to_string(),
+            });
+        }
         if state.scopes.is_some()
             || !is_import_admin(backend, user, state)
                 .await
@@ -1211,7 +1275,7 @@ where
             message,
         })?;
 
-        if matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort)) {
+        if !import_item_allows_overwrite(input.condition, mode) {
             return Err(PlanningFailure {
                 kind: FailureKind::Collision,
                 item: planned_result("class", "update", input.ref_.clone(), Some(identifier)),
@@ -1258,6 +1322,13 @@ where
             }),
         })
     } else {
+        if import_item_requires_existing(input.condition) {
+            return Err(PlanningFailure {
+                kind: FailureKind::Collision,
+                item: planned_result("class", "update", input.ref_.clone(), Some(identifier)),
+                message: "stale_revision: conditional import target does not exist".to_string(),
+            });
+        }
         ensure_collection_permission_cached(
             backend,
             user,
@@ -1443,7 +1514,7 @@ where
             message,
         })?;
 
-        if matches!(mode.collision_policy, Some(ImportCollisionPolicy::Abort)) {
+        if !import_item_allows_overwrite(input.condition, mode) {
             return Err(PlanningFailure {
                 kind: FailureKind::Collision,
                 item: planned_result("object", "update", input.ref_.clone(), Some(identifier)),
@@ -1476,6 +1547,13 @@ where
             }),
         })
     } else {
+        if import_item_requires_existing(input.condition) {
+            return Err(PlanningFailure {
+                kind: FailureKind::Collision,
+                item: planned_result("object", "update", input.ref_.clone(), Some(identifier)),
+                message: "stale_revision: conditional import target does not exist".to_string(),
+            });
+        }
         ensure_collection_permission_cached(
             backend,
             user,
@@ -1587,11 +1665,20 @@ where
             ),
             message,
         })?;
-    let decision = RelationPlanDecision::new(
-        relation_exists,
-        input.timestamps.as_ref(),
-        mode.collision_policy,
-    );
+    if !relation_exists && import_item_requires_existing(input.condition) {
+        return Err(PlanningFailure {
+            kind: FailureKind::Collision,
+            item: planned_result("class_relation", "update", input.ref_.clone(), identifier),
+            message: "stale_revision: conditional import target does not exist".to_string(),
+        });
+    }
+    let collision_policy = Some(if import_item_allows_overwrite(input.condition, mode) {
+        ImportCollisionPolicy::Overwrite
+    } else {
+        ImportCollisionPolicy::Abort
+    });
+    let decision =
+        RelationPlanDecision::new(relation_exists, input.timestamps.as_ref(), collision_policy);
     let (permission, permission_action) = decision.permission_requirement(
         Permissions::CreateClassRelation,
         Permissions::UpdateClassRelation,
@@ -1632,7 +1719,10 @@ where
         RelationPlanDecision::Noop => {
             return Ok(PlannedItem {
                 result: planned_result("class_relation", "noop", input.ref_.clone(), identifier),
-                execution: None,
+                execution: input
+                    .condition
+                    .and_then(ImportWriteCondition::expected_revision)
+                    .map(|_| PlannedExecution::CheckClassRelationCondition(input.clone())),
             });
         }
         RelationPlanDecision::Create => {}
@@ -1745,11 +1835,20 @@ where
             ),
             message,
         })?;
-    let decision = RelationPlanDecision::new(
-        relation_exists,
-        input.timestamps.as_ref(),
-        mode.collision_policy,
-    );
+    if !relation_exists && import_item_requires_existing(input.condition) {
+        return Err(PlanningFailure {
+            kind: FailureKind::Collision,
+            item: planned_result("object_relation", "update", input.ref_.clone(), identifier),
+            message: "stale_revision: conditional import target does not exist".to_string(),
+        });
+    }
+    let collision_policy = Some(if import_item_allows_overwrite(input.condition, mode) {
+        ImportCollisionPolicy::Overwrite
+    } else {
+        ImportCollisionPolicy::Abort
+    });
+    let decision =
+        RelationPlanDecision::new(relation_exists, input.timestamps.as_ref(), collision_policy);
     let (permission, permission_action) = decision.permission_requirement(
         Permissions::CreateObjectRelation,
         Permissions::UpdateObjectRelation,
@@ -1790,7 +1889,10 @@ where
         RelationPlanDecision::Noop => {
             return Ok(PlannedItem {
                 result: planned_result("object_relation", "noop", input.ref_.clone(), identifier),
-                execution: None,
+                execution: input
+                    .condition
+                    .and_then(ImportWriteCondition::expected_revision)
+                    .map(|_| PlannedExecution::CheckObjectRelationCondition(input.clone())),
             });
         }
         RelationPlanDecision::Create => {}
@@ -1807,7 +1909,7 @@ where
 pub(super) async fn plan_collection_permission<C>(
     backend: &C,
     user: &impl crate::db::traits::authz::AuthzSubject,
-    _mode: &ImportMode,
+    mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportCollectionPermissionInput,
 ) -> Result<PlannedItem, PlanningFailure>
@@ -1887,6 +1989,7 @@ where
                     external_key: None,
                     last_sync_attempted_at: None,
                     last_sync_success_at: None,
+                    revision: crate::models::ResourceRevision::INITIAL,
                 })
         })
         .ok_or_else(|| PlanningFailure {
@@ -1914,6 +2017,9 @@ where
             input.ref_.clone(),
             Some(format!("{}::{}", collection.name, group.groupname)),
         ),
-        execution: Some(PlannedExecution::ApplyCollectionPermissions(input.clone())),
+        execution: Some(PlannedExecution::ApplyCollectionPermissions {
+            input: input.clone(),
+            overwrite: import_item_allows_overwrite(input.condition, mode),
+        }),
     })
 }

@@ -76,7 +76,6 @@ async fn concurrent_definition_and_object_updates_return_current_values(
         &test_context.admin_token,
         &definition_endpoint,
         serde_json::json!({
-            "expected_revision": 1,
             "operation": {"type": "first_non_null", "paths": ["/manual/hostname"]}
         }),
     );

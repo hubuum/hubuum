@@ -401,7 +401,7 @@ async fn enqueue_rebuild(
     )
 }
 
-async fn advance_revision_and_enqueue(
+pub(crate) async fn advance_revision_and_enqueue(
     conn: &mut DbConnection,
     target_class_id: i32,
     actor_id: Option<i32>,
@@ -492,7 +492,7 @@ async fn apply_definition_patch(
 ) -> Result<ComputedFieldDefinition, ApiError> {
     use crate::schema::computed_field_definitions::dsl::{
         computed_field_definitions, description, enabled, id, key, label, operation, result_type,
-        revision, updated_at, updated_by,
+        updated_at, updated_by,
     };
     Ok(
         diesel::update(computed_field_definitions.filter(id.eq(current.id)))
@@ -503,7 +503,6 @@ async fn apply_definition_patch(
                 operation.eq(&patch.operation),
                 result_type.eq(&patch.result_type),
                 enabled.eq(patch.enabled),
-                revision.eq(revision + 1),
                 updated_by.eq(Some(actor_id)),
                 updated_at.eq(diesel::dsl::now),
             ))
@@ -528,15 +527,15 @@ pub async fn update_shared_definition(
             locked_class_record_in_collection(conn, target_class_id, authorized_collection_id)
                 .await?;
         let current = locked_definition(conn, definition_id).await?;
+        crate::db::assert_locked_revision_precondition(
+            conn,
+            &format!("computed_field_definitions:{}", current.id),
+            current.revision,
+        )
+        .await?;
         if current.class_id != target_class_id || !current.is_shared() {
             return Err(ApiError::NotFound(format!(
                 "Shared computed field {definition_id} was not found in class {target_class_id}"
-            )));
-        }
-        if current.revision != patch.expected_revision {
-            return Err(ApiError::Conflict(format!(
-                "Computed field revision is {}; expected {}",
-                current.revision, patch.expected_revision
             )));
         }
         let validated = patch.validate_against(&current)?;
@@ -579,7 +578,6 @@ pub async fn delete_shared_definition(
     authorized_collection_id: i32,
     definition_id: i32,
     actor_id: i32,
-    expected_revision: i64,
     context: &EventContext,
 ) -> Result<ClassComputationState, ApiError> {
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
@@ -591,12 +589,6 @@ pub async fn delete_shared_definition(
         if current.class_id != target_class_id || !current.is_shared() {
             return Err(ApiError::NotFound(format!(
                 "Shared computed field {definition_id} was not found in class {target_class_id}"
-            )));
-        }
-        if current.revision != expected_revision {
-            return Err(ApiError::Conflict(format!(
-                "Computed field revision is {}; expected {expected_revision}",
-                current.revision
             )));
         }
         use crate::schema::computed_field_definitions::dsl::{computed_field_definitions, id};
@@ -660,15 +652,15 @@ pub async fn update_personal_definition(
 ) -> Result<ComputedFieldDefinition, ApiError> {
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         let current = locked_definition(conn, definition_id).await?;
+        crate::db::assert_locked_revision_precondition(
+            conn,
+            &format!("computed_field_definitions:{}", current.id),
+            current.revision,
+        )
+        .await?;
         if !current.is_personal_for(owner_id) {
             return Err(ApiError::NotFound(format!(
                 "Personal computed field {definition_id} was not found"
-            )));
-        }
-        if current.revision != patch.expected_revision {
-            return Err(ApiError::Conflict(format!(
-                "Computed field revision is {}; expected {}",
-                current.revision, patch.expected_revision
             )));
         }
         let validated = patch.validate_against(&current)?;
@@ -690,19 +682,12 @@ pub async fn delete_personal_definition(
     pool: &DbPool,
     owner_id: i32,
     definition_id: i32,
-    expected_revision: i64,
 ) -> Result<(), ApiError> {
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         let current = locked_definition(conn, definition_id).await?;
         if !current.is_personal_for(owner_id) {
             return Err(ApiError::NotFound(format!(
                 "Personal computed field {definition_id} was not found"
-            )));
-        }
-        if current.revision != expected_revision {
-            return Err(ApiError::Conflict(format!(
-                "Computed field revision is {}; expected {expected_revision}",
-                current.revision
             )));
         }
         use crate::schema::computed_field_definitions::dsl::{computed_field_definitions, id};

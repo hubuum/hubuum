@@ -5,16 +5,18 @@ use crate::db::{DbPool, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
     Collection, EventSinkKey, GroupKey, HubuumClass, HubuumObject, IdentityScopeKey,
-    ImportAtomicity, ImportClassRelationInput, ImportCollisionPolicy, ImportExportTemplateInput,
-    ImportMode, ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
-    ImportRequest, NewHubuumClassRelation, NewTaskEventRecord, PrincipalKey, TaskRecord,
-    TaskResultCounts, TaskStatus, TokenScope,
+    ImportAtomicity, ImportClassRelationInput, ImportCollisionPolicy,
+    ImportComputedFieldVisibility, ImportExportTemplateInput, ImportMode,
+    ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype, ImportRequest,
+    NewHubuumClassRelation, NewTaskEventRecord, PrincipalKey, TaskRecord, TaskResultCounts,
+    TaskStatus, TokenScope,
 };
 use crate::observability::metrics;
 use crate::traits::BackendContext;
 
 use super::helpers::{
-    flush_import_result_batches, sanitize_error_for_storage, should_abort_best_effort_execution,
+    flush_import_result_batches, import_failure_outcome, sanitize_error_for_storage,
+    should_abort_best_effort_execution,
 };
 use super::planning::plan_import;
 use super::resolution::{
@@ -26,12 +28,14 @@ use super::types::{
     TerminalTaskUpdate,
 };
 use crate::db::traits::task_import::{
-    apply_permissions_db, create_class_db, create_class_relation_db, create_collection_db,
-    create_object_db, create_object_relation_db, load_export_template_sources_db,
-    lookup_event_sink_id_by_name_db, lookup_group_by_name_db, lookup_identity_scope_id_by_name_db,
-    lookup_principal_id_by_name_db, update_class_db, update_class_relation_timestamps_db,
-    update_collection_db, update_object_db, update_object_relation_timestamps_db,
-    upsert_event_sink_db, upsert_event_subscription_db, upsert_export_template_db, upsert_group_db,
+    apply_permissions_db, check_class_relation_import_condition_db,
+    check_object_relation_import_condition_db, create_class_db, create_class_relation_db,
+    create_collection_db, create_object_db, create_object_relation_db,
+    load_export_template_sources_db, lookup_event_sink_id_by_name_db, lookup_group_by_name_db,
+    lookup_identity_scope_id_by_name_db, lookup_principal_id_by_name_db, update_class_db,
+    update_class_relation_timestamps_db, update_collection_db, update_object_db,
+    update_object_relation_timestamps_db, upsert_computed_field_db, upsert_event_sink_db,
+    upsert_event_subscription_db, upsert_export_template_db, upsert_group_db,
     upsert_group_membership_db, upsert_identity_scope_db, upsert_principal_db,
     upsert_remote_target_db,
 };
@@ -333,11 +337,12 @@ where
         let execution_timer = metrics::import_phase_timer(metrics::ImportMetricPhase::Execution);
         if request.dry_run() {
             for failure in failures {
+                let outcome = failure.outcome();
                 accumulator.push_failure(
                     task.id,
                     &failure.item,
                     failure.message_for_storage(),
-                    "failed",
+                    outcome,
                 );
                 flush_import_result_batches(pool, &mut accumulator, false).await?;
             }
@@ -347,11 +352,12 @@ where
             }
         } else {
             for failure in failures {
+                let outcome = failure.outcome();
                 accumulator.push_failure(
                     task.id,
                     &failure.item,
                     failure.message_for_storage(),
-                    "failed",
+                    outcome,
                 );
                 flush_import_result_batches(pool, &mut accumulator, false).await?;
             }
@@ -530,8 +536,9 @@ pub(super) async fn execute_import_best_effort(
                 flush_import_result_batches(pool, accumulator, false).await?;
             }
             Err(err) => {
+                let outcome = import_failure_outcome(&err);
                 let sanitized_error = sanitize_error_for_storage(&err);
-                accumulator.push_failure(task_id, &item.result, sanitized_error, "failed");
+                accumulator.push_failure(task_id, &item.result, sanitized_error, outcome);
                 flush_import_result_batches(pool, accumulator, false).await?;
                 if should_abort_best_effort_execution(&err, mode) {
                     warn!(
@@ -549,6 +556,267 @@ pub(super) async fn execute_import_best_effort(
     }
 
     Ok(())
+}
+
+/// Observe the current owner revision for dry-run reporting. The value is
+/// advisory; the subsequent execution path still locks and rechecks the row.
+pub(super) async fn observed_revision_for_planned_item(
+    conn: &mut crate::db::DbConnection,
+    runtime: &RuntimeState,
+    execution: &PlannedExecution,
+) -> Result<Option<crate::models::ResourceRevision>, ApiError> {
+    use crate::db::prelude::*;
+    use crate::models::ImportComputedFieldVisibility;
+
+    let revision = match execution {
+        PlannedExecution::UpsertIdentityScope { input, .. } => {
+            use crate::schema::identity_scopes::dsl as s;
+            s::identity_scopes
+                .filter(s::name.eq(&input.name))
+                .select(s::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpsertGroup { input, .. } => {
+            use crate::schema::groups::dsl as g;
+            let scope_id = resolve_identity_scope_runtime(
+                conn,
+                runtime,
+                input.identity_scope_ref.as_deref(),
+                input.identity_scope_key.as_ref(),
+            )
+            .await?;
+            g::groups
+                .filter(g::identity_scope_id.eq(scope_id))
+                .filter(g::groupname.eq(&input.groupname))
+                .select(g::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpsertPrincipal { input, .. } => {
+            use crate::schema::principals::dsl as p;
+            let scope_id = resolve_identity_scope_runtime(
+                conn,
+                runtime,
+                input.identity_scope_ref.as_deref(),
+                input.identity_scope_key.as_ref(),
+            )
+            .await?;
+            p::principals
+                .filter(p::identity_scope_id.eq(scope_id))
+                .filter(p::name.eq(&input.name))
+                .select(p::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpsertGroupMembership { input, .. } => {
+            use crate::schema::group_memberships::dsl as m;
+            let principal_id = resolve_principal_runtime(
+                conn,
+                runtime,
+                input.principal_ref.as_deref(),
+                input.principal_key.as_ref(),
+            )
+            .await?;
+            let group_id = resolve_group_runtime(
+                conn,
+                runtime,
+                input.group_ref.as_deref(),
+                input.group_key.as_ref(),
+            )
+            .await?;
+            m::group_memberships
+                .filter(m::principal_id.eq(principal_id))
+                .filter(m::group_id.eq(group_id))
+                .select(m::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpdateCollection { collection_id, .. } => {
+            use crate::schema::collections::dsl as c;
+            c::collections
+                .filter(c::id.eq(collection_id))
+                .select(c::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpdateClass { class_id, .. } => {
+            use crate::schema::hubuumclass::dsl as c;
+            c::hubuumclass
+                .filter(c::id.eq(class_id))
+                .select(c::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpdateObject { object_id, .. } => {
+            use crate::schema::hubuumobject::dsl as o;
+            o::hubuumobject
+                .filter(o::id.eq(object_id))
+                .select(o::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpsertComputedField { input, .. } => {
+            use crate::schema::computed_field_definitions::dsl as d;
+            let class = resolve_class_runtime(
+                conn,
+                runtime,
+                input.class_ref.as_deref(),
+                input.class_key.as_ref(),
+            )
+            .await?;
+            let owner_id = match input.visibility {
+                ImportComputedFieldVisibility::Shared => None,
+                ImportComputedFieldVisibility::Personal => Some(
+                    resolve_principal_runtime(
+                        conn,
+                        runtime,
+                        input.owner_ref.as_deref(),
+                        input.owner_key.as_ref(),
+                    )
+                    .await?,
+                ),
+            };
+            let visibility = match input.visibility {
+                ImportComputedFieldVisibility::Shared => "shared",
+                ImportComputedFieldVisibility::Personal => "personal",
+            };
+            d::computed_field_definitions
+                .filter(d::class_id.eq(class.id))
+                .filter(d::visibility.eq(visibility))
+                .filter(d::owner_user_id.eq(owner_id))
+                .filter(d::key.eq(&input.key))
+                .select(d::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpdateClassRelationTimestamps { input, .. }
+        | PlannedExecution::CheckClassRelationCondition(input) => {
+            use crate::schema::hubuumclass_relation::dsl as r;
+            let (from, to) = resolve_class_relation_runtime(conn, runtime, input).await?;
+            r::hubuumclass_relation
+                .filter(
+                    r::from_hubuum_class_id
+                        .eq(from.id)
+                        .and(r::to_hubuum_class_id.eq(to.id))
+                        .or(r::from_hubuum_class_id
+                            .eq(to.id)
+                            .and(r::to_hubuum_class_id.eq(from.id))),
+                )
+                .select(r::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpdateObjectRelationTimestamps { input, .. }
+        | PlannedExecution::CheckObjectRelationCondition(input) => {
+            use crate::schema::hubuumobject_relation::dsl as r;
+            let (from, to) = resolve_object_relation_runtime(conn, runtime, input).await?;
+            r::hubuumobject_relation
+                .filter(
+                    r::from_hubuum_object_id
+                        .eq(from.id)
+                        .and(r::to_hubuum_object_id.eq(to.id))
+                        .or(r::from_hubuum_object_id
+                            .eq(to.id)
+                            .and(r::to_hubuum_object_id.eq(from.id))),
+                )
+                .select(r::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::ApplyCollectionPermissions { input, .. } => {
+            use crate::schema::collection_authorization_state::dsl as a;
+            let collection = resolve_collection_runtime(
+                conn,
+                runtime,
+                input.collection_ref.as_deref(),
+                input.collection_key.as_ref(),
+            )
+            .await?;
+            a::collection_authorization_state
+                .filter(a::collection_id.eq(collection.id))
+                .select(a::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpsertExportTemplate { input, .. } => {
+            use crate::schema::export_templates::dsl as t;
+            let collection = resolve_collection_runtime(
+                conn,
+                runtime,
+                input.collection_ref.as_deref(),
+                input.collection_key.as_ref(),
+            )
+            .await?;
+            t::export_templates
+                .filter(t::collection_id.eq(collection.id))
+                .filter(t::name.eq(&input.name))
+                .select(t::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpsertRemoteTarget { input, .. } => {
+            use crate::schema::remote_targets::dsl as r;
+            let collection = resolve_collection_runtime(
+                conn,
+                runtime,
+                input.collection_ref.as_deref(),
+                input.collection_key.as_ref(),
+            )
+            .await?;
+            r::remote_targets
+                .filter(r::collection_id.eq(collection.id))
+                .filter(r::name.eq(&input.name))
+                .select(r::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpsertEventSink { input, .. } => {
+            use crate::schema::event_sinks::dsl as s;
+            s::event_sinks
+                .filter(s::name.eq(&input.name))
+                .select(s::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::UpsertEventSubscription { input, .. } => {
+            use crate::schema::event_subscriptions::dsl as s;
+            let collection = resolve_collection_runtime(
+                conn,
+                runtime,
+                input.collection_ref.as_deref(),
+                input.collection_key.as_ref(),
+            )
+            .await?;
+            s::event_subscriptions
+                .filter(s::collection_id.eq(collection.id))
+                .filter(s::name.eq(&input.name))
+                .select(s::revision)
+                .first(conn)
+                .await
+                .optional()?
+        }
+        PlannedExecution::CreateCollection(_)
+        | PlannedExecution::CreateClass(_)
+        | PlannedExecution::CreateObject(_)
+        | PlannedExecution::CreateClassRelation(_)
+        | PlannedExecution::CreateObjectRelation(_) => None,
+    };
+    Ok(revision)
 }
 
 pub(super) async fn execute_planned_item(
@@ -725,6 +993,28 @@ pub(super) async fn execute_planned_item(
                 runtime.objects_by_ref.insert(reference.clone(), updated);
             }
         }
+        PlannedExecution::UpsertComputedField { input, overwrite } => {
+            let class = resolve_class_runtime(
+                conn,
+                runtime,
+                input.class_ref.as_deref(),
+                input.class_key.as_ref(),
+            )
+            .await?;
+            let owner_id = match input.visibility {
+                ImportComputedFieldVisibility::Shared => None,
+                ImportComputedFieldVisibility::Personal => Some(
+                    resolve_principal_runtime(
+                        conn,
+                        runtime,
+                        input.owner_ref.as_deref(),
+                        input.owner_key.as_ref(),
+                    )
+                    .await?,
+                ),
+            };
+            upsert_computed_field_db(conn, input, class.id, owner_id, *overwrite).await?;
+        }
         PlannedExecution::CreateClassRelation(input) => {
             let (from_class, to_class) =
                 resolve_class_relation_runtime(conn, runtime, input).await?;
@@ -739,28 +1029,69 @@ pub(super) async fn execute_planned_item(
                     to_max_relations: input.to_max_relations,
                 },
                 input.timestamps.as_ref(),
+                input.condition,
             )
             .await?;
         }
         PlannedExecution::UpdateClassRelationTimestamps { input, timestamps } => {
             let (from_class, to_class) =
                 resolve_class_relation_runtime(conn, runtime, input).await?;
-            update_class_relation_timestamps_db(conn, from_class.id, to_class.id, timestamps)
-                .await?;
+            update_class_relation_timestamps_db(
+                conn,
+                from_class.id,
+                to_class.id,
+                timestamps,
+                input.condition,
+            )
+            .await?;
+        }
+        PlannedExecution::CheckClassRelationCondition(input) => {
+            let (from_class, to_class) =
+                resolve_class_relation_runtime(conn, runtime, input).await?;
+            check_class_relation_import_condition_db(
+                conn,
+                from_class.id,
+                to_class.id,
+                input.condition,
+            )
+            .await?;
         }
         PlannedExecution::CreateObjectRelation(input) => {
             let (from_object, to_object) =
                 resolve_object_relation_runtime(conn, runtime, input).await?;
-            create_object_relation_db(conn, &from_object, &to_object, input.timestamps.as_ref())
-                .await?;
+            create_object_relation_db(
+                conn,
+                &from_object,
+                &to_object,
+                input.timestamps.as_ref(),
+                input.condition,
+            )
+            .await?;
         }
         PlannedExecution::UpdateObjectRelationTimestamps { input, timestamps } => {
             let (from_object, to_object) =
                 resolve_object_relation_runtime(conn, runtime, input).await?;
-            update_object_relation_timestamps_db(conn, &from_object, &to_object, timestamps)
-                .await?;
+            update_object_relation_timestamps_db(
+                conn,
+                &from_object,
+                &to_object,
+                timestamps,
+                input.condition,
+            )
+            .await?;
         }
-        PlannedExecution::ApplyCollectionPermissions(input) => {
+        PlannedExecution::CheckObjectRelationCondition(input) => {
+            let (from_object, to_object) =
+                resolve_object_relation_runtime(conn, runtime, input).await?;
+            check_object_relation_import_condition_db(
+                conn,
+                &from_object,
+                &to_object,
+                input.condition,
+            )
+            .await?;
+        }
+        PlannedExecution::ApplyCollectionPermissions { input, overwrite } => {
             let collection = resolve_collection_runtime(
                 conn,
                 runtime,
@@ -783,6 +1114,8 @@ pub(super) async fn execute_planned_item(
                 group.id,
                 &input.permissions,
                 input.replace_existing.unwrap_or(false),
+                input.condition,
+                *overwrite,
             )
             .await?;
         }

@@ -9,8 +9,8 @@ use utoipa::ToSchema;
 
 use crate::db::prelude::*;
 use crate::errors::ApiError;
-use crate::models::HubuumObject;
 use crate::models::search::{ComputedQueryValueType, FilterField, SortParam};
+use crate::models::{HubuumObject, ResourceRevision};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -103,7 +103,7 @@ pub struct ComputedFieldDefinition {
     pub operation: serde_json::Value,
     pub result_type: String,
     pub enabled: bool,
-    pub revision: i64,
+    pub revision: ResourceRevision,
     pub semantics_version: i16,
     pub created_by: Option<i32>,
     pub updated_by: Option<i32>,
@@ -148,6 +148,7 @@ impl CursorPaginated for ComputedFieldDefinition {
                 | FilterField::ClassId
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -158,6 +159,7 @@ impl CursorPaginated for ComputedFieldDefinition {
             FilterField::ClassId => CursorValue::Integer(self.class_id as i64),
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{field}' is not orderable for computed fields"
@@ -204,6 +206,11 @@ impl CursorSqlMapping for ComputedFieldDefinition {
             FilterField::UpdatedAt => CursorSqlField {
                 column: "computed_field_definitions.updated_at",
                 sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "computed_field_definitions.revision",
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             _ => {
@@ -319,7 +326,6 @@ impl ComputedFieldDefinitionRequest {
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ComputedFieldDefinitionPatch {
-    pub expected_revision: i64,
     pub key: Option<String>,
     pub label: Option<String>,
     pub description: Option<String>,
@@ -334,11 +340,6 @@ impl ComputedFieldDefinitionPatch {
         &self,
         current: &ComputedFieldDefinition,
     ) -> Result<ValidatedComputedFieldPatch, ApiError> {
-        if self.expected_revision <= 0 {
-            return Err(ApiError::BadRequest(
-                "expected_revision must be greater than zero".to_string(),
-            ));
-        }
         let key = self.key.as_ref().unwrap_or(&current.key);
         let label = self.label.as_ref().unwrap_or(&current.label);
         let description = self.description.as_ref().unwrap_or(&current.description);

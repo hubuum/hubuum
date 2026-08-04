@@ -1,14 +1,15 @@
-use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
+use actix_web::{HttpRequest, Responder, delete, get, patch, post, routes, web};
 use tracing::debug;
 
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::DbPool;
 use crate::db::traits::service_account::{
     DisableServiceAccount, SaveServiceAccount, count_manageable_service_accounts,
     is_human_owner_group_member, search_manageable_service_accounts,
 };
+use crate::db::{DbPool, with_revision_precondition_scope};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, ManagementAccess};
 use crate::models::search::parse_query_parameter;
@@ -49,9 +50,14 @@ async fn response_for(
     pool: &DbPool,
     sa: &ServiceAccount,
 ) -> Result<ServiceAccountResponse, ApiError> {
-    let (identity_scope, name) =
+    let (identity_scope, name, revision) =
         crate::db::traits::principal::principal_identity_scope_and_name(pool, sa.id).await?;
-    Ok(ServiceAccountResponse::from_parts(sa, identity_scope, name))
+    Ok(ServiceAccountResponse::from_parts(
+        sa,
+        identity_scope,
+        name,
+        revision,
+    ))
 }
 
 #[utoipa::path(
@@ -104,7 +110,7 @@ pub async fn create_service_account(
     let response = response_for(&pool, &sa).await?;
 
     let location = api_locations::service_account(sa.id)?;
-    Ok(ApiResponse::created(response, location))
+    ApiResponse::created_revisioned(response, location)
 }
 
 #[utoipa::path(
@@ -174,10 +180,7 @@ pub async fn get_service_account(
 ) -> Result<impl Responder, ApiError> {
     let sa = service_account_id.into_inner().instance(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
-    Ok(ApiResponse::new(
-        response_for(&pool, &sa).await?,
-        StatusCode::OK,
-    ))
+    ApiResponse::ok_revisioned(response_for(&pool, &sa).await?)
 }
 
 #[utoipa::path(
@@ -222,12 +225,14 @@ pub async fn update_service_account(
         ));
     }
 
+    let current = response_for(&pool, &sa).await?;
+    let precondition =
+        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
-    let updated = update.update(&pool, id, &event_context).await?;
-    Ok(ApiResponse::new(
-        response_for(&pool, &updated).await?,
-        StatusCode::OK,
-    ))
+    let updated =
+        with_revision_precondition_scope(precondition, update.update(&pool, id, &event_context))
+            .await?;
+    ApiResponse::ok_revisioned(response_for(&pool, &updated).await?)
 }
 
 #[utoipa::path(
@@ -254,8 +259,12 @@ pub async fn disable_service_account(
     let sa = id.instance(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
 
+    let current = response_for(&pool, &sa).await?;
+    let precondition =
+        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
-    let disabled = id.disable(&pool, &event_context).await?;
+    let disabled =
+        with_revision_precondition_scope(precondition, id.disable(&pool, &event_context)).await?;
 
     debug!(
         message = "Service account disabled",
@@ -263,10 +272,7 @@ pub async fn disable_service_account(
         requestor = requestor.user.id
     );
 
-    Ok(ApiResponse::new(
-        response_for(&pool, &disabled).await?,
-        StatusCode::OK,
-    ))
+    ApiResponse::ok_revisioned(response_for(&pool, &disabled).await?)
 }
 
 #[utoipa::path(
@@ -292,7 +298,10 @@ pub async fn delete_service_account(
     let id = service_account_id.into_inner();
     let sa = id.instance(&pool).await?;
     ensure_can_manage(&pool, &requestor, &sa).await?;
+    let current = response_for(&pool, &sa).await?;
+    let etag = current.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(&req);
-    id.delete(&pool, &event_context).await?;
-    Ok(ApiResponse::no_content())
+    with_revision_precondition_scope(precondition, id.delete(&pool, &event_context)).await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }

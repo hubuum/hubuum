@@ -4,8 +4,8 @@ use utoipa::ToSchema;
 
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::models::GroupID;
 use crate::models::search::{FilterField, SortParam};
+use crate::models::{GroupID, ResourceRevision};
 use crate::schema::service_accounts;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
@@ -61,10 +61,16 @@ pub struct ServiceAccountResponse {
     pub disabled_at: Option<chrono::NaiveDateTime>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 impl ServiceAccountResponse {
-    pub fn from_parts(sa: &ServiceAccount, identity_scope: String, name: String) -> Self {
+    pub fn from_parts(
+        sa: &ServiceAccount,
+        identity_scope: String,
+        name: String,
+        revision: ResourceRevision,
+    ) -> Self {
         Self {
             id: sa.id,
             identity_scope,
@@ -75,6 +81,7 @@ impl ServiceAccountResponse {
             disabled_at: sa.disabled_at,
             created_at: sa.created_at,
             updated_at: sa.updated_at,
+            revision,
         }
     }
 }
@@ -87,21 +94,28 @@ pub struct ServiceAccountWithName {
     pub service_account: ServiceAccount,
     pub identity_scope: String,
     pub name: String,
+    pub revision: ResourceRevision,
 }
 
 impl ServiceAccountWithName {
-    pub fn from_tuple(t: (ServiceAccount, String, String)) -> Self {
+    pub fn from_tuple(t: (ServiceAccount, String, String, ResourceRevision)) -> Self {
         Self {
             service_account: t.0,
             identity_scope: t.1,
             name: t.2,
+            revision: t.3,
         }
     }
 }
 
 impl From<ServiceAccountWithName> for ServiceAccountResponse {
     fn from(value: ServiceAccountWithName) -> Self {
-        ServiceAccountResponse::from_parts(&value.service_account, value.identity_scope, value.name)
+        ServiceAccountResponse::from_parts(
+            &value.service_account,
+            value.identity_scope,
+            value.name,
+            value.revision,
+        )
     }
 }
 
@@ -114,6 +128,7 @@ impl CursorPaginated for ServiceAccountWithName {
                 | FilterField::IdentityScope
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -124,6 +139,7 @@ impl CursorPaginated for ServiceAccountWithName {
             FilterField::Name => CursorValue::String(self.name.clone()),
             FilterField::CreatedAt => CursorValue::DateTime(self.service_account.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.service_account.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for service accounts",
@@ -171,6 +187,11 @@ impl CursorSqlMapping for ServiceAccountWithName {
             FilterField::UpdatedAt => CursorSqlField {
                 column: "service_accounts.updated_at",
                 sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "principals.revision",
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             _ => {

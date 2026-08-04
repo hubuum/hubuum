@@ -13,7 +13,7 @@ use crate::models::group::{Group, GroupID};
 use crate::models::output::{EffectiveGroupPermission, GroupPermission};
 use crate::models::search::QueryOptions;
 use crate::models::traits::GroupAccessors;
-use crate::models::{Permission, Permissions};
+use crate::models::{Permission, Permissions, ResourceRevision};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::collections;
 use crate::traits::{BackendContext, CollectionAccessors, SelfAccessors};
@@ -37,6 +37,7 @@ pub struct Collection {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub parent_collection_id: Option<i32>,
+    pub revision: ResourceRevision,
 }
 
 crate::int_id_newtype! {
@@ -469,6 +470,7 @@ pub struct CollectionHistory {
     pub actor_kind: Option<String>,
     pub initiator_user_id: Option<i32>,
     pub task_id: Option<i32>,
+    pub revision: ResourceRevision,
 }
 
 crate::impl_history_pagination!(CollectionHistory, "collections_history");

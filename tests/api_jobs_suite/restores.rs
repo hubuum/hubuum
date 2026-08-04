@@ -41,6 +41,7 @@ mod tests {
             "group_memberships",
             "group_membership_sources",
             "collections",
+            "collection_authorization_state",
             "collection_closure",
             "permissions",
             "hubuumclass",
@@ -77,7 +78,8 @@ mod tests {
             .push(serde_json::json!({
                 "id": 1,
                 "name": "local",
-                "provider_kind": "local"
+                "provider_kind": "local",
+                "revision": 1
             }));
         document
             .state
@@ -87,7 +89,17 @@ mod tests {
             .push(serde_json::json!({
                 "id": 1,
                 "name": "root",
-                "parent_collection_id": null
+                "parent_collection_id": null,
+                "revision": 1
+            }));
+        document
+            .state
+            .sections
+            .get_mut("collection_authorization_state")
+            .unwrap()
+            .push(serde_json::json!({
+                "collection_id": 1,
+                "revision": 1
             }));
         document
             .state

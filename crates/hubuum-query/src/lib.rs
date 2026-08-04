@@ -1123,6 +1123,9 @@ filter_fields!(
     (ClassId, "class_id"),
     (CreatedAt, "created_at"),
     (UpdatedAt, "updated_at"),
+    (Revision, "revision"),
+    (BeforeRevision, "before_revision"),
+    (AfterRevision, "after_revision"),
     (OccurredAt, "occurred_at"),
     (NextAttemptAt, "next_attempt_at"),
     (StartedAt, "started_at"),
@@ -1157,6 +1160,40 @@ filter_fields!(
     (ValidFrom, "valid_from"),
     (HistoryId, "history_id"),
 );
+
+/// Parse a bounded comma-separated list of positive signed 64-bit values.
+/// Revision filters deliberately do not accept range expansion syntax: range
+/// comparisons use the `gt`/`gte`/`lt`/`lte`/`between` operators instead.
+pub fn parse_positive_bigint_list_with_limit(
+    input: &str,
+    max_values: usize,
+) -> Result<Vec<i64>, QueryError> {
+    let mut values = Vec::new();
+    for segment in input.split(',') {
+        if segment.is_empty() {
+            return Err(QueryError::BadRequest(
+                "Revision filters cannot contain an empty value".to_string(),
+            ));
+        }
+        if values.len() == max_values {
+            return Err(QueryError::BadRequest(format!(
+                "Revision filter contains more than {max_values} values"
+            )));
+        }
+        let value = segment.parse::<i64>().map_err(|_| {
+            QueryError::BadRequest(format!(
+                "Invalid revision '{segment}': expected a positive int64"
+            ))
+        })?;
+        if value <= 0 {
+            return Err(QueryError::BadRequest(format!(
+                "Invalid revision '{segment}': expected a positive int64"
+            )));
+        }
+        values.push(value);
+    }
+    Ok(values)
+}
 
 pub fn parse_integer_list(input: &str) -> Result<Vec<i32>, QueryError> {
     parse_integer_list_with_limit(input, MAX_INTEGER_FILTER_VALUES)
@@ -1465,6 +1502,28 @@ mod tests {
             error,
             QueryError::BadRequest("duplicate sort field 'id'".to_string())
         );
+    }
+
+    #[test]
+    fn parses_revision_filters_and_rejects_invalid_positive_bigints() {
+        let parsed = parse_query_parameter(
+            "revision__between=10,20&before_revision__gte=3&after_revision__in=4,5&sort=-revision",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.filters[0].field, FilterField::Revision);
+        assert_eq!(parsed.filters[1].field, FilterField::BeforeRevision);
+        assert_eq!(parsed.filters[2].field, FilterField::AfterRevision);
+        assert_eq!(parsed.sort[0].field, FilterField::Revision);
+        assert!(parsed.sort[0].descending);
+        assert_eq!(
+            parse_positive_bigint_list_with_limit(&i64::MAX.to_string(), 1).unwrap(),
+            vec![i64::MAX]
+        );
+        for invalid in ["0", "-1", "9223372036854775808", "x", "1,"] {
+            assert!(parse_positive_bigint_list_with_limit(invalid, 8).is_err());
+        }
+        assert!(parse_positive_bigint_list_with_limit("1,2,3", 2).is_err());
     }
 
     #[test]

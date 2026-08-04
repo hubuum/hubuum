@@ -18,7 +18,7 @@ use crate::models::export_template::{
     UpdateExportTemplateRow,
 };
 use crate::models::search::{FilterField, QueryOptions};
-use crate::{date_search, numeric_search, string_search};
+use crate::{date_search, numeric_search, revision_search, string_search};
 
 fn export_template_event(
     row: &ExportTemplateRow,
@@ -193,6 +193,12 @@ impl UpdateExportTemplateRecord for UpdateExportTemplateRow {
                 .for_update()
                 .first::<ExportTemplateRow>(conn)
                 .await?;
+            crate::db::assert_locked_revision_precondition(
+                conn,
+                &format!("export_templates:{}", before.id()),
+                before.revision(),
+            )
+            .await?;
             if !self.has_changes(&before) {
                 return Ok(before);
             }
@@ -394,7 +400,7 @@ fn build_list_query<'a>(
 ) -> Result<crate::schema::export_templates::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
     use crate::schema::export_templates::dsl::{
         class_id, collection_id, created_at, description, export_templates, id, kind, name,
-        updated_at,
+        revision, updated_at,
     };
 
     let mut query = export_templates.into_boxed();
@@ -415,6 +421,7 @@ fn build_list_query<'a>(
             FilterField::ClassId => numeric_search!(query, param, operator, class_id),
             FilterField::CreatedAt => date_search!(query, param, operator, created_at),
             FilterField::UpdatedAt => date_search!(query, param, operator, updated_at),
+            FilterField::Revision => revision_search!(query, param, operator, revision),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't searchable (or does not exist) for export templates",

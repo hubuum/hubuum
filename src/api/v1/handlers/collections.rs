@@ -1,3 +1,4 @@
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
@@ -9,25 +10,55 @@ use crate::db::traits::history::{
     HistoryCollectionFilter, collection_as_of, collection_history_paginated_with_total_count,
 };
 use crate::db::traits::user::UserSearchBackend;
+use crate::db::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, Authenticated};
 use crate::models::collection as collection_model;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    Collection, CollectionHistory, CollectionID, EffectiveGroupPermission, Group, GroupID,
-    GroupPermission, GroupResponse, HistoryAuthorizationSnapshot, NewCollectionWithAssignee,
-    Permission, Permissions, PermissionsList, PrincipalID, UpdateCollection,
+    Collection, CollectionHistory, CollectionID, CollectionPermissionSet, EffectiveGroupPermission,
+    Group, GroupID, GroupPermission, GroupResponse, HistoryAuthorizationSnapshot,
+    NewCollectionWithAssignee, Permissions, PermissionsList, PrincipalID, UpdateCollection,
     UpdateCollectionParent,
 };
 use crate::pagination::{SKIPPED_TOTAL_COUNT, count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, ResourceRef};
 use actix_web::{
-    HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, routes, web,
+    Either, HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, routes, web,
 };
 use tracing::{debug, info};
 
-use crate::traits::{CanDelete, CanSave, CanUpdate, PermissionController, Search, SelfAccessors};
+use crate::traits::{
+    BackendContext, CanDelete, CanSave, CanUpdate, PermissionController, Search, SelfAccessors,
+};
+
+async fn sql_collection_permission_set(
+    pool: &AppContext,
+    collection: &Collection,
+) -> Result<CollectionPermissionSet, ApiError> {
+    let permissions = collection_model::groups_on(
+        pool,
+        collection.clone(),
+        Vec::new(),
+        parse_query_parameter("")?,
+    )
+    .await?;
+    crate::db::traits::collection::collection_permission_set_from_backend(
+        pool.db_pool(),
+        collection.id,
+        permissions,
+    )
+    .await
+}
+
+fn collection_precondition(
+    request: &HttpRequest,
+    resource: &impl RevisionedResource,
+) -> Result<Option<crate::api::etag::RevisionPrecondition>, ApiError> {
+    let current = resource.entity_tag()?;
+    IfMatchCondition::from_request(request)?.database_precondition(&current)
+}
 
 #[utoipa::path(
     get,
@@ -132,7 +163,7 @@ pub async fn create_collection(
     let created_collection = new_collection_request.save(&pool, &event_context).await?;
 
     let location = api_locations::collection(created_collection.id)?;
-    Ok(ApiResponse::created(created_collection, location))
+    ApiResponse::created_revisioned(created_collection, location)
 }
 
 #[utoipa::path(
@@ -171,7 +202,7 @@ pub async fn get_collection(
         collection
     );
 
-    Ok(ApiResponse::new(collection, StatusCode::OK))
+    ApiResponse::ok_revisioned(collection)
 }
 
 #[utoipa::path(
@@ -215,12 +246,16 @@ pub async fn update_collection(
         collection
     );
 
+    let precondition = collection_precondition(&req, &collection)?;
     let event_context = requestor.event_context(&req);
-    let updated_collection = update_data
-        .into_inner()
-        .update(&pool, collection_id, &event_context)
-        .await?;
-    Ok(ApiResponse::accepted(updated_collection))
+    let updated_collection = with_revision_precondition_scope(
+        precondition,
+        update_data
+            .into_inner()
+            .update(&pool, collection_id, &event_context),
+    )
+    .await?;
+    ApiResponse::accepted_revisioned(updated_collection)
 }
 
 #[utoipa::path(
@@ -259,9 +294,12 @@ pub async fn delete_collection(
         collection
     );
 
+    let etag = collection.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(&req);
-    collection.delete(&pool, &event_context).await?;
-    Ok(ApiResponse::no_content())
+    with_revision_precondition_scope(precondition, collection.delete(&pool, &event_context))
+        .await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 #[utoipa::path(
@@ -387,16 +425,20 @@ pub async fn move_collection_parent(
         new_parent
     );
 
+    let precondition = collection_precondition(&req, &collection)?;
     let event_context = requestor.event_context(&req);
-    let updated = collection_model::move_collection(
-        &pool,
-        collection.id,
-        new_parent_id.id(),
-        Some(&event_context),
+    let updated = with_revision_precondition_scope(
+        precondition,
+        collection_model::move_collection(
+            &pool,
+            collection.id,
+            new_parent_id.id(),
+            Some(&event_context),
+        ),
     )
     .await?;
 
-    Ok(ApiResponse::accepted(updated))
+    ApiResponse::accepted_revisioned(updated)
 }
 
 /// List all groups who have permissions for a collection
@@ -409,7 +451,7 @@ pub async fn move_collection_parent(
         ("collection_id" = i32, Path, description = "Collection ID")
     ),
     responses(
-        (status = 200, description = "Group permissions on collection", body = [GroupPermission]),
+        (status = 200, description = "Revisioned permission set", body = CollectionPermissionSet),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Collection not found", body = ApiErrorResponse)
     )
@@ -438,21 +480,21 @@ pub async fn get_collection_permissions(
         collection
     );
 
+    if pool.permission_backend().uses_sql_permission_store() {
+        let permission_set = sql_collection_permission_set(&pool, &collection).await?;
+        return Ok(Either::Left(ApiResponse::ok_revisioned(permission_set)?));
+    }
+
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
-    let (permissions, total_count) = if pool.permission_backend().uses_sql_permission_store() {
-        collection_model::groups_on_paginated_with_total_count(
-            &pool,
-            collection.clone(),
-            vec![],
-            &search_params,
-        )
-        .await?
-    } else {
-        pool.permission_backend()
-            .groups_with_permissions_on(*collection_id, &[], &search_params)
-            .await?
-    };
-    ApiResponse::paginated(permissions, total_count, &params)
+    let (permissions, total_count) = pool
+        .permission_backend()
+        .groups_with_permissions_on(*collection_id, &[], &search_params)
+        .await?;
+    Ok(Either::Right(ApiResponse::paginated(
+        permissions,
+        total_count,
+        &params,
+    )?))
 }
 
 /// List all permissions for a given group on a collection
@@ -466,7 +508,7 @@ pub async fn get_collection_permissions(
         ("group_id" = i32, Path, description = "Group ID")
     ),
     responses(
-        (status = 200, description = "Permission record", body = Permission),
+        (status = 200, description = "Revisioned permission set", body = CollectionPermissionSet),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
     )
@@ -497,16 +539,24 @@ pub async fn get_collection_group_permissions(
         collection
     );
 
-    let permissions = if pool.permission_backend().uses_sql_permission_store() {
-        collection_model::group_on(&pool, collection.id, group_id.id()).await?
-    } else {
-        pool.permission_backend()
-            .group_permission_on(collection_id, group_id)
-            .await?
-            .ok_or_else(|| ApiError::NotFound("Permission record not found".to_string()))?
-    };
+    if pool.permission_backend().uses_sql_permission_store() {
+        let permission = collection_model::group_on(&pool, collection.id, group_id.id()).await?;
+        let group = group_id.group(pool.db_pool()).await?;
+        let permission_set = crate::db::traits::collection::collection_permission_set_from_backend(
+            pool.db_pool(),
+            collection.id,
+            vec![GroupPermission { group, permission }],
+        )
+        .await?;
+        return Ok(Either::Left(ApiResponse::ok_revisioned(permission_set)?));
+    }
 
-    Ok(ApiResponse::new(permissions, StatusCode::OK))
+    let permission = pool
+        .permission_backend()
+        .group_permission_on(collection_id, group_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("Permission record not found".to_string()))?;
+    Ok(Either::Right(ApiResponse::new(permission, StatusCode::OK)))
 }
 
 #[utoipa::path(
@@ -572,7 +622,7 @@ pub async fn get_collection_effective_group_permissions(
     ),
     request_body = Vec<Permissions>,
     responses(
-        (status = 201, description = "Permissions set"),
+        (status = 201, description = "Permissions set", body = CollectionPermissionSet),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
@@ -606,18 +656,26 @@ pub async fn grant_collection_group_permissions(
         collection
     );
 
-    if pool.permission_backend().supports_mutation() {
+    if pool.permission_backend().uses_sql_permission_store() {
+        let current = sql_collection_permission_set(&pool, &collection).await?;
+        let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
-        collection
-            .grant(&pool, group_id, permissions, Some(&event_context))
-            .await?;
-    } else {
-        pool.permission_backend()
-            .apply_permissions(collection_id, group_id, permissions, false)
-            .await?;
+        with_revision_precondition_scope(
+            precondition,
+            collection.grant(&pool, group_id, permissions, Some(&event_context)),
+        )
+        .await?;
+        let updated = sql_collection_permission_set(&pool, &collection).await?;
+        return Ok(Either::Left(ApiResponse::revisioned(
+            updated,
+            StatusCode::CREATED,
+        )?));
     }
 
-    Ok(ApiResponse::created_empty())
+    pool.permission_backend()
+        .apply_permissions(collection_id, group_id, permissions, false)
+        .await?;
+    Ok(Either::Right(ApiResponse::created_empty()))
 }
 
 /// Replace all permissions for a group on a collection
@@ -633,7 +691,7 @@ pub async fn grant_collection_group_permissions(
     ),
     request_body = Vec<Permissions>,
     responses(
-        (status = 200, description = "Permissions replaced"),
+        (status = 200, description = "Permissions replaced", body = CollectionPermissionSet),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
@@ -674,18 +732,23 @@ pub async fn replace_collection_group_permissions(
         ));
     }
 
-    if pool.permission_backend().supports_mutation() {
+    if pool.permission_backend().uses_sql_permission_store() {
+        let current = sql_collection_permission_set(&pool, &collection).await?;
+        let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
-        collection
-            .set_permissions(&pool, group_id, permissions, Some(&event_context))
-            .await?;
-    } else {
-        pool.permission_backend()
-            .apply_permissions(collection_id, group_id, permissions, true)
-            .await?;
+        with_revision_precondition_scope(
+            precondition,
+            collection.set_permissions(&pool, group_id, permissions, Some(&event_context)),
+        )
+        .await?;
+        let updated = sql_collection_permission_set(&pool, &collection).await?;
+        return Ok(Either::Left(ApiResponse::ok_revisioned(updated)?));
     }
 
-    Ok(ApiResponse::ok_empty())
+    pool.permission_backend()
+        .apply_permissions(collection_id, group_id, permissions, true)
+        .await?;
+    Ok(Either::Right(ApiResponse::ok_empty()))
 }
 
 /// Revoke a permission set from a group on a collection
@@ -699,7 +762,7 @@ pub async fn replace_collection_group_permissions(
         ("group_id" = i32, Path, description = "Group ID")
     ),
     responses(
-        (status = 204, description = "Permissions revoked"),
+        (status = 200, description = "Permissions revoked", body = CollectionPermissionSet),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
     )
@@ -729,18 +792,23 @@ pub async fn revoke_collection_group_permissions(
         collection
     );
 
-    if pool.permission_backend().supports_mutation() {
+    if pool.permission_backend().uses_sql_permission_store() {
+        let current = sql_collection_permission_set(&pool, &collection).await?;
+        let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
-        collection
-            .revoke_all(&pool, group_id, Some(&event_context))
-            .await?;
-    } else {
-        pool.permission_backend()
-            .revoke_all(collection_id, group_id)
-            .await?;
+        with_revision_precondition_scope(
+            precondition,
+            collection.revoke_all(&pool, group_id, Some(&event_context)),
+        )
+        .await?;
+        let updated = sql_collection_permission_set(&pool, &collection).await?;
+        return Ok(Either::Left(ApiResponse::ok_revisioned(updated)?));
     }
 
-    Ok(ApiResponse::no_content())
+    pool.permission_backend()
+        .revoke_all(collection_id, group_id)
+        .await?;
+    Ok(Either::Right(ApiResponse::no_content()))
 }
 
 /// Check a specific permission for a group on a collection
@@ -813,7 +881,7 @@ pub async fn get_collection_group_permission(
         ("permission" = Permissions, Path, description = "Permission value")
     ),
     responses(
-        (status = 201, description = "Permission granted"),
+        (status = 201, description = "Permission granted", body = CollectionPermissionSet),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
     )
@@ -845,18 +913,26 @@ pub async fn grant_collection_group_permission(
     );
 
     let permissions = PermissionsList::new([permission]);
-    if pool.permission_backend().supports_mutation() {
+    if pool.permission_backend().uses_sql_permission_store() {
+        let current = sql_collection_permission_set(&pool, &collection).await?;
+        let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
-        collection
-            .grant(&pool, group_id, permissions, Some(&event_context))
-            .await?;
-    } else {
-        pool.permission_backend()
-            .apply_permissions(collection_id, group_id, permissions, false)
-            .await?;
+        with_revision_precondition_scope(
+            precondition,
+            collection.grant(&pool, group_id, permissions, Some(&event_context)),
+        )
+        .await?;
+        let updated = sql_collection_permission_set(&pool, &collection).await?;
+        return Ok(Either::Left(ApiResponse::revisioned(
+            updated,
+            StatusCode::CREATED,
+        )?));
     }
 
-    Ok(ApiResponse::created_empty())
+    pool.permission_backend()
+        .apply_permissions(collection_id, group_id, permissions, false)
+        .await?;
+    Ok(Either::Right(ApiResponse::created_empty()))
 }
 
 /// Revoke a specific permission from a group on a collection
@@ -871,7 +947,7 @@ pub async fn grant_collection_group_permission(
         ("permission" = Permissions, Path, description = "Permission value")
     ),
     responses(
-        (status = 204, description = "Permission revoked"),
+        (status = 200, description = "Permission revoked", body = CollectionPermissionSet),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Collection or group not found", body = ApiErrorResponse)
     )
@@ -903,18 +979,23 @@ pub async fn revoke_collection_group_permission(
     );
 
     let permissions = PermissionsList::new([permission]);
-    if pool.permission_backend().supports_mutation() {
+    if pool.permission_backend().uses_sql_permission_store() {
+        let current = sql_collection_permission_set(&pool, &collection).await?;
+        let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
-        collection
-            .revoke(&pool, group_id, permissions, Some(&event_context))
-            .await?;
-    } else {
-        pool.permission_backend()
-            .revoke_permissions(collection_id, group_id, permissions)
-            .await?;
+        with_revision_precondition_scope(
+            precondition,
+            collection.revoke(&pool, group_id, permissions, Some(&event_context)),
+        )
+        .await?;
+        let updated = sql_collection_permission_set(&pool, &collection).await?;
+        return Ok(Either::Left(ApiResponse::ok_revisioned(updated)?));
     }
 
-    Ok(ApiResponse::no_content())
+    pool.permission_backend()
+        .revoke_permissions(collection_id, group_id, permissions)
+        .await?;
+    Ok(Either::Right(ApiResponse::no_content()))
 }
 
 /// List all permissions for a principal on a collection
@@ -1274,7 +1355,12 @@ pub async fn get_collection_as_of(
         .await?;
     }
 
+    let etag = row.entity_tag()?;
     let principal_names =
         resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
-    Ok(ApiResponse::ok(HistoryResponse::new(row, &principal_names)))
+    Ok(ApiResponse::new_with_etag(
+        HistoryResponse::new(row, &principal_names),
+        StatusCode::OK,
+        etag,
+    ))
 }

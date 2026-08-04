@@ -45,6 +45,7 @@ impl ExpandCollection<HubuumClassExpanded> for HubuumClass {
             description: self.description.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
+            revision: self.revision,
         })
     }
 }
@@ -95,6 +96,7 @@ impl ExpandCollectionFromMap<HubuumClassExpanded> for HubuumClass {
                     created_at: chrono::NaiveDateTime::default(),
                     updated_at: chrono::NaiveDateTime::default(),
                     parent_collection_id: None,
+                    revision: crate::models::ResourceRevision::INITIAL,
                 }
             }
         };
@@ -108,6 +110,7 @@ impl ExpandCollectionFromMap<HubuumClassExpanded> for HubuumClass {
             description: self.description.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
+            revision: self.revision,
         }
     }
 }
@@ -123,6 +126,7 @@ impl CursorPaginated for HubuumClassExpanded {
                 | FilterField::CollectionId
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -136,6 +140,7 @@ impl CursorPaginated for HubuumClassExpanded {
             }
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for classes",
@@ -188,6 +193,11 @@ impl CursorSqlMapping for HubuumClassExpanded {
             FilterField::UpdatedAt => CursorSqlField {
                 column: "hubuumclass.updated_at",
                 sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "hubuumclass.revision",
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             _ => {

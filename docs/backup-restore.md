@@ -33,21 +33,19 @@ response includes `Digest` and `X-Hubuum-Backup-SHA256` headers. Stored outputs
 are served as attachments with `Cache-Control: no-store` and expire according
 to `HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS`.
 
-Full backups contain password hashes and integration configuration. Protect
-backup files as credentials. Authentication tokens and token scopes are never
-included and must be reissued after a restore. Environment-backed secret values
-are also outside the database backup.
+Full backups contain integration configuration but exclude password hashes,
+authentication tokens, and token scopes. Passwords and tokens must be reset or
+reissued after a restore. Environment-backed secret values are also outside the
+database backup.
 
-The version 3 manifest reports only counts for included sections and the fixed
-list of exclusions. It includes personal and shared computed-field definitions
-as authoritative state. When history is included, nullable task initiator,
-event initiator/task, and temporal actor/initiator/task provenance columns are
-round-tripped. Backup version `3` remains unchanged because the added fields are
-nullable and older version-3 rows restore them as `NULL`. Class computation
-state and object materializations are excluded as rebuildable caches; restore
-validates the definitions and queues class rebuild tasks. The manifest does not
-carry partial-selection counts, import-planning warnings, a collection scope,
-or an embedded import request.
+Backup version `4` preserves authoritative resource revisions, collection
+authorization-set revisions, temporal-history revisions, and event before/after
+revisions. Restore rejects older backup versions and invalid, maximum, or
+inconsistent revisions, then restores exact values through transaction-local
+restore mode. Class computation state and object materializations remain
+excluded as rebuildable caches; restore validates definitions and queues class
+rebuild tasks. The manifest does not carry partial-selection counts,
+import-planning warnings, a collection scope, or an embedded import request.
 
 Backups cannot be scoped and backup documents are not import requests. Use the
 export/import workflow (with an import-compatible export template or adapter)

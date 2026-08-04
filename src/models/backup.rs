@@ -14,7 +14,7 @@ use crate::schema::{backup_task_outputs, restore_jobs, server_instances};
 
 use super::principal::Principal;
 
-pub const CURRENT_BACKUP_VERSION: i32 = 3;
+pub const CURRENT_BACKUP_VERSION: i32 = 4;
 
 pub(crate) const BACKUP_STATE_SECTIONS: &[&str] = &[
     "identity_scopes",
@@ -25,6 +25,7 @@ pub(crate) const BACKUP_STATE_SECTIONS: &[&str] = &[
     "group_memberships",
     "group_membership_sources",
     "collections",
+    "collection_authorization_state",
     "collection_closure",
     "permissions",
     "hubuumclass",
@@ -166,7 +167,7 @@ pub struct BackupManifest {
     pub exclusions: Vec<String>,
 }
 
-/// Privileged, restore-only table snapshots. In backup version 3, each section
+/// Privileged, restore-only table snapshots. In backup version 4, each section
 /// name and row shape corresponds to the PostgreSQL table restored from it.
 /// These are versioned disaster-recovery internals, not portable import data.
 #[derive(Clone, Serialize, Deserialize, PartialEq, ToSchema, Default)]

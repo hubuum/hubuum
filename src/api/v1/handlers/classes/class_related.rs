@@ -139,7 +139,48 @@ async fn create_class_relation(
     let relation = relation.save(&pool, &event_context).await?;
 
     let location = api_locations::class_relation(class_id.id(), relation.id())?;
-    Ok(ApiResponse::created(relation, location))
+    ApiResponse::created_revisioned(relation, location)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/relations/{relation_id}",
+    tag = "classes",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("relation_id" = i32, Path, description = "Class relation ID")
+    ),
+    responses(
+        (status = 200, description = "Class relation", body = HubuumClassRelation),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Class or relation not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{class_id}/relations/{relation_id}")]
+async fn get_class_relation(
+    pool: AppContext,
+    requestor: Authenticated,
+    paths: web::Path<(HubuumClassID, HubuumClassRelationID)>,
+) -> Result<impl Responder, ApiError> {
+    let (class_id, relation_id) = paths.into_inner();
+    let relation = relation_id.instance(&pool).await?;
+    if relation.from_hubuum_class_id != class_id.id()
+        && relation.to_hubuum_class_id != class_id.id()
+    {
+        return Err(ApiError::NotFound("Class relation not found".to_string()));
+    }
+    let resource = relation.to_resource_ref(&pool).await?;
+    authorize_resources(
+        pool.permission_backend(),
+        &pool,
+        &requestor.principal,
+        requestor.scopes(),
+        vec![Permissions::ReadClassRelation],
+        vec![resource],
+    )
+    .await?;
+    ApiResponse::ok_revisioned(relation)
 }
 
 #[utoipa::path(
@@ -191,9 +232,12 @@ async fn delete_class_relation(
     if relation.from_hubuum_class_id == class_id.id()
         || relation.to_hubuum_class_id == class_id.id()
     {
+        let etag = relation.entity_tag()?;
+        let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
         let event_context = requestor.event_context(&req);
-        relation.delete(&pool, &event_context).await?;
-        Ok(ApiResponse::no_content())
+        with_revision_precondition_scope(precondition, relation.delete(&pool, &event_context))
+            .await?;
+        Ok(ApiResponse::no_content_with_etag(etag))
     } else {
         info!(
             message = "Relation membership mismatch when deleting relation: class does not match either endpoint",

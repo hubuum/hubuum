@@ -52,7 +52,7 @@ pub use self::login::{login_attempt, login_lockout};
 pub use self::registry::{init, runtime_identity};
 pub use self::remote_call::remote_call_finished;
 pub use self::scrape::scrape;
-pub use self::security::client_allowlist_rejected;
+pub use self::security::{client_allowlist_rejected, revision_condition};
 pub use self::task::{
     TaskOutputKind, task_claimed, task_completed, task_lease_recovered,
     task_output_cleanup_deleted, task_output_cleanup_failed, task_output_cleanup_run,
@@ -137,6 +137,7 @@ struct Metrics {
     login_limiter_backend_failures: Counter<u64>,
     login_limiter_entries: Gauge<u64>,
     client_allowlist_rejections: Counter<u64>,
+    revision_conditions: Counter<u64>,
     event_queue_items: Gauge<i64>,
     event_stale_claims: Gauge<i64>,
     event_oldest_age: Gauge<f64>,

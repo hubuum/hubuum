@@ -15,7 +15,7 @@ use crate::models::{
 
 const COLLECTION_SEARCH_SQL: &str = r#"
     SELECT c.id, c.name, c.description, c.created_at, c.updated_at,
-           c.parent_collection_id
+           c.parent_collection_id, c.revision
     FROM collections c
     CROSS JOIN LATERAL (
         SELECT CASE
@@ -44,7 +44,7 @@ const COLLECTION_SEARCH_SQL: &str = r#"
 
 const CLASS_SEARCH_SQL: &str = r#"
     SELECT c.id, c.name, c.collection_id, c.json_schema, c.validate_schema,
-           c.description, c.created_at, c.updated_at
+           c.description, c.created_at, c.updated_at, c.revision
     FROM hubuumclass c
     CROSS JOIN LATERAL (
         SELECT CASE
@@ -80,7 +80,7 @@ const CLASS_SEARCH_SQL: &str = r#"
 
 const OBJECT_SEARCH_SQL: &str = r#"
     SELECT o.id, o.name, o.collection_id, o.hubuum_class_id, o.data,
-           o.description, o.created_at, o.updated_at
+           o.description, o.created_at, o.updated_at, o.revision
     FROM hubuumobject o
     CROSS JOIN LATERAL (
         SELECT CASE

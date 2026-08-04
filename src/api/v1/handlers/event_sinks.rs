@@ -1,11 +1,12 @@
-use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, routes, web};
+use actix_web::{HttpRequest, Responder, delete, get, patch, routes, web};
 
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::{ApiResponse, ResponseLocation};
-use crate::db::DbPool;
 use crate::db::traits::event_subscription::{
     DeleteEventSinkRecord, SaveEventSinkRecord, UpdateEventSinkRecord,
 };
+use crate::db::{DbPool, with_revision_precondition_scope};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess};
 use crate::models::search::parse_query_parameter;
@@ -43,7 +44,7 @@ pub async fn create_event_sink(
         .await?
         .try_into()?;
     let location = ResponseLocation::new(format!("/api/v1/event-sinks/{}", created.id))?;
-    Ok(ApiResponse::created(created, location))
+    ApiResponse::created_revisioned(created, location)
 }
 
 #[utoipa::path(
@@ -91,10 +92,7 @@ pub async fn get_event_sink(
     _admin: AdminAccess,
     sink_id: web::Path<EventSinkID>,
 ) -> Result<impl Responder, ApiError> {
-    Ok(ApiResponse::new(
-        sink_id.into_inner().instance(&pool).await?,
-        StatusCode::OK,
-    ))
+    ApiResponse::ok_revisioned(sink_id.into_inner().instance(&pool).await?)
 }
 
 #[utoipa::path(
@@ -129,13 +127,18 @@ pub async fn patch_event_sink(
         ));
     }
     let existing = sink_id.instance(&pool).await?;
+    let precondition =
+        IfMatchCondition::from_request(&req)?.database_precondition(&existing.entity_tag()?)?;
     let event_context = admin.event_context(&req);
-    let updated: EventSink = update
-        .into_row(&existing)?
-        .update_event_sink_record(&pool, existing.id, &event_context)
-        .await?
-        .try_into()?;
-    Ok(ApiResponse::new(updated, StatusCode::OK))
+    let updated: EventSink = with_revision_precondition_scope(
+        precondition,
+        update
+            .into_row(&existing)?
+            .update_event_sink_record(&pool, existing.id, &event_context),
+    )
+    .await?
+    .try_into()?;
+    ApiResponse::ok_revisioned(updated)
 }
 
 #[utoipa::path(
@@ -158,12 +161,17 @@ pub async fn delete_event_sink(
     req: HttpRequest,
     sink_id: web::Path<EventSinkID>,
 ) -> Result<impl Responder, ApiError> {
+    let sink_id = sink_id.into_inner();
+    let existing = sink_id.instance(&pool).await?;
+    let etag = existing.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = admin.event_context(&req);
-    sink_id
-        .into_inner()
-        .delete_event_sink_record(&pool, &event_context)
-        .await?;
-    Ok(ApiResponse::no_content())
+    with_revision_precondition_scope(
+        precondition,
+        sink_id.delete_event_sink_record(&pool, &event_context),
+    )
+    .await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {

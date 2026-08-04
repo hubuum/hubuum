@@ -181,9 +181,14 @@ async fn get_class_as_of(
         .await?;
     }
 
+    let etag = row.entity_tag()?;
     let principal_names =
         resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
-    Ok(ApiResponse::ok(HistoryResponse::new(row, &principal_names)))
+    Ok(ApiResponse::new_with_etag(
+        HistoryResponse::new(row, &principal_names),
+        StatusCode::OK,
+        etag,
+    ))
 }
 
 #[utoipa::path(
@@ -379,7 +384,12 @@ async fn get_object_as_of(
         .await?;
     }
 
+    let etag = row.entity_tag()?;
     let principal_names =
         resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
-    Ok(ApiResponse::ok(HistoryResponse::new(row, &principal_names)))
+    Ok(ApiResponse::new_with_etag(
+        HistoryResponse::new(row, &principal_names),
+        StatusCode::OK,
+        etag,
+    ))
 }

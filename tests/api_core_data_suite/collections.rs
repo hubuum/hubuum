@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::models::{
-        Collection, CollectionID, GroupID, GroupPermission, GroupResponse,
+        Collection, CollectionID, CollectionPermissionSet, GroupID, GroupPermission, GroupResponse,
         NewCollectionWithAssignee, NewGroup, Permission, Permissions, UpdateCollection,
     };
 
@@ -9,7 +9,8 @@ mod tests {
         NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits,
     };
     use crate::tests::api_operations::{
-        delete_request, get_request, patch_request, post_request, put_request,
+        delete_request, get_request, patch_request, patch_request_with_headers, post_request,
+        put_request,
     };
     use crate::tests::asserts::{
         assert_paginated_collection_total_count, assert_response_status, header_value,
@@ -77,6 +78,45 @@ mod tests {
 
         created_collection1.cleanup().await.unwrap();
         created_collection2.cleanup().await.unwrap();
+    }
+
+    #[rstest]
+    #[actix_web::test]
+    async fn stale_collection_precondition_rejects_a_semantic_no_op(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
+        let fixture = context.collection_fixture("stale_collection_no_op").await;
+        let endpoint = format!("{COLLECTION_ENDPOINT}/{}", fixture.collection.id);
+
+        let response = get_request(&context.pool, &context.admin_token, &endpoint).await;
+        let response = assert_response_status(response, http::StatusCode::OK).await;
+        let stale_etag = response
+            .headers()
+            .get(http::header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let latest = UpdateCollection {
+            name: None,
+            description: Some("latest collection description".to_string()),
+        };
+        let response = patch_request(&context.pool, &context.admin_token, &endpoint, &latest).await;
+        assert_response_status(response, http::StatusCode::ACCEPTED).await;
+
+        let response = patch_request_with_headers(
+            &context.pool,
+            &context.admin_token,
+            &endpoint,
+            &latest,
+            vec![(http::header::IF_MATCH, stale_etag)],
+        )
+        .await;
+        assert_response_status(response, http::StatusCode::PRECONDITION_FAILED).await;
+
+        fixture.cleanup().await.unwrap();
     }
 
     #[rstest]
@@ -327,7 +367,8 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let permissions: Vec<GroupPermission> = test::read_body_json(resp).await;
+        let permission_set: CollectionPermissionSet = test::read_body_json(resp).await;
+        let permissions = permission_set.permissions;
         assert_eq!(permissions.len(), 1);
         let np = permissions[0].permission;
         assert_eq!(np.group_id, admin_group.id);
@@ -356,7 +397,7 @@ mod tests {
             created_collection_url, admin_group.id
         );
         let resp = delete_request(&context.pool, &context.admin_token, endpoint).await;
-        let _ = assert_response_status(resp, http::StatusCode::NO_CONTENT).await;
+        let _ = assert_response_status(resp, http::StatusCode::OK).await;
 
         let resp = get_request(
             &context.pool,
@@ -365,7 +406,8 @@ mod tests {
         )
         .await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let permissions: Vec<GroupPermission> = test::read_body_json(resp).await;
+        let permission_set: CollectionPermissionSet = test::read_body_json(resp).await;
+        let permissions = permission_set.permissions;
         assert_eq!(permissions.len(), 1);
         let np = permissions[0].permission;
         assert_eq!(np.group_id, admin_group.id);
@@ -441,7 +483,8 @@ mod tests {
         .await;
 
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let np: Permission = test::read_body_json(resp).await;
+        let permission_set: CollectionPermissionSet = test::read_body_json(resp).await;
+        let np: Permission = permission_set.permissions[0].permission;
         assert_eq!(np.group_id, normal_group.id);
         assert_eq!(np.collection_id, collection_fixture.collection.id);
         assert!(np.has_read_collection);
@@ -472,7 +515,7 @@ mod tests {
         )
         .await;
 
-        let _ = assert_response_status(resp, http::StatusCode::NO_CONTENT).await;
+        let _ = assert_response_status(resp, http::StatusCode::OK).await;
 
         // Check that normal group has no permissions
         let resp = get_request(
@@ -710,37 +753,18 @@ mod tests {
             .await
             .unwrap();
 
-        let sorted_endpoint = format!(
-            "{COLLECTION_ENDPOINT}/{}/permissions?permissions=ReadCollection&sort=id.desc",
+        let endpoint = format!(
+            "{COLLECTION_ENDPOINT}/{}/permissions",
             collection_fixture.collection.id
         );
-        let resp = get_request(&context.pool, &context.admin_token, &sorted_endpoint).await;
+        let resp = get_request(&context.pool, &context.admin_token, &endpoint).await;
         let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let permissions: Vec<GroupPermission> = test::read_body_json(resp).await;
+        let permission_set: CollectionPermissionSet = test::read_body_json(resp).await;
+        let permissions = permission_set.permissions;
 
         assert!(permissions.len() >= 2);
-        assert!(permissions[0].permission.id > permissions[1].permission.id);
         assert!(permissions.iter().any(|p| p.group.id == group_one.id));
         assert!(permissions.iter().any(|p| p.group.id == group_two.id));
-
-        let filtered_endpoint = format!(
-            "{COLLECTION_ENDPOINT}/{}/permissions?groupname__contains={}&sort=id",
-            collection_fixture.collection.id, group_one.groupname
-        );
-        let resp = get_request(&context.pool, &context.admin_token, &filtered_endpoint).await;
-        let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let filtered_permissions: Vec<GroupPermission> = test::read_body_json(resp).await;
-        assert_eq!(filtered_permissions.len(), 1);
-        assert_eq!(filtered_permissions[0].group.id, group_one.id);
-
-        let limited_endpoint = format!(
-            "{COLLECTION_ENDPOINT}/{}/permissions?permissions=ReadCollection&sort=id&limit=1",
-            collection_fixture.collection.id
-        );
-        let resp = get_request(&context.pool, &context.admin_token, &limited_endpoint).await;
-        let resp = assert_response_status(resp, http::StatusCode::OK).await;
-        let limited_permissions: Vec<GroupPermission> = test::read_body_json(resp).await;
-        assert_eq!(limited_permissions.len(), 1);
 
         group_one
             .delete_without_events(&context.pool)
@@ -818,25 +842,18 @@ mod tests {
                 .unwrap();
         }
 
-        let (permissions, permissions_total): (Vec<GroupPermission>, i64) =
-            assert_paginated_collection_total_count(
+        let response = get_request(
             &context.pool,
             &context.admin_token,
-            10,
-            |cursor| match cursor {
-                Some(cursor) => format!(
-                    "{COLLECTION_ENDPOINT}/{}/permissions?permissions=ReadCollection&groupname__contains=collection-total-count-group&sort=id&limit=2&cursor={cursor}",
-                    collection_fixture.collection.id
-                ),
-                None => format!(
-                    "{COLLECTION_ENDPOINT}/{}/permissions?permissions=ReadCollection&groupname__contains=collection-total-count-group&sort=id&limit=2",
-                    collection_fixture.collection.id
-                ),
-            },
+            &format!(
+                "{COLLECTION_ENDPOINT}/{}/permissions",
+                collection_fixture.collection.id
+            ),
         )
         .await;
-        assert_eq!(permissions_total, 3);
-        assert_eq!(permissions.len(), 3);
+        let response = assert_response_status(response, http::StatusCode::OK).await;
+        let permission_set: CollectionPermissionSet = test::read_body_json(response).await;
+        assert!(permission_set.permissions.len() >= 3);
 
         let (user_permissions, user_permissions_total): (Vec<GroupPermission>, i64) =
             assert_paginated_collection_total_count(

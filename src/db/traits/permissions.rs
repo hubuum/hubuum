@@ -13,6 +13,44 @@ use crate::traits::CollectionAccessors;
 
 use super::authz::{AuthzSubject, scope_allows};
 
+async fn permission_owner_revision(
+    conn: &mut crate::db::DbConnection,
+    target_collection_id: i32,
+) -> Result<crate::models::ResourceRevision, ApiError> {
+    use crate::schema::collection_authorization_state::dsl::{
+        collection_authorization_state, collection_id, revision,
+    };
+
+    Ok(collection_authorization_state
+        .filter(collection_id.eq(target_collection_id))
+        .select(revision)
+        .first(conn)
+        .await?)
+}
+
+async fn lock_permission_owner(
+    conn: &mut crate::db::DbConnection,
+    target_collection_id: i32,
+) -> Result<crate::models::ResourceRevision, ApiError> {
+    use crate::schema::collection_authorization_state::dsl::{
+        collection_authorization_state, collection_id, revision,
+    };
+
+    let owner_revision = collection_authorization_state
+        .filter(collection_id.eq(target_collection_id))
+        .select(revision)
+        .for_update()
+        .first(conn)
+        .await?;
+    crate::db::assert_locked_revision_precondition(
+        conn,
+        &format!("collection_authorization_state:{target_collection_id}"),
+        owner_revision,
+    )
+    .await?;
+    Ok(owner_revision)
+}
+
 fn permission_names(permissions: &[Permissions]) -> Vec<String> {
     permissions.iter().map(ToString::to_string).collect()
 }
@@ -21,14 +59,31 @@ fn granted_permission_names(permission: &Permission) -> Vec<String> {
     permission_names(&permission.granted())
 }
 
-fn permission_snapshot(permission: &Permission) -> serde_json::Value {
+fn permission_snapshot(
+    permission: &Permission,
+    revision: crate::models::ResourceRevision,
+) -> serde_json::Value {
     serde_json::json!({
         "id": permission.id,
         "collection_id": permission.collection_id,
         "group_id": permission.group_id,
         "granted_permissions": granted_permission_names(permission),
+        "revision": revision,
         "created_at": permission.created_at,
         "updated_at": permission.updated_at,
+    })
+}
+
+fn empty_permission_snapshot(
+    collection_id: i32,
+    group_id: i32,
+    revision: crate::models::ResourceRevision,
+) -> serde_json::Value {
+    serde_json::json!({
+        "collection_id": collection_id,
+        "group_id": group_id,
+        "granted_permissions": Vec::<String>::new(),
+        "revision": revision,
     })
 }
 
@@ -346,6 +401,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         let group_id_for_grant = group_id_for_grant.id();
 
         with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
+            lock_permission_owner(conn, target_collection_id).await?;
             let existing_entry = permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_grant))
@@ -592,6 +648,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         let requested = permission_list.iter().copied().collect::<Vec<_>>();
 
         with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
+            let before_owner_revision = lock_permission_owner(conn, target_collection_id).await?;
             let before = permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_grant))
@@ -629,6 +686,8 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                         .await?
                 }
             };
+            let after_owner_revision =
+                permission_owner_revision(conn, target_collection_id).await?;
 
             let event = permission_event(
                 &after,
@@ -641,13 +700,16 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                 &requested,
                 Some(replace_existing),
             )?
-            .with_after(permission_snapshot(&after));
+            .with_after(permission_snapshot(&after, after_owner_revision));
 
-            let event = if let Some(before) = before {
-                event.with_before(permission_snapshot(&before))
-            } else {
-                event
-            };
+            let event = event.with_before(match before {
+                Some(before) => permission_snapshot(&before, before_owner_revision),
+                None => empty_permission_snapshot(
+                    target_collection_id,
+                    group_id_for_grant,
+                    before_owner_revision,
+                ),
+            });
             emit_event(conn, &event).await?;
             Ok(after)
         })
@@ -666,6 +728,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         let group_id_for_revoke = group_id_for_revoke.id();
 
         with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
+            lock_permission_owner(conn, target_collection_id).await?;
             let before = permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
@@ -810,6 +873,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         let requested = permission_list.iter().copied().collect::<Vec<_>>();
 
         with_transaction(pool, async |conn| -> Result<Permission, ApiError> {
+            let before_owner_revision = lock_permission_owner(conn, target_collection_id).await?;
             let before = permissions
                 .filter(collection_id.eq(target_collection_id))
                 .filter(group_id.eq(group_id_for_revoke))
@@ -828,6 +892,8 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                 .set(&update_perm)
                 .get_result::<Permission>(conn)
                 .await?;
+            let after_owner_revision =
+                permission_owner_revision(conn, target_collection_id).await?;
 
             let event = permission_event(
                 &after,
@@ -840,8 +906,8 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                 &requested,
                 None,
             )?
-            .with_before(permission_snapshot(&before))
-            .with_after(permission_snapshot(&after));
+            .with_before(permission_snapshot(&before, before_owner_revision))
+            .with_after(permission_snapshot(&after, after_owner_revision));
             emit_event(conn, &event).await?;
             Ok(after)
         })
@@ -857,12 +923,14 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
 
         let collection_id_for_revoke = self.collection_id(pool).await?.id();
         let group_id_for_revoke = group_id_for_revoke.id();
-        with_connection(pool, async |conn| {
+        with_transaction(pool, async |conn| -> Result<_, ApiError> {
+            lock_permission_owner(conn, collection_id_for_revoke).await?;
             diesel::delete(permissions)
                 .filter(collection_id.eq(collection_id_for_revoke))
                 .filter(group_id.eq(group_id_for_revoke))
                 .execute(conn)
                 .await
+                .map_err(ApiError::from)
         })
         .await?;
 
@@ -886,6 +954,8 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         let collection_id_for_revoke = self.collection_id(pool).await?.id();
         let group_id_for_revoke = group_id_for_revoke.id();
         with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            let before_owner_revision =
+                lock_permission_owner(conn, collection_id_for_revoke).await?;
             let before = permissions
                 .filter(collection_id.eq(collection_id_for_revoke))
                 .filter(group_id.eq(group_id_for_revoke))
@@ -901,6 +971,8 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                 .await?;
 
             if let Some(before) = before {
+                let after_owner_revision =
+                    permission_owner_revision(conn, collection_id_for_revoke).await?;
                 let requested = before.granted();
                 let event = permission_event(
                     &before,
@@ -913,7 +985,12 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
                     &requested,
                     None,
                 )?
-                .with_before(permission_snapshot(&before));
+                .with_before(permission_snapshot(&before, before_owner_revision))
+                .with_after(empty_permission_snapshot(
+                    collection_id_for_revoke,
+                    group_id_for_revoke,
+                    after_owner_revision,
+                ));
                 emit_event(conn, &event).await?;
             }
 

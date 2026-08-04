@@ -48,6 +48,7 @@ use std::time::Duration;
 
 use tracing::debug;
 
+use crate::api::etag::RevisionPrecondition;
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
 use crate::events::MutationProvenance;
 use crate::models::search::StatementTimeoutMs;
@@ -380,6 +381,12 @@ tokio::task_local! {
     static AMBIENT_MUTATION_PROVENANCE: Option<MutationProvenance>;
 }
 
+tokio::task_local! {
+    /// An HTTP or queued-work revision assertion. Database revision triggers
+    /// evaluate it at the first authoritative row lock in the transaction.
+    static AMBIENT_REVISION_PRECONDITION: Option<RevisionPrecondition>;
+}
+
 fn ambient_db_call_site() -> DbCallSite {
     AMBIENT_DB_CALL_SITE
         .try_with(|call_site| *call_site)
@@ -447,6 +454,78 @@ fn ambient_mutation_provenance() -> Option<MutationProvenance> {
     AMBIENT_MUTATION_PROVENANCE
         .try_with(Clone::clone)
         .unwrap_or(None)
+}
+
+/// Run `future` with a conditional-mutation assertion in effect. The
+/// condition is applied transaction-locally by every database helper used
+/// inside the scope and therefore cannot leak through the connection pool.
+pub async fn with_revision_precondition_scope<F, R>(
+    precondition: Option<RevisionPrecondition>,
+    future: F,
+) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    AMBIENT_REVISION_PRECONDITION
+        .scope(precondition, future)
+        .await
+}
+
+fn ambient_revision_precondition() -> Option<RevisionPrecondition> {
+    AMBIENT_REVISION_PRECONDITION
+        .try_with(Clone::clone)
+        .unwrap_or(None)
+}
+
+async fn set_local_revision_precondition(
+    conn: &mut DbConnection,
+    precondition: &RevisionPrecondition,
+) -> Result<(), diesel::result::Error> {
+    diesel::sql_query(
+        "SELECT \
+         set_config('hubuum.if_match_owner', $1, true), \
+         set_config('hubuum.if_match_revisions', $2, true), \
+         set_config('hubuum.if_match_checked', '', true)",
+    )
+    .bind::<diesel::sql_types::Text, _>(precondition.owner_key())
+    .bind::<diesel::sql_types::Text, _>(precondition.revisions_csv())
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Evaluate the ambient condition immediately after a caller has locked an
+/// authoritative row. Mutation triggers repeat this defensively, but callers
+/// such as JSON Patch need stale detection before interpreting the payload.
+pub(crate) async fn assert_locked_revision_precondition(
+    conn: &mut DbConnection,
+    owner_key: &str,
+    revision: crate::models::ResourceRevision,
+) -> Result<(), diesel::result::Error> {
+    diesel::sql_query("SELECT hubuum_assert_revision_precondition($1, $2)")
+        .bind::<diesel::sql_types::Text, _>(owner_key)
+        .bind::<diesel::sql_types::BigInt, _>(revision.get())
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Reject a conditional mutation when the authoritative row disappeared
+/// before it could be locked. `If-Match` (including `*`) requires the selected
+/// resource to still exist; an unconditional mutation may create it.
+pub(crate) fn assert_revision_precondition_allows_insert(
+    owner_key: &str,
+) -> Result<(), crate::errors::ApiError> {
+    if ambient_revision_precondition()
+        .as_ref()
+        .is_some_and(|precondition| precondition.owner_key() == owner_key)
+    {
+        return Err(crate::errors::ApiError::PreconditionFailed(
+            "The resource changed since the supplied validator was issued".to_string(),
+            None,
+        ));
+    }
+    Ok(())
 }
 
 /// Apply transaction-local provenance settings consumed by history triggers.
@@ -545,13 +624,15 @@ where
 {
     let statement_timeout = ambient_statement_timeout();
     let provenance = ambient_mutation_provenance();
-    with_connection_context(&pool, statement_timeout, provenance, f).await
+    let precondition = ambient_revision_precondition();
+    with_connection_context(&pool, statement_timeout, provenance, precondition, f).await
 }
 
 async fn with_connection_context<F, R, E>(
     pool: &DbPool,
     statement_timeout: Option<StatementTimeoutMs>,
     provenance: Option<MutationProvenance>,
+    precondition: Option<RevisionPrecondition>,
     f: F,
 ) -> Result<R, ApiError>
 where
@@ -565,7 +646,7 @@ where
     let call_site = ambient_db_call_site();
     let mut conn = acquire_connection(pool).await?;
     let start = std::time::Instant::now();
-    let result = if statement_timeout.is_none() && provenance.is_none() {
+    let result = if statement_timeout.is_none() && provenance.is_none() && precondition.is_none() {
         f(&mut conn).await.map_err(ApiError::from)
     } else {
         conn.transaction::<R, ApiError, _>(async move |conn| {
@@ -574,6 +655,9 @@ where
             }
             if let Some(provenance) = provenance {
                 set_local_mutation_provenance(conn, &provenance).await?;
+            }
+            if let Some(precondition) = precondition {
+                set_local_revision_precondition(conn, &precondition).await?;
             }
             f(conn).await.map_err(ApiError::from)
         })
@@ -644,7 +728,14 @@ where
     E: Send,
     ApiError: From<E>,
 {
-    with_connection_context(pool, statement_timeout, ambient_mutation_provenance(), f).await
+    with_connection_context(
+        pool,
+        statement_timeout,
+        ambient_mutation_provenance(),
+        ambient_revision_precondition(),
+        f,
+    )
+    .await
 }
 
 /// Run database work inside a SQL transaction on a single pooled connection.
@@ -677,6 +768,7 @@ where
 {
     let statement_timeout = ambient_statement_timeout();
     let provenance = ambient_mutation_provenance();
+    let precondition = ambient_revision_precondition();
     let call_site = ambient_db_call_site();
     let mut conn = acquire_connection(pool).await?;
     let start = std::time::Instant::now();
@@ -687,6 +779,9 @@ where
             }
             if let Some(provenance) = provenance {
                 set_local_mutation_provenance(conn, &provenance).await?;
+            }
+            if let Some(precondition) = precondition {
+                set_local_revision_precondition(conn, &precondition).await?;
             }
             f(conn).await.map_err(ApiError::from)
         }),

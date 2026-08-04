@@ -24,6 +24,8 @@ Every versioned table has a companion `<table>_history` table that records all m
 
 Each history row is a **full-row snapshot** with the following columns:
 - **All columns from the base table** (e.g., `id`, `name`, `created_at`, etc.)
+- **`revision` (bigint)**: Positive authoritative revision represented by the
+  snapshot. Delete tombstones retain the final live revision.
 - **`op` (varchar)**: The operation performed. Valid values are:
   - `'I'` - INSERT
   - `'U'` - UPDATE
@@ -420,6 +422,7 @@ ordered newest-first by default.
 **Response Body:**
 Each history row is wrapped in a `HistoryResponse` containing:
 - All columns from the resource's base table (e.g., `id`, `name`, `created_at`, etc.)
+- `revision` (int64): Positive authoritative revision for the snapshot
 - `op` (string): Operation type - `'I'` (INSERT), `'U'` (UPDATE), or `'D'` (DELETE)
 - `valid_from` (timestamptz): When this version became active
 - `valid_to` (timestamptz, nullable): When this version expired (NULL for current/open version)

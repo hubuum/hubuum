@@ -28,6 +28,7 @@ fn object_snapshot(object: &HubuumObject) -> serde_json::Value {
         "description": object.description,
         "created_at": object.created_at,
         "updated_at": object.updated_at,
+        "revision": object.revision,
     })
 }
 
@@ -722,6 +723,13 @@ async fn lock_resolved_object_target(
                 .await?
         }
     };
+
+    crate::db::assert_locked_revision_precondition(
+        conn,
+        &format!("hubuumobject:{}", locked_object.id),
+        locked_object.revision,
+    )
+    .await?;
 
     Ok((locked_class, locked_object))
 }

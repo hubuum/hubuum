@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
-use crate::models::{CollectionID, REDACTED_DEBUG_VALUE};
+use crate::models::{CollectionID, REDACTED_DEBUG_VALUE, ResourceRevision};
 use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
@@ -114,6 +114,7 @@ pub(crate) struct EventSinkRow {
     pub enabled: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 impl_redacted_event_sink_debug!(
@@ -137,6 +138,7 @@ pub struct EventSink {
     pub enabled: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 impl_redacted_event_sink_debug!(EventSink, id, name, kind, enabled, created_at, updated_at,);
@@ -231,6 +233,7 @@ pub(crate) struct EventSubscriptionRow {
     pub enabled: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 impl_redacted_event_subscription_debug!(
@@ -264,6 +267,7 @@ pub struct EventSubscription {
     pub enabled: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 impl_redacted_event_subscription_debug!(
@@ -425,6 +429,7 @@ impl TryFrom<EventSinkRow> for EventSink {
             enabled: row.enabled,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            revision: row.revision,
         })
     }
 }
@@ -446,6 +451,7 @@ impl TryFrom<EventSubscriptionRow> for EventSubscription {
             enabled: row.enabled,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            revision: row.revision,
         })
     }
 }
@@ -783,7 +789,11 @@ impl CursorPaginated for EventSink {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
             field,
-            FilterField::Id | FilterField::Name | FilterField::Kind | FilterField::CreatedAt
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Kind
+                | FilterField::CreatedAt
+                | FilterField::Revision
         )
     }
 
@@ -793,6 +803,7 @@ impl CursorPaginated for EventSink {
             FilterField::Name => Ok(CursorValue::String(self.name.clone())),
             FilterField::Kind => Ok(CursorValue::String(self.kind.as_str().to_string())),
             FilterField::CreatedAt => Ok(CursorValue::DateTime(self.created_at)),
+            FilterField::Revision => Ok(CursorValue::Integer(self.revision.get())),
             _ => Err(ApiError::BadRequest(format!(
                 "Unsupported sort field '{}' for event sinks",
                 field
@@ -838,6 +849,11 @@ impl CursorSqlMapping for EventSink {
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
+            FilterField::Revision => CursorSqlField {
+                column: "event_sinks.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for event sinks",
@@ -852,7 +868,7 @@ impl CursorPaginated for EventSubscription {
     fn supports_sort(field: &FilterField) -> bool {
         matches!(
             field,
-            FilterField::Id | FilterField::Name | FilterField::CreatedAt
+            FilterField::Id | FilterField::Name | FilterField::CreatedAt | FilterField::Revision
         )
     }
 
@@ -861,6 +877,7 @@ impl CursorPaginated for EventSubscription {
             FilterField::Id => Ok(CursorValue::Integer(i64::from(self.id))),
             FilterField::Name => Ok(CursorValue::String(self.name.clone())),
             FilterField::CreatedAt => Ok(CursorValue::DateTime(self.created_at)),
+            FilterField::Revision => Ok(CursorValue::Integer(self.revision.get())),
             _ => Err(ApiError::BadRequest(format!(
                 "Unsupported sort field '{}' for event subscriptions",
                 field
@@ -899,6 +916,11 @@ impl CursorSqlMapping for EventSubscription {
             FilterField::CreatedAt => CursorSqlField {
                 column: "event_subscriptions.created_at",
                 sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "event_subscriptions.revision",
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             _ => {
@@ -963,6 +985,7 @@ mod tests {
             enabled: true,
             created_at: timestamp,
             updated_at: timestamp,
+            revision: crate::models::ResourceRevision::INITIAL,
         };
 
         let serialized = serde_json::to_value(subscription).unwrap();
@@ -1015,6 +1038,7 @@ mod tests {
             enabled: true,
             created_at: timestamp(),
             updated_at: timestamp(),
+            revision: ResourceRevision::INITIAL,
         };
 
         assert_omits(
@@ -1056,6 +1080,7 @@ mod tests {
             enabled: true,
             created_at: timestamp(),
             updated_at: timestamp(),
+            revision: ResourceRevision::INITIAL,
         };
 
         assert_omits(&format!("{request:?}"), &["request-routing-secret"]);

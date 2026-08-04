@@ -131,6 +131,7 @@ pub trait CursorPaginated {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorSqlType {
     Integer,
+    BigInt,
     Numeric,
     Boolean,
     String,

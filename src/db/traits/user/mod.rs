@@ -19,7 +19,7 @@ use crate::models::{
 };
 use crate::traits::{ClassAccessors, CollectionAccessors, GroupAccessors, SelfAccessors};
 
-use crate::{date_search, numeric_search, string_search, trace_query};
+use crate::{date_search, numeric_search, revision_search, string_search, trace_query};
 
 mod auth;
 mod membership;

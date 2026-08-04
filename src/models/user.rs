@@ -9,7 +9,7 @@ use crate::events::EventContext;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::load_principal_by_id;
 use crate::models::token::{IssuedToken, PrincipalToken, PrincipalTokenCreateRequest, Token};
-use crate::models::{PrincipalID, REDACTED_DEBUG_VALUE, redacted_debug_option};
+use crate::models::{PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, redacted_debug_option};
 use crate::schema::users;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -74,33 +74,7 @@ pub struct UserResponse {
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
-}
-
-impl UserResponse {
-    /// Build a response from a user plus its resolved principal name.
-    pub fn from_parts(
-        user: &User,
-        identity_scope: String,
-        provider_kind: String,
-        name: String,
-        provider_managed: bool,
-        last_sync_attempted_at: Option<chrono::NaiveDateTime>,
-        last_sync_success_at: Option<chrono::NaiveDateTime>,
-    ) -> Self {
-        Self {
-            id: user.id,
-            identity_scope,
-            provider_kind,
-            provider_managed,
-            name,
-            proper_name: user.proper_name.clone(),
-            email: user.email.clone(),
-            last_sync_attempted_at,
-            last_sync_success_at,
-            created_at: user.created_at,
-            updated_at: user.updated_at,
-        }
-    }
+    pub revision: ResourceRevision,
 }
 
 /// Explicit list/search projection: the `users` row plus the principal name (the
@@ -116,6 +90,7 @@ pub struct UserWithName {
     pub provider_managed: bool,
     pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
+    pub revision: ResourceRevision,
 }
 
 impl UserWithName {
@@ -129,6 +104,7 @@ impl UserWithName {
             bool,
             Option<chrono::NaiveDateTime>,
             Option<chrono::NaiveDateTime>,
+            ResourceRevision,
         ),
     ) -> Self {
         Self {
@@ -139,21 +115,27 @@ impl UserWithName {
             provider_managed: t.4,
             last_sync_attempted_at: t.5,
             last_sync_success_at: t.6,
+            revision: t.7,
         }
     }
 }
 
 impl From<UserWithName> for UserResponse {
     fn from(value: UserWithName) -> Self {
-        UserResponse::from_parts(
-            &value.user,
-            value.identity_scope,
-            value.provider_kind,
-            value.name,
-            value.provider_managed,
-            value.last_sync_attempted_at,
-            value.last_sync_success_at,
-        )
+        Self {
+            id: value.user.id,
+            identity_scope: value.identity_scope,
+            provider_kind: value.provider_kind,
+            provider_managed: value.provider_managed,
+            name: value.name,
+            proper_name: value.user.proper_name,
+            email: value.user.email,
+            last_sync_attempted_at: value.last_sync_attempted_at,
+            last_sync_success_at: value.last_sync_success_at,
+            created_at: value.user.created_at,
+            updated_at: value.user.updated_at,
+            revision: value.revision,
+        }
     }
 }
 
@@ -169,6 +151,7 @@ impl CursorPaginated for UserWithName {
                 | FilterField::Email
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -187,6 +170,7 @@ impl CursorPaginated for UserWithName {
             },
             FilterField::CreatedAt => CursorValue::DateTime(self.user.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.user.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for users",
@@ -246,6 +230,11 @@ impl CursorSqlMapping for UserWithName {
                 sql_type: CursorSqlType::DateTime,
                 nullable: false,
             },
+            FilterField::Revision => CursorSqlField {
+                column: "principals.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for users",
@@ -270,6 +259,7 @@ impl User {
             bool,
             Option<chrono::NaiveDateTime>,
             Option<chrono::NaiveDateTime>,
+            ResourceRevision,
         ),
         ApiError,
     >
@@ -286,6 +276,7 @@ impl User {
             metadata.provider_managed,
             metadata.last_sync_attempted_at,
             metadata.last_sync_success_at,
+            metadata.revision,
         ))
     }
 
@@ -309,16 +300,22 @@ impl User {
             provider_managed,
             last_sync_attempted_at,
             last_sync_success_at,
+            revision,
         ) = self.identity_scope_and_name(backend).await?;
-        Ok(UserResponse::from_parts(
-            self,
+        Ok(UserResponse {
+            id: self.id,
             identity_scope,
             provider_kind,
-            name,
             provider_managed,
+            name,
+            proper_name: self.proper_name.clone(),
+            email: self.email.clone(),
             last_sync_attempted_at,
             last_sync_success_at,
-        ))
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            revision,
+        })
     }
 
     /// Set a new local password and revoke every active bearer token for this

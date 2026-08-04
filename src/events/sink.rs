@@ -268,6 +268,7 @@ mod tests {
             enabled: true,
             created_at: envelope.occurred_at,
             updated_at: envelope.occurred_at,
+            revision: crate::models::ResourceRevision::INITIAL,
         };
         let sink = EventSink {
             id: 1,
@@ -278,6 +279,7 @@ mod tests {
             enabled: true,
             created_at: envelope.occurred_at,
             updated_at: envelope.occurred_at,
+            revision: crate::models::ResourceRevision::INITIAL,
         };
 
         RecordingSink

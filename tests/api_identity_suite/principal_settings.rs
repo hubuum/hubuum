@@ -8,7 +8,7 @@ mod tests {
     use crate::db::{DbPool, with_connection};
     use crate::errors::ApiError;
     use crate::events::{Action, EntityType, Event};
-    use crate::models::{Permissions, PrincipalID};
+    use crate::models::{Permissions, PrincipalID, PrincipalSettingsResponse};
     use crate::tests::api_operations::{delete_request, get_request, patch_request, put_request};
     use crate::tests::{
         TestContext, create_test_group, create_test_service_account, ensure_admin_group,
@@ -64,10 +64,8 @@ mod tests {
         let response = get_request(&context.pool, &context.normal_token, &endpoint).await;
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            test::read_body_json::<serde_json::Value, _>(response).await,
-            serde_json::json!({})
-        );
+        let settings: PrincipalSettingsResponse = test::read_body_json(response).await;
+        assert_eq!(settings.as_value(), &serde_json::json!({}));
     }
 
     #[actix_web::test]
@@ -129,10 +127,8 @@ mod tests {
         .await;
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            test::read_body_json::<serde_json::Value, _>(response).await,
-            replacement
-        );
+        let settings: PrincipalSettingsResponse = test::read_body_json(response).await;
+        assert_eq!(settings.as_value(), &replacement);
     }
 
     #[rstest]
@@ -164,9 +160,10 @@ mod tests {
         .await;
 
         assert_eq!(response.status(), StatusCode::OK);
+        let settings: PrincipalSettingsResponse = test::read_body_json(response).await;
         assert_eq!(
-            test::read_body_json::<serde_json::Value, _>(response).await,
-            serde_json::json!({
+            settings.as_value(),
+            &serde_json::json!({
                 "nested": { "keep": true, "change": "new", "added": [1, 2] },
                 "scalar": { "now": "an object" },
                 "unchanged": 7
@@ -205,9 +202,10 @@ mod tests {
         .await;
 
         assert_eq!(response.status(), StatusCode::OK);
+        let settings: PrincipalSettingsResponse = test::read_body_json(response).await;
         assert_eq!(
-            test::read_body_json::<serde_json::Value, _>(response).await,
-            serde_json::json!({ "nested": { "keep": true } })
+            settings.as_value(),
+            &serde_json::json!({ "nested": { "keep": true } })
         );
     }
 
@@ -478,9 +476,18 @@ mod tests {
 
         assert_eq!(
             event.before,
-            Some(serde_json::json!({ "settings": before }))
+            Some(serde_json::json!({
+                "revision": event.before_revision.unwrap(),
+                "settings": before
+            }))
         );
-        assert_eq!(event.after, Some(serde_json::json!({ "settings": after })));
+        assert_eq!(
+            event.after,
+            Some(serde_json::json!({
+                "revision": event.after_revision.unwrap(),
+                "settings": after
+            }))
+        );
     }
 
     #[rstest]
@@ -564,9 +571,10 @@ mod tests {
 
         let response = get_request(&context.pool, &context.normal_token, &endpoint).await;
         assert_eq!(response.status(), StatusCode::OK);
+        let settings: PrincipalSettingsResponse = test::read_body_json(response).await;
         assert_eq!(
-            test::read_body_json::<serde_json::Value, _>(response).await,
-            serde_json::json!({ "base": true, "left": 1, "right": 2 })
+            settings.as_value(),
+            &serde_json::json!({ "base": true, "left": 1, "right": 2 })
         );
     }
 }

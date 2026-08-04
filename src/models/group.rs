@@ -9,6 +9,7 @@ use crate::events::EventContext;
 use crate::models::principal::Principal;
 use crate::models::principal_group::NewPrincipalGroup;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
+use crate::models::{LOCAL_PROVIDER_KIND, ResourceRevision};
 use crate::schema::groups;
 
 use crate::db::prelude::*;
@@ -89,6 +90,18 @@ pub struct Group {
     pub external_key: Option<String>,
     pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
+    pub revision: ResourceRevision,
+}
+
+impl Group {
+    pub fn ensure_local_writes_allowed(&self) -> Result<(), ApiError> {
+        if self.managed_by != LOCAL_PROVIDER_KIND {
+            return Err(ApiError::Forbidden(
+                "Provider-managed groups are read-only in Hubuum".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
@@ -103,6 +116,40 @@ pub struct GroupResponse {
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
+}
+
+/// Canonical group representation covered completely by the group revision.
+/// Directory synchronization timestamps remain available in list responses,
+/// but are intentionally excluded here because they are operational state and
+/// do not advance the authoritative revision.
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
+pub struct GroupPointResponse {
+    pub id: i32,
+    pub identity_scope: String,
+    pub groupname: String,
+    pub description: String,
+    pub managed_by: String,
+    pub external_key: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
+}
+
+impl From<GroupResponse> for GroupPointResponse {
+    fn from(group: GroupResponse) -> Self {
+        Self {
+            id: group.id,
+            identity_scope: group.identity_scope,
+            groupname: group.groupname,
+            description: group.description,
+            managed_by: group.managed_by,
+            external_key: group.external_key,
+            created_at: group.created_at,
+            updated_at: group.updated_at,
+            revision: group.revision,
+        }
+    }
 }
 
 impl GroupResponse {
@@ -118,6 +165,7 @@ impl GroupResponse {
             last_sync_success_at: group.last_sync_success_at,
             created_at: group.created_at,
             updated_at: group.updated_at,
+            revision: group.revision,
         }
     }
 
@@ -165,6 +213,7 @@ impl CursorPaginated for GroupResponse {
             FilterField::Description => CursorValue::String(self.description.clone()),
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for groups",
@@ -204,6 +253,13 @@ impl Group {
         Ok(GroupResponse::from_parts(self, identity_scope))
     }
 
+    pub async fn to_point_response<C>(&self, backend: &C) -> Result<GroupPointResponse, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        Ok(self.to_response(backend).await?.into())
+    }
+
     pub async fn members<C>(&self, backend: &C) -> Result<Vec<Principal>, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -215,7 +271,7 @@ impl Group {
         &self,
         backend: &C,
         query_options: &QueryOptions,
-    ) -> Result<Vec<Principal>, ApiError>
+    ) -> Result<Vec<(crate::models::PrincipalGroup, Principal)>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
@@ -275,7 +331,7 @@ impl Group {
         backend: &C,
         member: &P,
         context: Option<&EventContext>,
-    ) -> Result<(), ApiError>
+    ) -> Result<crate::models::PrincipalGroup, ApiError>
     where
         C: BackendContext + ?Sized,
         P: PrincipalIdAccessor,
@@ -285,9 +341,7 @@ impl Group {
             group_id: self.id,
         }
         .save_principal_group_record(backend.db_pool(), context)
-        .await?;
-
-        Ok(())
+        .await
     }
 
     /// Remove a member from this group without emitting domain events.
@@ -445,6 +499,7 @@ impl CursorPaginated for Group {
                 | FilterField::Description
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -457,6 +512,7 @@ impl CursorPaginated for Group {
             FilterField::Description => CursorValue::String(self.description.clone()),
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for groups",
@@ -504,6 +560,11 @@ impl CursorSqlMapping for Group {
             FilterField::UpdatedAt => CursorSqlField {
                 column: "groups.updated_at",
                 sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "groups.revision",
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             _ => {

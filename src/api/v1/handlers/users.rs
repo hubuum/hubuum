@@ -1,13 +1,14 @@
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::DbPool;
+use crate::db::{DbPool, with_revision_precondition_scope};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, AdminOrSelfAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::user::{NewUser, UpdateUser, UserID, UserResponse, UserWithName};
 use crate::pagination::{count_query_options, prepare_db_pagination};
-use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
+use actix_web::{HttpRequest, Responder, delete, get, patch, post, routes, web};
 use tracing::debug;
 
 #[utoipa::path(
@@ -90,7 +91,7 @@ pub async fn create_user(
     let response = user.to_response(&pool).await?;
 
     let location = api_locations::user(user.id)?;
-    Ok(ApiResponse::created(response, location))
+    ApiResponse::created_revisioned(response, location)
 }
 
 #[utoipa::path(
@@ -121,10 +122,7 @@ pub async fn get_user(
         requestor = requestor.user.id
     );
 
-    Ok(ApiResponse::new(
-        user.to_response(&pool).await?,
-        StatusCode::OK,
-    ))
+    ApiResponse::ok_revisioned(user.to_response(&pool).await?)
 }
 
 #[utoipa::path(
@@ -160,15 +158,18 @@ pub async fn update_user(
         requestor = requestor.user.id
     );
 
+    let current = user_id.user(&pool).await?.to_response(&pool).await?;
+    let precondition =
+        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
-    let user = updated_user
-        .into_inner()
-        .save(user_id, &pool, Some(&event_context))
-        .await?;
-    Ok(ApiResponse::new(
-        user.to_response(&pool).await?,
-        StatusCode::OK,
-    ))
+    let user = with_revision_precondition_scope(
+        precondition,
+        updated_user
+            .into_inner()
+            .save(user_id, &pool, Some(&event_context)),
+    )
+    .await?;
+    ApiResponse::ok_revisioned(user.to_response(&pool).await?)
 }
 
 #[utoipa::path(
@@ -200,12 +201,17 @@ pub async fn delete_user(
     );
 
     let user_id = user_id.into_inner();
+    let current = user_id.user(&pool).await?.to_response(&pool).await?;
+    let etag = current.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
 
     let event_context = requestor.event_context(&req);
-    let delete_result = user_id.delete(&pool, Some(&event_context)).await;
+    let delete_result =
+        with_revision_precondition_scope(precondition, user_id.delete(&pool, Some(&event_context)))
+            .await;
 
     match delete_result {
-        Ok(_) => Ok(ApiResponse::no_content()),
+        Ok(_) => Ok(ApiResponse::no_content_with_etag(etag)),
         Err(e) => Err(e),
     }
 }
@@ -228,6 +234,7 @@ pub async fn anonymize_user(
     pool: web::Data<DbPool>,
     user_id: web::Path<UserID>,
     requestor: AdminAccess,
+    req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let target_id = user_id.id();
     let user_id = user_id.into_inner();
@@ -236,6 +243,10 @@ pub async fn anonymize_user(
         target = target_id,
         requestor = requestor.user.id
     );
-    user_id.anonymize(&pool).await?;
-    Ok(ApiResponse::no_content())
+    let current = user_id.user(&pool).await?.to_response(&pool).await?;
+    let precondition =
+        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
+    with_revision_precondition_scope(precondition, user_id.anonymize(&pool)).await?;
+    let updated = user_id.user(&pool).await?.to_response(&pool).await?;
+    Ok(ApiResponse::no_content_with_etag(updated.entity_tag()?))
 }

@@ -819,7 +819,6 @@ async fn non_pushdown_authorization_does_not_hold_the_computed_definition_lock(
     let collection_id = fixture.class.collection_id;
     let actor_id = test_context.admin_user.id;
     let definition_id = created.definition.id;
-    let definition_revision = created.definition.revision;
     backend.set_authorization_hook_after_calls(1, move || async move {
         let context = EventContext::system();
         update_shared_definition(
@@ -829,7 +828,6 @@ async fn non_pushdown_authorization_does_not_hold_the_computed_definition_lock(
             definition_id,
             actor_id,
             ComputedFieldDefinitionPatch {
-                expected_revision: definition_revision,
                 key: None,
                 label: Some("Updated while authorizing".to_string()),
                 description: None,

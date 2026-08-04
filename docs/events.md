@@ -38,6 +38,8 @@ Supported audit filters are:
 | `collection_id` | Collection directly attached to the event |
 | `occurred_after` | Lower `occurred_at` bound; accepts RFC 3339 or `YYYY-MM-DD` |
 | `occurred_before` | Upper `occurred_at` bound; accepts RFC 3339 or `YYYY-MM-DD` |
+| `before_revision` | Positive revision from the pre-mutation entity snapshot |
+| `after_revision` | Positive revision from the post-mutation entity snapshot |
 
 Supported sorts are `id` and `occurred_at`, with `-` for descending order.
 For example, `sort=-occurred_at` returns the newest visible events first.
@@ -524,7 +526,8 @@ HUBUUM_EVENT_RETENTION_ARCHIVE_PATH=/var/lib/hubuum/event-archive.jsonl
 
 Each archive line contains `archived_at` and the full event row, including
 durable `initiator_user_id` and `task_id` values. Event `schema_version`
-remains `1` because these nullable fields are additive. If archive writing or
+is `2` for revision-aware mutation events; older stored events remain readable
+as version `1` with null revision fields. If archive writing or
 durable file synchronization fails, the worker does not delete that batch. On
 Unix, newly created archive files are created with mode `0600`; existing file
 permissions are restricted to `0600` before every append. An archive path whose

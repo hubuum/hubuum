@@ -6,6 +6,7 @@ use crate::db::DbPool;
 use crate::db::traits::principal::PrincipalSettingsMutation;
 use crate::errors::ApiError;
 use crate::events::EventContext;
+use crate::models::ResourceRevision;
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::principals;
 use crate::traits::BackendContext;
@@ -70,6 +71,7 @@ pub struct Principal {
     pub external_subject: Option<String>,
     pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
+    pub revision: ResourceRevision,
 }
 
 /// An object-only JSON document containing a principal's local preferences.
@@ -80,6 +82,37 @@ pub struct Principal {
 #[serde(transparent)]
 #[schema(value_type = Object)]
 pub struct PrincipalSettings(serde_json::Value);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct PrincipalSettingsResponse {
+    #[serde(skip, default)]
+    #[schema(ignore)]
+    principal_id: i32,
+    pub revision: ResourceRevision,
+    pub settings: PrincipalSettings,
+}
+
+impl PrincipalSettingsResponse {
+    pub(crate) fn new(
+        principal_id: i32,
+        revision: ResourceRevision,
+        settings: PrincipalSettings,
+    ) -> Self {
+        Self {
+            principal_id,
+            revision,
+            settings,
+        }
+    }
+
+    pub fn principal_id(&self) -> i32 {
+        self.principal_id
+    }
+
+    pub fn as_value(&self) -> &serde_json::Value {
+        self.settings.as_value()
+    }
+}
 
 impl PrincipalSettings {
     pub fn new(value: serde_json::Value) -> Result<Self, ApiError> {
@@ -192,18 +225,20 @@ impl Principal {
     }
 }
 
-/// Public representation of a group member (a principal of either kind).
+/// Public principal details nested in a membership entity. Its revision is the
+/// principal revision, independent of the enclosing membership revision.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
-pub struct PrincipalMemberResponse {
+pub struct MembershipPrincipalResponse {
     pub principal_id: i32,
     pub identity_scope: String,
     pub kind: String,
     pub name: String,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
-impl PrincipalMemberResponse {
+impl MembershipPrincipalResponse {
     pub async fn from_principal<C>(backend: &C, principal: Principal) -> Result<Self, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -220,27 +255,79 @@ impl PrincipalMemberResponse {
             name: principal.name,
             created_at: principal.created_at,
             updated_at: principal.updated_at,
+            revision: principal.revision,
+        })
+    }
+}
+
+/// Public representation of the revision-owned membership between a principal
+/// and a group.
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, ToSchema)]
+pub struct PrincipalMemberResponse {
+    pub principal_id: i32,
+    pub group_id: i32,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub principal: Option<MembershipPrincipalResponse>,
+}
+
+impl PrincipalMemberResponse {
+    pub async fn from_membership<C>(
+        backend: &C,
+        membership: crate::models::PrincipalGroup,
+        principal: Option<Principal>,
+    ) -> Result<Self, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        let principal = if let Some(principal) = principal {
+            let metadata = crate::db::traits::principal::principal_identity_metadata(
+                backend.db_pool(),
+                principal.id,
+            )
+            .await?;
+            Some(MembershipPrincipalResponse {
+                principal_id: principal.id,
+                identity_scope: metadata.identity_scope,
+                kind: principal.kind,
+                name: principal.name,
+                created_at: principal.created_at,
+                updated_at: principal.updated_at,
+                revision: principal.revision,
+            })
+        } else {
+            None
+        };
+        Ok(Self {
+            principal_id: membership.principal_id,
+            group_id: membership.group_id,
+            created_at: membership.created_at,
+            updated_at: membership.updated_at,
+            revision: membership.revision,
+            principal,
         })
     }
 
-    pub async fn from_principals<C>(
+    pub async fn from_memberships<C>(
         backend: &C,
-        principals: Vec<Principal>,
+        memberships: Vec<(crate::models::PrincipalGroup, Principal)>,
     ) -> Result<Vec<Self>, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        let scope_ids = principals
+        let scope_ids = memberships
             .iter()
-            .map(|principal| principal.identity_scope_id)
+            .map(|(_, principal)| principal.identity_scope_id)
             .collect::<Vec<_>>();
         let scope_names =
             crate::db::traits::identity::identity_scope_names_by_ids(backend.db_pool(), &scope_ids)
                 .await?;
 
-        principals
+        memberships
             .into_iter()
-            .map(|principal| {
+            .map(|(membership, principal)| {
                 let identity_scope = scope_names
                     .get(&principal.identity_scope_id)
                     .cloned()
@@ -251,12 +338,20 @@ impl PrincipalMemberResponse {
                         ))
                     })?;
                 Ok(Self {
-                    principal_id: principal.id,
-                    identity_scope,
-                    kind: principal.kind,
-                    name: principal.name,
-                    created_at: principal.created_at,
-                    updated_at: principal.updated_at,
+                    principal_id: membership.principal_id,
+                    group_id: membership.group_id,
+                    created_at: membership.created_at,
+                    updated_at: membership.updated_at,
+                    revision: membership.revision,
+                    principal: Some(MembershipPrincipalResponse {
+                        principal_id: principal.id,
+                        identity_scope,
+                        kind: principal.kind,
+                        name: principal.name,
+                        created_at: principal.created_at,
+                        updated_at: principal.updated_at,
+                        revision: principal.revision,
+                    }),
                 })
             })
             .collect()
@@ -265,15 +360,29 @@ impl PrincipalMemberResponse {
 
 impl CursorPaginated for PrincipalMemberResponse {
     fn supports_sort(field: &FilterField) -> bool {
-        Principal::supports_sort(field)
+        matches!(
+            field,
+            FilterField::Id
+                | FilterField::Name
+                | FilterField::Username
+                | FilterField::CreatedAt
+                | FilterField::UpdatedAt
+                | FilterField::Revision
+        )
     }
 
     fn cursor_value(&self, field: &FilterField) -> Result<CursorValue, ApiError> {
         Ok(match field {
             FilterField::Id => CursorValue::Integer(self.principal_id as i64),
-            FilterField::Name | FilterField::Username => CursorValue::String(self.name.clone()),
+            FilterField::Name | FilterField::Username => CursorValue::String(
+                self.principal
+                    .as_ref()
+                    .map(|principal| principal.name.clone())
+                    .unwrap_or_default(),
+            ),
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for principals",
@@ -284,11 +393,52 @@ impl CursorPaginated for PrincipalMemberResponse {
     }
 
     fn default_sort() -> Vec<SortParam> {
-        Principal::default_sort()
+        vec![SortParam {
+            field: FilterField::Id,
+            descending: false,
+        }]
     }
 
     fn tie_breaker_sort() -> Vec<SortParam> {
-        Principal::tie_breaker_sort()
+        Self::default_sort()
+    }
+}
+
+impl CursorSqlMapping for PrincipalMemberResponse {
+    fn sql_field(field: &FilterField) -> Result<CursorSqlField, ApiError> {
+        Ok(match field {
+            FilterField::Id => CursorSqlField {
+                column: "principals.id",
+                sql_type: CursorSqlType::Integer,
+                nullable: false,
+            },
+            FilterField::Name | FilterField::Username => CursorSqlField {
+                column: "principals.name",
+                sql_type: CursorSqlType::String,
+                nullable: false,
+            },
+            FilterField::CreatedAt => CursorSqlField {
+                column: "group_memberships.created_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::UpdatedAt => CursorSqlField {
+                column: "group_memberships.updated_at",
+                sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "group_memberships.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not orderable for memberships",
+                    field
+                )));
+            }
+        })
     }
 }
 
@@ -340,7 +490,7 @@ impl PrincipalID {
         load_principal_by_id(backend.db_pool(), self.id()).await
     }
 
-    pub async fn settings<C>(&self, backend: &C) -> Result<PrincipalSettings, ApiError>
+    pub async fn settings<C>(&self, backend: &C) -> Result<PrincipalSettingsResponse, ApiError>
     where
         C: BackendContext + ?Sized,
     {
@@ -352,7 +502,7 @@ impl PrincipalID {
         backend: &C,
         settings: PrincipalSettings,
         event_context: &EventContext,
-    ) -> Result<PrincipalSettings, ApiError>
+    ) -> Result<PrincipalSettingsResponse, ApiError>
     where
         C: BackendContext + ?Sized,
     {
@@ -371,7 +521,7 @@ impl PrincipalID {
         backend: &C,
         patch: PrincipalSettings,
         event_context: &EventContext,
-    ) -> Result<PrincipalSettings, ApiError>
+    ) -> Result<PrincipalSettingsResponse, ApiError>
     where
         C: BackendContext + ?Sized,
     {
@@ -389,7 +539,7 @@ impl PrincipalID {
         &self,
         backend: &C,
         event_context: &EventContext,
-    ) -> Result<PrincipalSettings, ApiError>
+    ) -> Result<PrincipalSettingsResponse, ApiError>
     where
         C: BackendContext + ?Sized,
     {
@@ -418,6 +568,7 @@ impl CursorPaginated for Principal {
                 | FilterField::Username
                 | FilterField::CreatedAt
                 | FilterField::UpdatedAt
+                | FilterField::Revision
         )
     }
 
@@ -427,6 +578,7 @@ impl CursorPaginated for Principal {
             FilterField::Name | FilterField::Username => CursorValue::String(self.name.clone()),
             FilterField::CreatedAt => CursorValue::DateTime(self.created_at),
             FilterField::UpdatedAt => CursorValue::DateTime(self.updated_at),
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for principals",
@@ -469,6 +621,11 @@ impl CursorSqlMapping for Principal {
             FilterField::UpdatedAt => CursorSqlField {
                 column: "principals.updated_at",
                 sql_type: CursorSqlType::DateTime,
+                nullable: false,
+            },
+            FilterField::Revision => CursorSqlField {
+                column: "principals.revision",
+                sql_type: CursorSqlType::BigInt,
                 nullable: false,
             },
             _ => {

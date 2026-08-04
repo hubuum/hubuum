@@ -17,8 +17,8 @@ use crate::models::{
 };
 use crate::permissions::{ResourceAttrs, ResourceKind, ResourceRef};
 use crate::{
-    apply_query_options, bind_transitive_filter_params, date_search, numeric_search, string_search,
-    trace_query,
+    apply_query_options, bind_transitive_filter_params, date_search, numeric_search,
+    revision_search, string_search, trace_query,
 };
 
 use crate::traits::{GroupAccessors, SelfAccessors};
@@ -188,6 +188,7 @@ fn class_relation_snapshot(relation: &HubuumClassRelation) -> serde_json::Value 
         "to_max_relations": relation.to_max_relations,
         "created_at": relation.created_at,
         "updated_at": relation.updated_at,
+        "revision": relation.revision,
     })
 }
 
@@ -199,6 +200,7 @@ fn object_relation_snapshot(relation: &HubuumObjectRelation) -> serde_json::Valu
         "class_relation_id": relation.class_relation_id,
         "created_at": relation.created_at,
         "updated_at": relation.updated_at,
+        "revision": relation.revision,
     })
 }
 
@@ -451,6 +453,9 @@ where
                 }
                 FilterField::UpdatedAt => {
                     date_search!(base_query, param, operator, updated_at)
+                }
+                FilterField::Revision => {
+                    revision_search!(base_query, param, operator, revision)
                 }
                 _ => {
                     return Err(ApiError::BadRequest(format!(
@@ -816,6 +821,9 @@ where
                 }
                 FilterField::UpdatedAt => {
                     date_search!(base_query, param, operator, obj::updated_at)
+                }
+                FilterField::Revision => {
+                    revision_search!(base_query, param, operator, obj::revision)
                 }
                 FilterField::Collections => {
                     numeric_search!(base_query, param, operator, obj::collection_id)

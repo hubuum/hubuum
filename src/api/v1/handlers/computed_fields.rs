@@ -1,7 +1,6 @@
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, web};
-use serde::Deserialize;
-use utoipa::IntoParams;
 
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::can;
@@ -12,6 +11,7 @@ use crate::db::traits::computed_field::{
     list_personal_definitions_page, list_shared_definitions, preview_computed_definition,
     request_class_rebuild, update_personal_definition, update_shared_definition,
 };
+use crate::db::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::parse_query_parameter_with_passthrough;
@@ -25,11 +25,6 @@ use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
 use crate::traits::SelfAccessors;
 
-#[derive(Debug, Deserialize, IntoParams)]
-pub struct ExpectedRevisionQuery {
-    pub expected_revision: i64,
-}
-
 fn require_human(requestor: &Authenticated) -> Result<i32, ApiError> {
     if requestor.principal.is_human() {
         Ok(requestor.principal.id)
@@ -38,6 +33,15 @@ fn require_human(requestor: &Authenticated) -> Result<i32, ApiError> {
             "Service accounts cannot manage personal computed fields".to_string(),
         ))
     }
+}
+
+fn computed_field_precondition(
+    request: &HttpRequest,
+    definition: &ComputedFieldDefinition,
+) -> Result<Option<crate::api::etag::RevisionPrecondition>, ApiError> {
+    let condition = IfMatchCondition::from_request(request)?;
+    let current = definition.entity_tag()?;
+    condition.database_precondition(&current)
 }
 
 #[utoipa::path(
@@ -73,6 +77,47 @@ pub async fn get_shared_computed_fields(
         definitions,
         state,
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/classes/{class_id}/computed-fields/{field_id}",
+    tag = "computed fields",
+    security(("bearer_auth" = [])),
+    params(
+        ("class_id" = i32, Path, description = "Class ID"),
+        ("field_id" = i32, Path, description = "Computed-field definition ID")
+    ),
+    responses(
+        (status = 200, description = "Shared computed-field definition", body = ComputedFieldDefinition),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Computed field or class not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{class_id}/computed-fields/{field_id}")]
+pub async fn get_shared_computed_field(
+    pool: AppContext,
+    requestor: Authenticated,
+    path: web::Path<(HubuumClassID, ComputedFieldDefinitionID)>,
+) -> Result<impl Responder, ApiError> {
+    let (class_id, field_id) = path.into_inner();
+    let class = class_id.instance(&pool).await?;
+    can!(
+        &pool,
+        &requestor.principal,
+        requestor.scopes(),
+        [Permissions::ReadClass],
+        class
+    );
+    let definition = get_computed_definition(&pool, field_id.id()).await?;
+    if definition.class_id != class.id || !definition.is_shared() {
+        return Err(ApiError::NotFound(format!(
+            "Shared computed field {} was not found in class {}",
+            field_id.id(),
+            class.id
+        )));
+    }
+    ApiResponse::ok_revisioned(definition)
 }
 
 #[utoipa::path(
@@ -120,7 +165,8 @@ pub async fn create_shared_computed_field(
         &event_context,
     )
     .await?;
-    Ok(ApiResponse::new(response, StatusCode::CREATED))
+    let tag_resource = response.definition.clone();
+    ApiResponse::new_with_resource_etag(response, StatusCode::CREATED, &tag_resource)
 }
 
 #[utoipa::path(
@@ -159,18 +205,31 @@ pub async fn patch_shared_computed_field(
         [Permissions::UpdateCollection],
         collection
     );
+    let definition = get_computed_definition(&pool, field_id.id()).await?;
+    if definition.class_id != class.id || !definition.is_shared() {
+        return Err(ApiError::NotFound(format!(
+            "Shared computed field {} was not found in class {}",
+            field_id.id(),
+            class.id
+        )));
+    }
+    let precondition = computed_field_precondition(&http_request, &definition)?;
     let event_context = requestor.event_context(&http_request);
-    let response = update_shared_definition(
-        &pool,
-        class.id,
-        class.collection_id,
-        field_id.id(),
-        requestor.principal.id,
-        request.into_inner(),
-        &event_context,
+    let response = with_revision_precondition_scope(
+        precondition,
+        update_shared_definition(
+            &pool,
+            class.id,
+            class.collection_id,
+            field_id.id(),
+            requestor.principal.id,
+            request.into_inner(),
+            &event_context,
+        ),
     )
     .await?;
-    Ok(ApiResponse::ok(response))
+    let tag_resource = response.definition.clone();
+    ApiResponse::new_with_resource_etag(response, StatusCode::OK, &tag_resource)
 }
 
 #[utoipa::path(
@@ -181,7 +240,6 @@ pub async fn patch_shared_computed_field(
     params(
         ("class_id" = i32, Path, description = "Class ID"),
         ("field_id" = i32, Path, description = "Computed-field definition ID"),
-        ExpectedRevisionQuery
     ),
     responses(
         (status = 202, description = "Shared definition deleted and rebuild queued", body = ComputedFieldDeleteResponse),
@@ -193,7 +251,6 @@ pub async fn delete_shared_computed_field(
     pool: AppContext,
     requestor: Authenticated,
     path: web::Path<(HubuumClassID, ComputedFieldDefinitionID)>,
-    query: web::Query<ExpectedRevisionQuery>,
     http_request: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (class_id, field_id) = path.into_inner();
@@ -208,21 +265,36 @@ pub async fn delete_shared_computed_field(
         [Permissions::UpdateCollection],
         collection
     );
+    let definition = get_computed_definition(&pool, field_id.id()).await?;
+    if definition.class_id != class.id || !definition.is_shared() {
+        return Err(ApiError::NotFound(format!(
+            "Shared computed field {} was not found in class {}",
+            field_id.id(),
+            class.id
+        )));
+    }
+    let precondition = computed_field_precondition(&http_request, &definition)?;
     let event_context = requestor.event_context(&http_request);
-    let state = delete_shared_definition(
-        &pool,
-        class.id,
-        class.collection_id,
-        field_id.id(),
-        requestor.principal.id,
-        query.expected_revision,
-        &event_context,
+    let state = with_revision_precondition_scope(
+        precondition,
+        delete_shared_definition(
+            &pool,
+            class.id,
+            class.collection_id,
+            field_id.id(),
+            requestor.principal.id,
+            &event_context,
+        ),
     )
     .await?;
-    Ok(ApiResponse::accepted(ComputedFieldDeleteResponse {
-        deleted_definition_id: field_id.id(),
-        state,
-    }))
+    ApiResponse::new_with_resource_etag(
+        ComputedFieldDeleteResponse {
+            deleted_definition_id: field_id.id(),
+            state,
+        },
+        StatusCode::ACCEPTED,
+        &definition,
+    )
 }
 
 async fn preview_source(
@@ -376,6 +448,47 @@ pub async fn get_personal_computed_fields(
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/iam/me/computed-fields/{field_id}",
+    tag = "computed fields",
+    security(("bearer_auth" = [])),
+    params(("field_id" = i32, Path, description = "Computed-field definition ID")),
+    responses(
+        (status = 200, description = "Personal computed-field definition", body = ComputedFieldDefinition),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Service accounts are not allowed", body = ApiErrorResponse),
+        (status = 404, description = "Computed field not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/computed-fields/{field_id}")]
+pub async fn get_personal_computed_field(
+    pool: AppContext,
+    requestor: Authenticated,
+    field_id: web::Path<ComputedFieldDefinitionID>,
+) -> Result<impl Responder, ApiError> {
+    let owner_id = require_human(&requestor)?;
+    let field_id = field_id.into_inner();
+    let definition = get_computed_definition(&pool, field_id.id()).await?;
+    if !definition.is_personal_for(owner_id) {
+        return Err(ApiError::NotFound(format!(
+            "Personal computed field {} was not found",
+            field_id.id()
+        )));
+    }
+    let class = HubuumClassID::new(definition.class_id)?
+        .instance(&pool)
+        .await?;
+    can!(
+        &pool,
+        &requestor.principal,
+        requestor.scopes(),
+        [Permissions::ReadClass],
+        class
+    );
+    ApiResponse::ok_revisioned(definition)
+}
+
+#[utoipa::path(
     post,
     path = "/api/v1/iam/me/computed-fields",
     tag = "computed fields",
@@ -403,10 +516,10 @@ pub async fn create_personal_computed_field(
         [Permissions::ReadClass],
         class
     );
-    Ok(ApiResponse::new(
+    ApiResponse::revisioned(
         create_personal_definition(&pool, class.id, owner_id, request.definition).await?,
         StatusCode::CREATED,
-    ))
+    )
 }
 
 #[utoipa::path(
@@ -427,6 +540,7 @@ pub async fn patch_personal_computed_field(
     requestor: Authenticated,
     field_id: web::Path<ComputedFieldDefinitionID>,
     request: web::Json<ComputedFieldDefinitionPatch>,
+    http_request: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let owner_id = require_human(&requestor)?;
     let field_id = field_id.into_inner();
@@ -447,9 +561,13 @@ pub async fn patch_personal_computed_field(
         [Permissions::ReadClass],
         class
     );
-    Ok(ApiResponse::ok(
-        update_personal_definition(&pool, owner_id, field_id.id(), request.into_inner()).await?,
-    ))
+    let precondition = computed_field_precondition(&http_request, &definition)?;
+    let updated = with_revision_precondition_scope(
+        precondition,
+        update_personal_definition(&pool, owner_id, field_id.id(), request.into_inner()),
+    )
+    .await?;
+    ApiResponse::ok_revisioned(updated)
 }
 
 #[utoipa::path(
@@ -459,7 +577,6 @@ pub async fn patch_personal_computed_field(
     security(("bearer_auth" = [])),
     params(
         ("field_id" = i32, Path, description = "Computed-field definition ID"),
-        ExpectedRevisionQuery
     ),
     responses(
         (status = 204, description = "Personal computed field deleted"),
@@ -471,17 +588,34 @@ pub async fn delete_personal_computed_field(
     pool: AppContext,
     requestor: Authenticated,
     field_id: web::Path<ComputedFieldDefinitionID>,
-    query: web::Query<ExpectedRevisionQuery>,
+    http_request: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let owner_id = require_human(&requestor)?;
-    delete_personal_definition(
+    let field_id = field_id.into_inner();
+    let definition = get_computed_definition(&pool, field_id.id()).await?;
+    if !definition.is_personal_for(owner_id) {
+        return Err(ApiError::NotFound(format!(
+            "Personal computed field {} was not found",
+            field_id.id()
+        )));
+    }
+    let class = HubuumClassID::new(definition.class_id)?
+        .instance(&pool)
+        .await?;
+    can!(
         &pool,
-        owner_id,
-        field_id.into_inner().id(),
-        query.expected_revision,
+        &requestor.principal,
+        requestor.scopes(),
+        [Permissions::ReadClass],
+        class
+    );
+    let precondition = computed_field_precondition(&http_request, &definition)?;
+    with_revision_precondition_scope(
+        precondition,
+        delete_personal_definition(&pool, owner_id, field_id.id()),
     )
     .await?;
-    Ok(ApiResponse::no_content())
+    Ok(ApiResponse::no_content_with_etag(definition.entity_tag()?))
 }
 
 #[utoipa::path(

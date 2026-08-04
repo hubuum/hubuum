@@ -104,6 +104,7 @@ fn collection(id: i32, name: &str) -> Collection {
             .and_hms_opt(1, 0, 0)
             .unwrap(),
         parent_collection_id: None,
+        revision: crate::models::ResourceRevision::INITIAL,
     }
 }
 

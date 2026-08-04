@@ -3,13 +3,14 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 use utoipa::ToSchema;
 
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::openapi::{ApiErrorResponse, LoginResponse};
 use crate::api::response::ApiResponse;
-use crate::db::DbPool;
 use crate::db::traits::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
 use crate::db::traits::service_account::{
     is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
 };
+use crate::db::{DbPool, with_revision_precondition_scope};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
 use crate::models::collection::principal_all_permissions;
@@ -20,7 +21,8 @@ use crate::models::search::{
 use crate::models::token::{renew_token_by_id_for_principal, revoke_token_by_id_for_principal};
 use crate::models::{
     Group, GroupResponse, Permissions, PrincipalID, PrincipalToken, PrincipalTokenCreateRequest,
-    PrincipalTokenMetadata, TokenID, TokenListState, TokenScopeDetails,
+    PrincipalTokenMetadata, PrincipalTokenPointResponse, TokenID, TokenListState,
+    TokenScopeDetails,
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::traits::{AuthzSubject, GroupAccessors};
@@ -292,7 +294,7 @@ pub async fn list_tokens(
         ("token_id" = i32, Path, description = "Token id")
     ),
     responses(
-        (status = 200, description = "Retained token metadata", body = PrincipalTokenMetadata),
+        (status = 200, description = "Retained token metadata", body = PrincipalTokenPointResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
         (status = 404, description = "Token not found, not owned by this principal, or already purged", body = ApiErrorResponse)
@@ -310,7 +312,7 @@ pub async fn get_token(
     let token =
         PrincipalTokenMetadata::load_for_principal_token(&pool, path.principal_id, path.token_id)
             .await?;
-    Ok(ApiResponse::ok(token))
+    ApiResponse::ok_revisioned(PrincipalTokenPointResponse::from(token))
 }
 
 #[utoipa::path(
@@ -387,12 +389,22 @@ pub async fn revoke_token(
     let principal = path.principal_id.principal(&pool).await?;
     ensure_can_manage_principal(&pool, &requestor, &principal).await?;
 
+    let current =
+        PrincipalTokenMetadata::load_for_principal_token(&pool, path.principal_id, path.token_id)
+            .await?;
+    let current = PrincipalTokenPointResponse::from(current);
+    let precondition =
+        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
+
     let event_context = requestor.event_context(&req);
-    let revoked = revoke_token_by_id_for_principal(
-        &pool,
-        path.token_id,
-        path.principal_id,
-        Some(&event_context),
+    let revoked = with_revision_precondition_scope(
+        precondition,
+        revoke_token_by_id_for_principal(
+            &pool,
+            path.token_id,
+            path.principal_id,
+            Some(&event_context),
+        ),
     )
     .await?;
     if revoked == 0 {
@@ -400,7 +412,12 @@ pub async fn revoke_token(
             "Token not found for this principal".to_string(),
         ));
     }
-    Ok(ApiResponse::no_content())
+    let updated =
+        PrincipalTokenMetadata::load_for_principal_token(&pool, path.principal_id, path.token_id)
+            .await?;
+    Ok(ApiResponse::no_content_with_etag(
+        PrincipalTokenPointResponse::from(updated).entity_tag()?,
+    ))
 }
 
 #[utoipa::path(
@@ -485,7 +502,7 @@ pub async fn list_principal_permissions(
     security(("bearer_auth" = [])),
     params(("principal_id" = i32, Path, description = "Principal id")),
     responses(
-        (status = 200, description = "Principal settings", body = PrincipalSettings),
+        (status = 200, description = "Principal settings", body = crate::models::PrincipalSettingsResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Principal not found", body = ApiErrorResponse)
     )
@@ -498,7 +515,7 @@ pub async fn get_principal_settings(
 ) -> Result<impl Responder, ApiError> {
     let principal_id = principal_id.into_inner();
     ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
-    Ok(ApiResponse::ok(principal_id.settings(&pool).await?))
+    ApiResponse::ok_revisioned(principal_id.settings(&pool).await?)
 }
 
 #[utoipa::path(
@@ -509,7 +526,7 @@ pub async fn get_principal_settings(
     params(("principal_id" = i32, Path, description = "Principal id")),
     request_body = PrincipalSettings,
     responses(
-        (status = 200, description = "Replaced principal settings", body = PrincipalSettings),
+        (status = 200, description = "Replaced principal settings", body = crate::models::PrincipalSettingsResponse),
         (status = 400, description = "Settings root is not an object", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Principal not found", body = ApiErrorResponse)
@@ -525,11 +542,16 @@ pub async fn put_principal_settings(
 ) -> Result<impl Responder, ApiError> {
     let principal_id = principal_id.into_inner();
     ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
+    let current = principal_id.settings(&pool).await?;
+    let condition = IfMatchCondition::from_request(&req)?;
+    let precondition = condition.database_precondition(&current.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
-    let settings = principal_id
-        .replace_settings(&pool, settings.into_inner(), &event_context)
-        .await?;
-    Ok(ApiResponse::ok(settings))
+    let settings = with_revision_precondition_scope(
+        precondition,
+        principal_id.replace_settings(&pool, settings.into_inner(), &event_context),
+    )
+    .await?;
+    ApiResponse::ok_revisioned(settings)
 }
 
 #[utoipa::path(
@@ -548,10 +570,7 @@ pub async fn put_principal_settings(
         })
     ),
     responses(
-        (status = 200, description = "Merged principal settings", body = PrincipalSettings, example = json!({
-            "theme": "dark",
-            "layout": { "density": "normal", "columns": 2 }
-        })),
+        (status = 200, description = "Merged principal settings", body = crate::models::PrincipalSettingsResponse),
         (status = 400, description = "Settings root is not an object", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Principal not found", body = ApiErrorResponse)
@@ -567,11 +586,16 @@ pub async fn patch_principal_settings(
 ) -> Result<impl Responder, ApiError> {
     let principal_id = principal_id.into_inner();
     ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
+    let current = principal_id.settings(&pool).await?;
+    let condition = IfMatchCondition::from_request(&req)?;
+    let precondition = condition.database_precondition(&current.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
-    let settings = principal_id
-        .patch_settings(&pool, patch.into_inner(), &event_context)
-        .await?;
-    Ok(ApiResponse::ok(settings))
+    let settings = with_revision_precondition_scope(
+        precondition,
+        principal_id.patch_settings(&pool, patch.into_inner(), &event_context),
+    )
+    .await?;
+    ApiResponse::ok_revisioned(settings)
 }
 
 #[utoipa::path(
@@ -595,7 +619,14 @@ pub async fn delete_principal_settings(
 ) -> Result<impl Responder, ApiError> {
     let principal_id = principal_id.into_inner();
     ensure_can_manage_principal_settings(&pool, &requestor, principal_id.id()).await?;
+    let current = principal_id.settings(&pool).await?;
+    let condition = IfMatchCondition::from_request(&req)?;
+    let precondition = condition.database_precondition(&current.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
-    principal_id.reset_settings(&pool, &event_context).await?;
-    Ok(ApiResponse::no_content())
+    let reset = with_revision_precondition_scope(
+        precondition,
+        principal_id.reset_settings(&pool, &event_context),
+    )
+    .await?;
+    Ok(ApiResponse::no_content_with_etag(reset.entity_tag()?))
 }

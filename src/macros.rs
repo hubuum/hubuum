@@ -338,6 +338,91 @@ macro_rules! numeric_search {
 }
 
 #[macro_export]
+/// A positive BIGINT search used by resource and event revisions.
+macro_rules! revision_search {
+    ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{
+        use diesel::dsl::not;
+        use $crate::errors::ApiError;
+        use $crate::models::search::{DataType, Operator, ParsedQueryParamExt as _};
+
+        let (revision_operator, negated) = $operator.op_and_neg();
+        if revision_operator == Operator::IsNull {
+            $crate::is_null_search!($base_query, $parsed_query_param, $operator, $diesel_field);
+        } else {
+            if !$operator.is_applicable_to(DataType::NumericOrDate) {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator '{:?}' is not applicable to field '{}'",
+                    $operator, $parsed_query_param.field
+                )));
+            }
+            let values = $parsed_query_param.value_as_revision()?;
+            if revision_operator == Operator::Between && values.len() != 2 {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator 'between' requires 2 values (min,max) for field '{}'",
+                    $parsed_query_param.field
+                )));
+            }
+            if matches!(
+                revision_operator,
+                Operator::Equals | Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte
+            ) && values.len() != 1
+            {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator '{revision_operator}' requires exactly 1 value for field '{}'",
+                    $parsed_query_param.field
+                )));
+            }
+
+            match (revision_operator.clone(), negated) {
+                (Operator::Equals, false) | (Operator::In, false) => {
+                    $base_query = $base_query.filter($diesel_field.eq_any(values))
+                }
+                (Operator::Equals, true) | (Operator::In, true) => {
+                    $base_query = $base_query.filter(not($diesel_field.eq_any(values)))
+                }
+                (Operator::Gt, false) => {
+                    $base_query = $base_query.filter($diesel_field.gt(values[0]))
+                }
+                (Operator::Gt, true) => {
+                    $base_query = $base_query.filter($diesel_field.le(values[0]))
+                }
+                (Operator::Gte, false) => {
+                    $base_query = $base_query.filter($diesel_field.ge(values[0]))
+                }
+                (Operator::Gte, true) => {
+                    $base_query = $base_query.filter($diesel_field.lt(values[0]))
+                }
+                (Operator::Lt, false) => {
+                    $base_query = $base_query.filter($diesel_field.lt(values[0]))
+                }
+                (Operator::Lt, true) => {
+                    $base_query = $base_query.filter($diesel_field.ge(values[0]))
+                }
+                (Operator::Lte, false) => {
+                    $base_query = $base_query.filter($diesel_field.le(values[0]))
+                }
+                (Operator::Lte, true) => {
+                    $base_query = $base_query.filter($diesel_field.gt(values[0]))
+                }
+                (Operator::Between, false) => {
+                    $base_query = $base_query.filter($diesel_field.between(values[0], values[1]))
+                }
+                (Operator::Between, true) => {
+                    $base_query =
+                        $base_query.filter(not($diesel_field.between(values[0], values[1])))
+                }
+                _ => {
+                    return Err(ApiError::OperatorMismatch(format!(
+                        "Operator '{revision_operator}' is not implemented for revision field '{}'",
+                        $parsed_query_param.field
+                    )));
+                }
+            }
+        }
+    }};
+}
+
+#[macro_export]
 /// A date search macro
 macro_rules! date_search {
     ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{

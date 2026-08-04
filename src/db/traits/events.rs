@@ -31,7 +31,12 @@ pub async fn list_events_with_total_count(
 ) -> Result<(Vec<EventResponse>, i64), ApiError> {
     crate::logger::log_operation_read(filters.entity_type, filters.action, filters.entity_id);
 
-    let query = build_event_query(accessible_collection_ids, include_collection_less, filters)?;
+    let query = build_event_query(
+        accessible_collection_ids,
+        include_collection_less,
+        filters,
+        query_options,
+    )?;
     let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
         with_connection(pool, async |conn| {
             query.count().get_result::<i64>(conn).await
@@ -40,7 +45,12 @@ pub async fn list_events_with_total_count(
     })
     .await?;
 
-    let mut query = build_event_query(accessible_collection_ids, include_collection_less, filters)?;
+    let mut query = build_event_query(
+        accessible_collection_ids,
+        include_collection_less,
+        filters,
+        query_options,
+    )?;
     apply_query_options!(query, query_options, EventResponse);
     let mut rows = with_connection(pool, async |conn| query.load::<Event>(conn).await).await?;
     apply_legacy_task_provenance(pool, &mut rows).await?;
@@ -73,11 +83,12 @@ fn build_event_query<'a>(
     accessible_collection_ids: &'a [i32],
     include_collection_less: bool,
     filters: &EventListFilters,
+    query_options: &QueryOptions,
 ) -> Result<crate::schema::events::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
     use crate::schema::event_related_collections::dsl as related;
     use crate::schema::events::dsl::{
-        action, actor_kind, actor_user_id, collection_id, entity_id, entity_type, events,
-        id as event_row_id, initiator_user_id, occurred_at,
+        action, actor_kind, actor_user_id, after_revision, before_revision, collection_id,
+        entity_id, entity_type, events, id as event_row_id, initiator_user_id, occurred_at,
     };
 
     let mut query = events.into_boxed();
@@ -165,6 +176,24 @@ fn build_event_query<'a>(
     }
     if let Some(value) = filters.occurred_before {
         query = query.filter(occurred_at.le(value));
+    }
+
+    for param in &query_options.filters {
+        let operator = param.operator.clone();
+        match param.field {
+            crate::models::search::FilterField::BeforeRevision => {
+                crate::revision_search!(query, param, operator, before_revision)
+            }
+            crate::models::search::FilterField::AfterRevision => {
+                crate::revision_search!(query, param, operator, after_revision)
+            }
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' is not searchable for events",
+                    param.field
+                )));
+            }
+        }
     }
 
     Ok(query)

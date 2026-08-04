@@ -174,6 +174,7 @@ fn validation_summary(document: &BackupDocument) -> Result<RestoreValidationSumm
         }
     }
     validate_required_seed_rows(document)?;
+    validate_backup_revisions(document)?;
     validate_backup_class_schemas(document)?;
     validate_computed_field_definitions(document)?;
     let total_items = document
@@ -232,6 +233,194 @@ fn validate_backup_class_schemas(document: &BackupDocument) -> Result<(), ApiErr
                     .unwrap_or_else(|| "with unknown id".to_string())
             ))
         })?;
+    }
+    Ok(())
+}
+
+const REVISION_STATE_SECTIONS: &[&str] = &[
+    "identity_scopes",
+    "groups",
+    "principals",
+    "group_memberships",
+    "collections",
+    "collection_authorization_state",
+    "hubuumclass",
+    "computed_field_definitions",
+    "hubuumclass_relation",
+    "hubuumobject",
+    "hubuumobject_relation",
+    "export_templates",
+    "remote_targets",
+    "event_sinks",
+    "event_subscriptions",
+];
+
+const REVISION_HISTORY_SECTIONS: &[&str] = &[
+    "collections_history",
+    "hubuumclass_history",
+    "hubuumclass_relation_history",
+    "hubuumobject_history",
+    "hubuumobject_relation_history",
+    "export_templates_history",
+    "remote_targets_history",
+];
+
+fn row_revision(section: &str, row: &Value) -> Result<i64, ApiError> {
+    row.get("revision")
+        .and_then(Value::as_i64)
+        .filter(|revision| (1..i64::MAX).contains(revision))
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "Full backup section '{section}' contains an invalid resource revision"
+            ))
+        })
+}
+
+fn row_i64(section: &str, row: &Value, field: &str) -> Result<i64, ApiError> {
+    row.get(field).and_then(Value::as_i64).ok_or_else(|| {
+        ApiError::BadRequest(format!(
+            "Full backup section '{section}' contains an invalid {field}"
+        ))
+    })
+}
+
+fn validate_backup_revisions(document: &BackupDocument) -> Result<(), ApiError> {
+    for section in REVISION_STATE_SECTIONS {
+        for row in required_state_section(document, section)? {
+            row_revision(section, row)?;
+        }
+    }
+
+    validate_authorization_state_revisions(document)?;
+
+    let Some(history) = &document.history else {
+        return validate_event_revisions(document);
+    };
+    for section in REVISION_HISTORY_SECTIONS {
+        let rows = history.sections.get(*section).ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "Full backup history is missing required section '{section}'"
+            ))
+        })?;
+        for row in rows {
+            row_revision(section, row)?;
+        }
+        validate_live_history_revisions(document, section, rows)?;
+    }
+    validate_event_revisions(document)
+}
+
+fn validate_authorization_state_revisions(document: &BackupDocument) -> Result<(), ApiError> {
+    let collection_ids = required_state_section(document, "collections")?
+        .iter()
+        .map(|row| row_i64("collections", row, "id"))
+        .collect::<Result<HashSet<_>, _>>()?;
+    let authorization_ids = required_state_section(document, "collection_authorization_state")?
+        .iter()
+        .map(|row| row_i64("collection_authorization_state", row, "collection_id"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let unique_authorization_ids = authorization_ids.iter().copied().collect::<HashSet<_>>();
+    if authorization_ids.len() != unique_authorization_ids.len()
+        || unique_authorization_ids != collection_ids
+    {
+        return Err(ApiError::BadRequest(
+            "Full backup collection authorization revisions do not match collections".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_live_history_revisions(
+    document: &BackupDocument,
+    history_section: &str,
+    history_rows: &[Value],
+) -> Result<(), ApiError> {
+    let state_section = history_section.trim_end_matches("_history");
+    let live = required_state_section(document, state_section)?
+        .iter()
+        .map(|row| {
+            Ok((
+                row_i64(state_section, row, "id")?,
+                row_revision(state_section, row)?,
+            ))
+        })
+        .collect::<Result<HashMap<_, _>, ApiError>>()?;
+    let mut open = HashMap::new();
+    for row in history_rows
+        .iter()
+        .filter(|row| row.get("valid_to").is_some_and(Value::is_null))
+    {
+        let id = row_i64(history_section, row, "id")?;
+        let revision = row_revision(history_section, row)?;
+        if row.get("op").and_then(Value::as_str) == Some("D") || open.insert(id, revision).is_some()
+        {
+            return Err(ApiError::BadRequest(format!(
+                "Full backup history section '{history_section}' has an invalid open snapshot"
+            )));
+        }
+    }
+    if open != live {
+        return Err(ApiError::BadRequest(format!(
+            "Full backup live revisions disagree with '{history_section}'"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_event_revisions(document: &BackupDocument) -> Result<(), ApiError> {
+    let Some(events) = document
+        .history
+        .as_ref()
+        .and_then(|history| history.sections.get("events"))
+    else {
+        return Ok(());
+    };
+    for event in events {
+        for (column, snapshot) in [("before_revision", "before"), ("after_revision", "after")] {
+            let stored = match event.get(column) {
+                None | Some(Value::Null) => None,
+                Some(value) => Some(
+                    value
+                        .as_i64()
+                        .filter(|revision| (1..i64::MAX).contains(revision))
+                        .ok_or_else(|| {
+                            ApiError::BadRequest(format!(
+                                "Full backup event contains an invalid {column}"
+                            ))
+                        })?,
+                ),
+            };
+            let snapshot_revision = event
+                .get(snapshot)
+                .filter(|value| !value.is_null())
+                .and_then(|value| value.get("revision"))
+                .and_then(Value::as_i64);
+            if stored.is_some() && stored != snapshot_revision {
+                return Err(ApiError::BadRequest(format!(
+                    "Full backup event {column} disagrees with its {snapshot} snapshot"
+                )));
+            }
+        }
+        if event.get("schema_version").and_then(Value::as_i64) == Some(2) {
+            let before = event
+                .get("before_revision")
+                .is_some_and(|value| !value.is_null());
+            let after = event
+                .get("after_revision")
+                .is_some_and(|value| !value.is_null());
+            let action = event.get("action").and_then(Value::as_str);
+            let valid_shape = match action {
+                Some("created" | "queued" | "added") => !before && after,
+                Some("deleted" | "removed") => before && !after,
+                _ => before && after,
+            };
+            if !valid_shape {
+                return Err(ApiError::BadRequest(
+                    "Full backup revision-aware event has inconsistent before/after revisions"
+                        .to_string(),
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -309,7 +498,7 @@ fn validate_computed_field_definitions(document: &BackupDocument) -> Result<(), 
         object
             .get("revision")
             .and_then(Value::as_i64)
-            .filter(|value| *value > 0)
+            .filter(|value| (1..i64::MAX).contains(value))
             .ok_or_else(|| {
                 ApiError::BadRequest(
                     "Full backup computed-field definition has an invalid revision".to_string(),

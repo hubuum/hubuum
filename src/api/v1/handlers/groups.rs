@@ -1,12 +1,15 @@
+use crate::api::etag::{IfMatchCondition, RevisionedResource};
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::DbPool;
+use crate::db::{DbPool, with_revision_precondition_scope};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
 use crate::models::search::parse_query_parameter;
-use crate::models::{Group, GroupResponse, Principal, PrincipalID, PrincipalMemberResponse};
+use crate::models::{
+    Group, GroupPointResponse, GroupResponse, Principal, PrincipalID, PrincipalMemberResponse,
+};
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde::{Deserialize, Serialize};
@@ -71,7 +74,7 @@ pub async fn get_groups(
     security(("bearer_auth" = [])),
     request_body = NewGroup,
     responses(
-        (status = 201, description = "Group created", body = GroupResponse),
+        (status = 201, description = "Group created", body = GroupPointResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse)
@@ -96,10 +99,7 @@ pub async fn create_group(
     let group = new_group.save(&pool, Some(&event_context)).await?;
 
     let location = api_locations::group(group.id)?;
-    Ok(ApiResponse::created(
-        group.to_response(&pool).await?,
-        location,
-    ))
+    ApiResponse::created_revisioned(group.to_point_response(&pool).await?, location)
 }
 
 #[utoipa::path(
@@ -111,7 +111,7 @@ pub async fn create_group(
         ("group_id" = i32, Path, description = "Group ID")
     ),
     responses(
-        (status = 200, description = "Group", body = GroupResponse),
+        (status = 200, description = "Group", body = GroupPointResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "Group not found", body = ApiErrorResponse)
     )
@@ -130,10 +130,7 @@ pub async fn get_group(
         requestor = requestor.user.id
     );
 
-    Ok(ApiResponse::new(
-        group.to_response(&pool).await?,
-        StatusCode::OK,
-    ))
+    ApiResponse::ok_revisioned(group.to_point_response(&pool).await?)
 }
 
 #[utoipa::path(
@@ -146,7 +143,7 @@ pub async fn get_group(
     ),
     request_body = UpdateGroup,
     responses(
-        (status = 200, description = "Updated group", body = GroupResponse),
+        (status = 200, description = "Updated group", body = GroupPointResponse),
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Directory-managed group is read-only", body = ApiErrorResponse),
@@ -170,15 +167,18 @@ pub async fn update_group(
         requestor = requestor.user.id
     );
 
+    let current = group_id.group(&pool).await?;
+    let precondition =
+        IfMatchCondition::from_request(&req)?.database_precondition(&current.entity_tag()?)?;
     let event_context = requestor.event_context(&req);
-    let updated = updated_group
-        .into_inner()
-        .save(group_id, &pool, Some(&event_context))
-        .await?;
-    Ok(ApiResponse::new(
-        updated.to_response(&pool).await?,
-        StatusCode::OK,
-    ))
+    let updated = with_revision_precondition_scope(
+        precondition,
+        updated_group
+            .into_inner()
+            .save(group_id, &pool, Some(&event_context)),
+    )
+    .await?;
+    ApiResponse::ok_revisioned(updated.to_point_response(&pool).await?)
 }
 
 #[utoipa::path(
@@ -210,9 +210,13 @@ pub async fn delete_group(
         requestor = requestor.user.id
     );
 
+    let group = group_id.group(&pool).await?;
+    let etag = group.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(&req);
-    group_id.delete(&pool, Some(&event_context)).await?;
-    Ok(ApiResponse::no_content())
+    with_revision_precondition_scope(precondition, group_id.delete(&pool, Some(&event_context)))
+        .await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 #[utoipa::path(
@@ -255,8 +259,46 @@ pub async fn get_group_members(
     let search_params = prepare_db_pagination::<Principal>(&params)?;
     let members = group.members_paginated(&pool, &search_params).await?;
 
-    let response = PrincipalMemberResponse::from_principals(&pool, members).await?;
+    let response = PrincipalMemberResponse::from_memberships(&pool, members).await?;
     ApiResponse::paginated(response, total_count, &params)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/iam/groups/{group_id}/members/{principal_id}",
+    tag = "groups",
+    security(("bearer_auth" = [])),
+    params(
+        ("group_id" = i32, Path, description = "Group ID"),
+        ("principal_id" = i32, Path, description = "Principal ID")
+    ),
+    responses(
+        (status = 200, description = "Membership", body = PrincipalMemberResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 404, description = "Membership not found", body = ApiErrorResponse)
+    )
+)]
+#[get("/{group_id}/members/{principal_id}")]
+pub async fn get_group_member(
+    pool: web::Data<DbPool>,
+    user_group_ids: web::Path<GroupMember>,
+    requestor: UserAccess,
+) -> Result<impl Responder, ApiError> {
+    let group = user_group_ids.group_id.group(&pool).await?;
+    let principal = user_group_ids.principal_id.principal(&pool).await?;
+    let membership =
+        crate::db::traits::group::principal_group_by_ids(&pool, principal.id, group.id).await?;
+
+    debug!(
+        message = "Group membership requested",
+        principal = principal.id,
+        group = group.id,
+        requestor = requestor.user.id
+    );
+
+    let response =
+        PrincipalMemberResponse::from_membership(&pool, membership, Some(principal)).await?;
+    ApiResponse::ok_revisioned(response)
 }
 
 #[utoipa::path(
@@ -269,7 +311,7 @@ pub async fn get_group_members(
         ("principal_id" = i32, Path, description = "Principal ID")
     ),
     responses(
-        (status = 204, description = "User added to group"),
+        (status = 201, description = "Membership created", body = PrincipalMemberResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 404, description = "User or group not found", body = ApiErrorResponse)
     )
@@ -282,6 +324,7 @@ pub async fn add_group_member(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let group = user_group_ids.group_id.group(&pool).await?;
+    group.ensure_local_writes_allowed()?;
     let principal = user_group_ids.principal_id.principal(&pool).await?;
 
     debug!(
@@ -291,12 +334,30 @@ pub async fn add_group_member(
         requestor = requestor.user.id
     );
 
-    let event_context = requestor.event_context(&req);
-    group
-        .add_member(&pool, &principal, Some(&event_context))
-        .await?;
+    let condition = IfMatchCondition::from_request(&req)?;
+    let current =
+        crate::db::traits::group::principal_group_by_ids(&pool, principal.id, group.id).await;
+    let precondition = match current {
+        Ok(current) => condition.database_precondition(&current.entity_tag()?)?,
+        Err(ApiError::NotFound(_)) if matches!(condition, IfMatchCondition::Missing) => None,
+        Err(ApiError::NotFound(_)) => {
+            return Err(ApiError::PreconditionFailed(
+                "The membership does not exist; refetch it before retrying".to_string(),
+                None,
+            ));
+        }
+        Err(error) => return Err(error),
+    };
 
-    Ok(ApiResponse::no_content())
+    let event_context = requestor.event_context(&req);
+    let membership = with_revision_precondition_scope(
+        precondition,
+        group.add_member(&pool, &principal, Some(&event_context)),
+    )
+    .await?;
+    let response =
+        PrincipalMemberResponse::from_membership(&pool, membership, Some(principal)).await?;
+    ApiResponse::revisioned(response, StatusCode::CREATED)
 }
 
 #[utoipa::path(
@@ -322,6 +383,7 @@ pub async fn delete_group_member(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let group = user_group_ids.group_id.group(&pool).await?;
+    group.ensure_local_writes_allowed()?;
     let principal = user_group_ids.principal_id.principal(&pool).await?;
 
     debug!(
@@ -331,9 +393,15 @@ pub async fn delete_group_member(
         requestor = requestor.user.id
     );
 
+    let membership =
+        crate::db::traits::group::principal_group_by_ids(&pool, principal.id, group.id).await?;
+    let etag = membership.entity_tag()?;
+    let precondition = IfMatchCondition::from_request(&req)?.database_precondition(&etag)?;
     let event_context = requestor.event_context(&req);
-    group
-        .remove_member(&principal, &pool, Some(&event_context))
-        .await?;
-    Ok(ApiResponse::no_content())
+    with_revision_precondition_scope(
+        precondition,
+        group.remove_member(&principal, &pool, Some(&event_context)),
+    )
+    .await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }

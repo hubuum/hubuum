@@ -10,9 +10,9 @@ mod tests {
         UpdateResolvedObject,
     };
     use crate::models::{
-        ClassSelector, HubuumClassExpanded, HubuumClassID, HubuumObject, HubuumObjectID,
-        NewHubuumClass, NewHubuumObject, ObjectSelector, RelatedClassGraph, RelatedObjectGraph,
-        UpdateHubuumClass, UpdateHubuumObject,
+        ClassSelector, HubuumClass, HubuumClassExpanded, HubuumClassID, HubuumObject,
+        HubuumObjectID, NewHubuumClass, NewHubuumObject, ObjectSelector, RelatedClassGraph,
+        RelatedObjectGraph, UpdateHubuumClass, UpdateHubuumObject,
     };
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;
@@ -145,7 +145,7 @@ mod tests {
         let response =
             get_request(&test_context.pool, &test_context.admin_token, &class_path).await;
         let response = assert_response_status(response, StatusCode::OK).await;
-        let class: HubuumClassExpanded = test::read_body_json(response).await;
+        let class: HubuumClass = test::read_body_json(response).await;
         assert_eq!(class.id, named_class.id);
         assert_ne!(class.id, decoy_class.id);
 
@@ -302,6 +302,12 @@ mod tests {
         )
         .await;
         let response = assert_response_status(response, StatusCode::OK).await;
+        assert!(
+            !response
+                .headers()
+                .contains_key(actix_web::http::header::ETAG),
+            "expanded class aliases must remain untagged"
+        );
         let class: HubuumClassExpanded = test::read_body_json(response).await;
         assert_eq!(class.description, "updated by name");
 

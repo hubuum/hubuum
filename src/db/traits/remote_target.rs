@@ -9,7 +9,7 @@ use crate::models::remote_target::{
     RemoteTargetRow, UpdateRemoteTargetRow,
 };
 use crate::models::search::{FilterField, QueryOptions};
-use crate::{date_search, numeric_search, string_search};
+use crate::{date_search, numeric_search, revision_search, string_search};
 
 fn remote_target_event(
     row: &RemoteTargetRow,
@@ -170,6 +170,12 @@ impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
                 .for_update()
                 .first::<RemoteTargetRow>(conn)
                 .await?;
+            crate::db::assert_locked_revision_precondition(
+                conn,
+                &format!("remote_targets:{}", before.id),
+                before.revision,
+            )
+            .await?;
             if !self.has_changes(&before) {
                 return Ok(before);
             }
@@ -316,7 +322,7 @@ fn build_list_query<'a>(
 ) -> Result<crate::schema::remote_targets::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
     use crate::schema::remote_targets::dsl::{
         class_id, collection_id, created_at, description, id, method, name, remote_targets,
-        updated_at,
+        revision, updated_at,
     };
 
     let mut query = remote_targets
@@ -336,6 +342,7 @@ fn build_list_query<'a>(
             FilterField::Kind => string_search!(query, param, operator, method),
             FilterField::CreatedAt => date_search!(query, param, operator, created_at),
             FilterField::UpdatedAt => date_search!(query, param, operator, updated_at),
+            FilterField::Revision => revision_search!(query, param, operator, revision),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't searchable for remote targets",

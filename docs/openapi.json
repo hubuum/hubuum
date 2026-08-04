@@ -1242,11 +1242,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Class",
+            "description": "Class (expanded with include=collection)",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubuumClassExpanded"
+                  "$ref": "#/components/schemas/HubuumClass"
                 }
               }
             }
@@ -3013,11 +3013,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Class",
+            "description": "Class (expanded with include=collection)",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HubuumClassExpanded"
+                  "$ref": "#/components/schemas/HubuumClass"
                 }
               }
             }
@@ -3649,6 +3649,73 @@
       }
     },
     "/api/v1/classes/{class_id}/computed-fields/{field_id}": {
+      "get": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Computed Fields By Field Id",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/computed-fields/{field_id}.",
+        "operationId": "getApiV1ClassesByClassIdComputedFieldsByFieldId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "field_id",
+            "in": "path",
+            "description": "Computed-field definition ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Shared computed-field definition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldDefinition"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Computed field or class not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "delete": {
         "tags": [
           "computed fields"
@@ -3675,15 +3742,6 @@
             "schema": {
               "type": "integer",
               "format": "int32"
-            }
-          },
-          {
-            "name": "expected_revision",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
             }
           }
         ],
@@ -5225,6 +5283,73 @@
       }
     },
     "/api/v1/classes/{class_id}/relations/{relation_id}": {
+      "get": {
+        "tags": [
+          "classes"
+        ],
+        "summary": "Get Api V1 Classes By Class Id Relations By Relation Id",
+        "description": "Auto-generated documentation for GET /api/v1/classes/{class_id}/relations/{relation_id}.",
+        "operationId": "getApiV1ClassesByClassIdRelationsByRelationId",
+        "parameters": [
+          {
+            "name": "class_id",
+            "in": "path",
+            "description": "Class ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "relation_id",
+            "in": "path",
+            "description": "Class relation ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Class relation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubuumClassRelation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Class or relation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "delete": {
         "tags": [
           "classes"
@@ -8049,7 +8174,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Group permissions on collection The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
+            "description": "Revisioned permission set The response body contains the current page items as a JSON array. Use the `X-Total-Count` header for the exact number of matching results. Use the `X-Next-Cursor` header, when present, to request the next page.",
             "headers": {
               "X-Next-Cursor": {
                 "schema": {
@@ -8073,10 +8198,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/GroupPermission"
-                  }
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
                 }
               }
             }
@@ -8285,11 +8407,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Permission record",
+            "description": "Revisioned permission set",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Permission"
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
                 }
               }
             }
@@ -8365,7 +8487,14 @@
         },
         "responses": {
           "200": {
-            "description": "Permissions replaced"
+            "description": "Permissions replaced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
+                }
+              }
+            }
           },
           "400": {
             "description": "Bad request",
@@ -8448,7 +8577,14 @@
         },
         "responses": {
           "201": {
-            "description": "Permissions set"
+            "description": "Permissions set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
+                }
+              }
+            }
           },
           "400": {
             "description": "Bad request",
@@ -8517,8 +8653,15 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "Permissions revoked"
+          "200": {
+            "description": "Permissions revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -8648,7 +8791,14 @@
         ],
         "responses": {
           "201": {
-            "description": "Permission granted"
+            "description": "Permission granted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -8716,8 +8866,15 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "Permission revoked"
+          "200": {
+            "description": "Permission revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPermissionSet"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -11203,7 +11360,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupResponse"
+                  "$ref": "#/components/schemas/GroupPointResponse"
                 }
               }
             }
@@ -11272,7 +11429,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupResponse"
+                  "$ref": "#/components/schemas/GroupPointResponse"
                 }
               }
             }
@@ -11409,7 +11566,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupResponse"
+                  "$ref": "#/components/schemas/GroupPointResponse"
                 }
               }
             }
@@ -11771,6 +11928,73 @@
       }
     },
     "/api/v1/iam/groups/{group_id}/members/{principal_id}": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Get Api V1 Iam Groups By Group Id Members By Principal Id",
+        "description": "Auto-generated documentation for GET /api/v1/iam/groups/{group_id}/members/{principal_id}.",
+        "operationId": "getApiV1IamGroupsByGroupIdMembersByPrincipalId",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "principal_id",
+            "in": "path",
+            "description": "Principal ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Membership",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalMemberResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Membership not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "post": {
         "tags": [
           "groups"
@@ -11801,8 +12025,15 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "User added to group"
+          "201": {
+            "description": "Membership created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalMemberResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -12133,6 +12364,73 @@
       }
     },
     "/api/v1/iam/me/computed-fields/{field_id}": {
+      "get": {
+        "tags": [
+          "computed fields"
+        ],
+        "summary": "Get Api V1 Iam Me Computed Fields By Field Id",
+        "description": "Auto-generated documentation for GET /api/v1/iam/me/computed-fields/{field_id}.",
+        "operationId": "getApiV1IamMeComputedFieldsByFieldId",
+        "parameters": [
+          {
+            "name": "field_id",
+            "in": "path",
+            "description": "Computed-field definition ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Personal computed-field definition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputedFieldDefinition"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Service accounts are not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Computed field not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "delete": {
         "tags": [
           "computed fields"
@@ -12149,15 +12447,6 @@
             "schema": {
               "type": "integer",
               "format": "int32"
-            }
-          },
-          {
-            "name": "expected_revision",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
             }
           }
         ],
@@ -12395,7 +12684,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -12440,7 +12729,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -12531,14 +12820,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
-                },
-                "example": {
-                  "layout": {
-                    "columns": 2,
-                    "density": "normal"
-                  },
-                  "theme": "dark"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -12900,7 +13182,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -12967,7 +13249,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -13102,14 +13384,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalSettings"
-                },
-                "example": {
-                  "layout": {
-                    "columns": 2,
-                    "density": "normal"
-                  },
-                  "theme": "dark"
+                  "$ref": "#/components/schemas/PrincipalSettingsResponse"
                 }
               }
             }
@@ -13405,7 +13680,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrincipalTokenMetadata"
+                  "$ref": "#/components/schemas/PrincipalTokenPointResponse"
                 }
               }
             }
@@ -17593,7 +17868,7 @@
       },
       "BackupHistory": {
         "type": "object",
-        "description": "Privileged, restore-only table snapshots. In backup version 3, each section\nname and row shape corresponds to the PostgreSQL table restored from it.\nThese are versioned disaster-recovery internals, not portable import data.",
+        "description": "Privileged, restore-only table snapshots. In backup version 4, each section\nname and row shape corresponds to the PostgreSQL table restored from it.\nThese are versioned disaster-recovery internals, not portable import data.",
         "required": [
           "sections"
         ],
@@ -17844,7 +18119,8 @@
           "name",
           "description",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -17868,6 +18144,9 @@
             ],
             "format": "int32"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -17884,7 +18163,8 @@
           "updated_at",
           "op",
           "valid_from",
-          "history_id"
+          "history_id",
+          "revision"
         ],
         "properties": {
           "actor_id": {
@@ -17935,6 +18215,9 @@
             ],
             "format": "int32"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "task_id": {
             "type": [
               "integer",
@@ -17981,6 +18264,30 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "CollectionPermissionSet": {
+        "type": "object",
+        "description": "The revisioned, SQL-owned authorization state for a collection.\n\nIndividual permission rows are implementation details of this aggregate;\ncallers condition mutations on the revision of the complete set.",
+        "required": [
+          "collection_id",
+          "revision",
+          "permissions"
+        ],
+        "properties": {
+          "collection_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupPermission"
+            }
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           }
         }
       },
@@ -18047,8 +18354,7 @@
             "type": "string"
           },
           "revision": {
-            "type": "integer",
-            "format": "int64"
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "semantics_version": {
             "type": "integer",
@@ -18072,9 +18378,6 @@
       },
       "ComputedFieldDefinitionPatch": {
         "type": "object",
-        "required": [
-          "expected_revision"
-        ],
         "properties": {
           "description": {
             "type": [
@@ -18087,10 +18390,6 @@
               "boolean",
               "null"
             ]
-          },
-          "expected_revision": {
-            "type": "integer",
-            "format": "int64"
           },
           "key": {
             "type": [
@@ -18395,7 +18694,8 @@
         "description": "Public metadata for the token authenticating the current request.",
         "required": [
           "id",
-          "issued"
+          "issued",
+          "revision"
         ],
         "properties": {
           "description": {
@@ -18430,6 +18730,9 @@
               "string",
               "null"
             ]
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "scope": {
             "oneOf": [
@@ -18990,7 +19293,27 @@
             "format": "int32"
           },
           "after": {},
+          "after_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourceRevision"
+              }
+            ]
+          },
           "before": {},
+          "before_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourceRevision"
+              }
+            ]
+          },
           "collection_id": {
             "type": [
               "integer",
@@ -19061,7 +19384,8 @@
           "config",
           "enabled",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "config": {},
@@ -19081,6 +19405,9 @@
           },
           "name": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "secret_ref": {
             "type": [
@@ -19177,7 +19504,8 @@
           "routing",
           "enabled",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "actions": {
@@ -19215,6 +19543,9 @@
           },
           "name": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "routing": {},
           "sink_id": {
@@ -19888,7 +20219,8 @@
           "template",
           "kind",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "class_id": {
@@ -19968,6 +20300,9 @@
               }
             ]
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "scope_kind": {
             "oneOf": [
               {
@@ -20003,6 +20338,7 @@
           "kind": "export",
           "name": "owner-export",
           "relation_context": null,
+          "revision": 1,
           "scope_kind": "objects_in_class",
           "template": "{% for item in items %}{{ item.name }}={{ item.data.owner }}\n{% endfor %}",
           "updated_at": "2026-03-06T12:00:00"
@@ -20022,7 +20358,8 @@
           "updated_at",
           "op",
           "valid_from",
-          "history_id"
+          "history_id",
+          "revision"
         ],
         "properties": {
           "actor_id": {
@@ -20098,6 +20435,9 @@
             "type": "string"
           },
           "relation_context": {},
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "scope_kind": {
             "type": [
               "string",
@@ -20226,7 +20566,8 @@
           "created_at",
           "updated_at",
           "identity_scope_id",
-          "managed_by"
+          "managed_by",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -20269,6 +20610,9 @@
           },
           "managed_by": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -20332,6 +20676,55 @@
           }
         }
       },
+      "GroupPointResponse": {
+        "type": "object",
+        "description": "Canonical group representation covered completely by the group revision.\nDirectory synchronization timestamps remain available in list responses,\nbut are intentionally excluded here because they are operational state and\ndo not advance the authoritative revision.",
+        "required": [
+          "id",
+          "identity_scope",
+          "groupname",
+          "description",
+          "managed_by",
+          "created_at",
+          "updated_at",
+          "revision"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "external_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "groupname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "identity_scope": {
+            "type": "string"
+          },
+          "managed_by": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "GroupResponse": {
         "type": "object",
         "required": [
@@ -20341,7 +20734,8 @@
           "description",
           "managed_by",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -20384,6 +20778,9 @@
           "managed_by": {
             "type": "string"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -20402,7 +20799,8 @@
               "updated_at",
               "op",
               "valid_from",
-              "history_id"
+              "history_id",
+              "revision"
             ],
             "properties": {
               "actor_id": {
@@ -20452,6 +20850,9 @@
                   "null"
                 ],
                 "format": "int32"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
               },
               "task_id": {
                 "type": [
@@ -20513,7 +20914,8 @@
               "updated_at",
               "op",
               "valid_from",
-              "history_id"
+              "history_id",
+              "revision"
             ],
             "properties": {
               "actor_id": {
@@ -20589,6 +20991,9 @@
                 "type": "string"
               },
               "relation_context": {},
+              "revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
+              },
               "scope_kind": {
                 "type": [
                   "string",
@@ -20656,7 +21061,8 @@
               "updated_at",
               "op",
               "valid_from",
-              "history_id"
+              "history_id",
+              "revision"
             ],
             "properties": {
               "actor_id": {
@@ -20704,6 +21110,9 @@
               },
               "op": {
                 "type": "string"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
               },
               "task_id": {
                 "type": [
@@ -20767,7 +21176,8 @@
               "updated_at",
               "op",
               "valid_from",
-              "history_id"
+              "history_id",
+              "revision"
             ],
             "properties": {
               "actor_id": {
@@ -20819,6 +21229,9 @@
               },
               "op": {
                 "type": "string"
+              },
+              "revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
               },
               "task_id": {
                 "type": [
@@ -20884,7 +21297,8 @@
               "updated_at",
               "op",
               "valid_from",
-              "history_id"
+              "history_id",
+              "revision"
             ],
             "properties": {
               "actor_id": {
@@ -20954,6 +21368,9 @@
               "op": {
                 "type": "string"
               },
+              "revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
+              },
               "task_id": {
                 "type": [
                   "integer",
@@ -21014,7 +21431,8 @@
           "validate_schema",
           "description",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "collection_id": {
@@ -21036,6 +21454,9 @@
           "name": {
             "type": "string"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -21054,7 +21475,8 @@
           "validate_schema",
           "description",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "collection": {
@@ -21074,6 +21496,9 @@
           "json_schema": {},
           "name": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -21096,7 +21521,8 @@
           "updated_at",
           "op",
           "valid_from",
-          "history_id"
+          "history_id",
+          "revision"
         ],
         "properties": {
           "actor_id": {
@@ -21144,6 +21570,9 @@
           },
           "op": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "task_id": {
             "type": [
@@ -21184,7 +21613,8 @@
           "from_hubuum_class_id",
           "to_hubuum_class_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -21222,6 +21652,9 @@
               "null"
             ]
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "to_hubuum_class_id": {
             "type": "integer",
             "format": "int32"
@@ -21258,6 +21691,7 @@
           "description",
           "created_at",
           "updated_at",
+          "revision",
           "path"
         ],
         "properties": {
@@ -21287,6 +21721,9 @@
               "format": "int32"
             }
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -21306,7 +21743,8 @@
           "data",
           "description",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "collection_id": {
@@ -21331,6 +21769,9 @@
           },
           "name": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -21369,7 +21810,8 @@
           "updated_at",
           "op",
           "valid_from",
-          "history_id"
+          "history_id",
+          "revision"
         ],
         "properties": {
           "actor_id": {
@@ -21421,6 +21863,9 @@
           },
           "op": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "task_id": {
             "type": [
@@ -21470,7 +21915,8 @@
           "to_hubuum_object_id",
           "class_relation_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "class_relation_id": {
@@ -21488,6 +21934,9 @@
           "id": {
             "type": "integer",
             "format": "int32"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "to_hubuum_object_id": {
             "type": "integer",
@@ -21515,6 +21964,7 @@
           "description",
           "created_at",
           "updated_at",
+          "revision",
           "path"
         ],
         "properties": {
@@ -21547,6 +21997,9 @@
               "type": "integer",
               "format": "int32"
             }
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -21595,6 +22048,16 @@
               "null"
             ]
           },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "description": {
             "type": "string"
           },
@@ -21629,6 +22092,16 @@
       "ImportClassRelationInput": {
         "type": "object",
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "forward_template_alias": {
             "type": [
               "string",
@@ -21718,6 +22191,16 @@
           "description"
         ],
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "description": {
             "type": "string"
           },
@@ -21781,6 +22264,16 @@
               "null"
             ]
           },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "group_key": {
             "$ref": "#/components/schemas/GroupKey"
           },
@@ -21811,6 +22304,105 @@
           "overwrite"
         ]
       },
+      "ImportComputedFieldInput": {
+        "type": "object",
+        "required": [
+          "visibility",
+          "key",
+          "label",
+          "operation",
+          "result_type",
+          "enabled"
+        ],
+        "properties": {
+          "class_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ClassKey"
+              }
+            ]
+          },
+          "class_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "object"
+          },
+          "owner_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PrincipalKey"
+              }
+            ]
+          },
+          "owner_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "result_type": {
+            "$ref": "#/components/schemas/ComputedResultType"
+          },
+          "timestamps": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RestoreTimestamps"
+              }
+            ]
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ImportComputedFieldVisibility"
+          }
+        }
+      },
+      "ImportComputedFieldVisibility": {
+        "type": "string",
+        "enum": [
+          "shared",
+          "personal"
+        ]
+      },
       "ImportEventSinkInput": {
         "type": "object",
         "required": [
@@ -21819,6 +22411,16 @@
           "enabled"
         ],
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "config": {},
           "enabled": {
             "type": "boolean"
@@ -21883,6 +22485,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
             ]
           },
           "description": {
@@ -21976,6 +22588,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
             ]
           },
           "content_type": {
@@ -22094,6 +22716,12 @@
               "$ref": "#/components/schemas/ImportCollectionInput"
             }
           },
+          "computed_fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportComputedFieldInput"
+            }
+          },
           "event_sinks": {
             "type": "array",
             "items": {
@@ -22164,6 +22792,16 @@
           "managed_by"
         ],
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "description": {
             "type": "string"
           },
@@ -22230,6 +22868,16 @@
       "ImportGroupMembershipInput": {
         "type": "object",
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "group_key": {
             "oneOf": [
               {
@@ -22293,6 +22941,16 @@
           "provider_kind"
         ],
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -22417,6 +23075,16 @@
               "null"
             ]
           },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "data": {},
           "description": {
             "type": "string"
@@ -22445,6 +23113,16 @@
       "ImportObjectRelationInput": {
         "type": "object",
         "properties": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "from_object_key": {
             "oneOf": [
               {
@@ -22514,6 +23192,16 @@
               "provider_managed"
             ],
             "properties": {
+              "condition": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ImportWriteCondition"
+                  }
+                ]
+              },
               "external_subject": {
                 "type": [
                   "string",
@@ -22742,6 +23430,16 @@
               "null"
             ]
           },
+          "condition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportWriteCondition"
+              }
+            ]
+          },
           "description": {
             "type": "string"
           },
@@ -22867,6 +23565,16 @@
               "null"
             ]
           },
+          "observed_revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourceRevision"
+              }
+            ]
+          },
           "outcome": {
             "type": "string"
           },
@@ -22875,6 +23583,57 @@
             "format": "int32"
           }
         }
+      },
+      "ImportWriteCondition": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "create_only"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "overwrite"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "expected_revision",
+              "mode"
+            ],
+            "properties": {
+              "expected_revision": {
+                "$ref": "#/components/schemas/ResourceRevision"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "if_revision"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Per-item collision and optimistic-concurrency behavior for import v2."
       },
       "LoginRateLimitConfig": {
         "type": "object",
@@ -23169,10 +23928,49 @@
         ],
         "properties": {
           "principal": {
-            "$ref": "#/components/schemas/PrincipalMemberResponse"
+            "$ref": "#/components/schemas/MembershipPrincipalResponse"
           },
           "token": {
             "$ref": "#/components/schemas/CurrentTokenMetadata"
+          }
+        }
+      },
+      "MembershipPrincipalResponse": {
+        "type": "object",
+        "description": "Public principal details nested in a membership entity. Its revision is the\nprincipal revision, independent of the enclosing membership revision.",
+        "required": [
+          "principal_id",
+          "identity_scope",
+          "kind",
+          "name",
+          "created_at",
+          "updated_at",
+          "revision"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "identity_scope": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "principal_id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -24657,32 +25455,39 @@
       },
       "PrincipalMemberResponse": {
         "type": "object",
-        "description": "Public representation of a group member (a principal of either kind).",
+        "description": "Public representation of the revision-owned membership between a principal\nand a group.",
         "required": [
           "principal_id",
-          "identity_scope",
-          "kind",
-          "name",
+          "group_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
             "type": "string",
             "format": "date-time"
           },
-          "identity_scope": {
-            "type": "string"
+          "group_id": {
+            "type": "integer",
+            "format": "int32"
           },
-          "kind": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
+          "principal": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MembershipPrincipalResponse"
+              }
+            ]
           },
           "principal_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -24694,6 +25499,21 @@
         "type": "object",
         "description": "An object-only JSON document containing a principal's local preferences.\n\nValues below the document root may be any JSON type. The private\nrepresentation keeps callers from constructing an invalid non-object root."
       },
+      "PrincipalSettingsResponse": {
+        "type": "object",
+        "required": [
+          "revision",
+          "settings"
+        ],
+        "properties": {
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/PrincipalSettings"
+          }
+        }
+      },
       "PrincipalTokenMetadata": {
         "type": "object",
         "description": "Public, hash-free projection of a token for listing, including its exact\npermission and resource scope dimensions.",
@@ -24702,7 +25522,8 @@
           "principal_id",
           "issued",
           "active",
-          "expired"
+          "expired",
+          "revision"
         ],
         "properties": {
           "active": {
@@ -24749,6 +25570,9 @@
           "principal_id": {
             "$ref": "#/components/schemas/PrincipalID"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "revoked_at": {
             "type": [
               "string",
@@ -24764,6 +25588,67 @@
               {
                 "$ref": "#/components/schemas/TokenScopeDetails",
                 "description": "Exact permission and resource boundaries. `None` means that this token\nis unscoped."
+              }
+            ]
+          }
+        }
+      },
+      "PrincipalTokenPointResponse": {
+        "type": "object",
+        "description": "Canonical token representation covered completely by the token revision.\n`last_used_at` remains available in token lists, but is excluded from this\npoint representation because routine activity does not advance revision.",
+        "required": [
+          "id",
+          "principal_id",
+          "issued",
+          "revision"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "$ref": "#/components/schemas/TokenID"
+          },
+          "issued": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "principal_id": {
+            "$ref": "#/components/schemas/PrincipalID"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "scope": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TokenScopeDetails"
               }
             ]
           }
@@ -25204,7 +26089,8 @@
           "timeout_ms",
           "enabled",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "allowed_subject_types": {
@@ -25254,6 +26140,9 @@
           "name": {
             "type": "string"
           },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
+          },
           "timeout_ms": {
             "type": "integer",
             "format": "int32"
@@ -25285,7 +26174,8 @@
           "updated_at",
           "op",
           "valid_from",
-          "history_id"
+          "history_id",
+          "revision"
         ],
         "properties": {
           "actor_id": {
@@ -25354,6 +26244,9 @@
           },
           "op": {
             "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "task_id": {
             "type": [
@@ -25461,6 +26354,12 @@
             "description": "Value to replace with."
           }
         }
+      },
+      "ResourceRevision": {
+        "type": "integer",
+        "format": "int64",
+        "description": "Database-owned positive resource revision.",
+        "minimum": 1
       },
       "RestoreConfig": {
         "type": "object",
@@ -25763,7 +26662,8 @@
           "description",
           "owner_group_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -25800,6 +26700,9 @@
           "owner_group_id": {
             "type": "integer",
             "format": "int32"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",
@@ -27060,7 +27963,8 @@
           "provider_managed",
           "name",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "revision"
         ],
         "properties": {
           "created_at": {
@@ -27108,6 +28012,9 @@
           },
           "provider_managed": {
             "type": "boolean"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ResourceRevision"
           },
           "updated_at": {
             "type": "string",

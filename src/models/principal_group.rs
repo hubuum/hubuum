@@ -2,6 +2,7 @@ use crate::db::traits::group::{
     DeletePrincipalGroupRecord, PrincipalGroupGroupLookup, PrincipalGroupPrincipalLookup,
     SavePrincipalGroupRecord,
 };
+use crate::models::ResourceRevision;
 use crate::models::group::Group;
 use crate::models::principal::Principal;
 
@@ -26,6 +27,7 @@ pub struct PrincipalGroup {
     pub group_id: i32,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    pub revision: ResourceRevision,
 }
 
 #[derive(Serialize, Deserialize, Insertable)]

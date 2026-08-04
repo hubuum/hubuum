@@ -2333,7 +2333,7 @@ mod tests {
     /// #21: group-membership mutation is admin-only — a non-admin human cannot add
     /// a member.
     #[rstest]
-    #[case::admin(true, StatusCode::NO_CONTENT)]
+    #[case::admin(true, StatusCode::CREATED)]
     #[case::non_admin(false, StatusCode::FORBIDDEN)]
     #[actix_web::test]
     async fn test_group_member_mutation_is_admin_only(
@@ -2421,8 +2421,11 @@ mod tests {
         .await;
         let members: Vec<PrincipalMemberResponse> = test::read_body_json(resp).await;
 
-        let kinds: std::collections::HashSet<&str> =
-            members.iter().map(|m| m.kind.as_str()).collect();
+        let kinds: std::collections::HashSet<&str> = members
+            .iter()
+            .filter_map(|membership| membership.principal.as_ref())
+            .map(|principal| principal.kind.as_str())
+            .collect();
         assert!(
             kinds.contains("human") && kinds.contains("service_account"),
             "member listing should include both kinds, got {kinds:?}"

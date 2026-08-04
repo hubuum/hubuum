@@ -116,7 +116,7 @@ fn build_tokens_by_principal_query<'a>(
 ) -> Result<crate::schema::tokens::BoxedQuery<'a, Pg>, ApiError> {
     use crate::schema::tokens::dsl::{
         expires_at, issued, last_used_at, name as token_name, principal_id as token_principal_id,
-        revoked_at, tokens,
+        revision, revoked_at, tokens,
     };
     use crate::{date_search, string_search};
 
@@ -140,6 +140,9 @@ fn build_tokens_by_principal_query<'a>(
             FilterField::ExpiresAt => date_search!(base_query, param, operator, expires_at),
             FilterField::LastUsedAt => date_search!(base_query, param, operator, last_used_at),
             FilterField::Name => string_search!(base_query, param, operator, token_name),
+            FilterField::Revision => {
+                crate::revision_search!(base_query, param, operator, revision)
+            }
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' isn't searchable (or does not exist) for tokens",

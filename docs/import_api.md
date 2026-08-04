@@ -39,7 +39,7 @@ Top-level fields:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `version` | integer | yes | Current version is `1`. |
+| `version` | integer | yes | Current version is `2`; version `1` is rejected. |
 | `dry_run` | boolean | no | Defaults to `false`. |
 | `mode` | object | no | Defaults to `{"atomicity":"strict","collision_policy":"abort","permission_policy":"abort"}`. |
 | `graph` | object | yes | Holds the import sections described below. Omitted sections default to empty arrays. |
@@ -48,7 +48,7 @@ Example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "dry_run": false,
   "mode": {
     "atomicity": "strict",
@@ -103,6 +103,32 @@ Example:
   }
 }
 ```
+
+Import v2 supports per-item write conditions on every authoritative graph
+item. When `condition` is omitted, the top-level collision policy applies. The
+available conditions are:
+
+```json
+{ "mode": "create_only" }
+```
+
+```json
+{ "mode": "overwrite" }
+```
+
+```json
+{ "mode": "if_revision", "expected_revision": 17 }
+```
+
+`if_revision` accepts only a positive 64-bit resource revision. The worker
+persists the number in the queued request and compares it again while holding
+the target row lock. A mismatch is reported as `stale_revision`; strict imports
+roll back, while best-effort imports leave that item unchanged.
+
+Dry-run item results include an advisory `observed_revision` when the target
+already exists. The worker still performs the authoritative revision check
+under the row lock during real execution; clients must not treat the dry-run
+value as a reservation.
 
 ## Linking rules
 
@@ -234,6 +260,7 @@ state:
 - `groups`
 - `principals`
 - `group_memberships`
+- `computed_fields`
 - `export_templates`
 - `remote_targets`
 - `event_sinks`
@@ -423,6 +450,7 @@ names below.
 | `groups` | `ImportGroupInput` | Select the identity scope with exactly one of `identity_scope_ref` or `identity_scope_key`. |
 | `principals` | `ImportPrincipalInput` | Select an identity scope and use the flattened `kind` discriminator. Human records accept either `password` or an Argon2 `password_hash`, never both. Service accounts require an owner group selector. |
 | `group_memberships` | `ImportGroupMembershipInput` | Select exactly one principal and one group. Each optional source selects its own identity scope. |
+| `computed_fields` | `ImportComputedFieldInput` | Select one class. Personal fields require one owner principal; shared fields reject owners. Definition validation matches the computed-field API. |
 | `export_templates` | `ImportExportTemplateInput` | Select one collection and, for class-scoped exports, one class in that collection. Template composition is validated against existing and same-import templates in the collection. |
 | `remote_targets` | `ImportRemoteTargetInput` | Select one collection and any required class in that collection. URL, header, body, authentication, subject, and timeout validation matches the normal API. |
 | `event_sinks` | `ImportEventSinkInput` | Sink kind, configuration, secret reference, and feature availability are validated before persistence. |
@@ -438,8 +466,9 @@ are accepted only through the import API and are intended for authorized
 migration data. Core records use the same live collection permissions as other
 core imports; extended records require an unscoped runtime administrator.
 Standard resource create and update endpoints continue to manage timestamps
-automatically. Supplied import timestamps replace stored values on overwrite,
-and `updated_at` cannot be earlier than `created_at`.
+automatically. Imported timestamps are retained on creation or alongside an
+effective domain change; timestamp-only overwrites are semantic no-ops.
+`updated_at` cannot be earlier than `created_at`.
 
 When timestamps are omitted, new core records use the current time. Core
 collection, class, and object overwrites preserve `created_at` and refresh

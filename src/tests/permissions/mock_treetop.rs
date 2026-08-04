@@ -314,6 +314,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
             external_key: None,
             last_sync_attempted_at: None,
             last_sync_success_at: None,
+            revision: crate::models::ResourceRevision::INITIAL,
         },
         Group {
             id: 200,
@@ -332,6 +333,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
             external_key: None,
             last_sync_attempted_at: None,
             last_sync_success_at: None,
+            revision: crate::models::ResourceRevision::INITIAL,
         },
         Group {
             id: 300,
@@ -350,6 +352,7 @@ async fn mock_groups_with_permissions_on_filters_and_paginates() {
             external_key: None,
             last_sync_attempted_at: None,
             last_sync_success_at: None,
+            revision: crate::models::ResourceRevision::INITIAL,
         },
     ];
     backend.set_group_candidates(groups);

@@ -505,6 +505,7 @@ mod tests {
             enabled: true,
             created_at: now,
             updated_at: now,
+            revision: crate::models::ResourceRevision::INITIAL,
         };
         let sink = EventSink {
             id: 1,
@@ -515,6 +516,7 @@ mod tests {
             enabled: true,
             created_at: now,
             updated_at: now,
+            revision: crate::models::ResourceRevision::INITIAL,
         };
 
         let error = deliver_one(&NoopSinkResolver, &envelope, &subscription, &sink)
@@ -559,6 +561,7 @@ mod tests {
             enabled: true,
             created_at: now,
             updated_at: now,
+            revision: crate::models::ResourceRevision::INITIAL,
         };
         let sink = EventSink {
             id: 1,
@@ -569,6 +572,7 @@ mod tests {
             enabled: true,
             created_at: now,
             updated_at: now,
+            revision: crate::models::ResourceRevision::INITIAL,
         };
         let failing = FailingSink;
         let resolver = StaticResolver {

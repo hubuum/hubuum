@@ -14,8 +14,8 @@ use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
-    PrincipalID, REDACTED_DEBUG_VALUE, TokenIssuancePolicy, TokenLifetime, TokenScope,
-    TokenScopeDetails,
+    PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, TokenIssuancePolicy, TokenLifetime,
+    TokenScope, TokenScopeDetails,
 };
 use crate::schema::tokens;
 use crate::traits::{
@@ -38,6 +38,7 @@ pub struct PrincipalToken {
     pub revoked_at: Option<NaiveDateTime>,
     pub permission_scoped: bool,
     pub resource_scoped: bool,
+    pub revision: ResourceRevision,
 }
 
 impl fmt::Debug for PrincipalToken {
@@ -195,6 +196,39 @@ pub struct PrincipalTokenMetadata {
     /// Exact permission and resource boundaries. `None` means that this token
     /// is unscoped.
     pub scope: Option<TokenScopeDetails>,
+    pub revision: ResourceRevision,
+}
+
+/// Canonical token representation covered completely by the token revision.
+/// `last_used_at` remains available in token lists, but is excluded from this
+/// point representation because routine activity does not advance revision.
+#[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
+pub struct PrincipalTokenPointResponse {
+    pub id: TokenID,
+    pub principal_id: PrincipalID,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub issued: NaiveDateTime,
+    pub expires_at: Option<NaiveDateTime>,
+    pub revoked_at: Option<NaiveDateTime>,
+    pub scope: Option<TokenScopeDetails>,
+    pub revision: ResourceRevision,
+}
+
+impl From<PrincipalTokenMetadata> for PrincipalTokenPointResponse {
+    fn from(token: PrincipalTokenMetadata) -> Self {
+        Self {
+            id: token.id,
+            principal_id: token.principal_id,
+            name: token.name,
+            description: token.description,
+            issued: token.issued,
+            expires_at: token.expires_at,
+            revoked_at: token.revoked_at,
+            scope: token.scope,
+            revision: token.revision,
+        }
+    }
 }
 
 /// Public metadata for the token authenticating the current request.
@@ -209,6 +243,7 @@ pub struct CurrentTokenMetadata {
     /// Exact permission and resource boundaries. `None` means that this token
     /// is unscoped.
     pub scope: Option<TokenScopeDetails>,
+    pub revision: ResourceRevision,
 }
 
 impl PrincipalTokenMetadata {
@@ -267,6 +302,7 @@ impl PrincipalTokenMetadata {
             active: value.revoked_at.is_none() && !expired,
             expired,
             scope: value.scope_details(scope)?,
+            revision: value.revision,
         })
     }
 }
@@ -285,6 +321,7 @@ impl CurrentTokenMetadata {
             expires_at: value.expires_at,
             last_used_at: value.last_used_at,
             scope: value.scope_details(scope)?,
+            revision: value.revision,
         })
     }
 }
@@ -568,6 +605,7 @@ impl CursorPaginated for PrincipalToken {
                 | FilterField::IssuedAt
                 | FilterField::ExpiresAt
                 | FilterField::LastUsedAt
+                | FilterField::Revision
         )
     }
 
@@ -587,6 +625,7 @@ impl CursorPaginated for PrincipalToken {
                 Some(value) => CursorValue::DateTime(value),
                 None => CursorValue::Null,
             },
+            FilterField::Revision => CursorValue::Integer(self.revision.get()),
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for tokens",
@@ -648,6 +687,11 @@ impl CursorSqlMapping for PrincipalToken {
                 sql_type: CursorSqlType::DateTime,
                 nullable: true,
             },
+            FilterField::Revision => CursorSqlField {
+                column: "tokens.revision",
+                sql_type: CursorSqlType::BigInt,
+                nullable: false,
+            },
             _ => {
                 return Err(ApiError::BadRequest(format!(
                     "Field '{}' is not orderable for tokens",
@@ -679,6 +723,7 @@ mod tests {
             revoked_at: None,
             permission_scoped: false,
             resource_scoped: false,
+            revision: ResourceRevision::INITIAL,
         };
 
         let output = format!("{token:?}");
