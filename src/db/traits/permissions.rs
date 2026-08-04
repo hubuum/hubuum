@@ -76,7 +76,7 @@ fn permission_event(
 }
 
 fn update_permission_for_grant(
-    permission_list: &PermissionsList<Permissions>,
+    permission_list: &PermissionsList,
     replace_existing: bool,
 ) -> UpdatePermission {
     let mut update_perm = if replace_existing {
@@ -172,7 +172,7 @@ fn update_permission_for_grant(
 
 fn grant_changes_permission(
     current: &Permission,
-    requested: &PermissionsList<Permissions>,
+    requested: &PermissionsList,
     replace_existing: bool,
 ) -> bool {
     let granted = current.granted();
@@ -187,19 +187,14 @@ fn grant_changes_permission(
     }
 }
 
-fn revoke_changes_permission(
-    current: &Permission,
-    requested: &PermissionsList<Permissions>,
-) -> bool {
+fn revoke_changes_permission(current: &Permission, requested: &PermissionsList) -> bool {
     let granted = current.granted();
     requested
         .iter()
         .any(|permission| granted.contains(permission))
 }
 
-fn update_permission_for_revoke(
-    permission_list: &PermissionsList<Permissions>,
-) -> UpdatePermission {
+fn update_permission_for_revoke(permission_list: &PermissionsList) -> UpdatePermission {
     let mut update_perm = UpdatePermission::default();
     for permission in permission_list {
         match permission {
@@ -258,7 +253,7 @@ fn update_permission_for_revoke(
 pub(crate) fn new_permission_from_list(
     target_collection_id: i32,
     gid: i32,
-    permission_list: &PermissionsList<Permissions>,
+    permission_list: &PermissionsList,
 ) -> NewPermission {
     NewPermission {
         collection_id: target_collection_id,
@@ -342,7 +337,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         &self,
         pool: &DbPool,
         group_id_for_grant: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
         replace_existing: bool,
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
@@ -575,7 +570,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         &self,
         pool: &DbPool,
         group_id_for_grant: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
         replace_existing: bool,
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError> {
@@ -663,7 +658,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         &self,
         pool: &DbPool,
         group_id_for_revoke: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
     ) -> Result<Permission, ApiError> {
         use crate::schema::permissions::dsl::*;
 
@@ -795,7 +790,7 @@ pub trait PermissionControllerBackend: Serialize + CollectionAccessors {
         &self,
         pool: &DbPool,
         group_id_for_revoke: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError> {
         let Some(context) = context else {

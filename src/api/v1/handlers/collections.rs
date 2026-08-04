@@ -666,7 +666,7 @@ pub async fn replace_collection_group_permissions(
         collection
     );
 
-    if permissions.iter().next().is_none() {
+    if permissions.is_empty() {
         return Err(ApiError::BadRequest(
             "Permissions list cannot be empty for replace operation, use DELETE endpoint instead"
                 .to_string(),

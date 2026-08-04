@@ -126,7 +126,7 @@ pub(crate) async fn apply_permissions_query(
     pool: &DbPool,
     collection_id_param: i32,
     group_id_for_grant: i32,
-    permission_list: PermissionsList<Permissions>,
+    permission_list: PermissionsList,
     replace_existing: bool,
 ) -> Result<Permission, ApiError> {
     use crate::schema::permissions::dsl::*;
@@ -305,7 +305,7 @@ pub(crate) async fn revoke_permissions_query(
     pool: &DbPool,
     collection_id_param: i32,
     group_id_for_revoke: i32,
-    permission_list: PermissionsList<Permissions>,
+    permission_list: PermissionsList,
 ) -> Result<Permission, ApiError> {
     use crate::schema::permissions::dsl::*;
 

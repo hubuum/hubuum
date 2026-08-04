@@ -296,7 +296,7 @@ impl PermissionBackend for LocalPermissionBackend {
         &self,
         collection_id: CollectionID,
         group_id: GroupID,
-        list: PermissionsList<Permissions>,
+        list: PermissionsList,
         replace_existing: bool,
     ) -> Result<Permission, ApiError> {
         collection_id
@@ -308,7 +308,7 @@ impl PermissionBackend for LocalPermissionBackend {
         &self,
         collection_id: CollectionID,
         group_id: GroupID,
-        list: PermissionsList<Permissions>,
+        list: PermissionsList,
     ) -> Result<Permission, ApiError> {
         collection_id.revoke(&self.pool, group_id, list, None).await
     }

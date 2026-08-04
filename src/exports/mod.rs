@@ -305,10 +305,7 @@ impl<T> AuthorizationCandidates<T> {
         )
     }
 
-    fn permission_requests(
-        &self,
-        permissions: &PermissionsList<Permissions>,
-    ) -> Vec<PermissionRequest> {
+    fn permission_requests(&self, permissions: &PermissionsList) -> Vec<PermissionRequest> {
         self.0
             .iter()
             .map(|(_, resource)| PermissionRequest {
@@ -342,7 +339,7 @@ impl<T> AuthorizationCandidates<T> {
 fn query_permissions(
     query: &QueryOptions,
     required: &[Permissions],
-) -> Result<PermissionsList<Permissions>, ApiError> {
+) -> Result<PermissionsList, ApiError> {
     let mut permissions = query.filters.permissions()?;
     permissions.ensure_contains(required);
     Ok(permissions)
@@ -512,7 +509,7 @@ where
         &self,
         candidates: Vec<T>,
         resources: Vec<ResourceRef>,
-        permissions: PermissionsList<Permissions>,
+        permissions: PermissionsList,
     ) -> Result<Vec<T>, ApiError> {
         let candidates = AuthorizationCandidates::new(candidates, resources)?;
         if !scope_allows(self.scopes, permissions.as_slice()) {
@@ -542,7 +539,7 @@ where
         &self,
         candidates: Vec<T>,
         resources: Vec<ResourceRef>,
-        permissions: PermissionsList<Permissions>,
+        permissions: PermissionsList,
         query: &QueryOptions,
     ) -> Result<Vec<T>, ApiError>
     where
@@ -557,8 +554,8 @@ where
     async fn authorized_object_graph(
         &self,
         paths: &[Vec<i32>],
-        object_permissions: PermissionsList<Permissions>,
-        relation_permissions: PermissionsList<Permissions>,
+        object_permissions: PermissionsList,
+        relation_permissions: PermissionsList,
     ) -> Result<AuthorizedObjectGraph, ApiError> {
         let mut object_ids = paths
             .iter()
@@ -916,7 +913,7 @@ where
     async fn object_relations_between_ids_with_permissions(
         &self,
         object_ids: &[i32],
-        permissions: PermissionsList<Permissions>,
+        permissions: PermissionsList,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
             return self

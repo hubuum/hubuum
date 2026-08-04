@@ -137,7 +137,7 @@ pub trait PermissionBackend: Send + Sync {
         &self,
         collection_id: CollectionID,
         group_id: GroupID,
-        list: PermissionsList<Permissions>,
+        list: PermissionsList,
         replace_existing: bool,
     ) -> Result<Permission, ApiError>;
 
@@ -147,7 +147,7 @@ pub trait PermissionBackend: Send + Sync {
         &self,
         collection_id: CollectionID,
         group_id: GroupID,
-        list: PermissionsList<Permissions>,
+        list: PermissionsList,
     ) -> Result<Permission, ApiError>;
 
     /// Revoke all permissions of a group on a collection.

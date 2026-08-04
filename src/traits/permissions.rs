@@ -99,7 +99,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         &self,
         backend: &C,
         group_id_for_grant: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
     ) -> Result<Permission, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -112,7 +112,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         &self,
         backend: &C,
         group_id_for_grant: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError>
     where
@@ -137,7 +137,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         &self,
         backend: &C,
         group_id_for_grant: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
         replace_existing: bool,
     ) -> Result<Permission, ApiError>
     where
@@ -156,7 +156,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         &self,
         backend: &C,
         group_id_for_grant: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
         replace_existing: bool,
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError>
@@ -202,7 +202,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         &self,
         backend: &C,
         group_id_for_revoke: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
     ) -> Result<Permission, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -219,7 +219,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         &self,
         backend: &C,
         group_id_for_revoke: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError>
     where
@@ -338,7 +338,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         &self,
         backend: &C,
         group_identifier: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
     ) -> Result<Permission, ApiError>
     where
         C: BackendContext + ?Sized,
@@ -351,7 +351,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         &self,
         backend: &C,
         group_identifier: GroupID,
-        permission_list: PermissionsList<Permissions>,
+        permission_list: PermissionsList,
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError>
     where

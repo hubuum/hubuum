@@ -553,7 +553,7 @@ impl PermissionBackend for MockTreetopBackend {
         &self,
         _collection_id: CollectionID,
         _group_id: GroupID,
-        _list: PermissionsList<Permissions>,
+        _list: PermissionsList,
         _replace_existing: bool,
     ) -> Result<Permission, ApiError> {
         Err(ApiError::NotImplemented(
@@ -566,7 +566,7 @@ impl PermissionBackend for MockTreetopBackend {
         &self,
         _collection_id: CollectionID,
         _group_id: GroupID,
-        _list: PermissionsList<Permissions>,
+        _list: PermissionsList,
     ) -> Result<Permission, ApiError> {
         Err(ApiError::NotImplemented(
             "permission mutations are managed out-of-band when using a treetop-style backend"
