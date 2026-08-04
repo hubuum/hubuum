@@ -29,6 +29,7 @@ use crate::models::{
 };
 use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
+use crate::tasks::TaskLeaseDuration;
 
 const DATABASE_UTC_NOW_SQL: &str = "clock_timestamp() AT TIME ZONE 'UTC'";
 const DATABASE_UTC_NOW_QUERY: &str = "SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now";
@@ -1322,9 +1323,9 @@ fn task_kind_claim_order(start: usize) -> [&'static str; TaskKind::ALL.len()] {
     std::array::from_fn(|offset| kinds[(start + offset) % kinds.len()])
 }
 
-pub async fn claim_next_queued_task(
+pub(crate) async fn claim_next_queued_task(
     pool: &DbPool,
-    lease_duration: std::time::Duration,
+    lease_duration: TaskLeaseDuration,
 ) -> Result<Option<TaskRecord>, ApiError> {
     use crate::schema::tasks::dsl::{
         attempt_count, id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
@@ -1350,7 +1351,7 @@ pub async fn claim_next_queued_task(
         };
 
         let claim_token = Uuid::new_v4();
-        let lease_milliseconds = lease_duration_milliseconds(lease_duration);
+        let lease_milliseconds = lease_duration.database_milliseconds();
         let record = diesel::update(tasks.filter(id.eq(task_id_value)))
             .set((
                 status.eq(TaskStatus::Validating.as_str()),
@@ -1399,22 +1400,18 @@ pub async fn claim_next_queued_task(
     Ok(record)
 }
 
-fn lease_duration_milliseconds(lease_duration: std::time::Duration) -> i64 {
-    i64::try_from(lease_duration.as_millis()).unwrap_or(i64::MAX)
-}
-
 /// Extend an active task lease if this worker still owns it.
-pub async fn renew_task_lease(
+pub(crate) async fn renew_task_lease(
     pool: &DbPool,
     task_id_value: i32,
     claim_token: Uuid,
-    lease_duration: std::time::Duration,
+    lease_duration: TaskLeaseDuration,
 ) -> Result<bool, ApiError> {
     use crate::schema::tasks::dsl::{id, lease_expires_at, lease_token, status, tasks, updated_at};
 
     let active_statuses = TaskStatus::ACTIVE.map(TaskStatus::as_str);
     let updated = with_connection(pool, async |conn| -> Result<usize, ApiError> {
-        let lease_milliseconds = lease_duration_milliseconds(lease_duration);
+        let lease_milliseconds = lease_duration.database_milliseconds();
         diesel::update(
             tasks
                 .filter(id.eq(task_id_value))
@@ -1879,7 +1876,12 @@ mod tests {
         StoredRemoteCallTaskPayload, TaskID, TaskKind, TaskResultCounts, TaskStatus, TokenID,
         TokenScope,
     };
+    use crate::tasks::TaskLeaseDuration;
     use crate::tests::{TestContext, create_test_user};
+
+    fn test_lease_duration() -> TaskLeaseDuration {
+        TaskLeaseDuration::new(std::time::Duration::from_secs(60)).unwrap()
+    }
 
     #[derive(QueryableByName)]
     struct TaskCapacityIndex {
@@ -2289,11 +2291,8 @@ mod tests {
         });
 
         let locked_id = locked_rx.await.unwrap();
-        let (claimed, queries) = capture_queries(claim_next_queued_task(
-            &context.pool,
-            std::time::Duration::from_secs(60),
-        ))
-        .await;
+        let (claimed, queries) =
+            capture_queries(claim_next_queued_task(&context.pool, test_lease_duration())).await;
         let claimed = claimed.unwrap().map(|task| task.id);
         release_tx.send(()).unwrap();
         locker.await.unwrap();
@@ -2563,7 +2562,7 @@ mod tests {
                 &context.pool,
                 leased.id,
                 Uuid::new_v4(),
-                std::time::Duration::from_secs(60),
+                test_lease_duration(),
             )
             .await
             .unwrap()
@@ -2573,7 +2572,7 @@ mod tests {
                 &context.pool,
                 leased.id,
                 leased.lease_token.unwrap(),
-                std::time::Duration::from_secs(60),
+                test_lease_duration(),
             )
             .await
             .unwrap()
@@ -2595,7 +2594,7 @@ mod tests {
                 &context.pool,
                 leased.id,
                 leased.lease_token.unwrap(),
-                std::time::Duration::from_secs(60),
+                test_lease_duration(),
             )
             .await
             .unwrap()

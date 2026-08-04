@@ -43,9 +43,7 @@ use hubuum::middlewares::rate_limit::{
 };
 use hubuum::permissions::{AppContext, build_permission_backend};
 use hubuum::restores::{RestoreSettings, ensure_restore_coordinator_running};
-use hubuum::tasks::{
-    TaskWorkerSettings, ensure_task_worker_running_with_settings, initialize_task_worker_settings,
-};
+use hubuum::tasks::{ensure_task_worker_running_with_settings, initialize_task_worker_settings};
 use hubuum::token_retention::ensure_token_retention_worker_running;
 use hubuum::utilities::is_valid_log_level;
 use hubuum::{api, db, logger, middlewares, observability, tls, utilities};
@@ -130,26 +128,11 @@ async fn main() -> std::io::Result<()> {
     )
     .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
 
-    let task_worker_count = if config.runtime_role.runs_background_workers() {
-        config.task_workers
-    } else {
-        0
-    };
-    let task_worker_settings = TaskWorkerSettings::new(
-        task_worker_count,
-        Duration::from_millis(config.task_poll_interval_ms),
-        Duration::from_secs(config.task_lease_seconds),
-        Duration::from_secs(config.task_heartbeat_seconds),
-        Duration::from_secs(config.task_recovery_interval_seconds),
-        Duration::from_secs(config.export_output_cleanup_interval_seconds),
-    )
-    .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+    let task_worker_settings = config
+        .task_worker_settings()
+        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
     initialize_task_worker_settings(task_worker_settings)
         .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_INIT_ERROR));
-    observability::metrics::task_worker_config(
-        task_worker_count,
-        Duration::from_millis(config.task_poll_interval_ms),
-    );
 
     let initialization_settings =
         utilities::init::InitializationSettings::new(config.admin_groupname.clone())

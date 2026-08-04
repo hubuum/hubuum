@@ -10,11 +10,13 @@ use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
+use std::time::Duration;
 
 use crate::errors::ApiError;
 use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 use crate::models::retention::FutureRetention;
 use crate::models::{TokenIssuancePolicy, TokenRetentionSettings};
+use crate::tasks::TaskWorkerSettings;
 
 mod client_network;
 mod defaults;
@@ -923,6 +925,20 @@ impl AppConfig {
             .build()
     }
 
+    pub fn task_worker_settings(&self) -> Result<TaskWorkerSettings, ApiError> {
+        TaskWorkerSettings::builder()
+            .worker_count(self.runtime_role.effective_worker_count(self.task_workers))
+            .poll_interval(Duration::from_millis(self.task_poll_interval_ms))
+            .lease_duration(Duration::from_secs(self.task_lease_seconds))
+            .heartbeat_interval(Duration::from_secs(self.task_heartbeat_seconds))
+            .recovery_interval(Duration::from_secs(self.task_recovery_interval_seconds))
+            .export_output_cleanup_interval(Duration::from_secs(
+                self.export_output_cleanup_interval_seconds,
+            ))
+            .build()
+            .map_err(ApiError::BadRequest)
+    }
+
     pub(crate) fn event_fanout_settings(&self) -> Result<EventFanoutSettings, ApiError> {
         EventFanoutSettings::new(
             self.event_fanout_batch_size,
@@ -972,11 +988,7 @@ impl AppConfig {
             ));
         }
 
-        if self.task_poll_interval_ms == 0 {
-            return Err(ApiError::BadRequest(
-                "task_poll_interval_ms must be greater than 0".to_string(),
-            ));
-        }
+        self.task_worker_settings()?;
 
         if self.event_fanout_poll_interval_ms == 0 {
             return Err(ApiError::BadRequest(
@@ -1013,12 +1025,6 @@ impl AppConfig {
             "export_output_retention_hours",
         )
         .map_err(ApiError::BadRequest)?;
-
-        if self.export_output_cleanup_interval_seconds == 0 {
-            return Err(ApiError::BadRequest(
-                "export_output_cleanup_interval_seconds must be greater than 0".to_string(),
-            ));
-        }
 
         FutureRetention::from_hours(
             self.backup_output_retention_hours,
@@ -1170,31 +1176,6 @@ impl AppConfig {
         {
             return Err(ApiError::BadRequest(
                 "login_rate_limit_subnet_prefix_v6 must be between 1 and 128".to_string(),
-            ));
-        }
-
-        if self.task_lease_seconds == 0 {
-            return Err(ApiError::BadRequest(
-                "task_lease_seconds must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.task_heartbeat_seconds == 0 {
-            return Err(ApiError::BadRequest(
-                "task_heartbeat_seconds must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.task_heartbeat_seconds >= self.task_lease_seconds {
-            return Err(ApiError::BadRequest(format!(
-                "task_heartbeat_seconds ({}) must be less than task_lease_seconds ({})",
-                self.task_heartbeat_seconds, self.task_lease_seconds
-            )));
-        }
-
-        if self.task_recovery_interval_seconds == 0 {
-            return Err(ApiError::BadRequest(
-                "task_recovery_interval_seconds must be greater than 0".to_string(),
             ));
         }
 
@@ -2074,7 +2055,21 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "task_heartbeat_seconds (30) must be less than task_lease_seconds (30)"
+            "task worker heartbeat interval must be greater than zero and shorter than the lease"
+        );
+    }
+
+    #[test]
+    fn task_lease_duration_must_fit_database_timestamps() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _lease_guard =
+            EnvVarGuard::set("HUBUUM_TASK_LEASE_SECONDS", Some("18446744073709551615"));
+
+        let error = get_config_from_env().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "task worker lease duration is too large for database timestamps"
         );
     }
 
