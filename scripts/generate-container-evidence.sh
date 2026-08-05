@@ -15,8 +15,25 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$repo_root/.github/supply-chain-tools.env"
 
-if [[ "$image_ref" != *@sha256:* ]]; then
+image_pattern='^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*(:[A-Za-z0-9_][A-Za-z0-9._-]*)?@sha256:[0-9a-f]{64}$'
+if [[ ! "$image_ref" =~ $image_pattern ]]; then
   echo "container evidence requires an immutable image digest: $image_ref" >&2
+  exit 1
+fi
+if [[ ! "$output_prefix" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "container evidence output prefix contains unsupported characters: $output_prefix" >&2
+  exit 1
+fi
+if [[ ! "$source_revision" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "container evidence source revision must be a full lowercase commit SHA" >&2
+  exit 1
+fi
+if [[ ! "$source_tag" =~ ^(main|v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+  echo "container evidence source tag must be main or a stable release tag" >&2
+  exit 1
+fi
+if [[ ! "$target" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "container evidence target contains unsupported characters: $target" >&2
   exit 1
 fi
 
@@ -59,7 +76,6 @@ docker run --rm \
   --scanners vuln \
   --pkg-types os,library \
   --severity HIGH,CRITICAL \
-  --ignorefile /workspace/.trivyignore \
   --format json \
   --output "/evidence/${output_prefix}.trivy.json" \
   "$image_ref"

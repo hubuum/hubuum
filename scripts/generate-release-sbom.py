@@ -7,10 +7,17 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import re
 import subprocess
 import urllib.parse
 from pathlib import Path
 from typing import Any
+
+
+SHA256_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+SOURCE_REVISION = re.compile(r"^[0-9a-f]{40}$")
+SOURCE_TAG = re.compile(r"^(?:main|v\d+\.\d+\.\d+)$")
+TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def sha256(path: Path) -> str:
@@ -157,6 +164,16 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.artifact is None and (not args.subject_name or not args.subject_digest):
         parser.error("provide --artifact or both --subject-name and --subject-digest")
+    if args.artifact is not None and args.subject_digest is not None:
+        parser.error("--subject-digest cannot be combined with --artifact")
+    if args.subject_name is not None and not args.subject_name.strip():
+        parser.error("--subject-name cannot be blank")
+    if not SOURCE_REVISION.fullmatch(args.source_revision):
+        parser.error("--source-revision must be a full lowercase commit SHA")
+    if not SOURCE_TAG.fullmatch(args.source_tag):
+        parser.error("--source-tag must be main or a stable v-prefixed version")
+    if not TARGET.fullmatch(args.target):
+        parser.error("--target contains unsupported characters")
     return args
 
 
@@ -174,9 +191,12 @@ def main() -> None:
     else:
         subject_name = args.subject_name
         algorithm, separator, digest = args.subject_digest.partition(":")
-        if separator != ":" or algorithm.lower() != "sha256" or len(digest) != 64:
+        if (
+            separator != ":"
+            or algorithm != "sha256"
+            or not SHA256_DIGEST.fullmatch(digest)
+        ):
             raise SystemExit("--subject-digest must be sha256:<64 lowercase hex characters>")
-        int(digest, 16)
 
     lock_digest = sha256(Path("Cargo.lock"))
     root_ref = f"urn:hubuum:release:{digest}"

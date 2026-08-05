@@ -94,4 +94,28 @@ assert root["hashes"] == [{"alg": "SHA-256", "content": expected}]
 assert any(dependency["ref"] == root["bom-ref"] for dependency in document["dependencies"])
 PY
 
+if python3 scripts/generate-release-sbom.py \
+  --metadata-json "$temp_root/metadata.json" \
+  --output "$temp_root/invalid-digest.cdx.json" \
+  --subject-name example.invalid/hubuum \
+  --subject-digest "sha256:$(printf 'A%.0s' {1..64})" \
+  --subject-type container \
+  --source-revision 0123456789012345678901234567890123456789 \
+  --source-tag v1.2.3 \
+  --target linux-amd64 2>/dev/null; then
+  echo "uppercase subject digest was unexpectedly accepted" >&2
+  exit 1
+fi
+
+if python3 scripts/generate-release-sbom.py \
+  --artifact "$temp_root/archive.tar.gz" \
+  --metadata-json "$temp_root/metadata.json" \
+  --output "$temp_root/invalid-revision.cdx.json" \
+  --source-revision main \
+  --source-tag v1.2.3 \
+  --target linux-amd64 2>/dev/null; then
+  echo "abbreviated source revision was unexpectedly accepted" >&2
+  exit 1
+fi
+
 echo "Release SBOM generator tests passed."

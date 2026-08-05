@@ -16,6 +16,10 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 SHA_REF = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_REF = re.compile(r"@sha256:[0-9a-f]{64}$")
+OCI_DIGEST_REF = re.compile(
+    r"^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*"
+    r"(?::[A-Za-z0-9_][A-Za-z0-9._-]*)?@sha256:[0-9a-f]{64}$"
+)
 MUTABLE_INSTALLER = re.compile(
     r"(?i)(?:curl|wget)[^\n]*\|\s*(?:ba)?sh|irm[^\n]*\|\s*iex|/latest/download/"
 )
@@ -98,18 +102,27 @@ def configured_exceptions() -> set[tuple[str, str]]:
     for entry in policy.get("advisories", {}).get("ignore", []):
         identifier = entry if isinstance(entry, str) else entry.get("id") or entry.get("crate")
         if identifier:
-            configured.add(("advisory", identifier))
+            exception = ("advisory", identifier)
+            if exception in configured:
+                fail(f"deny.toml configures duplicate exception {exception!r}")
+            configured.add(exception)
 
     for entry in policy.get("licenses", {}).get("exceptions", []):
         identifier = entry.get("crate") or entry.get("name")
         if identifier:
-            configured.add(("license", identifier))
+            exception = ("license", identifier)
+            if exception in configured:
+                fail(f"deny.toml configures duplicate exception {exception!r}")
+            configured.add(exception)
 
     trivy_ignore = ROOT / ".trivyignore"
     for line in trivy_ignore.read_text(encoding="utf-8").splitlines():
         identifier = line.strip()
         if identifier and not identifier.startswith("#"):
-            configured.add(("container-vulnerability", identifier))
+            exception = ("container-vulnerability", identifier)
+            if exception in configured:
+                fail(f".trivyignore configures duplicate exception {exception!r}")
+            configured.add(exception)
 
     return configured
 
@@ -144,7 +157,10 @@ def check_exceptions() -> None:
             fail(f"exception {index} expires must be an ISO date")
         if expires < today:
             fail(f"exception {exception['id']} expired on {expires}")
-        documented.add((exception["kind"], exception["id"]))
+        identity = (exception["kind"], exception["id"])
+        if identity in documented:
+            fail(f"exception {index} duplicates {identity!r}")
+        documented.add(identity)
 
     configured = configured_exceptions()
     if configured != documented:
@@ -154,16 +170,29 @@ def check_exceptions() -> None:
         )
 
 
-def check_tool_manifest() -> None:
+def parse_tool_manifest(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    path = ROOT / ".github" / "supply-chain-tools.env"
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         if not line or line.startswith("#"):
             continue
+        if line != line.strip():
+            fail(f"{path.name}:{line_number} has leading or trailing whitespace")
         key, separator, value = line.partition("=")
-        if not separator or not key or not value:
-            fail(f"invalid tool manifest line: {line!r}")
+        if (
+            not separator
+            or not re.fullmatch(r"[A-Z][A-Z0-9_]*", key)
+            or not value
+        ):
+            fail(f"{path.name}:{line_number} is not a valid KEY=value entry")
+        if key in values:
+            fail(f"{path.name}:{line_number} duplicates {key}")
         values[key] = value
+    return values
+
+
+def validate_tool_values(values: dict[str, str]) -> None:
 
     required = {
         "CARGO_DENY_VERSION",
@@ -175,13 +204,19 @@ def check_tool_manifest() -> None:
     if values.keys() != required:
         fail(f"tool manifest keys must be exactly {sorted(required)!r}")
     for key in ("SYFT_IMAGE", "TRIVY_IMAGE"):
-        if not DIGEST_REF.search(values[key]):
-            fail(f"{key} must include a full SHA-256 OCI digest")
+        if not OCI_DIGEST_REF.fullmatch(values[key]):
+            fail(f"{key} must be a literal OCI reference with a full SHA-256 digest")
     for key in ("CARGO_DENY_VERSION", "DIESEL_CLI_VERSION"):
         if not re.fullmatch(r"\d+\.\d+\.\d+", values[key]):
             fail(f"{key} must be an exact semantic version")
     if not re.fullmatch(r"v\d+\.\d+\.\d+", values["COSIGN_VERSION"]):
         fail("COSIGN_VERSION must be an exact v-prefixed semantic version")
+
+
+def check_tool_manifest() -> None:
+    path = ROOT / ".github" / "supply-chain-tools.env"
+    values = parse_tool_manifest(path)
+    validate_tool_values(values)
     ci_workflow = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
     cosign_input = f"cosign-release: {values['COSIGN_VERSION']}"
     if cosign_input not in ci_workflow:

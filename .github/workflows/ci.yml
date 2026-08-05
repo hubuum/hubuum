@@ -177,8 +177,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Validate immutable inputs and exception metadata
         run: python3 scripts/check-supply-chain-policy.py
+      - name: Test supply-chain policy validation
+        run: python3 scripts/test-supply-chain-policy.py
       - name: Test release SBOM composition
         run: bash scripts/test-generate-release-sbom.sh
+      - name: Test container evidence input validation
+        run: bash scripts/test-generate-container-evidence.sh
       - name: Audit dependencies
         id: dependency_audit
         continue-on-error: true

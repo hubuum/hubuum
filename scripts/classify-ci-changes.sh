@@ -41,7 +41,8 @@ for path in "$@"; do
     .github/workflows/supply-chain.yml | .github/supply-chain-* | \
       deny.toml | .trivyignore | scripts/check-supply-chain-policy.py | \
       scripts/generate-container-evidence.sh | scripts/generate-release-sbom.py | \
-      scripts/run-cargo-deny.sh | scripts/test-generate-release-sbom.sh)
+      scripts/run-cargo-deny.sh | scripts/test-generate-release-sbom.sh | \
+      scripts/test-generate-container-evidence.sh | scripts/test-supply-chain-policy.py)
       code=true
       container=true
       artifacts=true

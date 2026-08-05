@@ -13,6 +13,10 @@ fi
 
 cargo_deny_bin="$(command -v cargo-deny)"
 version="$(cargo deny --version)"
+if [[ "$version" != "cargo-deny ${CARGO_DENY_VERSION}" ]]; then
+  echo "unexpected cargo-deny version after install: $version" >&2
+  exit 1
+fi
 if command -v sha256sum >/dev/null 2>&1; then
   digest="$(sha256sum "$cargo_deny_bin" | awk '{print $1}')"
 else

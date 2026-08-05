@@ -29,6 +29,10 @@ if [[ ! -x "$diesel_bin" ]]; then
 fi
 
 version="$($diesel_bin --version)"
+if [[ "$version" != "diesel ${DIESEL_CLI_VERSION}" ]]; then
+  echo "unexpected Diesel CLI version after install: $version" >&2
+  exit 1
+fi
 if command -v sha256sum >/dev/null 2>&1; then
   digest="$(sha256sum "$diesel_bin" | awk '{print $1}')"
 else
