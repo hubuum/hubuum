@@ -7,7 +7,10 @@ use crate::events::{EventContext, RequestProvenance};
 use crate::models::principal::{Principal, load_principal_by_id};
 use crate::models::token::{PrincipalToken, Token};
 use crate::models::user::User;
-use crate::models::{MAX_OBJECT_DATA_PATCH_BYTES, ObjectDataPatchDocument, TokenScope};
+use crate::models::{
+    MAX_OBJECT_DATA_PATCH_BYTES, MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, ObjectDataPatchDocument,
+    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenScope,
+};
 use crate::permissions::{AppContext, PrincipalRef};
 
 use actix_web::{
@@ -23,6 +26,8 @@ use tracing::debug;
 use crate::middlewares::actor_context::ResolvedAuth;
 
 const JSON_PATCH_MEDIA_TYPE: &str = "application/json-patch+json";
+const JSON_MEDIA_TYPE: &str = "application/json";
+const JSON_MERGE_PATCH_MEDIA_TYPE: &str = "application/merge-patch+json";
 
 /// Strict JSON Patch request extractor for object-data patching.
 pub struct ObjectDataPatchPayload(ObjectDataPatchDocument);
@@ -81,6 +86,86 @@ fn object_data_patch_payload_error(error: JsonPayloadError) -> ApiError {
             ApiError::BadRequest(format!("Could not read JSON Patch payload: {error}"))
         }
         _ => ApiError::BadRequest("Could not read JSON Patch payload".to_string()),
+    }
+}
+
+/// Content-type-aware extractor for principal-settings merge and JSON Patch requests.
+pub struct PrincipalSettingsPatchPayload(PrincipalSettingsPatch);
+
+impl PrincipalSettingsPatchPayload {
+    pub fn into_inner(self) -> PrincipalSettingsPatch {
+        self.0
+    }
+}
+
+impl FromRequest for PrincipalSettingsPatchPayload {
+    type Error = ApiError;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
+        let content_type = req
+            .mime_type()
+            .ok()
+            .flatten()
+            .map(|mime| mime.essence_str().to_string());
+
+        match content_type.as_deref() {
+            Some(JSON_PATCH_MEDIA_TYPE) => {
+                let body =
+                    JsonBody::<PrincipalSettingsPatchDocument>::new(req, payload, None, true)
+                        .limit(MAX_PRINCIPAL_SETTINGS_PATCH_BYTES);
+                Box::pin(async move {
+                    body.await
+                        .map(|patch| Self(PrincipalSettingsPatch::JsonPatch(patch)))
+                        .map_err(|error| {
+                            principal_settings_patch_payload_error(error, "JSON Patch")
+                        })
+                })
+            }
+            Some(JSON_MEDIA_TYPE | JSON_MERGE_PATCH_MEDIA_TYPE) => {
+                let body = JsonBody::<PrincipalSettings>::new(req, payload, None, true)
+                    .limit(MAX_PRINCIPAL_SETTINGS_PATCH_BYTES);
+                Box::pin(async move {
+                    body.await
+                        .map(|patch| Self(PrincipalSettingsPatch::MergePatch(patch)))
+                        .map_err(|error| {
+                            principal_settings_patch_payload_error(error, "JSON Merge Patch")
+                        })
+                })
+            }
+            _ => Box::pin(future::ready(Err(ApiError::UnsupportedMediaType(format!(
+                "Content-Type must be {JSON_MEDIA_TYPE}, {JSON_MERGE_PATCH_MEDIA_TYPE}, or {JSON_PATCH_MEDIA_TYPE}"
+            ))))),
+        }
+    }
+}
+
+fn principal_settings_patch_payload_error(
+    error: JsonPayloadError,
+    document_kind: &str,
+) -> ApiError {
+    match error {
+        JsonPayloadError::OverflowKnownLength { length, limit } => {
+            ApiError::PayloadTooLarge(format!(
+                "Principal settings patch payload is {length} bytes; the limit is {limit} bytes"
+            ))
+        }
+        JsonPayloadError::Overflow { limit } => ApiError::PayloadTooLarge(format!(
+            "Principal settings patch payload exceeded the {limit} byte limit"
+        )),
+        JsonPayloadError::ContentType => ApiError::UnsupportedMediaType(format!(
+            "Content-Type must be {JSON_MEDIA_TYPE}, {JSON_MERGE_PATCH_MEDIA_TYPE}, or {JSON_PATCH_MEDIA_TYPE}"
+        )),
+        JsonPayloadError::Deserialize(error) => {
+            ApiError::BadRequest(format!("Invalid {document_kind} document: {error}"))
+        }
+        JsonPayloadError::Serialize(error) => ApiError::InternalServerError(format!(
+            "Unexpected principal settings patch serialization error: {error}"
+        )),
+        JsonPayloadError::Payload(error) => ApiError::BadRequest(format!(
+            "Could not read principal settings patch payload: {error}"
+        )),
+        _ => ApiError::BadRequest("Could not read principal settings patch payload".to_string()),
     }
 }
 

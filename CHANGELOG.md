@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Principal settings PATCH endpoints now accept bounded RFC 6902 JSON Patch via
+  `application/json-patch+json`, including atomic `test`, precise array updates,
+  literal JSON `null`, and rollback-safe `add`, `remove`, `replace`, `move`, and
+  `copy` operations. Existing `application/json` JSON Merge Patch behavior is
+  unchanged, with `application/merge-patch+json` also accepted as an alias.
 - OpenAPI validation now blocks pull requests, `main`, and tagged releases on
   generated-document drift or unaccepted compatibility breaks from the latest
   stable release. CI publishes the generated document, exact drift diff,

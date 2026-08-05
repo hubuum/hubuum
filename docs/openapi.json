@@ -13699,8 +13699,8 @@
         "tags": [
           "principals"
         ],
-        "summary": "Patch Api V1 Iam Me Settings",
-        "description": "Applies an object-only JSON Merge Patch to the current principal settings. Object values merge recursively; a `null` value removes its key; arrays, strings, numbers, and booleans replace the existing value. An object patch applied to a missing or non-object value starts from an empty object. The document root must be an object. Use PUT, rather than PATCH, when a setting itself must retain a null value.",
+        "summary": "Patch current principal settings",
+        "description": "Selects patch semantics from Content-Type and applies the complete patch to the latest row-locked settings document. `application/json` and `application/merge-patch+json` use object-only JSON Merge Patch: object values merge recursively, `null` removes a key, and other values replace it. `application/json-patch+json` uses bounded RFC 6902 add, remove, replace, move, copy, and test operations. The final document root must remain an object. A no-op returns the unchanged settings without advancing the revision or emitting an event.",
         "operationId": "patchApiV1IamMeSettings",
         "parameters": [
           {
@@ -13714,9 +13714,38 @@
           }
         ],
         "requestBody": {
-          "description": "The settings patch object.",
+          "description": "An object-only JSON Merge Patch or RFC 6902 operation array, selected by Content-Type.",
           "content": {
             "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrincipalSettings"
+              },
+              "example": {
+                "layout": {
+                  "columns": 2,
+                  "sidebar": null
+                },
+                "theme": "dark"
+              }
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrincipalSettingsPatchDocument"
+              },
+              "example": [
+                {
+                  "op": "test",
+                  "path": "/theme",
+                  "value": "light"
+                },
+                {
+                  "op": "replace",
+                  "path": "/theme",
+                  "value": "dark"
+                }
+              ]
+            },
+            "application/merge-patch+json": {
               "schema": {
                 "$ref": "#/components/schemas/PrincipalSettings"
               },
@@ -13733,7 +13762,7 @@
         },
         "responses": {
           "200": {
-            "description": "Merged current principal settings",
+            "description": "Patched current principal settings, or the unchanged settings for a no-op",
             "headers": {
               "ETag": {
                 "schema": {
@@ -13751,7 +13780,7 @@
             }
           },
           "400": {
-            "description": "Settings root is not an object",
+            "description": "Malformed patch, invalid patch bounds, an invalid final root, or a result PostgreSQL JSONB cannot represent",
             "content": {
               "application/json": {
                 "schema": {
@@ -13770,8 +13799,48 @@
               }
             }
           },
+          "409": {
+            "description": "A JSON Patch operation failed, including a failed test; nothing was persisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "412": {
             "description": "Precondition failed because If-Match does not match the current resource revision."
+          },
+          "413": {
+            "description": "The patch request, result, nesting, or cumulative application work exceeds its limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type is not application/json, application/merge-patch+json, or application/json-patch+json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Persistence or event emission failed and the transaction was rolled back",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -14321,8 +14390,8 @@
         "tags": [
           "principals"
         ],
-        "summary": "Patch Api V1 Iam Principals By Principal Id Settings",
-        "description": "Applies an object-only JSON Merge Patch to the target principal settings. Object values merge recursively; a `null` value removes its key; arrays, strings, numbers, and booleans replace the existing value. An object patch applied to a missing or non-object value starts from an empty object. The document root must be an object. Use PUT, rather than PATCH, when a setting itself must retain a null value.",
+        "summary": "Patch principal settings",
+        "description": "Selects patch semantics from Content-Type and applies the complete patch to the latest row-locked settings document. `application/json` and `application/merge-patch+json` use object-only JSON Merge Patch: object values merge recursively, `null` removes a key, and other values replace it. `application/json-patch+json` uses bounded RFC 6902 add, remove, replace, move, copy, and test operations. The final document root must remain an object. A no-op returns the unchanged settings without advancing the revision or emitting an event.",
         "operationId": "patchApiV1IamPrincipalsByPrincipalIdSettings",
         "parameters": [
           {
@@ -14346,9 +14415,38 @@
           }
         ],
         "requestBody": {
-          "description": "The settings patch object.",
+          "description": "An object-only JSON Merge Patch or RFC 6902 operation array, selected by Content-Type.",
           "content": {
             "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrincipalSettings"
+              },
+              "example": {
+                "layout": {
+                  "columns": 2,
+                  "sidebar": null
+                },
+                "theme": "dark"
+              }
+            },
+            "application/json-patch+json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrincipalSettingsPatchDocument"
+              },
+              "example": [
+                {
+                  "op": "test",
+                  "path": "/theme",
+                  "value": "light"
+                },
+                {
+                  "op": "replace",
+                  "path": "/theme",
+                  "value": "dark"
+                }
+              ]
+            },
+            "application/merge-patch+json": {
               "schema": {
                 "$ref": "#/components/schemas/PrincipalSettings"
               },
@@ -14365,7 +14463,7 @@
         },
         "responses": {
           "200": {
-            "description": "Merged principal settings",
+            "description": "Patched principal settings, or the unchanged settings for a no-op",
             "headers": {
               "ETag": {
                 "schema": {
@@ -14383,7 +14481,7 @@
             }
           },
           "400": {
-            "description": "Settings root is not an object",
+            "description": "Malformed patch, invalid patch bounds, an invalid final root, or a result PostgreSQL JSONB cannot represent",
             "content": {
               "application/json": {
                 "schema": {
@@ -14412,8 +14510,48 @@
               }
             }
           },
+          "409": {
+            "description": "A JSON Patch operation failed, including a failed test; nothing was persisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "412": {
             "description": "Precondition failed because If-Match does not match the current resource revision."
+          },
+          "413": {
+            "description": "The patch request, result, nesting, or cumulative application work exceeds its limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type is not application/json, application/merge-patch+json, or application/json-patch+json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Persistence or event emission failed and the transaction was rolled back",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -26803,6 +26941,168 @@
       "PrincipalSettings": {
         "type": "object",
         "description": "An object-only JSON document containing a principal's local preferences.\n\nValues below the document root may be any JSON type. The private\nrepresentation keeps callers from constructing an invalid non-object root."
+      },
+      "PrincipalSettingsPatchDocument": {
+        "type": "array",
+        "items": {
+          "oneOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/AddOperation",
+                  "description": "'add' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "add"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'add' operation"
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/RemoveOperation",
+                  "description": "'remove' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "remove"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'remove' operation"
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ReplaceOperation",
+                  "description": "'replace' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "replace"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'replace' operation"
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/MoveOperation",
+                  "description": "'move' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "move"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'move' operation"
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/CopyOperation",
+                  "description": "'copy' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "copy"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'copy' operation"
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/TestOperation",
+                  "description": "'test' operation"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "test"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "description": "'test' operation"
+            }
+          ],
+          "description": "JSON Patch single patch operation"
+        },
+        "description": "RFC 6902 operations applied relative to the principal-settings document root. Supports add, remove, replace, move, copy, and test. The final root must remain an object. The request and result are limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
+        "examples": [
+          [
+            {
+              "op": "test",
+              "path": "/theme",
+              "value": "light"
+            },
+            {
+              "op": "replace",
+              "path": "/theme",
+              "value": "dark"
+            }
+          ]
+        ],
+        "maxItems": 1000
       },
       "PrincipalSettingsResponse": {
         "type": "object",

@@ -7,9 +7,9 @@ use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, NewEvent, emit_event};
 use crate::models::{
-    NewPrincipal, Principal, PrincipalKind, PrincipalSettings, PrincipalSettingsResponse,
-    ServiceAccount, ServiceAccountPointResponse, User, UserPointResponse, UserResponse,
-    UserWithName,
+    NewPrincipal, Principal, PrincipalKind, PrincipalSettings, PrincipalSettingsPatch,
+    PrincipalSettingsResponse, ServiceAccount, ServiceAccountPointResponse, User,
+    UserPointResponse, UserResponse, UserWithName,
 };
 
 pub trait InsertPrincipalRecord {
@@ -116,6 +116,43 @@ pub async fn mutate_principal_settings(
     input: PrincipalSettings,
     event_context: &EventContext,
 ) -> Result<PrincipalSettingsResponse, ApiError> {
+    let mutation = match mutation {
+        PrincipalSettingsMutation::Replace => PrincipalSettingsWrite::Replace(input),
+        PrincipalSettingsMutation::Patch => {
+            PrincipalSettingsWrite::Patch(PrincipalSettingsPatch::MergePatch(input))
+        }
+        PrincipalSettingsMutation::Reset => PrincipalSettingsWrite::Reset,
+    };
+    mutate_principal_settings_with(pool, principal_id_value, mutation, event_context).await
+}
+
+pub(crate) async fn apply_principal_settings_patch(
+    pool: &DbPool,
+    principal_id_value: i32,
+    patch: PrincipalSettingsPatch,
+    event_context: &EventContext,
+) -> Result<PrincipalSettingsResponse, ApiError> {
+    mutate_principal_settings_with(
+        pool,
+        principal_id_value,
+        PrincipalSettingsWrite::Patch(patch),
+        event_context,
+    )
+    .await
+}
+
+enum PrincipalSettingsWrite {
+    Replace(PrincipalSettings),
+    Patch(PrincipalSettingsPatch),
+    Reset,
+}
+
+async fn mutate_principal_settings_with(
+    pool: &DbPool,
+    principal_id_value: i32,
+    mutation: PrincipalSettingsWrite,
+    event_context: &EventContext,
+) -> Result<PrincipalSettingsResponse, ApiError> {
     use crate::schema::principals;
 
     with_transaction(
@@ -145,9 +182,9 @@ pub async fn mutate_principal_settings(
             .await?;
             let before = stored_principal_settings(principal_id_value, stored_before)?;
             let after = match mutation {
-                PrincipalSettingsMutation::Replace => input,
-                PrincipalSettingsMutation::Patch => before.clone().merge_patch(&input),
-                PrincipalSettingsMutation::Reset => PrincipalSettings::default(),
+                PrincipalSettingsWrite::Replace(settings) => settings,
+                PrincipalSettingsWrite::Patch(patch) => patch.apply(&before)?,
+                PrincipalSettingsWrite::Reset => PrincipalSettings::default(),
             };
 
             if before == after {

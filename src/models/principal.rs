@@ -1,12 +1,16 @@
 use crate::db::prelude::*;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{PartialSchema, ToSchema};
 
 use crate::db::DbPool;
 use crate::db::traits::principal::PrincipalSettingsMutation;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::ResourceRevision;
+use crate::models::json_patch::{
+    BoundedJsonPatch, MAX_JSON_PATCH_BYTES, MAX_JSON_PATCH_OPERATIONS,
+    MAX_JSON_PATCH_POINTER_DEPTH, MAX_JSON_PATCH_RESULT_NESTING_DEPTH, MAX_JSON_PATCH_WORK_BYTES,
+};
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::principals;
 use crate::traits::BackendContext;
@@ -83,6 +87,66 @@ pub struct Principal {
 #[schema(value_type = Object)]
 pub struct PrincipalSettings(serde_json::Value);
 
+/// Maximum number of operations accepted in one principal-settings JSON Patch document.
+pub const MAX_PRINCIPAL_SETTINGS_PATCH_OPERATIONS: usize = MAX_JSON_PATCH_OPERATIONS;
+
+/// Maximum pointer depth accepted in a principal-settings JSON Patch operation.
+pub const MAX_PRINCIPAL_SETTINGS_PATCH_POINTER_DEPTH: usize = MAX_JSON_PATCH_POINTER_DEPTH;
+
+/// Maximum request or result size accepted for principal-settings JSON Patch.
+pub const MAX_PRINCIPAL_SETTINGS_PATCH_BYTES: usize = MAX_JSON_PATCH_BYTES;
+
+/// Maximum cumulative application work accepted for principal-settings JSON Patch.
+pub const MAX_PRINCIPAL_SETTINGS_PATCH_WORK_BYTES: usize = MAX_JSON_PATCH_WORK_BYTES;
+
+/// Maximum result nesting accepted for principal-settings JSON Patch.
+pub const MAX_PRINCIPAL_SETTINGS_PATCH_RESULT_NESTING_DEPTH: usize =
+    MAX_JSON_PATCH_RESULT_NESTING_DEPTH;
+
+/// An RFC 6902 operation array applied relative to the principal-settings root.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct PrincipalSettingsPatchDocument(BoundedJsonPatch);
+
+impl PartialSchema for PrincipalSettingsPatchDocument {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        utoipa::openapi::schema::ArrayBuilder::new()
+            .items(json_patch::PatchOperation::schema())
+            .max_items(Some(MAX_PRINCIPAL_SETTINGS_PATCH_OPERATIONS))
+            .description(Some(
+                "RFC 6902 operations applied relative to the principal-settings document root. Supports add, remove, replace, move, copy, and test. The final root must remain an object. The request and result are limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
+            ))
+            .examples([serde_json::json!([
+                {"op": "test", "path": "/theme", "value": "light"},
+                {"op": "replace", "path": "/theme", "value": "dark"}
+            ])])
+            .build()
+            .into()
+    }
+}
+
+impl ToSchema for PrincipalSettingsPatchDocument {
+    fn schemas(
+        schemas: &mut Vec<(
+            String,
+            utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
+        )>,
+    ) {
+        schemas.push((
+            json_patch::PatchOperation::name().into_owned(),
+            json_patch::PatchOperation::schema(),
+        ));
+        json_patch::PatchOperation::schemas(schemas);
+    }
+}
+
+/// Content-type-selected semantics for a principal-settings PATCH request.
+#[derive(Clone, Debug)]
+pub enum PrincipalSettingsPatch {
+    MergePatch(PrincipalSettings),
+    JsonPatch(PrincipalSettingsPatchDocument),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PrincipalSettingsResponse {
     #[serde(skip, default)]
@@ -144,6 +208,21 @@ impl PrincipalSettings {
             .expect("PrincipalSettings always contains an object");
         merge_settings_objects(target, patch);
         self
+    }
+}
+
+impl PrincipalSettingsPatchDocument {
+    fn apply(&self, settings: &PrincipalSettings) -> Result<PrincipalSettings, ApiError> {
+        PrincipalSettings::new(self.0.apply(settings.as_value())?)
+    }
+}
+
+impl PrincipalSettingsPatch {
+    pub(crate) fn apply(self, settings: &PrincipalSettings) -> Result<PrincipalSettings, ApiError> {
+        match self {
+            Self::MergePatch(patch) => Ok(settings.clone().merge_patch(&patch)),
+            Self::JsonPatch(patch) => patch.apply(settings),
+        }
     }
 }
 
@@ -506,6 +585,24 @@ impl PrincipalID {
             backend.db_pool(),
             self.id(),
             PrincipalSettingsMutation::Patch,
+            patch,
+            event_context,
+        )
+        .await
+    }
+
+    pub async fn apply_settings_patch<C>(
+        &self,
+        backend: &C,
+        patch: PrincipalSettingsPatch,
+        event_context: &EventContext,
+    ) -> Result<PrincipalSettingsResponse, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        crate::db::traits::principal::apply_principal_settings_patch(
+            backend.db_pool(),
+            self.id(),
             patch,
             event_context,
         )

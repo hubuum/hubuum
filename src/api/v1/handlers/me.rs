@@ -11,10 +11,13 @@ use crate::api::v1::handlers::principals::{
 use crate::db::traits::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
 use crate::db::{DbPool, with_revision_precondition_scope};
 use crate::errors::ApiError;
-use crate::extractors::{AccessEventContext, Authenticated, ManagementAccess};
+use crate::extractors::{
+    AccessEventContext, Authenticated, ManagementAccess, PrincipalSettingsPatchPayload,
+};
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    Group, GroupResponse, PrincipalID, PrincipalSettings, PrincipalToken, TokenListState,
+    Group, GroupResponse, PrincipalID, PrincipalSettings, PrincipalSettingsPatchDocument,
+    PrincipalToken, TokenListState,
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::traits::GroupAccessors;
@@ -217,26 +220,40 @@ pub async fn put_my_settings(
     path = "/api/v1/iam/me/settings",
     tag = "principals",
     security(("bearer_auth" = [])),
-    description = "Applies an object-only JSON Merge Patch to the current principal settings. Object values merge recursively; a `null` value removes its key; arrays, strings, numbers, and booleans replace the existing value. An object patch applied to a missing or non-object value starts from an empty object. The document root must be an object. Use PUT, rather than PATCH, when a setting itself must retain a null value.",
+    summary = "Patch current principal settings",
+    description = "Selects patch semantics from Content-Type and applies the complete patch to the latest row-locked settings document. `application/json` and `application/merge-patch+json` use object-only JSON Merge Patch: object values merge recursively, `null` removes a key, and other values replace it. `application/json-patch+json` uses bounded RFC 6902 add, remove, replace, move, copy, and test operations. The final document root must remain an object. A no-op returns the unchanged settings without advancing the revision or emitting an event.",
     request_body(
-        content = PrincipalSettings,
-        description = "The settings patch object.",
-        example = json!({
-            "theme": "dark",
-            "layout": { "sidebar": null, "columns": 2 }
-        })
+        description = "An object-only JSON Merge Patch or RFC 6902 operation array, selected by Content-Type.",
+        content(
+            (PrincipalSettings = "application/json", example = json!({
+                "theme": "dark",
+                "layout": { "sidebar": null, "columns": 2 }
+            })),
+            (PrincipalSettings = "application/merge-patch+json", example = json!({
+                "theme": "dark",
+                "layout": { "sidebar": null, "columns": 2 }
+            })),
+            (PrincipalSettingsPatchDocument = "application/json-patch+json", example = json!([
+                { "op": "test", "path": "/theme", "value": "light" },
+                { "op": "replace", "path": "/theme", "value": "dark" }
+            ]))
+        )
     ),
     responses(
-        (status = 200, description = "Merged current principal settings", body = crate::models::PrincipalSettingsResponse),
-        (status = 400, description = "Settings root is not an object", body = ApiErrorResponse),
-        (status = 401, description = "Unauthorized", body = ApiErrorResponse)
+        (status = 200, description = "Patched current principal settings, or the unchanged settings for a no-op", body = crate::models::PrincipalSettingsResponse),
+        (status = 400, description = "Malformed patch, invalid patch bounds, an invalid final root, or a result PostgreSQL JSONB cannot represent", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 409, description = "A JSON Patch operation failed, including a failed test; nothing was persisted", body = ApiErrorResponse),
+        (status = 413, description = "The patch request, result, nesting, or cumulative application work exceeds its limit", body = ApiErrorResponse),
+        (status = 415, description = "Content-Type is not application/json, application/merge-patch+json, or application/json-patch+json", body = ApiErrorResponse),
+        (status = 500, description = "Persistence or event emission failed and the transaction was rolled back", body = ApiErrorResponse)
     )
 )]
 #[patch("/settings")]
 pub async fn patch_my_settings(
     pool: web::Data<DbPool>,
     requestor: Authenticated,
-    patch: web::Json<PrincipalSettings>,
+    patch: PrincipalSettingsPatchPayload,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let principal_id = PrincipalID::new(requestor.principal.id)?;
@@ -245,7 +262,7 @@ pub async fn patch_my_settings(
     let event_context = requestor.event_context(&req);
     let settings = with_revision_precondition_scope(
         precondition,
-        principal_id.patch_settings(&pool, patch.into_inner(), &event_context),
+        principal_id.apply_settings_patch(&pool, patch.into_inner(), &event_context),
     )
     .await?;
     ApiResponse::ok_revisioned(settings)
