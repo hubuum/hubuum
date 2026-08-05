@@ -31,9 +31,68 @@ sha256_file() {
   fi
 }
 
+for json_path in "$candidate_path" "$metadata_path" "$exceptions_path"; do
+  jq --exit-status . "$json_path" >/dev/null
+done
+
+if ! jq --exit-status '
+  type == "object" and
+  (.status == "available" or .status == "unavailable") and
+  (.source | type == "string" and length > 0) and
+  (.candidate_ref | type == "string" and length > 0) and
+  (.candidate_sha | type == "string" and length > 0) and
+  if .status == "available" then
+    (.tag | type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+    (.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    .reason == null
+  else
+    .tag == null and
+    .sha256 == null and
+    (.reason | type == "string" and length > 0)
+  end
+' "$metadata_path" >/dev/null; then
+  echo "Invalid OpenAPI baseline metadata: $metadata_path" >&2
+  exit 1
+fi
+
+today="${HUBUUM_OPENAPI_TODAY:-$(date -u +%F)}"
+if ! jq --null-input --exit-status --arg date "$today" '
+  try (
+    ($date | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+    (($date + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) == $date)
+  ) catch false
+' >/dev/null; then
+  echo "Invalid OpenAPI policy date: $today" >&2
+  exit 1
+fi
+
+if ! jq --exit-status '
+  def valid_date:
+    try (
+      (type == "string") and
+      test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") and
+      (((. + "T00:00:00Z") | fromdateiso8601 | strftime("%Y-%m-%d")) == .)
+    ) catch false;
+  .schema_version == 1 and
+  (.exceptions | type == "array") and
+  all(.exceptions[];
+    (.id | type == "string" and length > 0) and
+    (.baseline | type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+    (.expires | valid_date) and
+    (.reason | type == "string" and length > 0) and
+    (.migration | type == "string" and length > 0) and
+    (.changelog_entry | type == "string" and length > 0) and
+    (.fingerprints | type == "array" and length > 0) and
+    all(.fingerprints[]; type == "string" and length > 0)
+  )
+' "$exceptions_path" >/dev/null; then
+  echo "Invalid OpenAPI compatibility exception file: $exceptions_path" >&2
+  exit 1
+fi
+
+candidate_sha256="$(sha256_file "$candidate_path")"
 metadata_status="$(jq --raw-output '.status' "$metadata_path")"
 if [[ "$metadata_status" == "unavailable" ]]; then
-  candidate_sha256="$(sha256_file "$candidate_path")"
   jq --null-input \
     --slurpfile baseline "$metadata_path" \
     --arg candidate_sha256 "$candidate_sha256" \
@@ -58,30 +117,11 @@ if [[ "$metadata_status" == "unavailable" ]]; then
   exit 0
 fi
 
-if [[ "$metadata_status" != "available" ]]; then
-  echo "Unknown baseline metadata status: $metadata_status" >&2
-  exit 1
-fi
-
-for json_path in "$baseline_path" "$candidate_path" "$metadata_path" "$exceptions_path"; do
-  jq --exit-status . "$json_path" >/dev/null
-done
-
-if ! jq --exit-status '
-  .schema_version == 1 and
-  (.exceptions | type == "array") and
-  all(.exceptions[];
-    (.id | type == "string" and length > 0) and
-    (.baseline | type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) and
-    (.expires | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
-    (.reason | type == "string" and length > 0) and
-    (.migration | type == "string" and length > 0) and
-    (.changelog_entry | type == "string" and length > 0) and
-    (.fingerprints | type == "array" and length > 0) and
-    all(.fingerprints[]; type == "string" and length > 0)
-  )
-' "$exceptions_path" >/dev/null; then
-  echo "Invalid OpenAPI compatibility exception file: $exceptions_path" >&2
+jq --exit-status . "$baseline_path" >/dev/null
+baseline_sha256="$(sha256_file "$baseline_path")"
+expected_baseline_sha256="$(jq --raw-output '.sha256' "$metadata_path")"
+if [[ "$baseline_sha256" != "$expected_baseline_sha256" ]]; then
+  echo "OpenAPI baseline digest mismatch: expected $expected_baseline_sha256, got $baseline_sha256" >&2
   exit 1
 fi
 
@@ -162,15 +202,16 @@ awk '
   in_unreleased { print }
 ' "$changelog_path" > "$checked_changelog_path"
 if [[ "$candidate_version" != "$baseline_version" ]]; then
-  awk -v version="$candidate_version" '
-    $0 ~ ("^## \\[" version "\\]( |$)") { in_release = 1; next }
+  awk -v heading="## [$candidate_version]" '
+    index($0, heading) == 1 &&
+      (length($0) == length(heading) || substr($0, length(heading) + 1, 1) == " ") {
+      in_release = 1
+      next
+    }
     in_release && /^## \[/ { exit }
     in_release { print }
   ' "$changelog_path" >> "$checked_changelog_path"
 fi
-
-today="${HUBUUM_OPENAPI_TODAY:-$(date -u +%F)}"
-candidate_sha256="$(sha256_file "$candidate_path")"
 
 jq --null-input \
   --slurpfile changes "$all_changes" \

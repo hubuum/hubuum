@@ -13,6 +13,14 @@ metadata="$temporary_dir/metadata.json"
 exceptions="$temporary_dir/exceptions.json"
 changelog="$temporary_dir/CHANGELOG.md"
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 write_base() {
   jq --null-input '{
     openapi: "3.1.0",
@@ -65,13 +73,16 @@ write_base() {
 }
 
 write_metadata() {
+  local baseline_sha256
+  baseline_sha256="$(sha256_file "$base")"
   jq --null-input \
     --arg source "fixture:$base" \
+    --arg baseline_sha256 "$baseline_sha256" \
     '{
       status: "available",
       tag: "v1.0.0",
       source: $source,
-      sha256: "fixture",
+      sha256: $baseline_sha256,
       reason: null,
       candidate_ref: "test",
       candidate_sha: "test"
@@ -98,7 +109,7 @@ write_changelog() {
 run_checker() {
   local report_dir="$1"
   OASDIFF_BIN="$oasdiff_bin" \
-    HUBUUM_OPENAPI_TODAY="2026-08-04" \
+    HUBUUM_OPENAPI_TODAY="${HUBUUM_OPENAPI_TODAY:-2026-08-04}" \
     "$checker" \
     "$base" \
     "$candidate" \
@@ -106,6 +117,22 @@ run_checker() {
     "$exceptions" \
     "$changelog" \
     "$report_dir"
+}
+
+assert_rejected_with() {
+  local name="$1"
+  local expected="$2"
+  local report_dir="$temporary_dir/$name"
+  local stderr_path="$report_dir.stderr"
+  if run_checker "$report_dir" >/dev/null 2>"$stderr_path"; then
+    echo "Expected invalid fixture '$name' to be rejected" >&2
+    exit 1
+  fi
+  if ! grep --fixed-strings --quiet "$expected" "$stderr_path"; then
+    echo "Expected invalid fixture '$name' to report '$expected', got:" >&2
+    cat "$stderr_path" >&2
+    exit 1
+  fi
 }
 
 assert_passes() {
@@ -146,6 +173,14 @@ jq --exit-status \
   '.status == "available" and .tag == "v1.0.0" and (.sha256 | length == 64)' \
   "$resolver_report/baseline-metadata.json" >/dev/null
 
+# The compared baseline must match the digest recorded by the resolver.
+cp "$base" "$candidate"
+jq '.sha256 = "0000000000000000000000000000000000000000000000000000000000000000"' \
+  "$metadata" > "$temporary_dir/wrong-digest.json"
+cp "$temporary_dir/wrong-digest.json" "$metadata"
+assert_rejected_with "baseline-digest" "OpenAPI baseline digest mismatch"
+write_metadata
+
 # Repositories without a stable release record an explicit skipped result.
 cp "$base" "$candidate"
 jq '.status = "unavailable"
@@ -156,7 +191,26 @@ cp "$temporary_dir/unavailable.json" "$metadata"
 no_baseline_report="$temporary_dir/no-baseline"
 run_checker "$no_baseline_report"
 jq --exit-status '.status == "skipped"' "$no_baseline_report/compatibility.json" >/dev/null
+
+# A missing baseline does not bypass validation of the checked-in policy.
+jq --null-input '{
+  schema_version: 1,
+  exceptions: [{
+    id: "invalid-date",
+    baseline: "v1.0.0",
+    expires: "2026-02-29",
+    reason: "fixture",
+    migration: "fixture",
+    changelog_entry: "fixture",
+    fingerprints: ["fixture"]
+  }]
+}' > "$exceptions"
+assert_rejected_with "invalid-expiry" "Invalid OpenAPI compatibility exception file"
+write_empty_exceptions
 write_metadata
+
+HUBUUM_OPENAPI_TODAY="2026-02-29" \
+  assert_rejected_with "invalid-policy-date" "Invalid OpenAPI policy date"
 
 # Additive operations and optional response fields are compatible.
 jq '.paths["/health"] = {get: {responses: {"200": {description: "ok"}}}}
@@ -237,9 +291,23 @@ jq --exit-status \
   '.counts.accepted == 1 and .breaking[0].exception_id == "accepted-fixture-break"' \
   "$temporary_dir/accepted-break/compatibility.json" >/dev/null
 
-# Release preparation may move the approved text into the candidate version section.
+# Candidate versions are matched as literal changelog headings, not regular expressions.
 jq '.info.version = "1.0.1"' "$candidate" > "$temporary_dir/release-candidate.json"
 cp "$temporary_dir/release-candidate.json" "$candidate"
+{
+  echo "# Changelog"
+  echo
+  echo "## [Unreleased]"
+  echo
+  echo "## [1x0x1] - 2026-08-04"
+  echo
+  echo "$changelog_entry $migration"
+  echo
+  echo "## [1.0.0]"
+} > "$changelog"
+assert_fails_with "literal-release-heading" "api-removed-without-deprecation"
+
+# Release preparation may move the approved text into the candidate version section.
 {
   echo "# Changelog"
   echo
