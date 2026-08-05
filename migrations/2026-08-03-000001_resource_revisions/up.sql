@@ -268,7 +268,8 @@ BEGIN
         WHERE conrelid = 'events'::regclass
           AND conname = 'events_before_revision_positive'
     ) THEN
-        ALTER TABLE events ADD CONSTRAINT events_before_revision_positive CHECK (before_revision > 0) NOT VALID;
+        ALTER TABLE events ADD CONSTRAINT events_before_revision_positive
+            CHECK (before_revision > 0) NOT VALID;
     END IF;
     IF NOT EXISTS (
         SELECT 1
@@ -276,7 +277,8 @@ BEGIN
         WHERE conrelid = 'events'::regclass
           AND conname = 'events_after_revision_positive'
     ) THEN
-        ALTER TABLE events ADD CONSTRAINT events_after_revision_positive CHECK (after_revision > 0) NOT VALID;
+        ALTER TABLE events ADD CONSTRAINT events_after_revision_positive
+            CHECK (after_revision > 0) NOT VALID;
     END IF;
 END $$;
 ALTER TABLE events VALIDATE CONSTRAINT events_before_revision_positive;

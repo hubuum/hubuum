@@ -34,6 +34,29 @@ report_failure() {
   failures=$((failures + 1))
 }
 
+sql_statements() {
+  local file="$1"
+
+  awk '
+    /^[[:space:]]*(--|$)/ { next }
+    statement == "" { first_line = NR }
+    {
+      statement = statement " " $0
+      if ($0 ~ /;/) {
+        sub(/^[[:space:]]+/, "", statement)
+        print first_line ":" statement
+        statement = ""
+      }
+    }
+    END {
+      if (statement != "") {
+        sub(/^[[:space:]]+/, "", statement)
+        print first_line ":" statement
+      }
+    }
+  ' "$file"
+}
+
 while IFS= read -r file; do
   [[ -n "$file" ]] || continue
   checked=$((checked + 1))
@@ -62,7 +85,7 @@ while IFS= read -r file; do
       && [[ ! "$upper_statement" =~ INDEX[[:space:]]+CONCURRENTLY[[:space:]] ]]; then
       report_failure "$file" "$line_number" "indexes on an adjacent-release path must be created concurrently"
     fi
-  done < <(grep -nEiv '^[[:space:]]*(--|$)' "$repository_root/$file" || true)
+  done < <(sql_statements "$repository_root/$file")
 done < <(
   git -C "$repository_root" diff --diff-filter=AM --name-only "$base_ref"...HEAD -- 'migrations/*/up.sql'
 )

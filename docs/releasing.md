@@ -68,7 +68,7 @@ release (`N-1`) to the candidate (`N`). It resolves `N-1` through the GitHub
 release API, pulls the release image, records its immutable digest, and tests it
 with the candidate against one PostgreSQL database. The report records the
 candidate SHA, migration set and duration, maximum observed API latency and
-outage, each test phase, and failure logs.
+outage, the terminal test phase, and failure logs.
 
 The certified sequence drains old workers, keeps the old API under ordinary
 read probes while candidate migrations run, starts both API versions for

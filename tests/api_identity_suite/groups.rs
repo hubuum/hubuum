@@ -11,8 +11,8 @@ mod tests {
     use crate::models::group::{Group, GroupResponse, NewGroup, UpdateGroup};
     use crate::models::user::{NewUser, User};
     use crate::models::{
-        IdentityScope, MembershipPrincipalResponse, NewIdentityScope, Principal, PrincipalGroup,
-        PrincipalID, PrincipalKind, PrincipalMemberResponse,
+        IdentityScope, LDAP_PROVIDER_KIND, MembershipPrincipalResponse, NewIdentityScope,
+        Principal, PrincipalGroup, PrincipalID, PrincipalKind, PrincipalMemberResponse,
     };
     use crate::pagination::NEXT_CURSOR_HEADER;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
@@ -33,19 +33,15 @@ mod tests {
 
         let context = test_context;
         let scope_name = context.scoped_name("legacy_identity_scope_upsert");
-        let created = ensure_identity_scope(
-            &context.pool,
-            &scope_name,
-            crate::models::LDAP_PROVIDER_KIND,
-        )
-        .await
-        .unwrap();
+        let created = ensure_identity_scope(&context.pool, &scope_name, LDAP_PROVIDER_KIND)
+            .await
+            .unwrap();
 
         let returned = with_connection(&context.pool, async |conn| {
             diesel::insert_into(identity_scopes::table)
                 .values(NewIdentityScope {
                     name: &scope_name,
-                    provider_kind: crate::models::LDAP_PROVIDER_KIND,
+                    provider_kind: LDAP_PROVIDER_KIND,
                 })
                 .on_conflict(identity_scopes::name)
                 .do_update()

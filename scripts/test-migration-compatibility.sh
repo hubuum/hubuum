@@ -48,4 +48,16 @@ if bash "$test_root/scripts/check-migration-compatibility.sh" v1.0.0 >/dev/null 
   exit 1
 fi
 
+printf '%s\n' \
+  'ALTER TABLE widgets' \
+  '    ADD CONSTRAINT widgets_name_required' \
+  '    CHECK (length(name) > 0);' \
+  > "$test_root/migrations/0002_candidate/up.sql"
+git -C "$test_root" add .
+git -C "$test_root" commit --quiet -m unsafe-multiline-constraint
+if bash "$test_root/scripts/check-migration-compatibility.sh" v1.0.0 >/dev/null 2>&1; then
+  echo "multiline blocking constraint unexpectedly passed compatibility review" >&2
+  exit 1
+fi
+
 echo "Migration compatibility checker tests passed."

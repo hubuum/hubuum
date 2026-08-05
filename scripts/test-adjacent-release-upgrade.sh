@@ -47,22 +47,43 @@ compose=(
   --file "$test_root/compose.yml"
 )
 
+applied_migrations() {
+  local migration_table
+  local versions
+
+  if ! "${compose[@]}" ps postgres >/dev/null 2>&1; then
+    printf '[]'
+    return
+  fi
+  migration_table="$(
+    "${compose[@]}" exec -T postgres psql \
+      --username hubuum --dbname hubuum --tuples-only --no-align \
+      --command "SELECT to_regclass('public.__diesel_schema_migrations')" \
+      2>/dev/null || true
+  )"
+  if [[ "$migration_table" != "__diesel_schema_migrations" ]]; then
+    printf '[]'
+    return
+  fi
+  versions="$(
+    "${compose[@]}" exec -T postgres psql \
+      --username hubuum --dbname hubuum --tuples-only --no-align \
+      --command 'SELECT version FROM __diesel_schema_migrations ORDER BY version' \
+      2>/dev/null || true
+  )"
+  jq --null-input --arg versions "$versions" \
+    '$versions | split("\n") | map(select(length > 0))'
+}
+
 write_report() {
   local result="$1"
   local previous_digest
   local candidate_id
-  local migrations="[]"
+  local migrations
 
   previous_digest="${previous_image##*@}"
   candidate_id="$(docker image inspect "$candidate_image" --format '{{.Id}}' 2>/dev/null || true)"
-  if "${compose[@]}" ps postgres >/dev/null 2>&1; then
-    migrations="$(
-      "${compose[@]}" exec -T postgres psql \
-        --username hubuum --dbname hubuum --tuples-only --no-align \
-        --command 'SELECT version FROM __diesel_schema_migrations ORDER BY version' \
-        2>/dev/null | jq --raw-input --slurp 'split("\n") | map(select(length > 0))'
-    )"
-  fi
+  migrations="$(applied_migrations)"
 
   jq --null-input \
     --arg result "$result" \
@@ -359,6 +380,7 @@ probe_previous_api() {
   local url
   local status
   local duration
+  local result
 
   url="$(service_url previous-api)/api/v1/tasks/$probe_task_id"
   while [[ ! -e "$probe_stop_file" ]]; do
@@ -373,7 +395,10 @@ probe_previous_api() {
       duration="${result#*$'\t'}"
     else
       status="curl-error"
-      duration="3"
+      duration="${result#*$'\t'}"
+      if [[ "$result" != *$'\t'* || ! "$duration" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        duration="3"
+      fi
     fi
     printf '%s\t%s\n' "$status" "$duration" >> "$probe_log"
     sleep 0.1
@@ -388,8 +413,8 @@ analyze_probes() {
   max_probe_outage_seconds="$(
     awk '
       $1 == 200 {current=0; next}
-      {current += 0.1; if (current > max) max=current}
-      END {printf "%.1f", max + 0}
+      {current += $2 + 0.1; if (current > max) max=current}
+      END {printf "%.6f", max + 0}
     ' "$probe_log"
   )"
   if ((failures > 0)); then
