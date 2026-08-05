@@ -14,6 +14,7 @@ READY_PROBES_FILE="$TEST_ROOT/enable-ready-probes"
 PROBE_PIDS=""
 HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS="${HUBUUM_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-12}"
 HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS="${HUBUUM_ROLLOUT_CADDY_TIMEOUT_SECONDS:-45}"
+HUBUUM_ZERO_DOWNTIME_PROBE_TIMEOUT_SECONDS="${HUBUUM_ZERO_DOWNTIME_PROBE_TIMEOUT_SECONDS:-7}"
 INSTALL_MODE="backend"
 
 docker image inspect "$HUBUUM_TEST_IMAGE" >/dev/null 2>&1 || {
@@ -260,7 +261,8 @@ probe_worker() {
     fi
 
     if status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-      --connect-timeout 1 --max-time 2 "$PUBLIC_URL/$path" \
+      --connect-timeout 1 --max-time "$HUBUUM_ZERO_DOWNTIME_PROBE_TIMEOUT_SECONDS" \
+      "$PUBLIC_URL/$path" \
       2>> "$TEST_ROOT/probe-${worker}.stderr")"; then
       printf '%s %s\n' "$path" "$status" >> "$TEST_ROOT/probe-${worker}.log"
     else
@@ -295,6 +297,12 @@ assert_probes_succeeded() {
   if [[ -s "$failures" ]]; then
     echo "ERROR: public HTTP requests failed during the rollout:" >&2
     cat "$failures" >&2
+    for stderr_file in "$TEST_ROOT"/probe-*.stderr; do
+      if [[ -s "$stderr_file" ]]; then
+        echo "--- $stderr_file" >&2
+        cat "$stderr_file" >&2
+      fi
+    done
     return 1
   fi
   if (( request_count < 100 )); then
@@ -353,6 +361,9 @@ container_uses_candidate_image() {
 
 # shellcheck source=scripts/single-host-rollout.sh
 source "$REPOSITORY_ROOT/scripts/single-host-rollout.sh"
+hubuum_require_positive_seconds \
+  "HUBUUM_ZERO_DOWNTIME_PROBE_TIMEOUT_SECONDS" \
+  "$HUBUUM_ZERO_DOWNTIME_PROBE_TIMEOUT_SECONDS"
 
 echo "Starting the live single-host fixture on Hubuum v0.0.1..."
 COMPOSE_CMD=("${BASE_COMPOSE_CMD[@]}" --file "$TEST_ROOT/old-version.yml")

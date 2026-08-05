@@ -20,6 +20,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Token retention now writes a system-authored `token.purged` audit event with
   the exact final hash-free token and scope snapshot before deleting each token,
   including legacy rows whose earlier events predate complete scope snapshots.
+- Release CI now certifies the immediately previous stable image by immutable
+  digest through migration, a live mixed-version API interval, application
+  rollback, and candidate restoration. Reports include migration timing and API
+  availability measurements while the fixed earliest-release test remains.
 
 ### Changed
 
@@ -44,6 +48,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Import v2 collection, class, and object items support `create_only`,
   unconditional `overwrite`, and numeric `if_revision` write conditions that
   are rechecked by queued workers under row locks.
+- Revision indexes are built concurrently in a separate non-transactional
+  migration so an adjacent-release migration does not take blocking index-build
+  locks on live tables.
 
 - **Breaking (HTTP API):** entity JSON now contains `revision`; principal
   settings return `{revision, settings}`, SQL permission reads return
@@ -74,7 +81,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking (backup/restore):** full backups are version 4 and restore rejects
   version 3. Version 4 preserves authoritative, authorization-set, event, and
   temporal revisions. Operators must create a new backup before restore and
-  must deploy this release without mixed-version writers.
+  quiesce backup, restore, and import operations during the certified adjacent
+  API overlap.
 - **Breaking (imports):** imports are version 2 and version 1 is rejected.
   Producers must emit the v2 version number and may attach per-item write
   conditions where supported.

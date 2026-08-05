@@ -170,6 +170,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Install clippy
         run: rustup component add clippy
       - name: Install feature build dependencies
@@ -186,6 +188,10 @@ jobs:
         run: bash scripts/test-install-script-refresh.sh
       - name: Test single-host rolling update
         run: bash scripts/test-single-host-rollout.sh
+      - name: Test migration compatibility policy
+        run: |
+          bash scripts/test-migration-compatibility.sh
+          bash scripts/check-migration-compatibility.sh
 
   release-metadata:
     name: Release metadata
@@ -589,7 +595,15 @@ jobs:
   container-build:
     name: Container build (production features)
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.run_container == 'true'
+    if: >-
+      always() &&
+      (
+        startsWith(github.ref, 'refs/tags/v') ||
+        (
+          (github.event_name == 'pull_request' || github.ref == 'refs/heads/main') &&
+          needs.changes.outputs.run_container == 'true'
+        )
+      )
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -694,6 +708,42 @@ jobs:
           HUBUUM_TEST_IMAGE: hubuum-server:ci
           HUBUUM_OLD_TEST_IMAGE: ghcr.io/hubuum/hubuum-server:v0.0.1@sha256:061fc4cb3af57e2db06c33012db93e60834d4618815e30af4ebb4aa05a21f445
         run: bash scripts/test-single-host-zero-downtime.sh
+      - name: Resolve adjacent stable release
+        id: adjacent_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HUBUUM_COMPATIBILITY_REPORT: compatibility-report/release-metadata.json
+        run: bash scripts/resolve-adjacent-release.sh
+      - name: Test adjacent-release upgrade and application rollback
+        env:
+          HUBUUM_TEST_IMAGE: hubuum-server:ci
+          HUBUUM_PREVIOUS_IMAGE: ${{ steps.adjacent_release.outputs.previous_image }}
+          HUBUUM_PREVIOUS_RELEASE_TAG: ${{ steps.adjacent_release.outputs.previous_tag }}
+          HUBUUM_COMPATIBILITY_REPORT_DIR: compatibility-report
+        run: bash scripts/test-adjacent-release-upgrade.sh
+      - name: Summarize adjacent-release compatibility
+        if: always() && hashFiles('compatibility-report/report.json') != ''
+        run: |
+          {
+            echo "### Adjacent-release compatibility"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Result | $(jq --raw-output '.result' compatibility-report/report.json) |"
+            echo "| Previous release | $(jq --raw-output '.previous_release.tag' compatibility-report/report.json) |"
+            echo "| Previous digest | $(jq --raw-output '.previous_release.digest' compatibility-report/report.json) |"
+            echo "| Candidate SHA | $(jq --raw-output '.candidate.sha' compatibility-report/report.json) |"
+            echo "| Migration seconds | $(jq --raw-output '.migration.seconds' compatibility-report/report.json) |"
+            echo "| Maximum API latency | $(jq --raw-output '.migration.max_api_latency_seconds' compatibility-report/report.json) s |"
+            echo "| Maximum observed outage | $(jq --raw-output '.migration.max_observed_api_outage_seconds' compatibility-report/report.json) s |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload adjacent-release compatibility report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: adjacent-release-compatibility
+          path: compatibility-report
+          if-no-files-found: error
 
   ci-gate:
     name: >-
@@ -769,7 +819,9 @@ jobs:
   validate-tag-release:
     name: Validate tagged release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: verify-tag-main-ci-success
+    needs:
+      - verify-tag-main-ci-success
+      - container-build
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository

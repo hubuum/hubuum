@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS hubuumobject_relation_revision_id_idx;
