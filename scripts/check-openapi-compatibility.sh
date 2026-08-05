@@ -36,19 +36,25 @@ for json_path in "$candidate_path" "$metadata_path" "$exceptions_path"; do
 done
 
 if ! jq --exit-status '
+  def nonblank_string:
+    type == "string" and test("\\S");
+  def stable_tag:
+    nonblank_string and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$");
+  def sha256_digest:
+    type == "string" and test("^[0-9a-f]{64}$");
   type == "object" and
   (.status == "available" or .status == "unavailable") and
-  (.source | type == "string" and length > 0) and
-  (.candidate_ref | type == "string" and length > 0) and
-  (.candidate_sha | type == "string" and length > 0) and
+  (.source | nonblank_string) and
+  (.candidate_ref | nonblank_string) and
+  (.candidate_sha | nonblank_string) and
   if .status == "available" then
-    (.tag | type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) and
-    (.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.tag | stable_tag) and
+    (.sha256 | sha256_digest) and
     .reason == null
   else
     .tag == null and
     .sha256 == null and
-    (.reason | type == "string" and length > 0)
+    (.reason | nonblank_string)
   end
 ' "$metadata_path" >/dev/null; then
   echo "Invalid OpenAPI baseline metadata: $metadata_path" >&2
@@ -67,6 +73,10 @@ if ! jq --null-input --exit-status --arg date "$today" '
 fi
 
 if ! jq --exit-status '
+  def nonblank_string:
+    type == "string" and test("\\S");
+  def stable_tag:
+    nonblank_string and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$");
   def valid_date:
     try (
       (type == "string") and
@@ -76,14 +86,14 @@ if ! jq --exit-status '
   .schema_version == 1 and
   (.exceptions | type == "array") and
   all(.exceptions[];
-    (.id | type == "string" and length > 0) and
-    (.baseline | type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+    (.id | type == "string" and test("^[a-z0-9]+(-[a-z0-9]+)*$")) and
+    (.baseline | stable_tag) and
     (.expires | valid_date) and
-    (.reason | type == "string" and length > 0) and
-    (.migration | type == "string" and length > 0) and
-    (.changelog_entry | type == "string" and length > 0) and
+    (.reason | nonblank_string) and
+    (.migration | nonblank_string) and
+    (.changelog_entry | nonblank_string) and
     (.fingerprints | type == "array" and length > 0) and
-    all(.fingerprints[]; type == "string" and length > 0)
+    all(.fingerprints[]; nonblank_string)
   )
 ' "$exceptions_path" >/dev/null; then
   echo "Invalid OpenAPI compatibility exception file: $exceptions_path" >&2
@@ -231,7 +241,14 @@ jq --null-input \
       | select($exception.fingerprints | index($fingerprint))
       | $exception
     ) // null;
-  def duplicate_errors:
+  def duplicate_id_errors:
+    [
+      $policy[0].exceptions
+      | group_by(.id)[]
+      | select(length > 1)
+      | "duplicate exception id `\(.[0].id)`"
+    ];
+  def duplicate_fingerprint_errors:
     [
       $policy[0].exceptions
       | group_by(.baseline)[]
@@ -279,7 +296,12 @@ jq --null-input \
           exception_id: ($exception.id // null)
         }
     )) as $breaking
-  | (duplicate_errors + $documentation_errors + $unused_errors) as $exception_errors
+  | (
+      duplicate_id_errors +
+      duplicate_fingerprint_errors +
+      $documentation_errors +
+      $unused_errors
+    ) as $exception_errors
   | ($breaking | map(select(.accepted))) as $accepted
   | ($breaking | map(select(.accepted | not))) as $unaccepted
   | {

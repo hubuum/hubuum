@@ -135,6 +135,20 @@ assert_rejected_with() {
   fi
 }
 
+assert_policy_fails_with() {
+  local name="$1"
+  local expected="$2"
+  local report_dir="$temporary_dir/$name"
+  if run_checker "$report_dir" >/dev/null 2>&1; then
+    echo "Expected policy fixture '$name' to fail" >&2
+    exit 1
+  fi
+  jq --exit-status \
+    --arg expected "$expected" \
+    '.exception_errors | any(contains($expected))' \
+    "$report_dir/compatibility.json" >/dev/null
+}
+
 assert_passes() {
   local name="$1"
   local report_dir="$temporary_dir/$name"
@@ -206,6 +220,11 @@ jq --null-input '{
   }]
 }' > "$exceptions"
 assert_rejected_with "invalid-expiry" "Invalid OpenAPI compatibility exception file"
+
+jq '.exceptions[0].expires = "2099-01-01" | .exceptions[0].reason = "   "' \
+  "$exceptions" > "$temporary_dir/blank-reason.json"
+cp "$temporary_dir/blank-reason.json" "$exceptions"
+assert_rejected_with "blank-reason" "Invalid OpenAPI compatibility exception file"
 write_empty_exceptions
 write_metadata
 
@@ -284,12 +303,19 @@ jq --null-input \
       migration: $migration,
       changelog_entry: $changelog_entry,
       fingerprints: [$fingerprint]
-    }]
-  }' > "$exceptions"
+  }]
+}' > "$exceptions"
+cp "$exceptions" "$temporary_dir/accepted-policy.json"
 assert_passes "accepted-break"
 jq --exit-status \
   '.counts.accepted == 1 and .breaking[0].exception_id == "accepted-fixture-break"' \
   "$temporary_dir/accepted-break/compatibility.json" >/dev/null
+
+# Exception IDs remain unique so reports and review references are unambiguous.
+jq '.exceptions += [.exceptions[0]]' "$exceptions" > "$temporary_dir/duplicate-id.json"
+cp "$temporary_dir/duplicate-id.json" "$exceptions"
+assert_policy_fails_with "duplicate-id" "duplicate exception id"
+cp "$temporary_dir/accepted-policy.json" "$exceptions"
 
 # Candidate versions are matched as literal changelog headings, not regular expressions.
 jq '.info.version = "1.0.1"' "$candidate" > "$temporary_dir/release-candidate.json"

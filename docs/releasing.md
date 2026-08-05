@@ -80,8 +80,9 @@ digest, and publishes one `openapi-contract` artifact containing:
 
 Breaking findings fail the job unless each fingerprint is listed in
 `.github/openapi-breaking-exceptions.json`. An exception must name the exact
-baseline, have a future expiry date, explain the decision, provide client
-migration guidance, and point to matching text in the `[Unreleased]` changelog.
+baseline, have a unique stable identifier and future expiry date, explain the
+decision, provide client migration guidance, and point to matching text in the
+`[Unreleased]` changelog.
 Exceptions are never wildcards: every fingerprint must still be present, and
 unused fingerprints fail while their baseline is current. An exception for an
 older baseline becomes inactive automatically when a new stable release is
