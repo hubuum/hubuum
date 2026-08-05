@@ -5,7 +5,13 @@ repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 base_ref="${1:-}"
 
 if [[ -z "$base_ref" ]]; then
-  base_ref="$(git -C "$repository_root" tag --list 'v[0-9]*' --sort=-v:refname | head -n 1)"
+  while IFS= read -r candidate_ref; do
+    if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "$candidate_ref" == "${GITHUB_REF_NAME:-}" ]]; then
+      continue
+    fi
+    base_ref="$candidate_ref"
+    break
+  done < <(git -C "$repository_root" tag --list 'v[0-9]*' --sort=-v:refname)
 fi
 [[ -n "$base_ref" ]] || {
   echo "ERROR: no stable release tag is available for migration review" >&2

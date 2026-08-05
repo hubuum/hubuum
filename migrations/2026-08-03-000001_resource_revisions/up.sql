@@ -18,7 +18,10 @@ BEGIN
         'remote_targets_history'
     ]
     LOOP
-        EXECUTE format('ALTER TABLE %I ADD COLUMN revision BIGINT DEFAULT 1', table_name);
+        EXECUTE format(
+            'ALTER TABLE %I ADD COLUMN IF NOT EXISTS revision BIGINT DEFAULT 1',
+            table_name
+        );
     END LOOP;
 END $$;
 
@@ -43,7 +46,10 @@ BEGIN
         'tokens'
     ]
     LOOP
-        EXECUTE format('ALTER TABLE %I ADD COLUMN revision BIGINT DEFAULT 1', table_name);
+        EXECUTE format(
+            'ALTER TABLE %I ADD COLUMN IF NOT EXISTS revision BIGINT DEFAULT 1',
+            table_name
+        );
     END LOOP;
 END $$;
 
@@ -58,11 +64,18 @@ BEGIN
         'remote_targets', 'event_sinks', 'event_subscriptions', 'tokens'
     ]
     LOOP
-        EXECUTE format(
-            'ALTER TABLE %I ADD CONSTRAINT %I CHECK (revision > 0) NOT VALID',
-            table_name,
-            table_name || '_revision_positive'
-        );
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = to_regclass(table_name)
+              AND conname = table_name || '_revision_positive'
+        ) THEN
+            EXECUTE format(
+                'ALTER TABLE %I ADD CONSTRAINT %I CHECK (revision > 0) NOT VALID',
+                table_name,
+                table_name || '_revision_positive'
+            );
+        END IF;
     END LOOP;
 END $$;
 
@@ -105,13 +118,14 @@ BEGIN
     END LOOP;
 END $$;
 
-CREATE TABLE collection_authorization_state (
+CREATE TABLE IF NOT EXISTS collection_authorization_state (
     collection_id INT PRIMARY KEY REFERENCES collections(id) ON DELETE CASCADE,
     revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0)
 );
 
 INSERT INTO collection_authorization_state (collection_id)
-SELECT id FROM collections;
+SELECT id FROM collections
+ON CONFLICT (collection_id) DO NOTHING;
 
 -- The seven temporal resources predate revisions. An insert starts at one,
 -- every stored update advances once, and a delete tombstone retains the last
@@ -160,11 +174,18 @@ BEGIN
         'remote_targets_history'
     ]
     LOOP
-        EXECUTE format(
-            'ALTER TABLE %I ADD CONSTRAINT %I CHECK (revision > 0) NOT VALID',
-            table_name,
-            table_name || '_revision_positive'
-        );
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = to_regclass(table_name)
+              AND conname = table_name || '_revision_positive'
+        ) THEN
+            EXECUTE format(
+                'ALTER TABLE %I ADD CONSTRAINT %I CHECK (revision > 0) NOT VALID',
+                table_name,
+                table_name || '_revision_positive'
+            );
+        END IF;
     END LOOP;
 END $$;
 
@@ -237,14 +258,34 @@ BEGIN
 END $$;
 
 ALTER TABLE events
-    ADD COLUMN before_revision BIGINT NULL,
-    ADD COLUMN after_revision BIGINT NULL;
-ALTER TABLE events
-    ADD CONSTRAINT events_before_revision_positive CHECK (before_revision > 0) NOT VALID;
-ALTER TABLE events
-    ADD CONSTRAINT events_after_revision_positive CHECK (after_revision > 0) NOT VALID;
+    ADD COLUMN IF NOT EXISTS before_revision BIGINT NULL,
+    ADD COLUMN IF NOT EXISTS after_revision BIGINT NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'events'::regclass
+          AND conname = 'events_before_revision_positive'
+    ) THEN
+        ALTER TABLE events ADD CONSTRAINT events_before_revision_positive CHECK (before_revision > 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'events'::regclass
+          AND conname = 'events_after_revision_positive'
+    ) THEN
+        ALTER TABLE events ADD CONSTRAINT events_after_revision_positive CHECK (after_revision > 0) NOT VALID;
+    END IF;
+END $$;
 ALTER TABLE events VALIDATE CONSTRAINT events_before_revision_positive;
 ALTER TABLE events VALIDATE CONSTRAINT events_after_revision_positive;
+
+-- Keep the behavioral cutover atomic even though the expansion and backfill
+-- phases above intentionally commit independently. A failed cutover therefore
+-- leaves the old trigger set intact and can be retried safely.
+BEGIN;
 
 CREATE OR REPLACE FUNCTION hubuum_revision_owner_first(owner_key TEXT)
 RETURNS BOOLEAN
@@ -538,6 +579,21 @@ DROP TRIGGER IF EXISTS hubuumobject_relation_skip_unchanged_temporal_update_trg 
 DROP TRIGGER IF EXISTS export_templates_skip_unchanged_temporal_update_trg ON export_templates;
 DROP TRIGGER IF EXISTS remote_targets_skip_unchanged_temporal_update_trg ON remote_targets;
 
+DO $$
+DECLARE
+    table_name TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'identity_scopes', 'principals', 'groups', 'collections',
+        'group_memberships', 'hubuumclass', 'hubuumobject',
+        'hubuumclass_relation', 'hubuumobject_relation', 'export_templates',
+        'remote_targets', 'event_sinks', 'event_subscriptions',
+        'computed_field_definitions', 'tokens', 'collection_authorization_state'
+    ] LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I', table_name || '_revision', table_name);
+    END LOOP;
+END $$;
+
 CREATE TRIGGER identity_scopes_revision BEFORE INSERT OR UPDATE ON identity_scopes
 FOR EACH ROW EXECUTE FUNCTION hubuum_manage_resource_revision('updated_at', 'direct_return_unchanged');
 CREATE TRIGGER principals_revision BEFORE INSERT OR UPDATE ON principals
@@ -590,6 +646,10 @@ BEGIN
         'computed_field_definitions', 'tokens', 'collection_authorization_state'
     ] LOOP
         EXECUTE format(
+            'DROP TRIGGER IF EXISTS %I ON %I',
+            table_name || '_delete_revision', table_name
+        );
+        EXECUTE format(
             'CREATE TRIGGER %I BEFORE DELETE ON %I
              FOR EACH ROW EXECUTE FUNCTION hubuum_check_delete_revision()',
             table_name || '_delete_revision', table_name
@@ -597,6 +657,10 @@ BEGIN
     END LOOP;
 END $$;
 
+DROP TRIGGER IF EXISTS users_revision_child ON users;
+DROP TRIGGER IF EXISTS service_accounts_revision_child ON service_accounts;
+DROP TRIGGER IF EXISTS group_membership_sources_revision_child ON group_membership_sources;
+DROP TRIGGER IF EXISTS permissions_revision_child ON permissions;
 CREATE TRIGGER users_revision_child BEFORE UPDATE ON users
 FOR EACH ROW EXECUTE FUNCTION hubuum_skip_unchanged_revision_child('updated_at');
 CREATE TRIGGER service_accounts_revision_child BEFORE UPDATE ON service_accounts
@@ -606,6 +670,10 @@ FOR EACH ROW EXECUTE FUNCTION hubuum_skip_unchanged_revision_child('updated_at')
 CREATE TRIGGER permissions_revision_child BEFORE UPDATE ON permissions
 FOR EACH ROW EXECUTE FUNCTION hubuum_skip_unchanged_revision_child('updated_at');
 
+DROP TRIGGER IF EXISTS users_bump_principal_revision ON users;
+DROP TRIGGER IF EXISTS service_accounts_bump_principal_revision ON service_accounts;
+DROP TRIGGER IF EXISTS membership_sources_bump_revision ON group_membership_sources;
+DROP TRIGGER IF EXISTS permissions_bump_revision ON permissions;
 CREATE TRIGGER users_bump_principal_revision AFTER INSERT OR UPDATE OR DELETE ON users
 FOR EACH ROW EXECUTE FUNCTION hubuum_bump_revision_owner('principals', 'id');
 CREATE TRIGGER service_accounts_bump_principal_revision AFTER INSERT OR UPDATE OR DELETE ON service_accounts
@@ -625,6 +693,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS collections_create_authorization_state ON collections;
 CREATE TRIGGER collections_create_authorization_state
 AFTER INSERT ON collections FOR EACH ROW
 EXECUTE FUNCTION hubuum_create_collection_authorization_state();
@@ -636,6 +705,10 @@ BEGIN
     FOREACH table_name IN ARRAY ARRAY[
         'token_scopes', 'token_collection_scopes', 'token_class_scopes', 'token_object_scopes'
     ] LOOP
+        EXECUTE format(
+            'DROP TRIGGER IF EXISTS %I ON %I',
+            table_name || '_bump_token_revision', table_name
+        );
         EXECUTE format(
             'CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %I
              FOR EACH ROW EXECUTE FUNCTION hubuum_bump_revision_owner(''tokens'', ''token_id'')',
@@ -666,6 +739,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS events_fill_revisions ON events;
 CREATE TRIGGER events_fill_revisions BEFORE INSERT ON events
 FOR EACH ROW EXECUTE FUNCTION hubuum_fill_event_revisions();
 
@@ -706,3 +780,5 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+COMMIT;

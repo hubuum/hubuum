@@ -27,6 +27,10 @@ git -C "$test_root" add .
 git -C "$test_root" commit --quiet -m safe
 bash "$test_root/scripts/check-migration-compatibility.sh" v1.0.0 >/dev/null
 
+git -C "$test_root" tag v1.1.0
+GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v1.1.0 \
+  bash "$test_root/scripts/check-migration-compatibility.sh" >/dev/null
+
 printf '%s\n' 'ALTER TABLE widgets DROP COLUMN name;' > "$test_root/migrations/0002_candidate/up.sql"
 git -C "$test_root" add .
 git -C "$test_root" commit --quiet -m unsafe
