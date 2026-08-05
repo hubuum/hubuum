@@ -144,7 +144,7 @@ cat > "$test_root/.env" <<EOF
 HUBUUM_CANDIDATE_IMAGE=$candidate_image
 HUBUUM_PREVIOUS_IMAGE=$previous_image
 POSTGRES_TEST_IMAGE=$postgres_image
-HUBUUM_DATABASE_URL=$database_url
+HUBUUM_COMPATIBILITY_DATABASE_URL=$database_url
 EOF
 
 cat > "$test_root/compose.yml" <<'EOF'
@@ -157,7 +157,7 @@ services:
       POSTGRES_PASSWORD: adjacent-release
       PGUSER: hubuum
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hubuum -d hubuum"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U hubuum -d hubuum"]
       interval: 1s
       timeout: 2s
       retries: 60
@@ -172,8 +172,8 @@ services:
       HUBUUM_BIND_PORT: 8080
       # v0.0.8 and earlier read the unprefixed name. Keep both variables so
       # this harness can exercise the actual adjacent-version boundary.
-      DATABASE_URL: ${HUBUUM_DATABASE_URL}
-      HUBUUM_DATABASE_URL: ${HUBUUM_DATABASE_URL}
+      DATABASE_URL: ${HUBUUM_COMPATIBILITY_DATABASE_URL}
+      HUBUUM_DATABASE_URL: ${HUBUUM_COMPATIBILITY_DATABASE_URL}
       HUBUUM_CLIENT_ALLOWLIST: "*"
       HUBUUM_LOG_LEVEL: info
       HUBUUM_TOKEN_HASH_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
@@ -429,12 +429,14 @@ analyze_probes() {
 phase="start-previous-release"
 "${compose[@]}" up -d postgres
 for _ in $(seq 1 60); do
-  if "${compose[@]}" exec -T postgres pg_isready --username hubuum --dbname hubuum >/dev/null 2>&1; then
+  if "${compose[@]}" exec -T postgres pg_isready \
+    --host 127.0.0.1 --username hubuum --dbname hubuum >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-"${compose[@]}" exec -T postgres pg_isready --username hubuum --dbname hubuum >/dev/null
+"${compose[@]}" exec -T postgres pg_isready \
+  --host 127.0.0.1 --username hubuum --dbname hubuum >/dev/null
 "${compose[@]}" run --rm --no-deps --entrypoint /usr/local/bin/hubuum-admin previous-api --migrate
 "${compose[@]}" up -d previous-api previous-worker
 wait_for_ready previous-api
