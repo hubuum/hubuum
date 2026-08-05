@@ -211,59 +211,167 @@ jobs:
   openapi-contract:
     name: OpenAPI contract
     needs: changes
-    if: needs.changes.outputs.run_openapi == 'true'
+    if: >-
+      always() &&
+      (
+        startsWith(github.ref, 'refs/tags/v') ||
+        needs.changes.outputs.run_openapi == 'true'
+      )
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Cache cargo & target directories
         uses: Swatinem/rust-cache@v2
+      - name: Prepare OpenAPI report directory
+        run: mkdir -p openapi-contract
       - name: Generate OpenAPI JSON
-        run: cargo run --bin hubuum-openapi --locked > /tmp/openapi.json
+        id: generate_openapi
+        continue-on-error: true
+        run: cargo run --quiet --bin hubuum-openapi --locked > openapi-contract/generated.json
       - name: Validate OpenAPI semantics
+        id: openapi_semantics
+        continue-on-error: true
         run: "cargo test --lib 'api::openapi::tests::' --locked"
       - name: Check OpenAPI drift
         id: openapi_drift
-        continue-on-error: true
+        if: steps.generate_openapi.outcome == 'success'
         shell: bash
         run: |
-          if diff -u docs/openapi.json /tmp/openapi.json > /tmp/openapi.diff; then
+          set -euo pipefail
+          if diff -u docs/openapi.json openapi-contract/generated.json > openapi-contract/exact-drift.diff; then
             echo "drift=false" >> "$GITHUB_OUTPUT"
           else
+            diff_status=$?
+            if [[ "$diff_status" -ne 1 ]]; then
+              exit "$diff_status"
+            fi
             echo "drift=true" >> "$GITHUB_OUTPUT"
-            exit 1
           fi
-      - name: Flag OpenAPI drift
-        if: steps.openapi_drift.outputs.drift == 'true'
+      - name: Install checksum-pinned oasdiff
+        id: install_oasdiff
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          binary="$(scripts/install-oasdiff.sh "$RUNNER_TEMP/oasdiff")"
+          echo "binary=$binary" >> "$GITHUB_OUTPUT"
+          {
+            "$binary" --version
+            printf 'sha256 '
+            sha256sum "$binary" | awk '{print $1}'
+          } > openapi-contract/oasdiff-version.txt
+      - name: Test OpenAPI compatibility policy
+        id: test_openapi_policy
+        if: steps.install_oasdiff.outcome == 'success'
+        continue-on-error: true
+        env:
+          OASDIFF_BIN: ${{ steps.install_oasdiff.outputs.binary }}
+        run: scripts/test-openapi-compatibility.sh
+      - name: Resolve previous stable OpenAPI baseline
+        id: resolve_openapi_baseline
+        if: steps.generate_openapi.outcome == 'success'
+        continue-on-error: true
+        run: scripts/resolve-openapi-baseline.sh openapi-contract
+      - name: Check previous-release compatibility
+        id: openapi_compatibility
+        if: >-
+          steps.generate_openapi.outcome == 'success' &&
+          steps.install_oasdiff.outcome == 'success' &&
+          steps.resolve_openapi_baseline.outcome == 'success'
+        continue-on-error: true
+        env:
+          OASDIFF_BIN: ${{ steps.install_oasdiff.outputs.binary }}
+        run: >-
+          scripts/check-openapi-compatibility.sh
+          openapi-contract/baseline.json
+          openapi-contract/generated.json
+          openapi-contract/baseline-metadata.json
+          .github/openapi-breaking-exceptions.json
+          CHANGELOG.md
+          openapi-contract
+      - name: Write OpenAPI workflow summary
+        if: always()
         shell: bash
         run: |
-          echo "::warning title=OpenAPI drift detected::Generated OpenAPI differs from docs/openapi.json. Build and publish continue, but docs/openapi.json should be updated."
-          {
-            echo "### OpenAPI drift detected"
-            echo ""
-            echo "Generated OpenAPI differs from \`docs/openapi.json\`."
-            echo "Build and publish continue, but the spec file should be refreshed and committed."
-            echo ""
-            echo "<details><summary>Diff (first 200 lines)</summary>"
-            echo ""
-            echo '```diff'
-            sed -n '1,200p' /tmp/openapi.diff
-            echo '```'
-            echo "</details>"
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload OpenAPI drift diff
-        if: steps.openapi_drift.outputs.drift == 'true'
+          compatibility_status="not-run"
+          if [[ -f openapi-contract/compatibility.json ]]; then
+            compatibility_status="$(jq --raw-output '.status' openapi-contract/compatibility.json)"
+          fi
+          jq --null-input \
+            --arg generation "${{ steps.generate_openapi.outcome }}" \
+            --arg semantics "${{ steps.openapi_semantics.outcome }}" \
+            --arg drift_step "${{ steps.openapi_drift.outcome }}" \
+            --arg drift_found "${{ steps.openapi_drift.outputs.drift }}" \
+            --arg compatibility_step "${{ steps.openapi_compatibility.outcome }}" \
+            --arg compatibility_status "$compatibility_status" \
+            '{
+              generation: $generation,
+              semantics: $semantics,
+              drift: {step: $drift_step, found: ($drift_found == "true")},
+              compatibility: {step: $compatibility_step, status: $compatibility_status}
+            }' > openapi-contract/gate.json
+          if [[ -f openapi-contract/summary.md ]]; then
+            cat openapi-contract/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ "${{ steps.openapi_drift.outputs.drift }}" == "true" ]]; then
+            {
+              echo "## Generated OpenAPI drift"
+              echo
+              echo "The generated document differs from the committed \`docs/openapi.json\`."
+              echo
+              echo "<details><summary>Exact diff (first 200 lines)</summary>"
+              echo
+              echo '```diff'
+              sed -n '1,200p' openapi-contract/exact-drift.diff
+              echo '```'
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload OpenAPI contract evidence
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: openapi-diff
-          path: /tmp/openapi.diff
-      - name: Prepare OpenAPI artifact
-        run: cp /tmp/openapi.json openapi.json
-      - name: Upload OpenAPI artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: openapi-json
-          path: openapi.json
+          name: openapi-contract
+          path: openapi-contract
+          if-no-files-found: error
+      - name: Enforce OpenAPI contract gate
+        if: always()
+        env:
+          GENERATE_OUTCOME: ${{ steps.generate_openapi.outcome }}
+          SEMANTICS_OUTCOME: ${{ steps.openapi_semantics.outcome }}
+          DRIFT_OUTCOME: ${{ steps.openapi_drift.outcome }}
+          DRIFT_FOUND: ${{ steps.openapi_drift.outputs.drift }}
+          INSTALL_OUTCOME: ${{ steps.install_oasdiff.outcome }}
+          POLICY_TEST_OUTCOME: ${{ steps.test_openapi_policy.outcome }}
+          BASELINE_OUTCOME: ${{ steps.resolve_openapi_baseline.outcome }}
+          COMPATIBILITY_OUTCOME: ${{ steps.openapi_compatibility.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=false
+          for outcome in \
+            "$GENERATE_OUTCOME" \
+            "$SEMANTICS_OUTCOME" \
+            "$DRIFT_OUTCOME" \
+            "$INSTALL_OUTCOME" \
+            "$POLICY_TEST_OUTCOME" \
+            "$BASELINE_OUTCOME" \
+            "$COMPATIBILITY_OUTCOME"; do
+            if [[ "$outcome" != "success" ]]; then
+              failed=true
+            fi
+          done
+          if [[ "$DRIFT_FOUND" != "false" ]]; then
+            failed=true
+          fi
+          if [[ "$failed" == "true" ]]; then
+            echo "OpenAPI contract validation failed. Review the uploaded evidence." >&2
+            exit 1
+          fi
 
   feature-permutations:
     name: Feature smoke (${{ matrix.feature.name }})
@@ -821,6 +929,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
       - verify-tag-main-ci-success
+      - openapi-contract
       - container-build
     runs-on: ubuntu-24.04
     steps:

@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- OpenAPI validation now blocks pull requests, `main`, and tagged releases on
+  generated-document drift or unaccepted compatibility breaks from the latest
+  stable release. CI publishes the generated document, exact drift diff,
+  baseline tag and digest, structured compatibility data, and a grouped
+  Markdown report for review.
 - `HUBUUM_TREETOP_CA_CERT` now loads PEM CA certificate bundles from regular
   files up to 4 MiB into the Treetop client's trust store, enabling private PKI
   without disabling TLS certificate validation.

@@ -61,6 +61,18 @@ openapi_output="$(bash "$classifier" docs/openapi.json)"
 assert_flag "$openapi_output" openapi true
 assert_flag "$openapi_output" code false
 
+openapi_policy_output="$(bash "$classifier" \
+  .github/openapi-breaking-exceptions.json \
+  .github/oasdiff-severity-levels.txt \
+  scripts/check-openapi-compatibility.sh \
+  scripts/install-oasdiff.sh \
+  scripts/resolve-openapi-baseline.sh \
+  scripts/test-openapi-compatibility.sh)"
+assert_flag "$openapi_policy_output" openapi true
+assert_flag "$openapi_policy_output" code true
+assert_flag "$openapi_policy_output" container false
+assert_flag "$openapi_policy_output" artifacts false
+
 embedded_doc_output="$(bash "$classifier" docs/export_template_guide.md)"
 assert_flag "$embedded_doc_output" markdown true
 assert_flag "$embedded_doc_output" code true

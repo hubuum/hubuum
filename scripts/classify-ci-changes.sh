@@ -49,6 +49,15 @@ for path in "$@"; do
       container=true
       artifacts=true
       ;;
+    .github/oasdiff-severity-levels.txt | \
+      .github/openapi-breaking-exceptions.json | \
+      scripts/check-openapi-compatibility.sh | \
+      scripts/install-oasdiff.sh | \
+      scripts/resolve-openapi-baseline.sh | \
+      scripts/test-openapi-compatibility.sh)
+      code=true
+      openapi=true
+      ;;
     src/tests/* | tests/*)
       code=true
       ;;
