@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS group_memberships_group_revision_idx;

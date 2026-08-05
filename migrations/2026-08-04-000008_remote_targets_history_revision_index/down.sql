@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS remote_targets_history_id_revision_idx;

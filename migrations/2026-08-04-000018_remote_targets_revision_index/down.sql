@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS remote_targets_collection_revision_id_idx;

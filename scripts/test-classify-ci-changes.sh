@@ -73,6 +73,18 @@ openapi_output="$(bash "$classifier" docs/openapi.json)"
 assert_flag "$openapi_output" openapi true
 assert_flag "$openapi_output" code false
 
+openapi_policy_output="$(bash "$classifier" \
+  .github/openapi-breaking-exceptions.json \
+  .github/oasdiff-severity-levels.txt \
+  scripts/check-openapi-compatibility.sh \
+  scripts/install-oasdiff.sh \
+  scripts/resolve-openapi-baseline.sh \
+  scripts/test-openapi-compatibility.sh)"
+assert_flag "$openapi_policy_output" openapi true
+assert_flag "$openapi_policy_output" code true
+assert_flag "$openapi_policy_output" container false
+assert_flag "$openapi_policy_output" artifacts false
+
 embedded_doc_output="$(bash "$classifier" docs/export_template_guide.md)"
 assert_flag "$embedded_doc_output" markdown true
 assert_flag "$embedded_doc_output" code true
@@ -110,6 +122,11 @@ docker_output="$(bash "$classifier" Dockerfile)"
 assert_flag "$docker_output" code true
 assert_flag "$docker_output" container true
 assert_flag "$docker_output" artifacts true
+
+compatibility_output="$(bash "$classifier" scripts/test-adjacent-release-upgrade.sh)"
+assert_flag "$compatibility_output" code true
+assert_flag "$compatibility_output" container true
+assert_flag "$compatibility_output" artifacts false
 
 unknown_output="$(bash "$classifier" future-build-input.conf)"
 assert_flag "$unknown_output" code true

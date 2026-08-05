@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "exceptions": [
+    {
+      "id": "v0.0.8-class-point-shape",
+      "baseline": "v0.0.8",
+      "expires": "2027-01-31",
+      "reason": "Class point responses now expose the revision-owning class entity unless callers explicitly request the collection expansion.",
+      "migration": "Use `include=collection` for the expanded, untagged representation.",
+      "changelog_entry": "class point routes return the class entity by default",
+      "fingerprints": [
+        "1f8b37ed5c09",
+        "d3dd5172546c"
+      ]
+    },
+    {
+      "id": "v0.0.8-permission-response-shapes",
+      "baseline": "v0.0.8",
+      "expires": "2027-01-31",
+      "reason": "Permission reads and mutations now return revision-owning permission-set representations instead of the prior flattened records and empty mutation responses.",
+      "migration": "Clients must update deserializers for these response shapes.",
+      "changelog_entry": "SQL permission reads return `{collection_id, revision, permissions}`",
+      "fingerprints": [
+        "049bd1b7a37b",
+        "064bb152c691",
+        "08a1609ad33a",
+        "0b509ded1260",
+        "10dbda4c6bc6",
+        "19df23cd60fe",
+        "1ef659f2cc84",
+        "21ee75f23b22",
+        "27bfe28c7cbc",
+        "2bbc37a89604",
+        "2f2e5f3c4e67",
+        "46b10dc257d3",
+        "4a8d3afca58e",
+        "57e369b0f5f6",
+        "62f4310a3651",
+        "6d9249095b1e",
+        "6edba6998d69",
+        "7991363b9924",
+        "7c7b03581930",
+        "7e93e90220ba",
+        "853de7188a86",
+        "88a2189b281f",
+        "8a94f266ffbb",
+        "a8432adbe119",
+        "bd68ba20ae59",
+        "c2b8fb996d2b",
+        "c4484bd9c797",
+        "c67f38103e36",
+        "c88846b872fb",
+        "d69a11505144",
+        "d8093d065532",
+        "e25a75171fb5",
+        "e6144136c719",
+        "e8c3e8d030ca",
+        "ec017571718c",
+        "f34861463d26",
+        "f97f5273f762",
+        "fed806f612c3"
+      ]
+    },
+    {
+      "id": "v0.0.8-group-membership-responses",
+      "baseline": "v0.0.8",
+      "expires": "2027-01-31",
+      "reason": "Group membership reads and mutations now return revision-owning membership entities rather than flattened principals or empty mutation responses.",
+      "migration": "Clients must update deserializers for these response shapes.",
+      "changelog_entry": "group member lists return membership entities with an optional nested principal",
+      "fingerprints": [
+        "59803ff03478",
+        "66c7a93f5281",
+        "7251c62c4a0e",
+        "e1f135a4e7e5"
+      ]
+    },
+    {
+      "id": "v0.0.8-canonical-identity-responses",
+      "baseline": "v0.0.8",
+      "expires": "2027-01-31",
+      "reason": "Canonical user and service-account responses use stable identity-scope identifiers and leave mutable provider metadata to expanded list views.",
+      "migration": "Rich metadata remains available from the corresponding untagged list responses.",
+      "changelog_entry": "canonical tagged user and service-account points use stable `identity_scope_id` values",
+      "fingerprints": [
+        "3165e7caf134",
+        "3698fcd0837a",
+        "3cb513c5c818",
+        "41bc32374080",
+        "50f3c743f1ad",
+        "8328b36c12b0",
+        "86382f1f46a8",
+        "9951fab2d24a",
+        "c82b45bcff28",
+        "e2dd7b8bd4b5"
+      ]
+    },
+    {
+      "id": "v0.0.8-canonical-group-sync-fields",
+      "baseline": "v0.0.8",
+      "expires": "2027-01-31",
+      "reason": "Canonical group responses omit synchronization timestamps because those operational fields do not advance the group's resource revision.",
+      "migration": "The fields remain available in untagged group and token lists.",
+      "changelog_entry": "canonical tagged group points omit directory-sync timestamps",
+      "fingerprints": [
+        "4db4f8907cce",
+        "52546e408485",
+        "73fc34bc43f9",
+        "a10b5eca3d16",
+        "d62d27e89f79",
+        "fa2f9fb874f3"
+      ]
+    },
+    {
+      "id": "v0.0.8-canonical-user-sync-fields",
+      "baseline": "v0.0.8",
+      "expires": "2027-01-31",
+      "reason": "Canonical user responses omit synchronization timestamps because those operational fields do not advance the user's resource revision.",
+      "migration": "Rich metadata remains available from the corresponding untagged list responses.",
+      "changelog_entry": "canonical tagged user and service-account points use stable `identity_scope_id` values",
+      "fingerprints": [
+        "10415ea7df5d",
+        "3be8ea1aec48",
+        "5a8e0bfd2bb5",
+        "96dc02d8ef5d",
+        "a52bd5c016ff",
+        "bf0970950bb1"
+      ]
+    },
+    {
+      "id": "v0.0.8-event-delivery-claim-token",
+      "baseline": "v0.0.8",
+      "expires": "2027-01-31",
+      "reason": "The event-delivery worker lease token is an internal capability and must not be exposed through public API responses.",
+      "migration": "API clients must stop deserializing or depending on this field.",
+      "changelog_entry": "Event-delivery API responses no longer expose the internal `claim_token` worker lease capability",
+      "fingerprints": [
+        "06e21efc4f24",
+        "5e863de2244e",
+        "916f4ec01c6f",
+        "e0c16243d888"
+      ]
+    }
+  ]
+}

@@ -63,6 +63,15 @@ for path in "$@"; do
       container=true
       artifacts=true
       ;;
+    .github/oasdiff-severity-levels.txt | \
+      .github/openapi-breaking-exceptions.json | \
+      scripts/check-openapi-compatibility.sh | \
+      scripts/install-oasdiff.sh | \
+      scripts/resolve-openapi-baseline.sh | \
+      scripts/test-openapi-compatibility.sh)
+      code=true
+      openapi=true
+      ;;
     src/tests/* | tests/*)
       code=true
       ;;
@@ -143,6 +152,8 @@ for path in "$@"; do
       postgres_benchmark=true
       ;;
     scripts/install-single-host.sh | scripts/single-host-rollout.sh | \
+      scripts/check-migration-compatibility.sh | scripts/resolve-adjacent-release.sh | \
+      scripts/test-adjacent-release-upgrade.sh | scripts/test-migration-compatibility.sh | \
       scripts/test-install-script-refresh.sh | scripts/test-single-host-rollout.sh | \
       scripts/test-single-host-zero-downtime.sh | scripts/update-single-host.sh | \
       scripts/uninstall-single-host.sh | scripts/stop-single-host.sh)
