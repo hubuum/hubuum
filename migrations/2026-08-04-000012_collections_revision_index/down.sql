@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS collections_parent_revision_id_idx;

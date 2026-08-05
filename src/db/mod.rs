@@ -103,7 +103,7 @@ impl DbCallSite {
 /// Latest migration required by this binary. The test below keeps this value
 /// synchronized with the migration directory so readiness cannot silently lag
 /// behind a newly added schema change.
-pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260804000001";
+pub const REQUIRED_DATABASE_MIGRATION_VERSION: &str = "20260804000025";
 
 #[derive(diesel::QueryableByName)]
 struct DatabaseSchemaReadiness {
@@ -1050,6 +1050,26 @@ mod tests {
             include_str!("../../migrations/2026-08-03-000001_resource_revisions/down.sql");
 
         assert!(rollback.contains("DROP INDEX IF EXISTS computed_field_class_revision_id_idx;"));
+    }
+
+    #[test]
+    fn resource_revision_migration_has_explicit_phase_transactions() {
+        let migration =
+            include_str!("../../migrations/2026-08-03-000001_resource_revisions/up.sql");
+        let metadata =
+            include_str!("../../migrations/2026-08-03-000001_resource_revisions/metadata.toml");
+        let transaction_count = migration
+            .lines()
+            .filter(|line| line.trim() == "BEGIN;")
+            .count();
+        let commit_count = migration
+            .lines()
+            .filter(|line| line.trim() == "COMMIT;")
+            .count();
+
+        assert_eq!(metadata.trim(), "run_in_transaction = false");
+        assert_eq!(transaction_count, 16);
+        assert_eq!(commit_count, transaction_count);
     }
 
     #[tokio::test]

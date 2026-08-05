@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS computed_field_class_revision_id_idx;

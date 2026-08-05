@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS export_templates_collection_revision_id_idx;

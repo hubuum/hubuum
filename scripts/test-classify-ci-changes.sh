@@ -111,6 +111,11 @@ assert_flag "$docker_output" code true
 assert_flag "$docker_output" container true
 assert_flag "$docker_output" artifacts true
 
+compatibility_output="$(bash "$classifier" scripts/test-adjacent-release-upgrade.sh)"
+assert_flag "$compatibility_output" code true
+assert_flag "$compatibility_output" container true
+assert_flag "$compatibility_output" artifacts false
+
 unknown_output="$(bash "$classifier" future-build-input.conf)"
 assert_flag "$unknown_output" code true
 assert_flag "$unknown_output" container true
