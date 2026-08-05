@@ -34,14 +34,28 @@ if [[ ! "$target" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
   echo "container evidence target contains unsupported characters: $target" >&2
   exit 1
 fi
+case "$target" in
+  linux-amd64)
+    cargo_target=x86_64-unknown-linux-musl
+    ;;
+  linux-arm64)
+    cargo_target=aarch64-unknown-linux-musl
+    ;;
+  *)
+    echo "container evidence target is unsupported: $target" >&2
+    exit 1
+    ;;
+esac
 
 SYFT_IMAGE="$(python3 "$repo_root/scripts/check-supply-chain-policy.py" --tool-value SYFT_IMAGE)"
 TRIVY_IMAGE="$(python3 "$repo_root/scripts/check-supply-chain-policy.py" --tool-value TRIVY_IMAGE)"
 
 evidence_dir="${HUBUUM_EVIDENCE_DIR:-$repo_root/supply-chain-evidence}"
 mkdir -p "$evidence_dir"
+evidence_dir="$(cd "$evidence_dir" && pwd -P)"
 raw_sbom="$evidence_dir/${output_prefix}.syft.cdx.json"
 merged_sbom="$evidence_dir/${output_prefix}.cdx.json"
+full_report="$evidence_dir/${output_prefix}.trivy.json"
 sbom_report="$evidence_dir/${output_prefix}.sbom-trivy.json"
 policy_report="$evidence_dir/${output_prefix}.trivy-policy.json"
 scan_status="$evidence_dir/${output_prefix}.scan-status"
@@ -56,6 +70,8 @@ docker run --rm \
 cd "$repo_root"
 python3 scripts/generate-release-sbom.py \
   --base-sbom "$raw_sbom" \
+  --cargo-features tls-rustls,tls-openssl,embedded-migrations \
+  --cargo-target "$cargo_target" \
   --output "$merged_sbom" \
   --subject-name "${image_ref%@*}" \
   --subject-digest "${image_ref##*@}" \
@@ -66,6 +82,7 @@ python3 scripts/generate-release-sbom.py \
 
 trivy_cache="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/hubuum-trivy-cache"
 mkdir -p "$trivy_cache"
+trivy_cache="$(cd "$trivy_cache" && pwd -P)"
 docker run --rm \
   --env TRIVY_USERNAME="${GITHUB_ACTOR:-}" \
   --env TRIVY_PASSWORD="${GITHUB_TOKEN:-}" \
@@ -113,7 +130,18 @@ docker run --rm \
   --format json \
   "/evidence/${output_prefix}.cdx.json" > "$sbom_report"
 
-test -s "$policy_report"
+for evidence in \
+  "$raw_sbom" \
+  "$merged_sbom" \
+  "$full_report" \
+  "$policy_report" \
+  "$sbom_report" \
+  "$scan_status"; do
+  if [[ ! -s "$evidence" ]]; then
+    echo "container evidence output is missing or empty: $evidence" >&2
+    exit 1
+  fi
+done
 
 syft_version="$(docker run --rm "$SYFT_IMAGE" version)"
 trivy_version="$(docker run --rm "$TRIVY_IMAGE" --version)"

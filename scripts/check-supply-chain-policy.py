@@ -17,7 +17,6 @@ from typing import NoReturn
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 SHA_REF = re.compile(r"^[0-9a-f]{40}$")
-DIGEST_REF = re.compile(r"@sha256:[0-9a-f]{64}$")
 OCI_DIGEST_REF = re.compile(
     r"^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*"
     r"(?::[A-Za-z0-9_][A-Za-z0-9._-]*)?@sha256:[0-9a-f]{64}$"
@@ -70,7 +69,7 @@ def check_workflows() -> None:
                     )
 
             image_match = re.match(r"\s+image:\s*([^\s#]+)", line)
-            if image_match and not DIGEST_REF.search(image_match.group(1)):
+            if image_match and not OCI_DIGEST_REF.fullmatch(image_match.group(1)):
                 fail(
                     f"{workflow.relative_to(ROOT)}:{line_number} service image is not "
                     "pinned by SHA-256 digest"
@@ -230,9 +229,11 @@ def check_tool_manifest() -> None:
     values = parse_tool_manifest(path)
     validate_tool_values(values)
     ci_workflow = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
-    cosign_input = f"cosign-release: {values['COSIGN_VERSION']}"
-    if cosign_input not in ci_workflow:
-        fail("ci.yml cosign-release does not match the pinned tool manifest")
+    cosign_versions = re.findall(r"\bcosign-release:\s*([^\s#]+)", ci_workflow)
+    if not cosign_versions:
+        fail("ci.yml does not configure cosign-release")
+    if set(cosign_versions) != {values["COSIGN_VERSION"]}:
+        fail("every ci.yml cosign-release must match the pinned tool manifest")
 
 
 def print_tool_value(key: str) -> None:

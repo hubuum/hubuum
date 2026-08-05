@@ -61,14 +61,14 @@ bash scripts/test-generate-release-sbom.sh
 
 Every stable native archive has a neighboring CycloneDX 1.6 SBOM named
 `<archive>.cdx.json`. The SBOM identifies the archive digest, source revision,
-release tag, target, Cargo lockfile digest, workspace crates, and resolved Rust
-dependencies.
+release tag, build target, exact Cargo feature selection, Cargo lockfile digest,
+workspace crates, and target-filtered resolved Rust dependencies.
 
 `release-checksums.txt` is the authoritative SHA-256 manifest for all native
-archives. It is signed keylessly with Sigstore and published with its
-`release-checksums.sigstore.json` verification bundle. GitHub also publishes
-SLSA build provenance for every digest in that manifest. The release includes
-the provenance bundle, detailed build-input predicate, and its signed
+archives and their SBOMs. It is signed keylessly with Sigstore and published
+with its `release-checksums.sigstore.json` verification bundle. GitHub also
+publishes SLSA build provenance for every digest in that manifest. The release
+includes the provenance bundle, detailed build-input predicate, and its signed
 attestation bundle.
 
 Download and verify a release without maintainer secrets:

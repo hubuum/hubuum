@@ -18,6 +18,8 @@ SHA256_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 SOURCE_REVISION = re.compile(r"^[0-9a-f]{40}$")
 SOURCE_TAG = re.compile(r"^(?:main|v\d+\.\d+\.\d+)$")
 TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+CARGO_FEATURES = re.compile(r"^[A-Za-z0-9_/-]+(?:,[A-Za-z0-9_/-]+)*$")
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def sha256(path: Path) -> str:
@@ -28,20 +30,32 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def cargo_metadata(path: Path | None) -> dict[str, Any]:
+def cargo_metadata(
+    path: Path | None,
+    target: str,
+    features: str | None,
+    no_default_features: bool,
+) -> dict[str, Any]:
     if path is not None:
         return json.loads(path.read_text(encoding="utf-8"))
+    command = [
+        "cargo",
+        "metadata",
+        "--locked",
+        "--format-version",
+        "1",
+        "--filter-platform",
+        target,
+    ]
+    if no_default_features:
+        command.append("--no-default-features")
+    if features:
+        command.extend(("--features", features))
     result = subprocess.run(
-        [
-            "cargo",
-            "metadata",
-            "--locked",
-            "--all-features",
-            "--format-version",
-            "1",
-        ],
+        command,
         check=True,
         capture_output=True,
+        cwd=ROOT,
         text=True,
     )
     return json.loads(result.stdout)
@@ -215,7 +229,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifact", type=Path)
     parser.add_argument("--base-sbom", type=Path)
+    parser.add_argument("--cargo-features")
+    parser.add_argument("--cargo-target", required=True)
     parser.add_argument("--metadata-json", type=Path)
+    parser.add_argument("--no-default-features", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--subject-name")
     parser.add_argument("--subject-digest")
@@ -236,12 +253,21 @@ def parse_args() -> argparse.Namespace:
         parser.error("--source-tag must be main or a stable v-prefixed version")
     if not TARGET.fullmatch(args.target):
         parser.error("--target contains unsupported characters")
+    if not TARGET.fullmatch(args.cargo_target):
+        parser.error("--cargo-target contains unsupported characters")
+    if args.cargo_features and not CARGO_FEATURES.fullmatch(args.cargo_features):
+        parser.error("--cargo-features must be a comma-separated feature list")
     return args
 
 
 def main() -> None:
     args = parse_args()
-    metadata = cargo_metadata(args.metadata_json)
+    metadata = cargo_metadata(
+        args.metadata_json,
+        args.cargo_target,
+        args.cargo_features,
+        args.no_default_features,
+    )
     cargo_components, cargo_dependencies, workspace_refs = cargo_graph(metadata)
     base_components, base_dependencies, base_root_dependencies = merge_base_sbom(
         args.base_sbom
@@ -260,7 +286,7 @@ def main() -> None:
         ):
             raise SystemExit("--subject-digest must be sha256:<64 lowercase hex characters>")
 
-    lock_digest = sha256(Path("Cargo.lock"))
+    lock_digest = sha256(ROOT / "Cargo.lock")
     root_ref = f"urn:hubuum:release:{digest}"
     root_component = {
         "type": args.subject_type,
@@ -272,6 +298,15 @@ def main() -> None:
             {"name": "hubuum:source_revision", "value": args.source_revision},
             {"name": "hubuum:release_tag", "value": args.source_tag},
             {"name": "hubuum:target", "value": args.target},
+            {"name": "hubuum:cargo_target", "value": args.cargo_target},
+            {
+                "name": "hubuum:cargo_features",
+                "value": args.cargo_features or "",
+            },
+            {
+                "name": "hubuum:cargo_default_features",
+                "value": str(not args.no_default_features).lower(),
+            },
             {"name": "hubuum:cargo_lock_sha256", "value": lock_digest},
         ],
     }

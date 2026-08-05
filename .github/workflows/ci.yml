@@ -984,8 +984,44 @@ jobs:
         run: |
           while IFS= read -r -d '' archive; do
             archive_name="${archive#dist/}"
+            cargo_args=()
+            case "$archive_name" in
+              *linux-x86_64*)
+                cargo_args=(
+                  "--cargo-target" "x86_64-unknown-linux-musl"
+                  "--cargo-features" "production-all"
+                  "--no-default-features"
+                )
+                ;;
+              *linux-aarch64*)
+                cargo_args=(
+                  "--cargo-target" "aarch64-unknown-linux-musl"
+                  "--cargo-features" "production-all"
+                  "--no-default-features"
+                )
+                ;;
+              *macos-aarch64*)
+                cargo_args=(
+                  "--cargo-target" "aarch64-apple-darwin"
+                  "--cargo-features" "production-all"
+                  "--no-default-features"
+                )
+                ;;
+              *windows-x86_64*)
+                cargo_args=(
+                  "--cargo-target" "x86_64-pc-windows-msvc"
+                  "--cargo-features"
+                  "tls-rustls,amqp,email,valkey,embedded-migrations,vendored-openssl"
+                )
+                ;;
+              *)
+                echo "No Cargo build configuration for $archive_name" >&2
+                exit 1
+                ;;
+            esac
             python3 scripts/generate-release-sbom.py \
               --artifact "$archive" \
+              "${cargo_args[@]}" \
               --output "${archive}.cdx.json" \
               --source-revision "$GITHUB_SHA" \
               --source-tag "$GITHUB_REF_NAME" \
@@ -994,9 +1030,13 @@ jobs:
 
           (
             cd dist
-            while IFS= read -r -d '' archive; do
-              sha256sum "${archive#./}"
-            done < <(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | sort -z)
+            while IFS= read -r -d '' artifact; do
+              sha256sum "${artifact#./}"
+            done < <(
+              find . -maxdepth 1 -type f \
+                \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.cdx.json' \) \
+                -print0 | sort -z
+            )
           ) > dist/release-checksums.txt
           (cd dist && sha256sum --check release-checksums.txt)
       - name: Record release build inputs

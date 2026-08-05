@@ -76,7 +76,10 @@ cd "$repo_root"
 python3 scripts/generate-release-sbom.py \
   --artifact "$temp_root/archive.tar.gz" \
   --base-sbom "$temp_root/base.cdx.json" \
+  --cargo-features production-all \
+  --cargo-target x86_64-unknown-linux-musl \
   --metadata-json "$temp_root/metadata.json" \
+  --no-default-features \
   --output "$temp_root/release.cdx.json" \
   --source-revision 0123456789012345678901234567890123456789 \
   --source-tag v1.2.3 \
@@ -96,6 +99,10 @@ assert {"hubuum", "serde", "ca-certificates", "unreferenced"} <= components
 root = document["metadata"]["component"]
 expected = hashlib.sha256(b"release archive contents").hexdigest()
 assert root["hashes"] == [{"alg": "SHA-256", "content": expected}]
+properties = {item["name"]: item["value"] for item in root["properties"]}
+assert properties["hubuum:cargo_target"] == "x86_64-unknown-linux-musl"
+assert properties["hubuum:cargo_features"] == "production-all"
+assert properties["hubuum:cargo_default_features"] == "false"
 assert any(dependency["ref"] == root["bom-ref"] for dependency in document["dependencies"])
 ca_dependency = next(
     dependency
@@ -110,6 +117,7 @@ PY
 
 if python3 scripts/generate-release-sbom.py \
   --metadata-json "$temp_root/metadata.json" \
+  --cargo-target x86_64-unknown-linux-musl \
   --output "$temp_root/invalid-digest.cdx.json" \
   --subject-name example.invalid/hubuum \
   --subject-digest "sha256:$(printf 'A%.0s' {1..64})" \
@@ -123,6 +131,7 @@ fi
 
 if python3 scripts/generate-release-sbom.py \
   --artifact "$temp_root/archive.tar.gz" \
+  --cargo-target x86_64-unknown-linux-musl \
   --metadata-json "$temp_root/metadata.json" \
   --output "$temp_root/invalid-revision.cdx.json" \
   --source-revision main \
@@ -131,5 +140,32 @@ if python3 scripts/generate-release-sbom.py \
   echo "abbreviated source revision was unexpectedly accepted" >&2
   exit 1
 fi
+
+cd "$temp_root"
+python3 "$repo_root/scripts/generate-release-sbom.py" \
+  --cargo-target x86_64-unknown-linux-musl \
+  --metadata-json "$temp_root/metadata.json" \
+  --output "$temp_root/outside-repository.cdx.json" \
+  --source-revision 0123456789012345678901234567890123456789 \
+  --source-tag main \
+  --subject-digest "sha256:$(printf 'c%.0s' {1..64})" \
+  --subject-name example.invalid/hubuum \
+  --subject-type container \
+  --target linux-amd64
+
+python3 - "$repo_root/Cargo.lock" "$temp_root/outside-repository.cdx.json" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+lock_digest = hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest()
+document = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+properties = {
+    item["name"]: item["value"]
+    for item in document["metadata"]["component"]["properties"]
+}
+assert properties["hubuum:cargo_lock_sha256"] == lock_digest
+PY
 
 echo "Release SBOM generator tests passed."
