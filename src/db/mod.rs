@@ -1052,6 +1052,19 @@ mod tests {
         assert!(rollback.contains("DROP INDEX IF EXISTS computed_field_class_revision_id_idx;"));
     }
 
+    #[test]
+    fn resource_revision_migration_has_explicit_phase_transactions() {
+        let migration =
+            include_str!("../../migrations/2026-08-03-000001_resource_revisions/up.sql");
+        let metadata =
+            include_str!("../../migrations/2026-08-03-000001_resource_revisions/metadata.toml");
+        let transaction_count = migration.matches("\nBEGIN;\n").count();
+
+        assert_eq!(metadata.trim(), "run_in_transaction = false");
+        assert_eq!(transaction_count, 16);
+        assert_eq!(migration.matches("\nCOMMIT;").count(), transaction_count);
+    }
+
     #[tokio::test]
     async fn database_schema_readiness_accepts_the_migrated_test_database() {
         let config = get_config().expect("Failed to load config for test");

@@ -2,6 +2,8 @@
 -- restore an exact value only while hubuum.restore_revisions is transaction
 -- locally enabled.
 
+BEGIN;
+
 -- Add the history-side column first so an old temporal trigger can continue to
 -- insert rows during the later metadata-only expansion of each live table.
 DO $$
@@ -24,6 +26,9 @@ BEGIN
         );
     END LOOP;
 END $$;
+
+COMMIT;
+BEGIN;
 
 DO $$
 DECLARE
@@ -53,6 +58,9 @@ BEGIN
     END LOOP;
 END $$;
 
+COMMIT;
+BEGIN;
+
 DO $$
 DECLARE
     table_name TEXT;
@@ -79,6 +87,9 @@ BEGIN
     END LOOP;
 END $$;
 
+COMMIT;
+BEGIN;
+
 -- Validation scans may be long on a real installation. They run separately
 -- from the metadata-only ACCESS EXCLUSIVE phases so ordinary reads continue.
 DO $$
@@ -100,6 +111,9 @@ BEGIN
     END LOOP;
 END $$;
 
+COMMIT;
+BEGIN;
+
 DO $$
 DECLARE
     table_name TEXT;
@@ -118,6 +132,9 @@ BEGIN
     END LOOP;
 END $$;
 
+COMMIT;
+BEGIN;
+
 CREATE TABLE IF NOT EXISTS collection_authorization_state (
     collection_id INT PRIMARY KEY REFERENCES collections(id) ON DELETE CASCADE,
     revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0)
@@ -126,6 +143,9 @@ CREATE TABLE IF NOT EXISTS collection_authorization_state (
 INSERT INTO collection_authorization_state (collection_id)
 SELECT id FROM collections
 ON CONFLICT (collection_id) DO NOTHING;
+
+COMMIT;
+BEGIN;
 
 -- The seven temporal resources predate revisions. An insert starts at one,
 -- every stored update advances once, and a delete tombstone retains the last
@@ -163,6 +183,9 @@ BEGIN
     END LOOP;
 END $$;
 
+COMMIT;
+BEGIN;
+
 DO $$
 DECLARE
     table_name TEXT;
@@ -189,6 +212,9 @@ BEGIN
     END LOOP;
 END $$;
 
+COMMIT;
+BEGIN;
+
 DO $$
 DECLARE
     table_name TEXT;
@@ -208,6 +234,9 @@ BEGIN
     END LOOP;
 END $$;
 
+COMMIT;
+BEGIN;
+
 DO $$
 DECLARE
     table_name TEXT;
@@ -225,6 +254,9 @@ BEGIN
         );
     END LOOP;
 END $$;
+
+COMMIT;
+BEGIN;
 
 -- Copy the open history revision to the live row without disabling triggers.
 -- The transaction-local restore flag suppresses history writes while retaining
@@ -257,9 +289,16 @@ BEGIN
     END LOOP;
 END $$;
 
+COMMIT;
+BEGIN;
+
 ALTER TABLE events
     ADD COLUMN IF NOT EXISTS before_revision BIGINT NULL,
     ADD COLUMN IF NOT EXISTS after_revision BIGINT NULL;
+
+COMMIT;
+BEGIN;
+
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -281,13 +320,23 @@ BEGIN
             CHECK (after_revision > 0) NOT VALID;
     END IF;
 END $$;
+
+COMMIT;
+BEGIN;
+
 ALTER TABLE events VALIDATE CONSTRAINT events_before_revision_positive;
+
+COMMIT;
+BEGIN;
+
 ALTER TABLE events VALIDATE CONSTRAINT events_after_revision_positive;
+
+COMMIT;
+BEGIN;
 
 -- Keep the behavioral cutover atomic even though the expansion and backfill
 -- phases above intentionally commit independently. A failed cutover therefore
 -- leaves the old trigger set intact and can be retried safely.
-BEGIN;
 
 CREATE OR REPLACE FUNCTION hubuum_revision_owner_first(owner_key TEXT)
 RETURNS BOOLEAN
