@@ -187,6 +187,21 @@ jq --exit-status \
   '.status == "available" and .tag == "v1.0.0" and (.sha256 | length == 64)' \
   "$resolver_report/baseline-metadata.json" >/dev/null
 
+# A baseline document cannot be labeled as a different release.
+jq '.info.version = "0.9.0"' "$base" > "$temporary_dir/wrong-version-baseline.json"
+resolver_error="$temporary_dir/resolver-version.stderr"
+if HUBUUM_OPENAPI_BASELINE_FILE="$temporary_dir/wrong-version-baseline.json" \
+  HUBUUM_OPENAPI_BASELINE_TAG="v1.0.0" \
+  "$repo_root/scripts/resolve-openapi-baseline.sh" \
+    "$temporary_dir/resolver-wrong-version" \
+    >/dev/null 2>"$resolver_error"; then
+  echo "Expected the resolver to reject a mismatched baseline version" >&2
+  exit 1
+fi
+grep --fixed-strings --quiet \
+  "OpenAPI baseline document does not match tag v1.0.0" \
+  "$resolver_error"
+
 # The compared baseline must match the digest recorded by the resolver.
 cp "$base" "$candidate"
 jq '.sha256 = "0000000000000000000000000000000000000000000000000000000000000000"' \
@@ -194,6 +209,18 @@ jq '.sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 cp "$temporary_dir/wrong-digest.json" "$metadata"
 assert_rejected_with "baseline-digest" "OpenAPI baseline digest mismatch"
 write_metadata
+
+# The checker independently binds the baseline document version to its tag.
+cp "$temporary_dir/wrong-version-baseline.json" "$base"
+cp "$base" "$candidate"
+write_metadata
+assert_rejected_with "baseline-version" "OpenAPI baseline document does not match metadata tag v1.0.0"
+write_base
+write_metadata
+
+# Candidate metadata needed for changelog scoping is required even without oasdiff.
+jq 'del(.info.version)' "$base" > "$candidate"
+assert_rejected_with "candidate-version" "Invalid candidate OpenAPI document"
 
 # Repositories without a stable release record an explicit skipped result.
 cp "$base" "$candidate"
@@ -296,7 +323,7 @@ jq --null-input \
   '{
     schema_version: 1,
     exceptions: [{
-      id: "accepted-fixture-break",
+      id: "v1.0.0-accepted-fixture-break",
       baseline: "v1.0.0",
       expires: "2099-01-01",
       reason: "The fixture endpoint was replaced.",
@@ -308,7 +335,7 @@ jq --null-input \
 cp "$exceptions" "$temporary_dir/accepted-policy.json"
 assert_passes "accepted-break"
 jq --exit-status \
-  '.counts.accepted == 1 and .breaking[0].exception_id == "accepted-fixture-break"' \
+  '.counts.accepted == 1 and .breaking[0].exception_id == "v1.0.0-accepted-fixture-break"' \
   "$temporary_dir/accepted-break/compatibility.json" >/dev/null
 
 # Exception IDs remain unique so reports and review references are unambiguous.

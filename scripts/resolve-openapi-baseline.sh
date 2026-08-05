@@ -45,13 +45,29 @@ write_metadata() {
     }' > "$metadata_path"
 }
 
+validate_baseline_document() {
+  local tag="$1"
+  local expected_version="${tag#v}"
+
+  if ! jq --exit-status --arg expected_version "$expected_version" '
+    type == "object" and
+    (.openapi | type == "string" and test("\\S")) and
+    (.info | type == "object") and
+    .info.version == $expected_version and
+    (.paths | type == "object")
+  ' "$baseline_path" >/dev/null; then
+    echo "OpenAPI baseline document does not match tag $tag" >&2
+    exit 1
+  fi
+}
+
 if [[ -n "${HUBUUM_OPENAPI_BASELINE_FILE:-}" ]]; then
   if [[ -z "${HUBUUM_OPENAPI_BASELINE_TAG:-}" ]]; then
     echo "HUBUUM_OPENAPI_BASELINE_TAG is required with HUBUUM_OPENAPI_BASELINE_FILE" >&2
     exit 1
   fi
   cp "$HUBUUM_OPENAPI_BASELINE_FILE" "$baseline_path"
-  jq --exit-status . "$baseline_path" >/dev/null
+  validate_baseline_document "$HUBUUM_OPENAPI_BASELINE_TAG"
   digest="$(sha256_file "$baseline_path")"
   write_metadata \
     "available" \
@@ -124,7 +140,7 @@ fi
 encoded_tag="$(jq --null-input --raw-output --arg value "$baseline_tag" '$value | @uri')"
 contents_url="$api_url/repos/$repository/contents/docs/openapi.json?ref=$encoded_tag"
 github_get "application/vnd.github.raw+json" "$contents_url" "$baseline_path"
-jq --exit-status . "$baseline_path" >/dev/null
+validate_baseline_document "$baseline_tag"
 
 digest="$(sha256_file "$baseline_path")"
 write_metadata "available" "$baseline_tag" "$contents_url" "$digest" ""

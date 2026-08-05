@@ -38,6 +38,20 @@ done
 if ! jq --exit-status '
   def nonblank_string:
     type == "string" and test("\\S");
+  type == "object" and
+  (.openapi | nonblank_string) and
+  (.info | type == "object") and
+  (.info.version | nonblank_string) and
+  (.paths | type == "object")
+' "$candidate_path" >/dev/null; then
+  echo "Invalid candidate OpenAPI document: $candidate_path" >&2
+  exit 1
+fi
+candidate_version="$(jq --raw-output '.info.version' "$candidate_path")"
+
+if ! jq --exit-status '
+  def nonblank_string:
+    type == "string" and test("\\S");
   def stable_tag:
     nonblank_string and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$");
   def sha256_digest:
@@ -86,7 +100,7 @@ if ! jq --exit-status '
   .schema_version == 1 and
   (.exceptions | type == "array") and
   all(.exceptions[];
-    (.id | type == "string" and test("^[a-z0-9]+(-[a-z0-9]+)*$")) and
+    (.id | type == "string" and test("^[a-z0-9]+([.-][a-z0-9]+)*$")) and
     (.baseline | stable_tag) and
     (.expires | valid_date) and
     (.reason | nonblank_string) and
@@ -132,6 +146,19 @@ baseline_sha256="$(sha256_file "$baseline_path")"
 expected_baseline_sha256="$(jq --raw-output '.sha256' "$metadata_path")"
 if [[ "$baseline_sha256" != "$expected_baseline_sha256" ]]; then
   echo "OpenAPI baseline digest mismatch: expected $expected_baseline_sha256, got $baseline_sha256" >&2
+  exit 1
+fi
+
+baseline_tag="$(jq --raw-output '.tag' "$metadata_path")"
+baseline_version="${baseline_tag#v}"
+if ! jq --exit-status --arg expected_version "$baseline_version" '
+  type == "object" and
+  (.openapi | type == "string" and test("\\S")) and
+  (.info | type == "object") and
+  .info.version == $expected_version and
+  (.paths | type == "object")
+' "$baseline_path" >/dev/null; then
+  echo "OpenAPI baseline document does not match metadata tag $baseline_tag" >&2
   exit 1
 fi
 
@@ -202,9 +229,6 @@ jq --slurp 'add | unique_by(.fingerprint)' \
   "$raw_changes" \
   "$synthetic_changes" > "$all_changes"
 
-baseline_tag="$(jq --raw-output '.tag' "$metadata_path")"
-baseline_version="${baseline_tag#v}"
-candidate_version="$(jq --raw-output '.info.version' "$candidate_path")"
 checked_changelog_path="$report_dir/checked-changelog.md"
 awk '
   /^## \[Unreleased\]/ { in_unreleased = 1; next }
