@@ -508,11 +508,28 @@ jobs:
           $dieselBin = Join-Path $env:USERPROFILE '.cargo\bin\diesel.exe'
           if (-not (Test-Path $dieselBin)) { throw "Diesel CLI not found at $dieselBin" }
           $dieselDescription = & $dieselBin --version
+          $dieselVersionCandidates = @(
+            foreach ($line in $dieselDescription) {
+              if ($line -match '^\s*Version:\s+(\d+\.\d+\.\d+)\s*$') {
+                $Matches[1]
+              } elseif ($line -match '^diesel\s+(\d+\.\d+\.\d+)\s*$') {
+                $Matches[1]
+              }
+            }
+          )
+          if ($dieselVersionCandidates.Count -ne 1) {
+            throw "Could not parse exactly one Diesel CLI version from: $($dieselDescription -join '; ')"
+          }
+          $installedDieselVersion = $dieselVersionCandidates[0]
+          if ($installedDieselVersion -ne $dieselVersion) {
+            throw "Unexpected Diesel CLI version $installedDieselVersion (expected $dieselVersion)"
+          }
+          $dieselLabel = "diesel $installedDieselVersion"
           $dieselDigest = (Get-FileHash $dieselBin -Algorithm SHA256).Hash.ToLower()
-          Write-Host $dieselDescription
+          Write-Host $dieselLabel
           Write-Host "diesel sha256:$dieselDigest"
           if ($env:GITHUB_STEP_SUMMARY) {
-            Add-Content $env:GITHUB_STEP_SUMMARY "- Diesel CLI: ``$dieselDescription``"
+            Add-Content $env:GITHUB_STEP_SUMMARY "- Diesel CLI: ``$dieselLabel``"
             Add-Content $env:GITHUB_STEP_SUMMARY "- Diesel CLI executable: ``sha256:$dieselDigest``"
           }
           "DIESEL_BIN=$dieselBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
