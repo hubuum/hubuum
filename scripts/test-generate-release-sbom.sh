@@ -59,10 +59,15 @@ cat > "$temp_root/base.cdx.json" <<'JSON'
   "version": 1,
   "metadata": {"component": {"bom-ref": "base-image"}},
   "components": [
-    {"type": "library", "bom-ref": "pkg:apk/alpine/ca-certificates@1", "name": "ca-certificates", "version": "1"}
+    {"type": "library", "bom-ref": "pkg:apk/alpine/ca-certificates@1", "name": "ca-certificates", "version": "1"},
+    {"type": "library", "bom-ref": "pkg:generic/base-one@1", "name": "base-one", "version": "1"},
+    {"type": "library", "bom-ref": "pkg:generic/base-two@1", "name": "base-two", "version": "1"},
+    {"type": "library", "name": "unreferenced", "version": "1"}
   ],
   "dependencies": [
-    {"ref": "base-image", "dependsOn": ["pkg:apk/alpine/ca-certificates@1"]}
+    {"ref": "base-image", "dependsOn": ["pkg:apk/alpine/ca-certificates@1"]},
+    {"ref": "pkg:apk/alpine/ca-certificates@1", "dependsOn": ["pkg:generic/base-one@1"]},
+    {"ref": "pkg:apk/alpine/ca-certificates@1", "dependsOn": ["pkg:generic/base-two@1"]}
   ]
 }
 JSON
@@ -87,11 +92,20 @@ document = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert document["bomFormat"] == "CycloneDX"
 assert document["specVersion"] == "1.6"
 components = {component["name"] for component in document["components"]}
-assert {"hubuum", "serde", "ca-certificates"} <= components
+assert {"hubuum", "serde", "ca-certificates", "unreferenced"} <= components
 root = document["metadata"]["component"]
 expected = hashlib.sha256(b"release archive contents").hexdigest()
 assert root["hashes"] == [{"alg": "SHA-256", "content": expected}]
 assert any(dependency["ref"] == root["bom-ref"] for dependency in document["dependencies"])
+ca_dependency = next(
+    dependency
+    for dependency in document["dependencies"]
+    if dependency["ref"] == "pkg:apk/alpine/ca-certificates@1"
+)
+assert ca_dependency["dependsOn"] == [
+    "pkg:generic/base-one@1",
+    "pkg:generic/base-two@1",
+]
 PY
 
 if python3 scripts/generate-release-sbom.py \

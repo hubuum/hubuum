@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import os
@@ -10,6 +11,7 @@ import re
 import sys
 import tomllib
 from pathlib import Path
+from typing import NoReturn
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,9 +25,16 @@ OCI_DIGEST_REF = re.compile(
 MUTABLE_INSTALLER = re.compile(
     r"(?i)(?:curl|wget)[^\n]*\|\s*(?:ba)?sh|irm[^\n]*\|\s*iex|/latest/download/"
 )
+REQUIRED_TOOL_KEYS = {
+    "CARGO_DENY_VERSION",
+    "DIESEL_CLI_VERSION",
+    "SYFT_IMAGE",
+    "TRIVY_IMAGE",
+    "COSIGN_VERSION",
+}
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     print(f"supply-chain policy error: {message}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -78,6 +87,17 @@ def walk_tables(value: object):
             yield from walk_tables(child)
 
 
+def add_exception(
+    exceptions: set[tuple[str, str]], kind: str, identifier: object, source: str
+) -> None:
+    if not isinstance(identifier, str) or not identifier.strip():
+        fail(f"{source} has an invalid {kind} exception identifier")
+    exception = (kind, identifier)
+    if exception in exceptions:
+        fail(f"{source} configures duplicate exception {exception!r}")
+    exceptions.add(exception)
+
+
 def check_git_dependencies() -> None:
     for manifest in sorted(ROOT.glob("**/Cargo.toml")):
         if "target" in manifest.parts:
@@ -100,29 +120,29 @@ def configured_exceptions() -> set[tuple[str, str]]:
     configured: set[tuple[str, str]] = set()
 
     for entry in policy.get("advisories", {}).get("ignore", []):
-        identifier = entry if isinstance(entry, str) else entry.get("id") or entry.get("crate")
-        if identifier:
-            exception = ("advisory", identifier)
-            if exception in configured:
-                fail(f"deny.toml configures duplicate exception {exception!r}")
-            configured.add(exception)
+        if isinstance(entry, str):
+            identifier = entry
+        elif isinstance(entry, dict):
+            identifier = entry.get("id") or entry.get("crate")
+        else:
+            identifier = None
+        add_exception(configured, "advisory", identifier, "deny.toml")
 
     for entry in policy.get("licenses", {}).get("exceptions", []):
-        identifier = entry.get("crate") or entry.get("name")
-        if identifier:
-            exception = ("license", identifier)
-            if exception in configured:
-                fail(f"deny.toml configures duplicate exception {exception!r}")
-            configured.add(exception)
+        identifier = (
+            entry.get("crate") or entry.get("name")
+            if isinstance(entry, dict)
+            else None
+        )
+        add_exception(configured, "license", identifier, "deny.toml")
 
     trivy_ignore = ROOT / ".trivyignore"
     for line in trivy_ignore.read_text(encoding="utf-8").splitlines():
         identifier = line.strip()
         if identifier and not identifier.startswith("#"):
-            exception = ("container-vulnerability", identifier)
-            if exception in configured:
-                fail(f".trivyignore configures duplicate exception {exception!r}")
-            configured.add(exception)
+            add_exception(
+                configured, "container-vulnerability", identifier, ".trivyignore"
+            )
 
     return configured
 
@@ -193,16 +213,8 @@ def parse_tool_manifest(path: Path) -> dict[str, str]:
 
 
 def validate_tool_values(values: dict[str, str]) -> None:
-
-    required = {
-        "CARGO_DENY_VERSION",
-        "DIESEL_CLI_VERSION",
-        "SYFT_IMAGE",
-        "TRIVY_IMAGE",
-        "COSIGN_VERSION",
-    }
-    if values.keys() != required:
-        fail(f"tool manifest keys must be exactly {sorted(required)!r}")
+    if values.keys() != REQUIRED_TOOL_KEYS:
+        fail(f"tool manifest keys must be exactly {sorted(REQUIRED_TOOL_KEYS)!r}")
     for key in ("SYFT_IMAGE", "TRIVY_IMAGE"):
         if not OCI_DIGEST_REF.fullmatch(values[key]):
             fail(f"{key} must be a literal OCI reference with a full SHA-256 digest")
@@ -223,6 +235,12 @@ def check_tool_manifest() -> None:
         fail("ci.yml cosign-release does not match the pinned tool manifest")
 
 
+def print_tool_value(key: str) -> None:
+    values = parse_tool_manifest(ROOT / ".github" / "supply-chain-tools.env")
+    validate_tool_values(values)
+    print(values[key])
+
+
 def write_workflow_summary() -> None:
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_path:
@@ -241,12 +259,7 @@ def write_workflow_summary() -> None:
             if image_match:
                 service_images.add(image_match.group(1))
 
-    tools = []
-    for line in (ROOT / ".github" / "supply-chain-tools.env").read_text(
-        encoding="utf-8"
-    ).splitlines():
-        if line and not line.startswith("#"):
-            tools.append(line)
+    tool_values = parse_tool_manifest(ROOT / ".github" / "supply-chain-tools.env")
 
     with Path(summary_path).open("a", encoding="utf-8") as summary:
         summary.write("### Immutable supply-chain inputs\n\n")
@@ -254,11 +267,18 @@ def write_workflow_summary() -> None:
             summary.write(f"- Action: `{pin}`\n")
         for image in sorted(service_images):
             summary.write(f"- Service image: `{image}`\n")
-        for tool in tools:
-            summary.write(f"- Tool: `{tool}`\n")
+        for key in sorted(tool_values):
+            summary.write(f"- Tool: `{key}={tool_values[key]}`\n")
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tool-value", choices=sorted(REQUIRED_TOOL_KEYS))
+    args = parser.parse_args()
+    if args.tool_value:
+        print_tool_value(args.tool_value)
+        return
+
     check_workflows()
     check_git_dependencies()
     check_exceptions()

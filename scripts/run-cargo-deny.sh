@@ -2,8 +2,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck disable=SC1091
-source "$repo_root/.github/supply-chain-tools.env"
+CARGO_DENY_VERSION="$(
+  python3 "$repo_root/scripts/check-supply-chain-policy.py" \
+    --tool-value CARGO_DENY_VERSION
+)"
 report_path="${1:-cargo-deny.log}"
 
 installed_version="$(cargo deny --version 2>/dev/null || true)"

@@ -40,7 +40,8 @@ An exception has this shape:
 GitHub Actions are pinned to full commit SHAs with their readable release name
 in a comment. CI service images and release tooling containers are pinned by
 OCI digest. `.github/supply-chain-tools.env` records exact versions and image
-digests for cargo-deny, Diesel CLI, Syft, Trivy, and cosign.
+digests for cargo-deny, Diesel CLI, Syft, Trivy, and cosign. Consumers read
+individual validated values rather than evaluating the manifest as shell code.
 
 Diesel CLI and cargo-deny are built from checksum-verified crates.io sources at
 exact versions. Syft and Trivy run from digest-pinned OCI images. The pinned

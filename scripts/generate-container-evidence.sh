@@ -12,8 +12,6 @@ source_revision="$3"
 source_tag="$4"
 target="$5"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck disable=SC1091
-source "$repo_root/.github/supply-chain-tools.env"
 
 image_pattern='^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*(:[A-Za-z0-9_][A-Za-z0-9._-]*)?@sha256:[0-9a-f]{64}$'
 if [[ ! "$image_ref" =~ $image_pattern ]]; then
@@ -36,6 +34,9 @@ if [[ ! "$target" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
   echo "container evidence target contains unsupported characters: $target" >&2
   exit 1
 fi
+
+SYFT_IMAGE="$(python3 "$repo_root/scripts/check-supply-chain-policy.py" --tool-value SYFT_IMAGE)"
+TRIVY_IMAGE="$(python3 "$repo_root/scripts/check-supply-chain-policy.py" --tool-value TRIVY_IMAGE)"
 
 evidence_dir="${HUBUUM_EVIDENCE_DIR:-$repo_root/supply-chain-evidence}"
 mkdir -p "$evidence_dir"

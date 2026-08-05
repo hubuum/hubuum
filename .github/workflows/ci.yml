@@ -502,14 +502,7 @@ jobs:
           "PG_TEST_PORT=$pgPort" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "PG_LOG=$pgLog" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-          $toolVersions = @{}
-          Get-Content '.github/supply-chain-tools.env' |
-            Where-Object { $_ -and -not $_.StartsWith('#') } |
-            ForEach-Object {
-              $key, $value = $_.Split('=', 2)
-              $toolVersions[$key] = $value
-            }
-          $dieselVersion = $toolVersions['DIESEL_CLI_VERSION']
+          $dieselVersion = python3 scripts/check-supply-chain-policy.py --tool-value DIESEL_CLI_VERSION
           if (-not $dieselVersion) { throw 'DIESEL_CLI_VERSION is not configured' }
           cargo install --locked --force --version "=$dieselVersion" --no-default-features --features postgres diesel_cli
           $dieselBin = Join-Path $env:USERPROFILE '.cargo\bin\diesel.exe'

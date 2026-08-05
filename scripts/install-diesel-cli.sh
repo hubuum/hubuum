@@ -2,8 +2,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck disable=SC1091
-source "$repo_root/.github/supply-chain-tools.env"
+DIESEL_CLI_VERSION="$(
+  python3 "$repo_root/scripts/check-supply-chain-policy.py" \
+    --tool-value DIESEL_CLI_VERSION
+)"
 
 cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
 diesel_bin="$cargo_bin/diesel"
