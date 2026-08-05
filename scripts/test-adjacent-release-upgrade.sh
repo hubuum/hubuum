@@ -170,6 +170,9 @@ services:
     environment: &hubuum-environment
       HUBUUM_BIND_IP: 0.0.0.0
       HUBUUM_BIND_PORT: 8080
+      # v0.0.8 and earlier read the unprefixed name. Keep both variables so
+      # this harness can exercise the actual adjacent-version boundary.
+      DATABASE_URL: ${HUBUUM_DATABASE_URL}
       HUBUUM_DATABASE_URL: ${HUBUUM_DATABASE_URL}
       HUBUUM_CLIENT_ALLOWLIST: "*"
       HUBUUM_LOG_LEVEL: info

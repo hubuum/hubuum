@@ -1058,11 +1058,18 @@ mod tests {
             include_str!("../../migrations/2026-08-03-000001_resource_revisions/up.sql");
         let metadata =
             include_str!("../../migrations/2026-08-03-000001_resource_revisions/metadata.toml");
-        let transaction_count = migration.matches("\nBEGIN;\n").count();
+        let transaction_count = migration
+            .lines()
+            .filter(|line| line.trim() == "BEGIN;")
+            .count();
+        let commit_count = migration
+            .lines()
+            .filter(|line| line.trim() == "COMMIT;")
+            .count();
 
         assert_eq!(metadata.trim(), "run_in_transaction = false");
         assert_eq!(transaction_count, 16);
-        assert_eq!(migration.matches("\nCOMMIT;").count(), transaction_count);
+        assert_eq!(commit_count, transaction_count);
     }
 
     #[tokio::test]
