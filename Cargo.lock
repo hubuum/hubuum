@@ -5055,7 +5055,7 @@ dependencies = [
 [[package]]
 name = "treetop-client"
 version = "0.0.1"
-source = "git+https://github.com/terjekv/treetop-client#5a1d176df790216983127b18af70f6ac6a91ce28"
+source = "git+https://github.com/terjekv/treetop-client?rev=5a1d176df790216983127b18af70f6ac6a91ce28#5a1d176df790216983127b18af70f6ac6a91ce28"
 dependencies = [
  "reqwest",
  "secrecy",

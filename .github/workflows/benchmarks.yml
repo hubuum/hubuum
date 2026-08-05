@@ -47,7 +47,7 @@ jobs:
       run_runtime: ${{ steps.policy.outputs.run_runtime }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: Test change classifier
@@ -108,7 +108,7 @@ jobs:
     name: Self-contained benchmarks
     needs: changes
     if: needs.changes.outputs.run_self_contained == 'true'
-    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@v3
+    uses: terjekv/github-action-iai-callgrind/.github/workflows/rust-pr-bench.yml@a0993c0f7cbfcb4e34c9e13dbea62176608c833c # v3
     secrets: inherit
     with:
       backend: all
@@ -152,11 +152,11 @@ jobs:
       POSTGRES_BENCH_STABILITY_PCT: 10
     steps:
       - name: Check out pull request
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: Cache Cargo and target directories
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Install PostgreSQL build tools
         run: |
           sudo apt-get update --yes
@@ -362,11 +362,11 @@ jobs:
       RUNTIME_BEHAVIOR_SAMPLE_SECONDS: 60
     steps:
       - name: Check out pull request
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: Cache Cargo and target directories
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Install PostgreSQL build tools
         run: |
           sudo apt-get update --yes
@@ -449,7 +449,7 @@ jobs:
             --max-relative-regression-percent 25
       - name: Upload runtime behavior reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: runtime-behavior
           path: target/runtime-behavior

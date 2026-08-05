@@ -106,7 +106,7 @@ openssl = { version = "0.10.80", optional = true }
 lru = "0.18.0"
 # treetop-client is currently consumed from git at version 0.0.1. Cargo.lock
 # pins the exact revision; bump explicitly when the upstream API stabilizes.
-treetop-client = { git = "https://github.com/terjekv/treetop-client", optional = true }
+treetop-client = { git = "https://github.com/terjekv/treetop-client", rev = "5a1d176df790216983127b18af70f6ac6a91ce28", optional = true }
 toml = "1.1"
 
 [target.'cfg(unix)'.dependencies]

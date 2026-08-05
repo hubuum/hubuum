@@ -1,0 +1,3 @@
+# Fixed HIGH and CRITICAL findings block release by default.
+# Any future CVE listed here must have matching, unexpired metadata in
+# .github/supply-chain-exceptions.json.

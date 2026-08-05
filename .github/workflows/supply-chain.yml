@@ -1,0 +1,40 @@
+name: Scheduled supply-chain audit
+
+on:
+  schedule:
+    - cron: "17 03 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-policy:
+    name: Rust dependency and license policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate immutable inputs and exception metadata
+        run: python3 scripts/check-supply-chain-policy.py
+      - name: Test supply-chain policy validation
+        run: python3 scripts/test-supply-chain-policy.py
+      - name: Test release SBOM composition
+        run: bash scripts/test-generate-release-sbom.sh
+      - name: Test container evidence input validation
+        run: bash scripts/test-generate-container-evidence.sh
+      - name: Audit dependencies
+        id: dependency_audit
+        continue-on-error: true
+        run: bash scripts/run-cargo-deny.sh cargo-deny.log
+      - name: Retain dependency audit
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: scheduled-cargo-deny-${{ github.run_id }}
+          path: cargo-deny.log
+          if-no-files-found: error
+          retention-days: 90
+      - name: Enforce dependency audit result
+        if: steps.dependency_audit.outcome != 'success'
+        run: exit 1
