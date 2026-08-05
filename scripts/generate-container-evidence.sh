@@ -37,9 +37,11 @@ fi
 case "$target" in
   linux-amd64)
     cargo_target=x86_64-unknown-linux-musl
+    container_platform=linux/amd64
     ;;
   linux-arm64)
     cargo_target=aarch64-unknown-linux-musl
+    container_platform=linux/arm64
     ;;
   *)
     echo "container evidence target is unsupported: $target" >&2
@@ -91,6 +93,7 @@ docker run --rm \
   --volume "$repo_root:/workspace:ro" \
   "$TRIVY_IMAGE" \
   image \
+  --platform "$container_platform" \
   --scanners vuln \
   --pkg-types os,library \
   --severity HIGH,CRITICAL \
@@ -107,6 +110,7 @@ docker run --rm \
   --volume "$repo_root:/workspace:ro" \
   "$TRIVY_IMAGE" \
   image \
+  --platform "$container_platform" \
   --scanners vuln \
   --pkg-types os,library \
   --severity HIGH,CRITICAL \
