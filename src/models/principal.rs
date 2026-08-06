@@ -1,5 +1,6 @@
 use crate::db::prelude::*;
 use serde::{Deserialize, Serialize};
+use utoipa::openapi::{RefOr, schema::Schema};
 use utoipa::{PartialSchema, ToSchema};
 
 use crate::db::DbPool;
@@ -109,40 +110,26 @@ pub const MAX_PRINCIPAL_SETTINGS_PATCH_RESULT_NESTING_DEPTH: usize =
 pub struct PrincipalSettingsPatchDocument(BoundedJsonPatch);
 
 impl PartialSchema for PrincipalSettingsPatchDocument {
-    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-        utoipa::openapi::schema::ArrayBuilder::new()
-            .items(json_patch::PatchOperation::schema())
-            .max_items(Some(MAX_PRINCIPAL_SETTINGS_PATCH_OPERATIONS))
-            .description(Some(
-                "RFC 6902 operations applied relative to the principal-settings document root. Supports add, remove, replace, move, copy, and test; test compares JSON numbers by numeric value. The final root must remain an object. The request and result are limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
-            ))
-            .examples([serde_json::json!([
+    fn schema() -> RefOr<Schema> {
+        BoundedJsonPatch::openapi_schema(
+            "RFC 6902 operations applied relative to the principal-settings document root. Supports add, remove, replace, move, copy, and test; test compares JSON numbers by numeric value. The final root must remain an object. The request and result are limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
+            serde_json::json!([
                 {"op": "test", "path": "/theme", "value": "light"},
                 {"op": "replace", "path": "/theme", "value": "dark"}
-            ])])
-            .build()
-            .into()
+            ]),
+        )
     }
 }
 
 impl ToSchema for PrincipalSettingsPatchDocument {
-    fn schemas(
-        schemas: &mut Vec<(
-            String,
-            utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
-        )>,
-    ) {
-        schemas.push((
-            json_patch::PatchOperation::name().into_owned(),
-            json_patch::PatchOperation::schema(),
-        ));
-        json_patch::PatchOperation::schemas(schemas);
+    fn schemas(schemas: &mut Vec<(String, RefOr<Schema>)>) {
+        BoundedJsonPatch::register_openapi_schemas(schemas);
     }
 }
 
 /// Content-type-selected semantics for a principal-settings PATCH request.
 #[derive(Clone, Debug)]
-pub enum PrincipalSettingsPatch {
+pub(crate) enum PrincipalSettingsPatch {
     MergePatch(PrincipalSettings),
     JsonPatch(PrincipalSettingsPatchDocument),
 }
@@ -591,7 +578,7 @@ impl PrincipalID {
         .await
     }
 
-    pub async fn apply_settings_patch<C>(
+    pub(crate) async fn apply_settings_patch<C>(
         &self,
         backend: &C,
         patch: PrincipalSettingsPatch,

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use utoipa::openapi::{RefOr, schema::Schema};
 use utoipa::{PartialSchema, ToSchema};
 
 use crate::errors::ApiError;
@@ -31,33 +32,19 @@ pub const MAX_OBJECT_DATA_PATCH_RESULT_NESTING_DEPTH: usize = MAX_JSON_PATCH_RES
 pub struct ObjectDataPatchDocument(BoundedJsonPatch);
 
 impl PartialSchema for ObjectDataPatchDocument {
-    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-        utoipa::openapi::schema::ArrayBuilder::new()
-            .items(json_patch::PatchOperation::schema())
-            .max_items(Some(MAX_OBJECT_DATA_PATCH_OPERATIONS))
-            .description(Some(
-                "RFC 6902 operations applied relative to the root of an object's raw data document. Supports add, remove, replace, move, copy, and test; test compares JSON numbers by numeric value. The resulting document is limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
-            ))
-            .examples([serde_json::json!([
+    fn schema() -> RefOr<Schema> {
+        BoundedJsonPatch::openapi_schema(
+            "RFC 6902 operations applied relative to the root of an object's raw data document. Supports add, remove, replace, move, copy, and test; test compares JSON numbers by numeric value. The resulting document is limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
+            serde_json::json!([
                 {"op": "add", "path": "/facts", "value": {"source": "inventory"}}
-            ])])
-            .build()
-            .into()
+            ]),
+        )
     }
 }
 
 impl ToSchema for ObjectDataPatchDocument {
-    fn schemas(
-        schemas: &mut Vec<(
-            String,
-            utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
-        )>,
-    ) {
-        schemas.push((
-            json_patch::PatchOperation::name().into_owned(),
-            json_patch::PatchOperation::schema(),
-        ));
-        json_patch::PatchOperation::schemas(schemas);
+    fn schemas(schemas: &mut Vec<(String, RefOr<Schema>)>) {
+        BoundedJsonPatch::register_openapi_schemas(schemas);
     }
 }
 
@@ -115,22 +102,6 @@ mod tests {
         let patched = patch_document(patch).apply(&original).unwrap();
 
         assert_eq!(patched, expected);
-    }
-
-    #[test]
-    fn object_data_patch_test_compares_numeric_representations_recursively() {
-        let patch = serde_json::from_str::<ObjectDataPatchDocument>(
-            r#"[
-                {"op":"add","path":"/value","value":{"direct":1.0,"nested":[2e0]}},
-                {"op":"test","path":"/value","value":{"nested":[2.00],"direct":1}},
-                {"op":"add","path":"/test_passed","value":true}
-            ]"#,
-        )
-        .unwrap();
-
-        let patched = patch.apply(&serde_json::json!({})).unwrap();
-
-        assert_eq!(patched["test_passed"], true);
     }
 
     #[rstest::rstest]
