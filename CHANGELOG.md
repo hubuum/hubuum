@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-08-06
+
 ### Added
 
 - Principal settings PATCH endpoints now accept bounded RFC 6902 JSON Patch via
