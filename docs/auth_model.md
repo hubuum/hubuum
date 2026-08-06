@@ -390,14 +390,16 @@ not searchable.
 | --- | --- | --- |
 | `GET /api/v1/iam/me/settings` | Read the current principal settings | Any valid token for the current principal |
 | `PUT /api/v1/iam/me/settings` | Replace the current principal settings | Any valid token for the current principal |
-| `PATCH /api/v1/iam/me/settings` | Merge a patch into the current principal settings | Any valid token for the current principal |
+| `PATCH /api/v1/iam/me/settings` | Apply JSON Merge Patch or JSON Patch to the current principal settings | Any valid token for the current principal |
 | `DELETE /api/v1/iam/me/settings` | Reset the current principal settings to `{}` | Any valid token for the current principal |
 | `/api/v1/iam/principals/{principal_id}/settings` | The same operations for a named principal | Self, or an unscoped human admin; denied cross-principal requests return `404` |
 
 The settings document root must be a JSON object. Nested values may be any JSON
 type. `PUT` replaces the entire document, so it can retain a nested `null` value.
 
-`PATCH` applies object-only JSON Merge Patch semantics:
+`PATCH` selects its semantics from `Content-Type`. `application/json` retains the
+existing object-only JSON Merge Patch behavior. The standards-oriented
+`application/merge-patch+json` media type is accepted as an alias:
 
 - Object values merge recursively.
 - A `null` patch value removes that key; it does not store a JSON `null`.
@@ -428,6 +430,37 @@ For example:
   "tags": ["b"]
 }
 ```
+
+Use `Content-Type: application/json-patch+json` to apply an RFC 6902 operation
+array instead. Hubuum supports `add`, `remove`, `replace`, `move`, `copy`, and
+`test`. Every `path` and `from` is an RFC 6901 JSON Pointer relative to the
+settings document root. `test` compares arrays and objects recursively and
+compares JSON numbers by numeric value, so representations such as `1`, `1.0`,
+and `1e0` are equal. For example, this patch compares the current theme, updates
+it, inserts one array element, and stores a literal JSON `null`:
+
+```json
+[
+  { "op": "test", "path": "/theme", "value": "light" },
+  { "op": "replace", "path": "/theme", "value": "dark" },
+  { "op": "add", "path": "/shortcuts/1", "value": "search" },
+  { "op": "add", "path": "/dismissed_tip", "value": null }
+]
+```
+
+The complete JSON Patch is applied to the latest settings value after the
+principal row is locked. A failed operation, including a failed `test`, returns
+`409 Conflict` and rolls back all operations and audit side effects. The final
+document root must remain an object; replacing it with another JSON type returns
+`400 Bad Request`. A successful no-op returns the current document without
+advancing its revision or emitting an event.
+
+JSON Patch requests and results are limited to 2 MiB, 1,000 operations, 128
+pointer segments per `path` or `from`, 64 nested containers, and 32 MiB of
+cumulative application work. Intermediate results are checked after every
+operation for these bounds and for PostgreSQL JSONB representability. Array
+indices can become stale when another client changes the array first; pair
+index-sensitive operations with `test` when element identity matters.
 
 Settings mutations are serialized with a principal row lock, so concurrent patches
 preserve unrelated changes. Each mutation that changes the settings records a

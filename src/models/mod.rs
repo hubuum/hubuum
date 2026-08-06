@@ -18,6 +18,7 @@ pub mod group;
 pub mod history;
 pub mod identity;
 pub mod import;
+pub(crate) mod json_patch;
 pub(crate) mod maintenance;
 pub mod object;
 pub mod object_aggregate;

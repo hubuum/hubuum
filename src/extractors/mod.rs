@@ -7,7 +7,10 @@ use crate::events::{EventContext, RequestProvenance};
 use crate::models::principal::{Principal, load_principal_by_id};
 use crate::models::token::{PrincipalToken, Token};
 use crate::models::user::User;
-use crate::models::{MAX_OBJECT_DATA_PATCH_BYTES, ObjectDataPatchDocument, TokenScope};
+use crate::models::{
+    MAX_OBJECT_DATA_PATCH_BYTES, MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, ObjectDataPatchDocument,
+    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenScope,
+};
 use crate::permissions::{AppContext, PrincipalRef};
 
 use actix_web::{
@@ -23,6 +26,43 @@ use tracing::debug;
 use crate::middlewares::actor_context::ResolvedAuth;
 
 const JSON_PATCH_MEDIA_TYPE: &str = "application/json-patch+json";
+const JSON_MEDIA_TYPE: &str = "application/json";
+const JSON_MERGE_PATCH_MEDIA_TYPE: &str = "application/merge-patch+json";
+const SUPPORTED_PRINCIPAL_SETTINGS_PATCH_MEDIA_TYPES: &str =
+    "application/json, application/merge-patch+json, or application/json-patch+json";
+
+#[derive(Clone, Copy)]
+struct PatchPayloadErrorContext {
+    sentence_subject: &'static str,
+    embedded_subject: &'static str,
+    document_kind: &'static str,
+    supported_media_types: &'static str,
+}
+
+const OBJECT_DATA_PATCH_ERROR_CONTEXT: PatchPayloadErrorContext = PatchPayloadErrorContext {
+    sentence_subject: "JSON Patch",
+    embedded_subject: "JSON Patch",
+    document_kind: "JSON Patch",
+    supported_media_types: JSON_PATCH_MEDIA_TYPE,
+};
+
+const PRINCIPAL_SETTINGS_JSON_PATCH_ERROR_CONTEXT: PatchPayloadErrorContext =
+    PatchPayloadErrorContext {
+        sentence_subject: "Principal settings patch",
+        embedded_subject: "principal settings patch",
+        document_kind: "JSON Patch",
+        supported_media_types: SUPPORTED_PRINCIPAL_SETTINGS_PATCH_MEDIA_TYPES,
+    };
+
+const PRINCIPAL_SETTINGS_MERGE_PATCH_ERROR_CONTEXT: PatchPayloadErrorContext =
+    PatchPayloadErrorContext {
+        document_kind: "JSON Merge Patch",
+        ..PRINCIPAL_SETTINGS_JSON_PATCH_ERROR_CONTEXT
+    };
+
+fn unsupported_patch_media_type(supported_media_types: &str) -> ApiError {
+    ApiError::UnsupportedMediaType(format!("Content-Type must be {supported_media_types}"))
+}
 
 /// Strict JSON Patch request extractor for object-data patching.
 pub struct ObjectDataPatchPayload(ObjectDataPatchDocument);
@@ -38,16 +78,12 @@ impl FromRequest for ObjectDataPatchPayload {
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
-        let content_type = req
-            .mime_type()
-            .ok()
-            .flatten()
-            .map(|mime| mime.essence_str().to_string());
+        let content_type = req.mime_type().ok().flatten();
 
-        if content_type.as_deref() != Some(JSON_PATCH_MEDIA_TYPE) {
-            return Box::pin(future::ready(Err(ApiError::UnsupportedMediaType(format!(
-                "Content-Type must be {JSON_PATCH_MEDIA_TYPE}"
-            )))));
+        if content_type.as_ref().map(|mime| mime.essence_str()) != Some(JSON_PATCH_MEDIA_TYPE) {
+            return Box::pin(future::ready(Err(unsupported_patch_media_type(
+                JSON_PATCH_MEDIA_TYPE,
+            ))));
         }
 
         let body = JsonBody::<ObjectDataPatchDocument>::new(req, payload, None, true)
@@ -55,32 +91,89 @@ impl FromRequest for ObjectDataPatchPayload {
         Box::pin(async move {
             body.await
                 .map(Self)
-                .map_err(object_data_patch_payload_error)
+                .map_err(|error| patch_payload_error(error, OBJECT_DATA_PATCH_ERROR_CONTEXT))
         })
     }
 }
 
-fn object_data_patch_payload_error(error: JsonPayloadError) -> ApiError {
+/// Content-type-aware extractor for principal-settings merge and JSON Patch requests.
+pub struct PrincipalSettingsPatchPayload(PrincipalSettingsPatch);
+
+impl PrincipalSettingsPatchPayload {
+    pub(crate) fn into_inner(self) -> PrincipalSettingsPatch {
+        self.0
+    }
+}
+
+impl FromRequest for PrincipalSettingsPatchPayload {
+    type Error = ApiError;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
+        let content_type = req.mime_type().ok().flatten();
+
+        match content_type.as_ref().map(|mime| mime.essence_str()) {
+            Some(JSON_PATCH_MEDIA_TYPE) => {
+                let body =
+                    JsonBody::<PrincipalSettingsPatchDocument>::new(req, payload, None, true)
+                        .limit(MAX_PRINCIPAL_SETTINGS_PATCH_BYTES);
+                Box::pin(async move {
+                    body.await
+                        .map(|patch| Self(PrincipalSettingsPatch::JsonPatch(patch)))
+                        .map_err(|error| {
+                            patch_payload_error(error, PRINCIPAL_SETTINGS_JSON_PATCH_ERROR_CONTEXT)
+                        })
+                })
+            }
+            Some(JSON_MEDIA_TYPE | JSON_MERGE_PATCH_MEDIA_TYPE) => {
+                let body = JsonBody::<PrincipalSettings>::new(req, payload, None, true)
+                    .limit(MAX_PRINCIPAL_SETTINGS_PATCH_BYTES);
+                Box::pin(async move {
+                    body.await
+                        .map(|patch| Self(PrincipalSettingsPatch::MergePatch(patch)))
+                        .map_err(|error| {
+                            patch_payload_error(error, PRINCIPAL_SETTINGS_MERGE_PATCH_ERROR_CONTEXT)
+                        })
+                })
+            }
+            _ => Box::pin(future::ready(Err(unsupported_patch_media_type(
+                SUPPORTED_PRINCIPAL_SETTINGS_PATCH_MEDIA_TYPES,
+            )))),
+        }
+    }
+}
+
+fn patch_payload_error(error: JsonPayloadError, context: PatchPayloadErrorContext) -> ApiError {
     match error {
-        JsonPayloadError::OverflowKnownLength { length, limit } => ApiError::PayloadTooLarge(
-            format!("JSON Patch payload is {length} bytes; the limit is {limit} bytes"),
-        ),
+        JsonPayloadError::OverflowKnownLength { length, limit } => {
+            ApiError::PayloadTooLarge(format!(
+                "{} payload is {length} bytes; the limit is {limit} bytes",
+                context.sentence_subject
+            ))
+        }
         JsonPayloadError::Overflow { limit } => ApiError::PayloadTooLarge(format!(
-            "JSON Patch payload exceeded the {limit} byte limit"
+            "{} payload exceeded the {limit} byte limit",
+            context.sentence_subject
         )),
         JsonPayloadError::ContentType => {
-            ApiError::UnsupportedMediaType(format!("Content-Type must be {JSON_PATCH_MEDIA_TYPE}"))
+            unsupported_patch_media_type(context.supported_media_types)
         }
-        JsonPayloadError::Deserialize(error) => {
-            ApiError::BadRequest(format!("Invalid JSON Patch document: {error}"))
-        }
-        JsonPayloadError::Serialize(error) => ApiError::InternalServerError(format!(
-            "Unexpected JSON Patch serialization error: {error}"
+        JsonPayloadError::Deserialize(error) => ApiError::BadRequest(format!(
+            "Invalid {} document: {error}",
+            context.document_kind
         )),
-        JsonPayloadError::Payload(error) => {
-            ApiError::BadRequest(format!("Could not read JSON Patch payload: {error}"))
-        }
-        _ => ApiError::BadRequest("Could not read JSON Patch payload".to_string()),
+        JsonPayloadError::Serialize(error) => ApiError::InternalServerError(format!(
+            "Unexpected {} serialization error: {error}",
+            context.embedded_subject
+        )),
+        JsonPayloadError::Payload(error) => ApiError::BadRequest(format!(
+            "Could not read {} payload: {error}",
+            context.embedded_subject
+        )),
+        _ => ApiError::BadRequest(format!(
+            "Could not read {} payload",
+            context.embedded_subject
+        )),
     }
 }
 

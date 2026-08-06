@@ -47,19 +47,20 @@ use crate::models::{
     ObjectAggregateMeasureValue, ObjectAggregateRow, ObjectAggregateValueState,
     ObjectDataPatchDocument, ObjectKey, ObjectsByClass, Permission, Permissions,
     PersonalComputedFieldDefinitionRequest, PrincipalKey, PrincipalMemberResponse,
-    PrincipalSettings, PrincipalSettingsResponse, PrincipalTokenMetadata,
-    PrincipalTokenPointResponse, RelatedClassGraph, RelatedObjectGraph, RemoteAuthConfig,
-    RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride, RemoteInvocationParameters,
-    RemoteInvocationSubject, RemoteTarget, RemoteTargetHistory, RemoteTargetID,
-    RemoteTargetInvokeRequest, RemoteTargetSubjectType, ResourceRevision, RestoreConfirmRequest,
-    RestoreJobStatus, RestoreStageResponse, RestoreTimestamps, RestoreValidationSummary,
-    ServiceAccountPointResponse, ServiceAccountResponse, SharedComputedScopeResponse, TaskDetails,
-    TaskEventResponse, TaskKind, TaskLinks, TaskProgress, TaskResponse, TaskStatus, TokenListState,
-    TokenResourceScope, TokenScopeDetails, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
-    UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
-    UpdateCollection, UpdateEventSink, UpdateEventSubscription, UpdateExportTemplate, UpdateGroup,
-    UpdateHubuumClass, UpdateHubuumObject, UpdateHubuumObjectRequest, UpdateRemoteTarget,
-    UpdateServiceAccount, UpdateUser, UserPointResponse, UserResponse,
+    PrincipalSettings, PrincipalSettingsPatchDocument, PrincipalSettingsResponse,
+    PrincipalTokenMetadata, PrincipalTokenPointResponse, RelatedClassGraph, RelatedObjectGraph,
+    RemoteAuthConfig, RemoteCallResult, RemoteHttpMethod, RemoteInvocationBodyOverride,
+    RemoteInvocationParameters, RemoteInvocationSubject, RemoteTarget, RemoteTargetHistory,
+    RemoteTargetID, RemoteTargetInvokeRequest, RemoteTargetSubjectType, ResourceRevision,
+    RestoreConfirmRequest, RestoreJobStatus, RestoreStageResponse, RestoreTimestamps,
+    RestoreValidationSummary, ServiceAccountPointResponse, ServiceAccountResponse,
+    SharedComputedScopeResponse, TaskDetails, TaskEventResponse, TaskKind, TaskLinks, TaskProgress,
+    TaskResponse, TaskStatus, TokenListState, TokenResourceScope, TokenScopeDetails,
+    UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
+    UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateCollection, UpdateEventSink,
+    UpdateEventSubscription, UpdateExportTemplate, UpdateGroup, UpdateHubuumClass,
+    UpdateHubuumObject, UpdateHubuumObjectRequest, UpdateRemoteTarget, UpdateServiceAccount,
+    UpdateUser, UserPointResponse, UserResponse,
 };
 use crate::pagination::{
     NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits_or_defaults,
@@ -335,6 +336,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
             PrincipalMemberResponse,
             MembershipPrincipalResponse,
             PrincipalSettings,
+            PrincipalSettingsPatchDocument,
             PrincipalSettingsResponse,
             ResourceRevision,
             NewServiceAccount,
@@ -1784,6 +1786,57 @@ mod tests {
         assert_eq!(schema["type"], "array");
         assert_eq!(schema["maxItems"], 1_000);
         assert!(schema["items"].is_object());
+    }
+
+    #[test]
+    fn principal_settings_patch_media_types_limits_and_statuses_are_documented() {
+        let json = openapi_json();
+        let operation_pointers = [
+            "/paths/~1api~1v1~1iam~1me~1settings/patch",
+            "/paths/~1api~1v1~1iam~1principals~1{principal_id}~1settings/patch",
+        ];
+
+        for operation_pointer in operation_pointers {
+            let operation = json
+                .pointer(operation_pointer)
+                .expect("principal-settings patch operation");
+            assert_eq!(
+                operation
+                    .pointer("/requestBody/content/application~1json/schema/$ref")
+                    .and_then(Value::as_str),
+                Some("#/components/schemas/PrincipalSettings")
+            );
+            assert_eq!(
+                operation
+                    .pointer("/requestBody/content/application~1merge-patch+json/schema/$ref",)
+                    .and_then(Value::as_str),
+                Some("#/components/schemas/PrincipalSettings")
+            );
+            assert_eq!(
+                operation
+                    .pointer("/requestBody/content/application~1json-patch+json/schema/$ref")
+                    .and_then(Value::as_str),
+                Some("#/components/schemas/PrincipalSettingsPatchDocument")
+            );
+            for status in ["200", "400", "401", "409", "412", "413", "415", "500"] {
+                assert!(
+                    operation["responses"].get(status).is_some(),
+                    "missing documented principal-settings patch response {status}"
+                );
+            }
+        }
+        let principal_operation = json
+            .pointer(operation_pointers[1])
+            .expect("principal-addressed settings patch operation");
+        assert!(principal_operation["responses"].get("404").is_some());
+
+        let schema = &json["components"]["schemas"]["PrincipalSettingsPatchDocument"];
+        assert_eq!(schema["type"], "array");
+        assert_eq!(schema["maxItems"], 1_000);
+        assert!(schema["items"].is_object());
+        assert!(schema["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("final root must remain an object")));
     }
 
     #[test]

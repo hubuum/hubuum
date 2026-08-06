@@ -1,15 +1,17 @@
 use hubuum_events_core::EventContext;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::api::etag::RevisionOwner;
 use crate::db::prelude::*;
-use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
+use crate::db::{
+    DbConnection, DbPool, assert_locked_revision_precondition, with_connection, with_transaction,
+};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, NewEvent, emit_event};
 use crate::models::{
-    NewPrincipal, Principal, PrincipalKind, PrincipalSettings, PrincipalSettingsResponse,
-    ServiceAccount, ServiceAccountPointResponse, User, UserPointResponse, UserResponse,
-    UserWithName,
+    NewPrincipal, Principal, PrincipalKind, PrincipalSettings, PrincipalSettingsPatch,
+    PrincipalSettingsResponse, ResourceRevision, ServiceAccount, ServiceAccountPointResponse, User,
+    UserPointResponse, UserResponse, UserWithName,
 };
 
 pub trait InsertPrincipalRecord {
@@ -116,6 +118,53 @@ pub async fn mutate_principal_settings(
     input: PrincipalSettings,
     event_context: &EventContext,
 ) -> Result<PrincipalSettingsResponse, ApiError> {
+    let mutation = match mutation {
+        PrincipalSettingsMutation::Replace => PrincipalSettingsWrite::Replace(input),
+        PrincipalSettingsMutation::Patch => {
+            PrincipalSettingsWrite::Patch(PrincipalSettingsPatch::MergePatch(input))
+        }
+        PrincipalSettingsMutation::Reset => PrincipalSettingsWrite::Reset,
+    };
+    write_principal_settings(pool, principal_id_value, mutation, event_context).await
+}
+
+pub(crate) async fn apply_principal_settings_patch(
+    pool: &DbPool,
+    principal_id_value: i32,
+    patch: PrincipalSettingsPatch,
+    event_context: &EventContext,
+) -> Result<PrincipalSettingsResponse, ApiError> {
+    write_principal_settings(
+        pool,
+        principal_id_value,
+        PrincipalSettingsWrite::Patch(patch),
+        event_context,
+    )
+    .await
+}
+
+enum PrincipalSettingsWrite {
+    Replace(PrincipalSettings),
+    Patch(PrincipalSettingsPatch),
+    Reset,
+}
+
+impl PrincipalSettingsWrite {
+    fn apply(self, before: &PrincipalSettings) -> Result<PrincipalSettings, ApiError> {
+        match self {
+            Self::Replace(settings) => Ok(settings),
+            Self::Patch(patch) => patch.apply(before),
+            Self::Reset => Ok(PrincipalSettings::default()),
+        }
+    }
+}
+
+async fn write_principal_settings(
+    pool: &DbPool,
+    principal_id_value: i32,
+    mutation: PrincipalSettingsWrite,
+    event_context: &EventContext,
+) -> Result<PrincipalSettingsResponse, ApiError> {
     use crate::schema::principals;
 
     with_transaction(
@@ -130,25 +179,16 @@ pub async fn mutate_principal_settings(
                     principals::revision,
                 ))
                 .for_update()
-                .first::<(
-                    String,
-                    String,
-                    serde_json::Value,
-                    crate::models::ResourceRevision,
-                )>(conn)
+                .first::<(String, String, Value, ResourceRevision)>(conn)
                 .await?;
-            crate::db::assert_locked_revision_precondition(
+            assert_locked_revision_precondition(
                 conn,
                 &RevisionOwner::Principal.key(principal_id_value),
                 before_revision,
             )
             .await?;
             let before = stored_principal_settings(principal_id_value, stored_before)?;
-            let after = match mutation {
-                PrincipalSettingsMutation::Replace => input,
-                PrincipalSettingsMutation::Patch => before.clone().merge_patch(&input),
-                PrincipalSettingsMutation::Reset => PrincipalSettings::default(),
-            };
+            let after = mutation.apply(&before)?;
 
             if before == after {
                 return Ok(PrincipalSettingsResponse::new(
@@ -162,7 +202,7 @@ pub async fn mutate_principal_settings(
                 diesel::update(principals::table.filter(principals::id.eq(principal_id_value)))
                     .set(principals::settings.eq(after.as_value()))
                     .returning(principals::revision)
-                    .get_result::<crate::models::ResourceRevision>(conn)
+                    .get_result::<ResourceRevision>(conn)
                     .await?;
 
             let entity_type = match PrincipalKind::from_db(&kind)? {
@@ -194,7 +234,7 @@ pub async fn mutate_principal_settings(
 
 fn stored_principal_settings(
     principal_id_value: i32,
-    value: serde_json::Value,
+    value: Value,
 ) -> Result<PrincipalSettings, ApiError> {
     PrincipalSettings::new(value).map_err(|_| {
         ApiError::InternalServerError(format!(
