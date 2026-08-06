@@ -7,6 +7,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-08-06
+
+### Fixed
+
+- Tagged release workflows now publish binaries, SBOMs, signed checksums,
+  provenance attestations, and multi-architecture container images after all
+  validation prerequisites pass. The `v0.0.9` tag exposed skip propagation and
+  published no release assets; use `v0.0.10` instead.
+
 ## [0.0.9] - 2026-08-06
 
 ### Added
