@@ -36,7 +36,7 @@ impl PartialSchema for ObjectDataPatchDocument {
             .items(json_patch::PatchOperation::schema())
             .max_items(Some(MAX_OBJECT_DATA_PATCH_OPERATIONS))
             .description(Some(
-                "RFC 6902 operations applied relative to the root of an object's raw data document. Supports add, remove, replace, move, copy, and test. The resulting document is limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
+                "RFC 6902 operations applied relative to the root of an object's raw data document. Supports add, remove, replace, move, copy, and test; test compares JSON numbers by numeric value. The resulting document is limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
             ))
             .examples([serde_json::json!([
                 {"op": "add", "path": "/facts", "value": {"source": "inventory"}}
@@ -115,6 +115,22 @@ mod tests {
         let patched = patch_document(patch).apply(&original).unwrap();
 
         assert_eq!(patched, expected);
+    }
+
+    #[test]
+    fn object_data_patch_test_compares_numeric_representations_recursively() {
+        let patch = serde_json::from_str::<ObjectDataPatchDocument>(
+            r#"[
+                {"op":"add","path":"/value","value":{"direct":1.0,"nested":[2e0]}},
+                {"op":"test","path":"/value","value":{"nested":[2.00],"direct":1}},
+                {"op":"add","path":"/test_passed","value":true}
+            ]"#,
+        )
+        .unwrap();
+
+        let patched = patch.apply(&serde_json::json!({})).unwrap();
+
+        assert_eq!(patched["test_passed"], true);
     }
 
     #[rstest::rstest]

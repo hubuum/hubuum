@@ -1,3 +1,6 @@
+use std::cmp::Ordering;
+use std::fmt::Display;
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use crate::db::json::{
@@ -51,12 +54,7 @@ impl BoundedJsonPatch {
         let mut cumulative_bytes = validate_json_patch_result(document, None)?;
         let mut patched = document.clone();
         for (operation_index, operation) in self.0.iter().enumerate() {
-            json_patch::patch(&mut patched, std::slice::from_ref(operation)).map_err(|error| {
-                ApiError::Conflict(format!(
-                    "JSON Patch operation at index {operation_index} failed at path '{}': {}",
-                    error.path, error.kind
-                ))
-            })?;
+            apply_json_patch_operation(&mut patched, operation, operation_index)?;
             let result_bytes = validate_json_patch_result(&patched, Some(operation_index))?;
             cumulative_bytes = cumulative_bytes
                 .checked_add(result_bytes)
@@ -67,6 +65,77 @@ impl BoundedJsonPatch {
         }
         Ok(patched)
     }
+}
+
+fn apply_json_patch_operation(
+    document: &mut serde_json::Value,
+    operation: &json_patch::PatchOperation,
+    operation_index: usize,
+) -> Result<(), ApiError> {
+    if let json_patch::PatchOperation::Test(test) = operation {
+        let result = document
+            .pointer(test.path.as_str())
+            .ok_or(json_patch::PatchErrorKind::InvalidPointer)
+            .and_then(|actual| {
+                json_patch_values_equal(actual, &test.value)
+                    .then_some(())
+                    .ok_or(json_patch::PatchErrorKind::TestFailed)
+            });
+        return result
+            .map_err(|kind| json_patch_operation_error(operation_index, &test.path, &kind));
+    }
+
+    json_patch::patch(document, std::slice::from_ref(operation))
+        .map_err(|error| json_patch_operation_error(operation_index, &error.path, &error.kind))
+}
+
+fn json_patch_operation_error(
+    operation_index: usize,
+    path: &impl Display,
+    kind: &impl Display,
+) -> ApiError {
+    ApiError::Conflict(format!(
+        "JSON Patch operation at index {operation_index} failed at path '{path}': {kind}"
+    ))
+}
+
+/// RFC 6902 defines `test` equality recursively and compares JSON numbers by
+/// numeric value rather than their serialized representation.
+fn json_patch_values_equal(left: &serde_json::Value, right: &serde_json::Value) -> bool {
+    match (left, right) {
+        (serde_json::Value::Number(left), serde_json::Value::Number(right)) => {
+            if json_number_is_zero(left) && json_number_is_zero(right) {
+                return true;
+            }
+            hubuum_computed_fields::compare_decimal_strings(&left.to_string(), &right.to_string())
+                == Some(Ordering::Equal)
+        }
+        (serde_json::Value::Array(left), serde_json::Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| json_patch_values_equal(left, right))
+        }
+        (serde_json::Value::Object(left), serde_json::Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, left)| {
+                    right
+                        .get(key)
+                        .is_some_and(|right| json_patch_values_equal(left, right))
+                })
+        }
+        _ => left == right,
+    }
+}
+
+fn json_number_is_zero(number: &serde_json::Number) -> bool {
+    number
+        .to_string()
+        .trim_start_matches('-')
+        .split(['e', 'E'])
+        .next()
+        .is_some_and(|mantissa| mantissa.bytes().all(|byte| matches!(byte, b'0' | b'.')))
 }
 
 fn validate_json_patch_result(

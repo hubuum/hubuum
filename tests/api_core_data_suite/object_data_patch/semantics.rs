@@ -286,3 +286,34 @@ async fn failed_test_operation_leaves_the_object_unchanged(
     assert_eq!(current_object(&test_context, object.id).await, object);
     fixture.cleanup().await.unwrap();
 }
+
+#[rstest]
+#[actix_web::test]
+async fn test_operation_compares_numbers_by_rfc_value(#[future(awt)] test_context: TestContext) {
+    let fixture = object_fixture(
+        &test_context,
+        "numeric test equality",
+        serde_json::json!({}),
+    )
+    .await;
+    let object = &fixture.objects[0];
+
+    let response = patch_request_with_raw_body(
+        &test_context.pool,
+        &test_context.admin_token,
+        &data_patch_endpoint(fixture.class.id, object.id),
+        br#"[
+            {"op":"add","path":"/value","value":{"direct":1.0,"nested":[2e0]}},
+            {"op":"test","path":"/value","value":{"nested":[2.00],"direct":1}},
+            {"op":"add","path":"/test_passed","value":true}
+        ]"#
+        .as_slice(),
+        JSON_PATCH_MEDIA_TYPE,
+    )
+    .await;
+    let response = assert_response_status(response, StatusCode::OK).await;
+    let updated: HubuumObject = test::read_body_json(response).await;
+
+    assert_eq!(updated.data["test_passed"], true);
+    fixture.cleanup().await.unwrap();
+}

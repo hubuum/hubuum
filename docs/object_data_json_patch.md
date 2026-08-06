@@ -72,6 +72,8 @@ Normal JSON Patch object and array rules apply:
 - A missing intermediate parent makes an operation fail.
 - `/-` appends to an existing array.
 - Array indices use the RFC 6901 canonical decimal form and must be in range.
+- `test` compares arrays and objects recursively and compares JSON numbers by
+  numeric value, so representations such as `1`, `1.0`, and `1e0` are equal.
 - `~1` represents `/` and `~0` represents `~` inside a pointer token.
 - `move` and `copy` interpret `from` relative to the same raw data root.
 

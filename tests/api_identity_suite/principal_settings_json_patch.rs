@@ -290,6 +290,29 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn json_patch_test_compares_numbers_by_rfc_value() {
+        let context = TestContext::new().await;
+
+        let response = patch_request_with_raw_body(
+            &context.pool,
+            &context.normal_token,
+            ME_SETTINGS,
+            br#"[
+                {"op":"add","path":"/value","value":{"direct":1.0,"nested":[2e0]}},
+                {"op":"test","path":"/value","value":{"nested":[2.00],"direct":1}},
+                {"op":"add","path":"/test_passed","value":true}
+            ]"#
+            .as_slice(),
+            JSON_PATCH_MEDIA_TYPE,
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let settings: PrincipalSettingsResponse = test::read_body_json(response).await;
+        assert_eq!(settings.as_value()["test_passed"], true);
+    }
+
+    #[actix_web::test]
     async fn a_json_patch_no_op_does_not_advance_revision_or_emit_an_event() {
         let context = TestContext::new().await;
         let principal_id = context.normal_user.id;

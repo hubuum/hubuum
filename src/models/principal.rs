@@ -114,7 +114,7 @@ impl PartialSchema for PrincipalSettingsPatchDocument {
             .items(json_patch::PatchOperation::schema())
             .max_items(Some(MAX_PRINCIPAL_SETTINGS_PATCH_OPERATIONS))
             .description(Some(
-                "RFC 6902 operations applied relative to the principal-settings document root. Supports add, remove, replace, move, copy, and test. The final root must remain an object. The request and result are limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
+                "RFC 6902 operations applied relative to the principal-settings document root. Supports add, remove, replace, move, copy, and test; test compares JSON numbers by numeric value. The final root must remain an object. The request and result are limited to 2 MiB and 64 nested containers, with a bounded cumulative application-work budget.",
             ))
             .examples([serde_json::json!([
                 {"op": "test", "path": "/theme", "value": "light"},

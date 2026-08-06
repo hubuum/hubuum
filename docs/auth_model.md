@@ -434,8 +434,10 @@ For example:
 Use `Content-Type: application/json-patch+json` to apply an RFC 6902 operation
 array instead. Hubuum supports `add`, `remove`, `replace`, `move`, `copy`, and
 `test`. Every `path` and `from` is an RFC 6901 JSON Pointer relative to the
-settings document root. For example, this patch compares the current theme,
-updates it, inserts one array element, and stores a literal JSON `null`:
+settings document root. `test` compares arrays and objects recursively and
+compares JSON numbers by numeric value, so representations such as `1`, `1.0`,
+and `1e0` are equal. For example, this patch compares the current theme, updates
+it, inserts one array element, and stores a literal JSON `null`:
 
 ```json
 [
