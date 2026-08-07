@@ -283,7 +283,7 @@ jobs:
         with:
           ref: ${{ needs.verify-release.outputs.release_sha }}
       - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9ed843567869ab1699d4 # stable 2026-08-04
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-04
       - name: Ensure Rust target is installed
         run: rustup target add ${{ matrix.platform.target }}
       - name: Cache cargo and target directories
