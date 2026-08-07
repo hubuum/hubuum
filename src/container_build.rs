@@ -709,7 +709,7 @@ fn container_ci_exercises_live_single_host_http_continuity() {
 }
 
 #[test]
-fn tagged_release_validation_handles_the_skipped_change_classifier() {
+fn tagged_release_validation_requires_each_direct_prerequisite() {
     let workflow = read_repository_text(".github/workflows/ci.yml");
     let validation_start = workflow
         .find("\n  validate-tag-release:")
@@ -721,7 +721,13 @@ fn tagged_release_validation_handles_the_skipped_change_classifier() {
     let validation = &workflow[validation_start..validation_end];
 
     assert!(validation.contains("always() &&"));
-    assert!(validation.contains("!contains(needs.*.result, 'failure')"));
-    assert!(validation.contains("!contains(needs.*.result, 'cancelled')"));
-    assert!(validation.contains("!contains(needs.*.result, 'skipped')"));
+    for prerequisite in [
+        "verify-tag-main-ci-success",
+        "dependency-policy",
+        "openapi-contract",
+        "container-build",
+    ] {
+        assert!(validation.contains(&format!("needs.{prerequisite}.result == 'success'")));
+    }
+    assert!(!validation.contains("needs.*.result"));
 }

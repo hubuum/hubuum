@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Existing immutable release tags whose validation prerequisites passed but
+  whose publication gate was skipped can be recovered through a guarded manual
+  workflow. Tagged-release validation now checks each direct prerequisite
+  explicitly instead of relying on wildcard job-result evaluation.
+
 ## [0.0.10] - 2026-08-07
 
 ### Fixed
