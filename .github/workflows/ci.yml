@@ -1163,6 +1163,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+      artifact-metadata: write
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1617,6 +1618,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      artifact-metadata: write
     strategy:
       fail-fast: false
       matrix:
@@ -1717,6 +1719,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      artifact-metadata: write
     steps:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
