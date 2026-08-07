@@ -7,52 +7,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-### Fixed
-
-- Existing immutable release tags whose validation prerequisites passed but
-  whose publication gate was skipped can be recovered through a guarded manual
-  workflow. Tagged-release validation now checks each direct prerequisite
-  explicitly instead of relying on wildcard job-result evaluation.
-
-## [0.0.10] - 2026-08-07
-
-### Fixed
-
-- Tagged release workflows now publish binaries, SBOMs, signed checksums,
-  provenance attestations, and multi-architecture container images after all
-  validation prerequisites pass. The `v0.0.9` tag exposed skip propagation and
-  published no release assets; use `v0.0.10` instead.
-
-### Changed
-
-- **Breaking (HTTP API, carried forward from v0.0.9):** entity JSON now contains
-  `revision`; principal settings return `{revision, settings}`, SQL permission
-  reads return `{collection_id, revision, permissions}`, and group member lists
-  return membership entities with an optional nested principal. Clients must
-  update deserializers for these response shapes.
-- **Breaking (HTTP API, carried forward from v0.0.9):** class point routes return
-  the class entity by default. Use `include=collection` for the expanded,
-  untagged representation. Raw object points are tagged; `include=computed`
-  remains expanded and untagged.
-- **Breaking (HTTP API, carried forward from v0.0.9):** canonical tagged group
-  points omit directory-sync timestamps, and canonical tagged token points omit
-  `last_used_at`, because those operational fields do not advance resource
-  revisions. The fields remain available in untagged group and token lists.
-- **Breaking (HTTP API, carried forward from v0.0.9):** canonical tagged user and
-  service-account points use stable `identity_scope_id` values and omit
-  independently mutable provider and synchronization metadata. Tagged
-  group-membership points omit the expanded principal, and SQL permission-set
-  entries expose permission rows with stable `group_id` values instead of
-  expanded groups. Rich metadata remains available from the corresponding
-  untagged list responses.
-
-### Security
-
-- **Breaking (HTTP API, carried forward from v0.0.9):** Event-delivery API
-  responses no longer expose the internal `claim_token` worker lease capability.
-  API clients must stop deserializing or depending on this field.
-
-## [0.0.9] - 2026-08-06
+## [0.0.9] - 2026-08-07
 
 ### Added
 
@@ -300,6 +255,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Tagged release validation now checks each direct prerequisite explicitly, so
+  skipped non-release jobs do not suppress binaries, SBOMs, signed checksums,
+  provenance attestations, or multi-architecture container publication.
 - Conditional collection, class, object, and membership mutations now return
   `412 Precondition Failed` when their selected target vanishes, changes before
   delete validation, or produces a membership-source no-op.

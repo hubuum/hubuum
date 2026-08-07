@@ -64,27 +64,6 @@ Once the tag is pushed, the CI workflow will:
 - use the matching changelog section as the GitHub Release notes
 - publish AMD64 and ARM64 GHCR images for the release tag
 
-### Recovering an existing tag
-
-Release tags are immutable. Do not delete, move, or recreate a tag when its
-validation prerequisites passed but GitHub skipped the publication jobs.
-Instead, merge the publication fix to `main` and dispatch the guarded recovery
-workflow:
-
-```bash
-gh workflow run recover-release.yml --ref main -f tag=v0.0.10
-```
-
-The recovery workflow refuses to run unless the input is an existing annotated
-stable tag, its commit has a successful `main` CI run, the tag workflow passed
-the exact OpenAPI, dependency-policy, production-container, and main-commit
-prerequisites, publication was skipped, and no GitHub Release exists. It checks
-out and rebuilds the immutable tagged commit, then publishes the same archives,
-SBOMs, signed checksums, attestations, and multi-architecture container aliases
-as the ordinary tag workflow. Recovery signatures use
-`.github/workflows/recover-release.yml@refs/heads/main` as their workflow
-identity.
-
 ## OpenAPI compatibility gate
 
 The `OpenAPI contract` job treats two independent failures as release
