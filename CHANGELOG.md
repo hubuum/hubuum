@@ -258,7 +258,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Tagged release validation and every downstream publication job now check
   their direct prerequisites explicitly, so skipped non-release jobs do not
   suppress binaries, SBOMs, signed checksums, provenance attestations, or
-  multi-architecture container publication.
+  multi-architecture container publication. GitHub Release publication waits
+  for the successfully attested multi-architecture manifest, and generated
+  CycloneDX release SBOMs include the required RFC 4122 document serial.
 - Conditional collection, class, object, and membership mutations now return
   `412 Precondition Failed` when their selected target vanishes, changes before
   delete validation, or produces a membership-source no-op.

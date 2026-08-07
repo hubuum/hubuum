@@ -10,6 +10,7 @@ import json
 import re
 import subprocess
 import urllib.parse
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -316,10 +317,12 @@ def main() -> None:
     root_dependencies = sorted(set(base_root_dependencies + workspace_refs))
     dependencies.append({"ref": root_ref, "dependsOn": root_dependencies})
     dependencies = merge_dependencies(dependencies)
+    serial_number = uuid.uuid5(uuid.NAMESPACE_URL, f"{root_ref}:{args.target}")
 
     document = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
+        "serialNumber": f"urn:uuid:{serial_number}",
         "version": 1,
         "metadata": {
             "timestamp": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),

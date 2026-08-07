@@ -749,7 +749,11 @@ fn tagged_release_jobs_explicitly_require_successful_dependencies() {
         (
             "publish-github-release",
             Some("build-main-linux-artifacts"),
-            &["build-tag-linux-artifacts", "build-tag-native-artifacts"],
+            &[
+                "build-tag-linux-artifacts",
+                "build-tag-native-artifacts",
+                "publish-tag-container-manifests",
+            ],
         ),
         (
             "publish-tag-container-images",
