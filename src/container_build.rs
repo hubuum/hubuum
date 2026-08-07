@@ -731,3 +731,61 @@ fn tagged_release_validation_requires_each_direct_prerequisite() {
     }
     assert!(!validation.contains("needs.*.result"));
 }
+
+#[test]
+fn tagged_release_jobs_explicitly_require_successful_dependencies() {
+    let workflow = read_repository_text(".github/workflows/ci.yml");
+    let jobs: [(&str, Option<&str>, &[&str]); 5] = [
+        (
+            "build-tag-linux-artifacts",
+            Some("build-tag-native-artifacts"),
+            &["validate-tag-release"],
+        ),
+        (
+            "build-tag-native-artifacts",
+            Some("publish-github-release"),
+            &["validate-tag-release"],
+        ),
+        (
+            "publish-github-release",
+            Some("build-main-linux-artifacts"),
+            &["build-tag-linux-artifacts", "build-tag-native-artifacts"],
+        ),
+        (
+            "publish-tag-container-images",
+            Some("publish-tag-container-manifests"),
+            &["validate-tag-release"],
+        ),
+        (
+            "publish-tag-container-manifests",
+            None,
+            &["publish-tag-container-images"],
+        ),
+    ];
+
+    for (job, next_job, dependencies) in jobs {
+        let job_marker = format!("\n  {job}:");
+        let job_start = workflow
+            .find(&job_marker)
+            .unwrap_or_else(|| panic!("CI should define {job}"));
+        let job_end = next_job
+            .map(|next_job| {
+                let next_marker = format!("\n  {next_job}:");
+                workflow[job_start + 1..]
+                    .find(&next_marker)
+                    .map(|offset| job_start + 1 + offset)
+                    .unwrap_or_else(|| panic!("{job} should precede {next_job}"))
+            })
+            .unwrap_or(workflow.len());
+        let job_definition = &workflow[job_start..job_end];
+
+        assert!(job_definition.contains("always() &&"));
+        assert!(job_definition.contains("startsWith(github.ref, 'refs/tags/v')"));
+        for dependency in dependencies {
+            assert!(
+                job_definition.contains(&format!("needs.{dependency}.result == 'success'")),
+                "{job} should require {dependency} to succeed"
+            );
+        }
+    }
+}
