@@ -707,3 +707,21 @@ fn container_ci_exercises_live_single_host_http_continuity() {
     assert!(live_test.is_file());
     assert!(workflow.contains("bash scripts/test-single-host-zero-downtime.sh"));
 }
+
+#[test]
+fn tagged_release_validation_handles_the_skipped_change_classifier() {
+    let workflow = read_repository_text(".github/workflows/ci.yml");
+    let validation_start = workflow
+        .find("\n  validate-tag-release:")
+        .expect("CI should define tagged release validation");
+    let validation_end = workflow[validation_start + 1..]
+        .find("\n  build-tag-linux-artifacts:")
+        .map(|offset| validation_start + 1 + offset)
+        .expect("tagged release validation should have a known end marker");
+    let validation = &workflow[validation_start..validation_end];
+
+    assert!(validation.contains("always() &&"));
+    assert!(validation.contains("!contains(needs.*.result, 'failure')"));
+    assert!(validation.contains("!contains(needs.*.result, 'cancelled')"));
+    assert!(validation.contains("!contains(needs.*.result, 'skipped')"));
+}
