@@ -90,6 +90,7 @@ import hashlib
 import json
 import pathlib
 import sys
+import uuid
 
 document = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert document["bomFormat"] == "CycloneDX"
@@ -99,6 +100,11 @@ assert {"hubuum", "serde", "ca-certificates", "unreferenced"} <= components
 root = document["metadata"]["component"]
 expected = hashlib.sha256(b"release archive contents").hexdigest()
 assert root["hashes"] == [{"alg": "SHA-256", "content": expected}]
+expected_serial = uuid.uuid5(
+    uuid.NAMESPACE_URL,
+    f"{root['bom-ref']}:linux-amd64",
+)
+assert document["serialNumber"] == f"urn:uuid:{expected_serial}"
 properties = {item["name"]: item["value"] for item in root["properties"]}
 assert properties["hubuum:cargo_target"] == "x86_64-unknown-linux-musl"
 assert properties["hubuum:cargo_features"] == "production-all"

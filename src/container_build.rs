@@ -749,7 +749,11 @@ fn tagged_release_jobs_explicitly_require_successful_dependencies() {
         (
             "publish-github-release",
             Some("build-main-linux-artifacts"),
-            &["build-tag-linux-artifacts", "build-tag-native-artifacts"],
+            &[
+                "build-tag-linux-artifacts",
+                "build-tag-native-artifacts",
+                "publish-tag-container-manifests",
+            ],
         ),
         (
             "publish-tag-container-images",
@@ -787,5 +791,40 @@ fn tagged_release_jobs_explicitly_require_successful_dependencies() {
                 "{job} should require {dependency} to succeed"
             );
         }
+    }
+}
+
+#[test]
+fn tagged_release_attestors_can_persist_artifact_metadata() {
+    let workflow = read_repository_text(".github/workflows/ci.yml");
+
+    for (job, next_job) in [
+        ("publish-github-release", Some("build-main-linux-artifacts")),
+        (
+            "publish-tag-container-images",
+            Some("publish-tag-container-manifests"),
+        ),
+        ("publish-tag-container-manifests", None),
+    ] {
+        let job_marker = format!("\n  {job}:");
+        let job_start = workflow
+            .find(&job_marker)
+            .unwrap_or_else(|| panic!("CI should define {job}"));
+        let job_end = next_job
+            .map(|next_job| {
+                let next_marker = format!("\n  {next_job}:");
+                workflow[job_start + 1..]
+                    .find(&next_marker)
+                    .map(|offset| job_start + 1 + offset)
+                    .unwrap_or_else(|| panic!("{job} should precede {next_job}"))
+            })
+            .unwrap_or(workflow.len());
+        let job_definition = &workflow[job_start..job_end];
+
+        assert!(job_definition.contains("actions/attest@"));
+        assert!(
+            job_definition.contains("artifact-metadata: write"),
+            "{job} should be able to persist artifact metadata storage records"
+        );
     }
 }
