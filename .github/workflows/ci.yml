@@ -959,9 +959,10 @@ jobs:
     if: >-
       always() &&
       startsWith(github.ref, 'refs/tags/v') &&
-      !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled') &&
-      !contains(needs.*.result, 'skipped')
+      needs.verify-tag-main-ci-success.result == 'success' &&
+      needs.dependency-policy.result == 'success' &&
+      needs.openapi-contract.result == 'success' &&
+      needs.container-build.result == 'success'
     needs:
       - verify-tag-main-ci-success
       - dependency-policy
