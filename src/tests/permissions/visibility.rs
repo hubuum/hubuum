@@ -24,7 +24,8 @@ use crate::permissions::types::{
     ResourceKind, ResourceRef,
 };
 use crate::permissions::visibility::{
-    AuthorizationPage, AuthorizedObjectIds, authorize_all_candidates, paginate_authorized,
+    AuthorizationPage, AuthorizedObjectIds, authorize_all_candidates,
+    authorize_resource_permissions, paginate_authorized,
 };
 use crate::tests::{
     create_collection_fixture, create_test_group, create_test_user, get_pool_and_config,
@@ -46,6 +47,14 @@ fn authorized_object_ids_reject_non_positive_values() {
         error,
         ApiError::InternalServerError("Authorized object ids must be positive".to_string())
     );
+}
+
+#[test]
+fn authorized_object_ids_intersection_preserves_sorted_unique_ids() {
+    let left = AuthorizedObjectIds::new([1, 2, 4]).unwrap();
+    let right = AuthorizedObjectIds::new([2, 3, 4]).unwrap();
+
+    assert_eq!(left.intersection(&right).as_slice(), &[2, 4]);
 }
 
 #[actix_test]
@@ -76,6 +85,47 @@ async fn candidate_authorization_bounds_each_expanded_permission_batch() {
 
     assert_eq!(authorized, candidates);
     assert_eq!(backend.authorization_batch_sizes(), vec![256, 44]);
+}
+
+#[actix_test]
+async fn resource_permissions_are_normalized_to_policy_resource_kinds() {
+    let backend = MockTreetopBackend::new();
+    backend.add_rule(MockAllowRule {
+        group_id: 7,
+        action: Permissions::ReadClass,
+        resource_kind: ResourceKind::Class,
+        resource_id: Some(11),
+        attrs: ResourceAttrs::default(),
+    });
+    backend.add_rule(MockAllowRule {
+        group_id: 7,
+        action: Permissions::ReadCollection,
+        resource_kind: ResourceKind::Collection,
+        resource_id: Some(5),
+        attrs: ResourceAttrs::default(),
+    });
+    let principal = PrincipalRef::new(1, [7]);
+    let class_resource = ResourceRef {
+        kind: ResourceKind::Class,
+        id: 11,
+        attrs: ResourceAttrs {
+            collection_id: Some(5),
+            ..Default::default()
+        },
+    };
+
+    let authorized = authorize_resource_permissions(
+        &backend,
+        &principal,
+        &class_resource,
+        None,
+        &[Permissions::ReadClass, Permissions::ReadCollection],
+    )
+    .await
+    .expect("normalized authorization should succeed");
+
+    assert!(authorized);
+    assert_eq!(backend.authorization_batch_sizes(), vec![2]);
 }
 
 #[actix_test]

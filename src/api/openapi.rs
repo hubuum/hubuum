@@ -1355,6 +1355,7 @@ mod tests {
         App,
         http::{Method, StatusCode},
     };
+    use rstest::rstest;
     use serde_json::Value;
     use std::collections::{BTreeSet, HashSet};
 
@@ -2016,6 +2017,28 @@ mod tests {
         assert!(
             event_delivery_page_limit_description.is_some(),
             "X-Page-Limit header must be documented for annotated cursor pagination"
+        );
+    }
+
+    #[rstest]
+    #[case("/api/v1/classes/{class_id}/")]
+    #[case("/api/v1/classes/by-name/{class_name}/objects")]
+    fn related_filter_depth_documents_valid_range(#[case] path: &str) {
+        let json = openapi_json();
+        let pointer_path = path.replace('~', "~0").replace('/', "~1");
+        let parameters = json
+            .pointer(&format!("/paths/{pointer_path}/get/parameters"))
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("object list GET {path} must document query parameters"));
+        let depth = parameters
+            .iter()
+            .find(|parameter| parameter["name"] == "related.<alias>.depth__lte")
+            .unwrap_or_else(|| panic!("object list GET {path} must document related depth"));
+
+        assert_eq!(depth["schema"]["minimum"], 1);
+        assert_eq!(
+            depth["schema"]["maximum"],
+            crate::models::search::MAX_RELATED_FILTER_DEPTH
         );
     }
 

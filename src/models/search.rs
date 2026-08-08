@@ -6,8 +6,10 @@ use std::str::FromStr;
 use tracing::debug;
 
 pub use hubuum_query::{
-    ComputedFieldScope, ComputedQueryValueType, DataType, FilterField, JsonFieldPathRef, Operator,
-    ParsedQueryParam, QueryOptions, SQLMappedType, SearchOperator, SortParam, StatementTimeoutMs,
+    ComputedFieldScope, ComputedQueryValueType, DEFAULT_RELATED_FILTER_DEPTH, DataType,
+    FilterField, JsonFieldPathRef, MAX_RELATED_FILTER_DEPTH, MAX_RELATED_FILTER_GROUPS, Operator,
+    ParsedQueryParam, QueryOptions, RelatedClassField, RelatedFilterTarget, RelatedObjectField,
+    RelatedQueryField, SQLMappedType, SearchOperator, SortParam, StatementTimeoutMs,
     decode_query_parameter_pairs, get_jsonb_field_type_from_value_and_operator,
 };
 #[cfg(test)]
@@ -57,6 +59,19 @@ pub fn parse_query_parameter_with_computed_filters_and_passthrough(
     Ok((query_options, passthrough))
 }
 
+pub fn parse_query_parameter_with_computed_and_related_filters_and_passthrough(
+    qs: &str,
+    passthrough_keys: &[&str],
+) -> Result<(QueryOptions, HashMap<String, Vec<String>>), ApiError> {
+    let (mut query_options, passthrough) =
+        hubuum_query::parse_query_parameter_with_computed_and_related_filters_and_passthrough(
+            qs,
+            passthrough_keys,
+        )?;
+    query_options.limit = query_options.limit.map(validate_page_limit).transpose()?;
+    Ok((query_options, passthrough))
+}
+
 impl From<hubuum_query::QueryError> for ApiError {
     fn from(error: hubuum_query::QueryError) -> Self {
         match error {
@@ -89,6 +104,7 @@ pub(crate) struct SQLComponent {
 pub(crate) enum SQLValue {
     String(String),
     Integer(i32),
+    BigInteger(i64),
     Date(NaiveDateTime),
     Boolean(bool),
 }

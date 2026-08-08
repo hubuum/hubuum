@@ -9,7 +9,8 @@ use crate::db::traits::computed_field::{
 };
 use crate::db::traits::user::UserSearchBackend;
 use crate::db::traits::user::search::{
-    count_computed_objects_with_authorized_ids, search_computed_objects_with_authorized_ids,
+    ExternalRelatedFilterAuthorization, count_computed_objects_with_authorized_ids,
+    externally_authorized_related_object_ids, search_computed_objects_with_authorized_ids,
 };
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
@@ -23,9 +24,7 @@ use crate::pagination::{
     known_count_or_skipped, page_request, prepare_db_pagination,
 };
 use crate::permissions::visibility::{AuthorizedObjectIds, authorize_all_candidates};
-use crate::permissions::{
-    AppContext, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef, authorize_resources,
-};
+use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
 use crate::traits::BackendContext;
 
 enum ComputedListVisibility {
@@ -202,15 +201,7 @@ async fn can_list_objects_in_class(
             &requestor.principal,
             requestor.scopes(),
             vec![Permissions::ReadObject, Permissions::ReadCollection],
-            vec![ResourceRef {
-                kind: ResourceKind::Class,
-                id: class.id,
-                attrs: ResourceAttrs {
-                    collection_id: Some(class.collection_id),
-                    class_id: Some(class.id),
-                    ..Default::default()
-                },
-            }],
+            vec![class.authorization_resource()],
         )
         .await
         .is_ok());
@@ -255,16 +246,7 @@ async fn authorized_object_ids_in_class(
         candidates,
         requestor.scopes(),
         vec![Permissions::ReadObject],
-        |object| ResourceRef {
-            kind: ResourceKind::Object,
-            id: object.id,
-            attrs: ResourceAttrs {
-                collection_id: Some(object.collection_id),
-                class_id: Some(object.hubuum_class_id),
-                name: Some(object.name.clone()),
-                ..Default::default()
-            },
-        },
+        HubuumObject::authorization_resource,
     )
     .await?;
     AuthorizedObjectIds::new(authorized.into_iter().map(|object| object.id))
@@ -275,6 +257,7 @@ async fn computed_list_visibility(
     requestor: &Authenticated,
     class: &HubuumClass,
     class_id: &HubuumClassID,
+    params: &QueryOptions,
 ) -> Result<Option<ComputedListVisibility>, ApiError> {
     if pool.permission_backend().supports_sql_visibility_pushdown() {
         return can_list_objects_in_class(pool, requestor, class)
@@ -283,6 +266,22 @@ async fn computed_list_visibility(
     }
 
     let authorized_ids = authorized_object_ids_in_class(pool, requestor, class_id).await?;
+    let principal = PrincipalRef::load(pool, &requestor.principal).await?;
+    let related_ids = externally_authorized_related_object_ids(
+        &requestor.principal,
+        &params.filters,
+        ExternalRelatedFilterAuthorization::new(
+            pool.db_pool(),
+            pool.permission_backend(),
+            &principal,
+            requestor.scopes(),
+        ),
+    )
+    .await?;
+    let authorized_ids = match related_ids {
+        Some(related_ids) => authorized_ids.intersection(&related_ids),
+        None => authorized_ids,
+    };
     Ok((!authorized_ids.is_empty()).then_some(ComputedListVisibility::Policy(authorized_ids)))
 }
 
@@ -312,7 +311,8 @@ pub(super) async fn list_objects(
     }
 
     let class_id = HubuumClassID::new(class.id)?;
-    let Some(visibility) = computed_list_visibility(pool, requestor, class, &class_id).await?
+    let Some(visibility) =
+        computed_list_visibility(pool, requestor, class, &class_id, &params).await?
     else {
         return empty_computed_page(&params);
     };

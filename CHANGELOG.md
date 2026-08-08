@@ -7,6 +7,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Class object lists now accept up to four named `related.<alias>` filter
+  groups. Each group selects one target class, normal target-object fields, and
+  an optional bidirectional depth up to 10; groups are combined with `AND`, and
+  graph paths remain permission-aware and resource-scoped with both SQL and
+  external policy backends. External-policy graph expansion uses explicit
+  target, object, and relation work limits.
+
 ## [0.0.9] - 2026-08-07
 
 ### Added

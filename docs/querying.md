@@ -153,6 +153,87 @@ operator table, visibility rules, null behavior, and JSON value syntax.
 Computed keys may contain `__`; only a recognized operator at the final
 `__<operator>` suffix is parsed as filter syntax.
 
+## Filtering class objects by related targets
+
+The two class object-list routes support bounded, bidirectional relationship
+filters:
+
+```text
+GET /api/v1/classes/{class_id}/
+GET /api/v1/classes/by-name/{class_name}/objects
+```
+
+Every related target is a named group. The group alias correlates its class,
+object, and depth parameters:
+
+```text
+related.<alias>.class.name=Room
+related.<alias>.object.name__iequals=foo
+related.<alias>.depth__lte=5
+```
+
+Use exactly one unnegated equality class selector in each group:
+`class.name=<name>` or `class.id=<id>`. The alias must start with an ASCII
+letter or `_`, may then contain ASCII letters, digits, and `_`, and may be at
+most 64 characters. A request may contain at most four groups.
+
+Object predicates in one group must match the same related target object. The
+supported target fields are:
+
+- `id`
+- `name`
+- `description`
+- `collection_id`
+- `created_at`
+- `updated_at`
+- `revision`
+- `json_data`
+
+Each field accepts its normal type-appropriate operators. `json_data` uses the
+same `path=value` grammar and JSON operators documented below. Related fields
+cannot be used for sorting.
+
+Groups are independent existential predicates and are combined with `AND`.
+For example, this returns hosts related to a room named `foo`, a person named
+`bar`, and a person named `zoot`:
+
+```text
+GET /api/v1/classes/by-name/Host/objects?related.room.class.name=Room&related.room.object.name=foo&related.bar.class.name=Person&related.bar.object.name=bar&related.zoot.class.name=Person&related.zoot.object.name=zoot
+```
+
+The two person aliases may resolve to distinct targets. The same target may
+also satisfy more than one compatible group. Ordinary filters and computed
+filters apply to the returned host objects and are combined with the related
+groups using `AND`.
+
+`depth__lte` is optional and is the only supported depth operator. It defaults
+to `1`, has a hard maximum of `10`, and is evaluated independently for each
+group. Paths may traverse objects of any class in either relation direction.
+The target itself is not considered related to itself.
+
+Negated target-field operators retain existential semantics. For example,
+`related.person.object.name__not_equals=bar` means that a visible related
+person exists whose name is not `bar`; it does not mean that no related person
+is named `bar`. Boolean combinations such as `OR`, group-level `NOT`, and
+distinct-target requirements are reserved for a structured search API.
+
+Authorization applies to the whole path. The target class and target object,
+every traversed object, and every traversed object relation must be visible to
+the caller. A hidden path is ignored, while a fully visible alternative path
+may still satisfy the group. A valid query whose target does not exist or is
+not visible returns an empty result instead of disclosing the target.
+
+Related filtering adds a bounded graph walk to both the page query and, unless
+`include_total=false`, the exact count query. Use the smallest useful depth and
+set `include_total=false` on latency-sensitive requests that do not need
+`X-Total-Count`.
+
+External policy authorization traverses the graph level by level so hidden
+paths are rejected before they can expand the next frontier. Each group has a
+safety budget of 1,000 candidate targets, 10,000 examined objects, and 20,000
+examined relations. A query that exceeds a budget returns `400 Bad Request`;
+narrow the target predicates or reduce the requested depth.
+
 ## Cursor pagination
 
 List endpoints use cursor pagination.
