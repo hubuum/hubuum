@@ -12,8 +12,7 @@ mod administration;
 mod application;
 
 pub use administration::run_admin_from_environment;
-pub use application::run_server_from_environment;
-pub use errors::ApiError;
+pub use application::run_runtime_from_environment;
 
 pub mod api;
 pub mod auth;
@@ -51,7 +50,7 @@ pub mod utilities;
 ///
 /// This is the workspace-internal entrypoint used by `hubuum-openapi`.
 #[must_use]
-pub fn generated_openapi_json() -> String {
+pub fn generate_openapi_json() -> String {
     use utoipa::OpenApi;
 
     let openapi = api::openapi::ApiDoc::openapi();

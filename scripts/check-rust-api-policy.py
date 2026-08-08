@@ -28,9 +28,12 @@ class PackagePolicy:
     policy_document: str | None
 
 
+class PolicyError(RuntimeError):
+    """Raised when the workspace violates the Rust API policy."""
+
+
 def fail(message: str) -> NoReturn:
-    print(f"Rust API policy error: {message}", file=sys.stderr)
-    raise SystemExit(1)
+    raise PolicyError(message)
 
 
 def read_manifest(path: Path) -> dict[str, object]:
@@ -101,9 +104,7 @@ def workspace_manifests(root: Path) -> list[Path]:
         if not isinstance(package_id, str) or not isinstance(manifest_path, str):
             fail("cargo metadata package is missing its id or manifest_path")
         manifest = Path(manifest_path).resolve()
-        try:
-            manifest.relative_to(root)
-        except ValueError:
+        if not manifest.is_relative_to(root):
             fail(f"workspace manifest must remain inside the repository: {manifest}")
         manifests_by_id[package_id] = manifest
 
@@ -128,9 +129,11 @@ def workspace_manifests(root: Path) -> list[Path]:
 def publishing_enabled(name: str, publish_value: object) -> bool:
     if isinstance(publish_value, bool):
         return publish_value
-    if isinstance(publish_value, list) and all(
-        isinstance(registry, str) and registry for registry in publish_value
-    ):
+    if isinstance(publish_value, list):
+        if not all(
+            isinstance(registry, str) and registry for registry in publish_value
+        ):
+            fail(f"package {name} has an invalid Cargo publish setting")
         return bool(publish_value)
     fail(f"package {name} has an invalid Cargo publish setting")
 
@@ -142,10 +145,9 @@ def public_policy_document(root: Path, name: str, declared: object) -> str:
     if declared_path.is_absolute():
         fail(f"public package {name} policy-document must be repository-relative")
     policy_path = (root / declared_path).resolve()
-    try:
-        relative_path = policy_path.relative_to(root)
-    except ValueError:
+    if not policy_path.is_relative_to(root):
         fail(f"public package {name} policy-document must remain inside the repository")
+    relative_path = policy_path.relative_to(root)
     if not policy_path.is_file():
         fail(
             f"public package {name} policy-document does not exist as a file: "
@@ -216,7 +218,7 @@ def policies(root: Path) -> list[PackagePolicy]:
     return sorted(result, key=lambda policy: policy.name)
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     output = parser.add_mutually_exclusive_group()
@@ -224,7 +226,11 @@ def main() -> None:
     output.add_argument("--supported-packages", action="store_true")
     arguments = parser.parse_args()
 
-    result = policies(arguments.root.resolve())
+    try:
+        result = policies(arguments.root.resolve())
+    except PolicyError as error:
+        print(f"Rust API policy error: {error}", file=sys.stderr)
+        return 1
     if arguments.supported_packages:
         for policy in result:
             if policy.rust_api in PUBLIC_STATUSES:
@@ -237,7 +243,8 @@ def main() -> None:
             for status in sorted(VALID_STATUSES)
         }
         print(f"Rust API policy passed for {len(result)} package(s): {counts}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -82,6 +82,11 @@ warnings denied, all features, and Cargo's clean packaged-source build. Promote
 a package only in a dedicated change containing its API policy, release owner,
 versioning rules, and downstream migration or compatibility fixtures.
 
+For an initial public release, CI records the absence of a crates.io baseline
+and skips only semantic comparison; rustdoc and clean packaging remain
+mandatory. Once the first release exists, the semantic compatibility check is
+mandatory, and registry lookup errors fail rather than bypass the check.
+
 ## OpenAPI compatibility gate
 
 The `OpenAPI contract` job treats two independent failures as release
