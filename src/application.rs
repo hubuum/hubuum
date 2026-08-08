@@ -49,7 +49,7 @@ use crate::{api, db, logger, middlewares, observability, tls, utilities};
 ///
 /// This is the workspace-internal composition boundary used by the server
 /// binary. It is not a supported third-party embedding API.
-pub async fn run_server_from_environment() -> std::io::Result<()> {
+pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     if let Err(e) = tls::install_default_crypto_provider() {
         fatal_error(
             &format!("Failed to initialize TLS cryptography: {e}"),

@@ -216,10 +216,10 @@ jobs:
           fetch-depth: 0
       - name: Validate Rust API classifications
         run: python3 scripts/check-rust-api-policy.py
-      - name: Test Rust API policy validation
-        run: |
-          python3 scripts/test-rust-api-policy.py
-          python3 scripts/test-crates-io-baseline.py
+      - name: Test Rust API classification policy
+        run: python3 scripts/test-rust-api-policy.py
+      - name: Test Rust API registry baseline detection
+        run: python3 scripts/test-crates-io-baseline.py
       - name: Select supported Rust packages
         id: supported
         run: |

@@ -1,3 +1,3 @@
 fn main() {
-    println!("{}", hubuum::generated_openapi_json());
+    println!("{}", hubuum::generate_openapi_json());
 }

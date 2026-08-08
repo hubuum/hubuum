@@ -22,11 +22,11 @@ construction detail, not a semantic-version compatibility promise.
 
 The root library has four in-repository consumer groups:
 
-- `hubuum-server`, through the narrow `run_server_from_environment` composition
+- `hubuum-server`, through the narrow `run_runtime_from_environment` composition
   entrypoint;
 - `hubuum-admin`, through the narrow `run_admin_from_environment` command
   entrypoint;
-- `hubuum-openapi`, through `generated_openapi_json`; and
+- `hubuum-openapi`, through `generate_openapi_json`; and
 - integration tests and benchmarks, which require Rust's external-crate
   visibility because Cargo builds those targets separately.
 
@@ -95,10 +95,10 @@ The machine values are:
 - `stable-public`.
 
 `scripts/check-rust-api-policy.py` rejects an unclassified package. Internal
-classifications require `publish = false`; public classifications require
-publishing to be enabled and a package-specific policy document that resolves
-to a readable file inside this repository. The checker uses Cargo's resolved
-workspace membership, including automatically admitted in-tree path
+classifications require Cargo publishing to be disabled; public classifications
+require publishing to be enabled and a package-specific policy document that
+resolves to a readable file inside this repository. The checker uses Cargo's
+resolved workspace membership, including automatically admitted in-tree path
 dependencies. CI and tagged release validation run the policy and its
 regression fixtures.
 
@@ -182,6 +182,7 @@ Run the classification policy and its fixtures with:
 ```bash
 python3 scripts/check-rust-api-policy.py
 python3 scripts/test-rust-api-policy.py
+python3 scripts/test-crates-io-baseline.py
 ```
 
 The deterministic JSON inventory is available for review with:

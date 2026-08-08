@@ -55,6 +55,7 @@ Validate these controls locally with:
 
 ```bash
 python3 scripts/check-supply-chain-policy.py
+python3 scripts/test-supply-chain-policy.py
 bash scripts/test-generate-container-evidence.sh
 bash scripts/test-generate-release-sbom.sh
 ```

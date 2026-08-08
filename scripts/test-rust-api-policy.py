@@ -85,6 +85,22 @@ class RustApiPolicyTests(unittest.TestCase):
         policy_path.parent.mkdir(parents=True, exist_ok=True)
         policy_path.write_text("# Member policy\n", encoding="utf-8")
 
+    def write_public_member(
+        self,
+        *,
+        status: str = "stable-public",
+        publish: str = "true",
+        policy_path: str = "docs/member.md",
+        create_policy: bool = True,
+    ) -> None:
+        self.write_workspace(
+            member_status=status,
+            member_publish=publish,
+            member_policy=f'policy-document = "{policy_path}"',
+        )
+        if create_policy:
+            self.write_policy_document(policy_path)
+
     def test_internal_workspace_is_accepted(self) -> None:
         self.write_workspace()
 
@@ -128,13 +144,8 @@ class RustApiPolicyTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("implicit must set package.metadata.hubuum.rust-api", result.stderr)
 
-    def test_public_package_requires_policy_and_is_selected(self) -> None:
-        self.write_workspace(
-            member_status="stable-public",
-            member_publish="true",
-            member_policy='policy-document = "docs/member.md"',
-        )
-        self.write_policy_document()
+    def test_public_package_is_selected(self) -> None:
+        self.write_public_member()
 
         result = self.run_checker("--supported-packages")
 
@@ -142,11 +153,7 @@ class RustApiPolicyTests(unittest.TestCase):
         self.assertEqual(result.stdout, "member\n")
 
     def test_public_package_cannot_disable_publishing(self) -> None:
-        self.write_workspace(
-            member_status="experimental-public",
-            member_publish="false",
-            member_policy='policy-document = "docs/member.md"',
-        )
+        self.write_public_member(status="experimental-public", publish="false")
 
         result = self.run_checker()
 
@@ -154,12 +161,7 @@ class RustApiPolicyTests(unittest.TestCase):
         self.assertIn("must enable publishing", result.stderr)
 
     def test_public_package_cannot_use_an_empty_publish_allowlist(self) -> None:
-        self.write_workspace(
-            member_status="experimental-public",
-            member_publish="[]",
-            member_policy='policy-document = "docs/member.md"',
-        )
-        self.write_policy_document()
+        self.write_public_member(status="experimental-public", publish="[]")
 
         result = self.run_checker()
 
@@ -167,12 +169,10 @@ class RustApiPolicyTests(unittest.TestCase):
         self.assertIn("must enable publishing", result.stderr)
 
     def test_public_package_accepts_a_non_empty_publish_allowlist(self) -> None:
-        self.write_workspace(
-            member_status="experimental-public",
-            member_publish='["crates-io"]',
-            member_policy='policy-document = "docs/member.md"',
+        self.write_public_member(
+            status="experimental-public",
+            publish='["crates-io"]',
         )
-        self.write_policy_document()
 
         result = self.run_checker("--supported-packages")
 
@@ -180,11 +180,7 @@ class RustApiPolicyTests(unittest.TestCase):
         self.assertEqual(result.stdout, "member\n")
 
     def test_public_package_policy_document_must_exist(self) -> None:
-        self.write_workspace(
-            member_status="stable-public",
-            member_publish="true",
-            member_policy='policy-document = "docs/missing.md"',
-        )
+        self.write_public_member(policy_path="docs/missing.md", create_policy=False)
 
         result = self.run_checker()
 
@@ -192,11 +188,7 @@ class RustApiPolicyTests(unittest.TestCase):
         self.assertIn("policy-document does not exist as a file", result.stderr)
 
     def test_public_package_policy_document_must_be_a_file(self) -> None:
-        self.write_workspace(
-            member_status="stable-public",
-            member_publish="true",
-            member_policy='policy-document = "docs/member"',
-        )
+        self.write_public_member(policy_path="docs/member", create_policy=False)
         (self.root / "docs" / "member").mkdir(parents=True)
 
         result = self.run_checker()
@@ -206,10 +198,9 @@ class RustApiPolicyTests(unittest.TestCase):
 
     def test_public_package_policy_document_must_stay_in_repository(self) -> None:
         outside_path = self.root.parent / f"{self.root.name}-outside.md"
-        self.write_workspace(
-            member_status="stable-public",
-            member_publish="true",
-            member_policy=f'policy-document = "../{outside_path.name}"',
+        self.write_public_member(
+            policy_path=f"../{outside_path.name}",
+            create_policy=False,
         )
         outside_path.write_text("policy\n", encoding="utf-8")
         self.addCleanup(outside_path.unlink, missing_ok=True)
@@ -228,10 +219,7 @@ class RustApiPolicyTests(unittest.TestCase):
         self.assertIn("must set package.metadata.hubuum.rust-api", result.stderr)
 
     def test_root_must_remain_internal_application(self) -> None:
-        self.write_workspace(
-            root_status="workspace-internal",
-            root_publish="false",
-        )
+        self.write_workspace(root_status="workspace-internal")
 
         result = self.run_checker()
 

@@ -129,7 +129,8 @@ The Rust API policy check classifies every Cargo package and prevents internal
 packages from becoming publishable accidentally. If a package is deliberately
 promoted to experimental or stable public status, the same job adds rustdoc,
 clean package, and semantic compatibility checks automatically. Run its local
-fixtures with `python3 scripts/test-rust-api-policy.py`.
+fixtures with `python3 scripts/test-rust-api-policy.py` and
+`python3 scripts/test-crates-io-baseline.py`.
 
 The `ci:full` pull request label forces the complete CI and benchmark suites,
 including on a draft or documentation-only pull request. The `ci:benchmarks`
