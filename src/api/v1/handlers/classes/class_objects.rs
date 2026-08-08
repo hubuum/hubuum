@@ -1,4 +1,7 @@
 use super::*;
+use crate::db::traits::user::search::{
+    ExternalRelatedFilterAuthorization, externally_authorized_related_object_ids,
+};
 
 //
 // Object API
@@ -8,12 +11,15 @@ use super::*;
     get,
     path = "/api/v1/classes/{class_id}/",
     tag = "classes",
-    description = "Lists objects in the path class. Enabled computed fields can be filtered with computed.shared.<key> or computed.personal.<key> using the normal __operator suffix, and sorted with the same names. Computed querying supports at most two computed filter parameters and two explicit sort fields per request.",
+    description = "Lists objects in the path class. Enabled computed fields can be filtered with computed.shared.<key> or computed.personal.<key> using the normal __operator suffix, and sorted with the same names. Named related.<alias> groups filter objects by bounded, permission-visible paths to independent target objects. Computed querying supports at most two computed filter parameters and two explicit sort fields per request.",
     security(("bearer_auth" = [])),
     params(
         ("class_id" = i32, Path, description = "Class ID"),
         ("include" = Option<String>, Query, description = "Set to computed to enrich each object"),
-        ("sort" = Option<String>, Query, description = "Sort by object fields or computed.shared.<key>/computed.personal.<key>; computed sorting supports at most two explicit sort fields")
+        ("sort" = Option<String>, Query, description = "Sort by object fields or computed.shared.<key>/computed.personal.<key>; computed sorting supports at most two explicit sort fields"),
+        ("related.<alias>.class.name" = Option<String>, Query, description = "Required exact target-class selector for a named related group; use class.id instead for an integer ID"),
+        ("related.<alias>.object.<field>__<operator>" = Option<String>, Query, description = "Target-object predicate correlated within the named group; supports id, name, description, collection_id, created_at, updated_at, revision, and json_data"),
+        ("related.<alias>.depth__lte" = Option<u8>, Query, description = "Maximum bidirectional relationship depth for the named group; defaults to 1 and is capped at 10", minimum = 1, maximum = 10)
     ),
     responses(
         (status = 200, description = "Objects in class, optionally enriched with computed fields", body = [crate::models::HubuumObjectReadResponse]),
@@ -37,12 +43,15 @@ async fn get_objects_in_class(
     path = "/api/v1/classes/by-name/{class_name}/objects",
     tag = "classes",
     summary = "List objects in a class by class name",
-    description = "Name-addressed alias for listing the current objects in a class. Numeric-looking class names remain names.",
+    description = "Name-addressed alias for listing the current objects in a class. Numeric-looking class names remain names. Named related.<alias> groups filter objects by bounded, permission-visible paths to independent target objects.",
     security(("bearer_auth" = [])),
     params(
         ("class_name" = String, Path, description = "Globally unique class name"),
         ("include" = Option<String>, Query, description = "Set to computed to enrich each object"),
-        ("sort" = Option<String>, Query, description = "Sort by object fields or computed.shared.<key>/computed.personal.<key>; computed sorting supports at most two explicit sort fields")
+        ("sort" = Option<String>, Query, description = "Sort by object fields or computed.shared.<key>/computed.personal.<key>; computed sorting supports at most two explicit sort fields"),
+        ("related.<alias>.class.name" = Option<String>, Query, description = "Required exact target-class selector for a named related group; use class.id instead for an integer ID"),
+        ("related.<alias>.object.<field>__<operator>" = Option<String>, Query, description = "Target-object predicate correlated within the named group; supports id, name, description, collection_id, created_at, updated_at, revision, and json_data"),
+        ("related.<alias>.depth__lte" = Option<u8>, Query, description = "Maximum bidirectional relationship depth for the named group; defaults to 1 and is capped at 10", minimum = 1, maximum = 10)
     ),
     responses(
         (status = 200, description = "Objects in class, optionally enriched with computed fields", body = [crate::models::HubuumObjectReadResponse]),
@@ -157,15 +166,31 @@ async fn load_raw_object_page(
     } else if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
         (Vec::new(), 0)
     } else {
-        let candidates = user
-            .search_objects_from_backend_with_admin_status(
-                pool,
-                count_query_options(params),
-                true,
-                None,
-            )
-            .await?;
         let principal = PrincipalRef::load(pool, user).await?;
+        let related_ids = externally_authorized_related_object_ids(
+            user,
+            &params.filters,
+            ExternalRelatedFilterAuthorization::new(
+                pool.db_pool(),
+                pool.permission_backend(),
+                &principal,
+                requestor.scopes(),
+            ),
+        )
+        .await?;
+        let mut candidate_options = count_query_options(params);
+        candidate_options
+            .filters
+            .retain(|filter| filter.field.related_query().is_none());
+        let mut candidates = if related_ids.as_ref().is_some_and(|ids| ids.is_empty()) {
+            Vec::new()
+        } else {
+            user.search_objects_from_backend_with_admin_status(pool, candidate_options, true, None)
+                .await?
+        };
+        if let Some(related_ids) = &related_ids {
+            candidates.retain(|object| related_ids.contains(object.id));
+        }
         let search_params = prepare_db_pagination::<HubuumObject>(params)?;
         let page = authorize_cursor_page(
             pool.permission_backend(),
@@ -174,16 +199,7 @@ async fn load_raw_object_page(
             requestor.scopes(),
             vec![Permissions::ReadObject],
             &search_params,
-            |object| ResourceRef {
-                kind: ResourceKind::Object,
-                id: object.id,
-                attrs: ResourceAttrs {
-                    collection_id: Some(object.collection_id),
-                    class_id: Some(object.hubuum_class_id),
-                    name: Some(object.name.clone()),
-                    ..Default::default()
-                },
-            },
+            HubuumObject::authorization_resource,
         )
         .await?;
         (page.rows, page.total_count)

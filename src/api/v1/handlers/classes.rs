@@ -57,7 +57,7 @@ use crate::utilities::extensions::CustomStringExtensions;
 
 use crate::models::search::{
     FilterField, QueryOptions, QueryParamsExt, SearchOperator, decode_query_parameter_pairs,
-    parse_query_parameter, parse_query_parameter_with_computed_filters_and_passthrough,
+    parse_query_parameter, parse_query_parameter_with_computed_and_related_filters_and_passthrough,
     parse_query_parameter_with_passthrough,
 };
 use crate::models::traits::class_relation::ToHubuumClasses;
@@ -103,7 +103,10 @@ fn parse_collection_include(query_string: &str) -> Result<bool, ApiError> {
 
 fn parse_computed_object_list_query(query_string: &str) -> Result<(QueryOptions, bool), ApiError> {
     let (params, mut passthrough) =
-        parse_query_parameter_with_computed_filters_and_passthrough(query_string, &["include"])?;
+        parse_query_parameter_with_computed_and_related_filters_and_passthrough(
+            query_string,
+            &["include"],
+        )?;
     let include_computed = match passthrough.remove("include") {
         None => false,
         Some(values) if values.as_slice() == ["computed"] => true,

@@ -1584,7 +1584,7 @@
           "classes"
         ],
         "summary": "List objects in a class by class name",
-        "description": "Name-addressed alias for listing the current objects in a class. Numeric-looking class names remain names. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Name-addressed alias for listing the current objects in a class. Numeric-looking class names remain names. Named related.<alias> groups filter objects by bounded, permission-visible paths to independent target objects. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByNameByClassNameObjects",
         "parameters": [
           {
@@ -1612,6 +1612,36 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "related.<alias>.class.name",
+            "in": "query",
+            "description": "Required exact target-class selector for a named related group; use class.id instead for an integer ID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "related.<alias>.object.<field>__<operator>",
+            "in": "query",
+            "description": "Target-object predicate correlated within the named group; supports id, name, description, collection_id, created_at, updated_at, revision, and json_data",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "related.<alias>.depth__lte",
+            "in": "query",
+            "description": "Maximum bidirectional relationship depth for the named group; defaults to 1 and is capped at 10",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 10,
+              "minimum": 1
             }
           },
           {
@@ -3339,7 +3369,7 @@
           "classes"
         ],
         "summary": "Get Api V1 Classes By Class Id Trailing",
-        "description": "Lists objects in the path class. Enabled computed fields can be filtered with computed.shared.<key> or computed.personal.<key> using the normal __operator suffix, and sorted with the same names. Computed querying supports at most two computed filter parameters and two explicit sort fields per request. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
+        "description": "Lists objects in the path class. Enabled computed fields can be filtered with computed.shared.<key> or computed.personal.<key> using the normal __operator suffix, and sorted with the same names. Named related.<alias> groups filter objects by bounded, permission-visible paths to independent target objects. Computed querying supports at most two computed filter parameters and two explicit sort fields per request. Supports cursor pagination through the `limit`, `sort`, and `cursor` query parameters. The exact total hit count is returned in the `X-Total-Count` response header unless `include_total=false`, and the next page cursor is returned in the `X-Next-Cursor` response header.",
         "operationId": "getApiV1ClassesByClassIdTrailing",
         "parameters": [
           {
@@ -3368,6 +3398,36 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "related.<alias>.class.name",
+            "in": "query",
+            "description": "Required exact target-class selector for a named related group; use class.id instead for an integer ID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "related.<alias>.object.<field>__<operator>",
+            "in": "query",
+            "description": "Target-object predicate correlated within the named group; supports id, name, description, collection_id, created_at, updated_at, revision, and json_data",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "related.<alias>.depth__lte",
+            "in": "query",
+            "description": "Maximum bidirectional relationship depth for the named group; defaults to 1 and is capped at 10",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 10,
+              "minimum": 1
             }
           },
           {
