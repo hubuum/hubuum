@@ -26,6 +26,7 @@ MUTABLE_INSTALLER = re.compile(
 )
 REQUIRED_TOOL_KEYS = {
     "CARGO_DENY_VERSION",
+    "CARGO_SEMVER_CHECKS_VERSION",
     "DIESEL_CLI_VERSION",
     "SYFT_IMAGE",
     "TRIVY_IMAGE",
@@ -217,7 +218,11 @@ def validate_tool_values(values: dict[str, str]) -> None:
     for key in ("SYFT_IMAGE", "TRIVY_IMAGE"):
         if not OCI_DIGEST_REF.fullmatch(values[key]):
             fail(f"{key} must be a literal OCI reference with a full SHA-256 digest")
-    for key in ("CARGO_DENY_VERSION", "DIESEL_CLI_VERSION"):
+    for key in (
+        "CARGO_DENY_VERSION",
+        "CARGO_SEMVER_CHECKS_VERSION",
+        "DIESEL_CLI_VERSION",
+    ):
         if not re.fullmatch(r"\d+\.\d+\.\d+", values[key]):
             fail(f"{key} must be an exact semantic version")
     if not re.fullmatch(r"v\d+\.\d+\.\d+", values["COSIGN_VERSION"]):

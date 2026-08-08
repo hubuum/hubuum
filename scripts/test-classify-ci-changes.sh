@@ -46,7 +46,55 @@ assert_literal_include_is_code() {
 docs_output="$(bash "$classifier" README.md AGENTS.md docs/development.md)"
 assert_flag "$docs_output" markdown true
 assert_flag "$docs_output" code false
+assert_flag "$docs_output" rust_api_policy false
 assert_flag "$docs_output" artifacts false
+
+policy_fixture_root="$(mktemp -d)"
+trap 'rm -rf "$policy_fixture_root"' EXIT
+mkdir -p "$policy_fixture_root/src"
+cat > "$policy_fixture_root/Cargo.toml" <<'EOF'
+[package]
+name = "policy-fixture"
+version = "0.0.1"
+edition = "2024"
+publish = true
+
+[package.metadata.hubuum]
+rust-api = "experimental-public"
+policy-document = "docs/public-api.md"
+
+[workspace]
+EOF
+: > "$policy_fixture_root/src/lib.rs"
+
+deleted_policy_document_output="$(
+  RUST_API_POLICY_ROOT="$policy_fixture_root" \
+    bash "$classifier" docs/public-api.md
+)"
+assert_flag "$deleted_policy_document_output" markdown true
+assert_flag "$deleted_policy_document_output" code false
+assert_flag "$deleted_policy_document_output" rust_api_policy true
+
+moved_policy_document_output="$(
+  RUST_API_POLICY_ROOT="$policy_fixture_root" \
+    bash "$classifier" docs/public-api.md docs/moved-public-api.md
+)"
+assert_flag "$moved_policy_document_output" markdown true
+assert_flag "$moved_policy_document_output" code false
+assert_flag "$moved_policy_document_output" rust_api_policy true
+
+python3 - "$repo_root/.github/workflows/ci.yml" <<'PY'
+import sys
+from pathlib import Path
+
+workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = workflow.index("\n  rust-api-policy:\n")
+end = workflow.index("\n  lint:\n", start)
+job = workflow[start:end]
+condition = "needs.changes.outputs.rust_api_policy == 'true'"
+if job.count(condition) != 1:
+    raise SystemExit("Rust API policy job must consume rust_api_policy exactly once")
+PY
 
 querying_docs_output="$(bash "$classifier" docs/querying.md)"
 assert_flag "$querying_docs_output" markdown true
@@ -57,7 +105,14 @@ markdown_config_output="$(bash "$classifier" .markdownlint.json)"
 assert_flag "$markdown_config_output" markdown true
 assert_flag "$markdown_config_output" code false
 
-supply_chain_output="$(bash "$classifier" deny.toml .trivyignore .github/supply-chain-tools.env scripts/generate-container-evidence.sh scripts/test-generate-container-evidence.sh scripts/test-supply-chain-policy.py)"
+supply_chain_output="$(bash "$classifier" \
+  deny.toml \
+  .trivyignore \
+  .github/supply-chain-tools.env \
+  scripts/generate-container-evidence.sh \
+  scripts/install-cargo-semver-checks.sh \
+  scripts/test-generate-container-evidence.sh \
+  scripts/test-supply-chain-policy.py)"
 assert_flag "$supply_chain_output" code true
 assert_flag "$supply_chain_output" container true
 assert_flag "$supply_chain_output" artifacts true
@@ -68,6 +123,16 @@ assert_flag "$supply_chain_docs_output" markdown true
 assert_flag "$supply_chain_docs_output" code true
 assert_flag "$supply_chain_docs_output" container true
 assert_flag "$supply_chain_docs_output" artifacts true
+
+rust_api_policy_output="$(bash "$classifier" \
+  scripts/check-rust-api-policy.py \
+  scripts/test-rust-api-policy.py \
+  scripts/check-crates-io-baseline.py \
+  scripts/test-crates-io-baseline.py)"
+assert_flag "$rust_api_policy_output" code true
+assert_flag "$rust_api_policy_output" container false
+assert_flag "$rust_api_policy_output" artifacts false
+assert_flag "$rust_api_policy_output" benchmarks false
 
 openapi_output="$(bash "$classifier" docs/openapi.json)"
 assert_flag "$openapi_output" openapi true
