@@ -195,7 +195,7 @@ pub const DYNAMIC_SECRET_PREFIXES: &[(&str, EnvironmentOwner)] = &[
 pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/config.rs",
     "src/config/token_hash.rs",
-    "src/bin/admin.rs",
+    "src/administration.rs",
     "src/logger.rs",
     "src/tasks/remote_call.rs",
     "src/tests/permissions/live_treetop_parity.rs",
@@ -406,5 +406,11 @@ mod tests {
             "Hubuum environment access outside declared adapters:\n{}",
             unexpected.join("\n")
         );
+    }
+
+    #[test]
+    fn administration_environment_access_stays_behind_the_library_boundary() {
+        assert!(ENVIRONMENT_ADAPTER_PATHS.contains(&"src/administration.rs"));
+        assert!(!ENVIRONMENT_ADAPTER_PATHS.contains(&"src/bin/admin.rs"));
     }
 }

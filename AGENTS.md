@@ -21,6 +21,11 @@
 
 ## Architecture
 
+- Treat the root `hubuum` library as an internal application composition crate,
+  not a supported third-party embedding API. Its `pub` visibility may exist for
+  sibling binaries, integration tests, or benchmarks without creating a SemVer
+  promise. Keep package classifications consistent with
+  `docs/rust_api_boundary.md` and the Rust API policy checker.
 - Keep public domain behavior in `src/models/*` and `src/traits/*`.
 - Keep Diesel/Postgres query construction and backend details in `src/db/traits/*`.
 - Model methods should stay thin and delegate persistence-heavy work to backend traits.

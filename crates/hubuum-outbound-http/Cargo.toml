@@ -5,6 +5,10 @@ edition = "2024"
 description = "Hardened outbound HTTP helpers for Hubuum."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
 
 [dependencies]
 ipnet = "2.12"

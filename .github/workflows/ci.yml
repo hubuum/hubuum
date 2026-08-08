@@ -199,6 +199,51 @@ jobs:
         if: steps.dependency_audit.outcome != 'success'
         run: exit 1
 
+  rust-api-policy:
+    name: Rust API policy
+    needs: changes
+    if: >-
+      always() &&
+      (
+        startsWith(github.ref, 'refs/tags/v') ||
+        needs.changes.outputs.code == 'true'
+      )
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Validate Rust API classifications
+        run: python3 scripts/check-rust-api-policy.py
+      - name: Test Rust API policy validation
+        run: python3 scripts/test-rust-api-policy.py
+      - name: Select supported Rust packages
+        id: supported
+        run: |
+          packages="$(python3 scripts/check-rust-api-policy.py --supported-packages)"
+          {
+            echo 'packages<<EOF'
+            echo "$packages"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Install semantic compatibility checker
+        if: steps.supported.outputs.packages != ''
+        run: |
+          version="$(python3 scripts/check-supply-chain-policy.py --tool-value CARGO_SEMVER_CHECKS_VERSION)"
+          cargo install cargo-semver-checks --locked --version "$version"
+      - name: Verify supported Rust packages
+        if: steps.supported.outputs.packages != ''
+        env:
+          SUPPORTED_PACKAGES: ${{ steps.supported.outputs.packages }}
+        run: |
+          while IFS= read -r package; do
+            [[ -n "$package" ]] || continue
+            RUSTDOCFLAGS='-D warnings' cargo doc --locked --no-deps --all-features --package "$package"
+            cargo package --locked --package "$package"
+            cargo semver-checks --package "$package"
+          done <<< "$SUPPORTED_PACKAGES"
+
   lint:
     name: Lint
     needs: changes
@@ -898,6 +943,7 @@ jobs:
       - changes
       - static-checks
       - dependency-policy
+      - rust-api-policy
       - lint
       - release-metadata
       - openapi-contract
@@ -961,11 +1007,13 @@ jobs:
       startsWith(github.ref, 'refs/tags/v') &&
       needs.verify-tag-main-ci-success.result == 'success' &&
       needs.dependency-policy.result == 'success' &&
+      needs.rust-api-policy.result == 'success' &&
       needs.openapi-contract.result == 'success' &&
       needs.container-build.result == 'success'
     needs:
       - verify-tag-main-ci-success
       - dependency-policy
+      - rust-api-policy
       - openapi-contract
       - container-build
     runs-on: ubuntu-24.04

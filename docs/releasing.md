@@ -13,6 +13,9 @@ This repository uses the CI workflow in
   immediately preceding stable release.
 - The candidate must pass the adjacent stable release upgrade and application
   rollback harness against an immutable release-image digest.
+- Every Rust package must retain an explicit support classification; internal
+  packages cannot be published, and any supported package must pass rustdoc,
+  clean packaging, and semantic compatibility checks.
 
 ## Scripted release flow
 
@@ -59,10 +62,25 @@ Once the tag is pushed, the CI workflow will:
   API probes, exercise a mixed-version interval, and restore its application
   image against the migrated database before publishing
 - verify that the tag, `Cargo.toml`, changelog, and OpenAPI versions match
+- validate Rust API classifications and any supported crate compatibility
 - publish GitHub release archives and SHA-256 checksums for Linux x86_64, Linux ARM64,
   Windows x86_64, and macOS ARM64
 - use the matching changelog section as the GitHub Release notes
 - publish AMD64 and ARM64 GHCR images for the release tag
+
+## Rust package compatibility
+
+The root server package and all current workspace crates are internal and set
+`publish = false`. They are shipped as source inputs to the Hubuum binaries, not
+as supported crates. The authoritative classification and promotion process is
+documented in [Rust API Boundary](rust_api_boundary.md).
+
+CI rejects missing classifications and any internal package that enables Cargo
+publishing. A future `experimental-public` or `stable-public` package is
+automatically checked with the pinned `cargo-semver-checks` version, rustdoc
+warnings denied, all features, and Cargo's clean packaged-source build. Promote
+a package only in a dedicated change containing its API policy, release owner,
+versioning rules, and downstream migration or compatibility fixtures.
 
 ## OpenAPI compatibility gate
 

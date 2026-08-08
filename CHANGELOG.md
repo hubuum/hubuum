@@ -15,6 +15,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   graph paths remain permission-aware and resource-scoped with both SQL and
   external policy backends. External-policy graph expansion uses explicit
   target, object, and relation work limits.
+- Added machine-enforced Rust package support classifications. CI prevents
+  internal crates from becoming publishable and automatically adds rustdoc,
+  clean-package, and semantic compatibility checks when a crate is deliberately
+  promoted to a supported public status.
+
+### Changed
+
+- **Breaking (Rust API support policy):** the root `hubuum` library and every
+  current workspace crate are explicitly internal and non-publishable. Their
+  Rust `pub` items are workspace construction details rather than supported
+  third-party embedding or extension APIs. Rust application clients must use
+  `hubuum-client-rust` over the versioned HTTP/OpenAPI contract; known Git
+  consumers must pin and maintain internal interfaces themselves or migrate to
+  the client. The server, admin, and OpenAPI binaries now call narrow internal
+  library entrypoints, and the library owns API/worker/all runtime composition.
 
 ## [0.0.9] - 2026-08-07
 
