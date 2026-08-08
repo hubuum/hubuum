@@ -217,7 +217,9 @@ jobs:
       - name: Validate Rust API classifications
         run: python3 scripts/check-rust-api-policy.py
       - name: Test Rust API policy validation
-        run: python3 scripts/test-rust-api-policy.py
+        run: |
+          python3 scripts/test-rust-api-policy.py
+          python3 scripts/test-crates-io-baseline.py
       - name: Select supported Rust packages
         id: supported
         run: |
@@ -237,11 +239,26 @@ jobs:
         env:
           SUPPORTED_PACKAGES: ${{ steps.supported.outputs.packages }}
         run: |
+          echo '### Rust API registry baselines' >> "$GITHUB_STEP_SUMMARY"
           while IFS= read -r package; do
             [[ -n "$package" ]] || continue
             RUSTDOCFLAGS='-D warnings' cargo doc --locked --no-deps --all-features --package "$package"
             cargo package --locked --package "$package"
-            cargo semver-checks --package "$package"
+            baseline="$(python3 scripts/check-crates-io-baseline.py "$package")"
+            case "$baseline" in
+              present)
+                cargo semver-checks --package "$package"
+                echo "- \`$package\`: checked against its latest crates.io release" >> "$GITHUB_STEP_SUMMARY"
+                ;;
+              missing)
+                echo "::notice title=No Rust API registry baseline::$package has no crates.io release; compatibility checks begin after its first release"
+                echo "- \`$package\`: no crates.io release yet; recorded as an initial public release" >> "$GITHUB_STEP_SUMMARY"
+                ;;
+              *)
+                echo "Unexpected registry baseline result for $package: $baseline" >&2
+                exit 1
+                ;;
+            esac
           done <<< "$SUPPORTED_PACKAGES"
 
   lint:

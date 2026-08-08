@@ -96,8 +96,11 @@ The machine values are:
 
 `scripts/check-rust-api-policy.py` rejects an unclassified package. Internal
 classifications require `publish = false`; public classifications require
-publishing to be enabled and a package-specific policy document. CI and tagged
-release validation run the policy and its regression fixtures.
+publishing to be enabled and a package-specific policy document that resolves
+to a readable file inside this repository. The checker uses Cargo's resolved
+workspace membership, including automatically admitted in-tree path
+dependencies. CI and tagged release validation run the policy and its
+regression fixtures.
 
 ## Internal package rules
 
@@ -147,6 +150,12 @@ runs:
 - rustdoc with warnings denied and all declared features enabled;
 - `cargo package --locked`, including Cargo's clean packaged-source build; and
 - pinned `cargo-semver-checks` against the latest registry release.
+
+For a crate's initial public release, CI records that no crates.io baseline
+exists and skips only the semantic comparison. Documentation and packaging
+checks remain mandatory. Once a crates.io release exists, semantic comparison
+is mandatory; registry lookup failures other than a definitive missing-package
+response fail the job.
 
 An intentional supported-API break requires the correct version change, a
 changelog entry labeled as a supported Rust crate break, and migration guidance.
