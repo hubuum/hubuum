@@ -48,6 +48,7 @@ jobs:
     outputs:
       markdown: ${{ steps.paths.outputs.markdown }}
       code: ${{ steps.paths.outputs.code }}
+      rust_api_policy: ${{ steps.paths.outputs.rust_api_policy }}
       openapi: ${{ steps.paths.outputs.openapi }}
       container: ${{ steps.paths.outputs.container }}
       artifacts: ${{ steps.paths.outputs.artifacts }}
@@ -206,7 +207,8 @@ jobs:
       always() &&
       (
         startsWith(github.ref, 'refs/tags/v') ||
-        needs.changes.outputs.code == 'true'
+        needs.changes.outputs.code == 'true' ||
+        needs.changes.outputs.rust_api_policy == 'true'
       )
     runs-on: ubuntu-24.04
     steps:

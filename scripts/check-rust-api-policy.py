@@ -151,7 +151,26 @@ def cargo_publish_policy(name: str, publish_value: object) -> CargoPublishPolicy
     fail(f"package {name} has an invalid Cargo publish setting")
 
 
-def public_policy_document(root: Path, name: str, declared: object) -> str:
+def package_manifest(
+    root: Path, manifest: Path
+) -> tuple[str, dict[str, object], dict[str, object] | None]:
+    data = read_manifest(manifest)
+    package = data.get("package")
+    if not isinstance(package, dict):
+        fail(f"{manifest.relative_to(root)} must declare [package]")
+    name = package.get("name")
+    if not isinstance(name, str) or not name:
+        fail(f"{manifest.relative_to(root)} has no package name")
+    metadata = package.get("metadata")
+    hubuum = metadata.get("hubuum") if isinstance(metadata, dict) else None
+    if not isinstance(hubuum, dict):
+        hubuum = None
+    return name, package, hubuum
+
+
+def policy_document_path(
+    root: Path, name: str, declared: object
+) -> tuple[Path, str]:
     if not isinstance(declared, str) or not declared.strip():
         fail(f"public package {name} must declare a policy-document")
     declared_path = Path(declared)
@@ -160,7 +179,11 @@ def public_policy_document(root: Path, name: str, declared: object) -> str:
     policy_path = (root / declared_path).resolve()
     if not policy_path.is_relative_to(root):
         fail(f"public package {name} policy-document must remain inside the repository")
-    relative_path = policy_path.relative_to(root)
+    return policy_path, policy_path.relative_to(root).as_posix()
+
+
+def public_policy_document(root: Path, name: str, declared: object) -> str:
+    policy_path, relative_path = policy_document_path(root, name, declared)
     if not policy_path.is_file():
         fail(
             f"public package {name} policy-document does not exist as a file: "
@@ -171,20 +194,27 @@ def public_policy_document(root: Path, name: str, declared: object) -> str:
             policy_file.read(1)
     except OSError as error:
         fail(f"public package {name} policy-document is not readable: {error}")
-    return relative_path.as_posix()
+    return relative_path
+
+
+def declared_policy_documents(root: Path) -> list[str]:
+    documents: set[str] = set()
+    for manifest in workspace_manifests(root):
+        name, _, hubuum = package_manifest(root, manifest)
+        if hubuum is None or "policy-document" not in hubuum:
+            continue
+        _, relative_path = policy_document_path(
+            root,
+            name,
+            hubuum["policy-document"],
+        )
+        documents.add(relative_path)
+    return sorted(documents)
 
 
 def package_policy(root: Path, manifest: Path) -> PackagePolicy:
-    data = read_manifest(manifest)
-    package = data.get("package")
-    if not isinstance(package, dict):
-        fail(f"{manifest.relative_to(root)} must declare [package]")
-    name = package.get("name")
-    if not isinstance(name, str) or not name:
-        fail(f"{manifest.relative_to(root)} has no package name")
-    metadata = package.get("metadata")
-    hubuum = metadata.get("hubuum") if isinstance(metadata, dict) else None
-    rust_api = hubuum.get("rust-api") if isinstance(hubuum, dict) else None
+    name, package, hubuum = package_manifest(root, manifest)
+    rust_api = hubuum.get("rust-api") if hubuum is not None else None
     if rust_api not in VALID_STATUSES:
         fail(
             f"{name} must set package.metadata.hubuum.rust-api to one of "
@@ -192,9 +222,7 @@ def package_policy(root: Path, manifest: Path) -> PackagePolicy:
         )
 
     publish = cargo_publish_policy(name, package.get("publish", True))
-    policy_document = (
-        hubuum.get("policy-document") if isinstance(hubuum, dict) else None
-    )
+    policy_document = hubuum.get("policy-document") if hubuum is not None else None
     if rust_api in INTERNAL_STATUSES:
         if publish.enabled:
             fail(f"internal package {name} must disable publishing")
@@ -242,9 +270,14 @@ def main() -> int:
     output = parser.add_mutually_exclusive_group()
     output.add_argument("--json", action="store_true")
     output.add_argument("--supported-packages", action="store_true")
+    output.add_argument("--declared-policy-documents", action="store_true")
     arguments = parser.parse_args()
 
     try:
+        if arguments.declared_policy_documents:
+            for document in declared_policy_documents(arguments.root.resolve()):
+                print(document)
+            return 0
         result = policies(arguments.root.resolve())
     except PolicyError as error:
         print(f"Rust API policy error: {error}", file=sys.stderr)

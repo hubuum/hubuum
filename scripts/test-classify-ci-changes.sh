@@ -46,7 +46,55 @@ assert_literal_include_is_code() {
 docs_output="$(bash "$classifier" README.md AGENTS.md docs/development.md)"
 assert_flag "$docs_output" markdown true
 assert_flag "$docs_output" code false
+assert_flag "$docs_output" rust_api_policy false
 assert_flag "$docs_output" artifacts false
+
+policy_fixture_root="$(mktemp -d)"
+trap 'rm -rf "$policy_fixture_root"' EXIT
+mkdir -p "$policy_fixture_root/src"
+cat > "$policy_fixture_root/Cargo.toml" <<'EOF'
+[package]
+name = "policy-fixture"
+version = "0.0.1"
+edition = "2024"
+publish = true
+
+[package.metadata.hubuum]
+rust-api = "experimental-public"
+policy-document = "docs/public-api.md"
+
+[workspace]
+EOF
+: > "$policy_fixture_root/src/lib.rs"
+
+deleted_policy_document_output="$(
+  RUST_API_POLICY_ROOT="$policy_fixture_root" \
+    bash "$classifier" docs/public-api.md
+)"
+assert_flag "$deleted_policy_document_output" markdown true
+assert_flag "$deleted_policy_document_output" code false
+assert_flag "$deleted_policy_document_output" rust_api_policy true
+
+moved_policy_document_output="$(
+  RUST_API_POLICY_ROOT="$policy_fixture_root" \
+    bash "$classifier" docs/public-api.md docs/moved-public-api.md
+)"
+assert_flag "$moved_policy_document_output" markdown true
+assert_flag "$moved_policy_document_output" code false
+assert_flag "$moved_policy_document_output" rust_api_policy true
+
+python3 - "$repo_root/.github/workflows/ci.yml" <<'PY'
+import sys
+from pathlib import Path
+
+workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = workflow.index("\n  rust-api-policy:\n")
+end = workflow.index("\n  lint:\n", start)
+job = workflow[start:end]
+condition = "needs.changes.outputs.rust_api_policy == 'true'"
+if job.count(condition) != 1:
+    raise SystemExit("Rust API policy job must consume rust_api_policy exactly once")
+PY
 
 querying_docs_output="$(bash "$classifier" docs/querying.md)"
 assert_flag "$querying_docs_output" markdown true
