@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+policy_root="${RUST_API_POLICY_ROOT:-$repo_root}"
+declared_policy_documents="$(
+  python3 "$repo_root/scripts/check-rust-api-policy.py" \
+    --root "$policy_root" \
+    --declared-policy-documents
+)"
+
 any=false
 markdown=false
 code=false
+rust_api_policy=false
 openapi=false
 container=false
 artifacts=false
@@ -17,6 +26,13 @@ for path in "$@"; do
   if [[ "$path" == *.md ]]; then
     markdown=true
   fi
+
+  while IFS= read -r policy_document; do
+    if [[ -n "$policy_document" && "$path" == "$policy_document" ]]; then
+      rust_api_policy=true
+      break
+    fi
+  done <<< "$declared_policy_documents"
 
   case "$path" in
     docs/openapi.json)
@@ -181,6 +197,7 @@ outputs=(
   "any=$any"
   "markdown=$markdown"
   "code=$code"
+  "rust_api_policy=$rust_api_policy"
   "openapi=$openapi"
   "container=$container"
   "artifacts=$artifacts"

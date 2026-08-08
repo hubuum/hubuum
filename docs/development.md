@@ -128,7 +128,9 @@ and intentional-break rules.
 The Rust API policy check classifies every Cargo package and prevents internal
 packages from becoming publishable accidentally. If a package is deliberately
 promoted to experimental or stable public status, the same job adds rustdoc,
-clean package, and semantic compatibility checks automatically. Run its local
+clean package, and semantic compatibility checks automatically. The change
+classifier discovers each declared policy document so deleting or moving one
+still selects this job in an otherwise documentation-only change. Run the local
 fixtures with `python3 scripts/test-rust-api-policy.py` and
 `python3 scripts/test-crates-io-baseline.py`.
 

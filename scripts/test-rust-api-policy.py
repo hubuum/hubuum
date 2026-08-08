@@ -198,6 +198,14 @@ class RustApiPolicyTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("policy-document does not exist as a file", result.stderr)
 
+    def test_declared_policy_documents_include_a_missing_file(self) -> None:
+        self.write_public_member(policy_path="docs/missing.md", create_policy=False)
+
+        result = self.run_checker("--declared-policy-documents")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "docs/missing.md\n")
+
     def test_public_package_policy_document_must_be_a_file(self) -> None:
         self.write_public_member(policy_path="docs/member", create_policy=False)
         (self.root / "docs" / "member").mkdir(parents=True)

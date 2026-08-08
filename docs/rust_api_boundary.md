@@ -100,7 +100,9 @@ require `publish = true` or a registry allowlist containing `crates-io`, plus a
 package-specific policy document that resolves to a readable file inside this
 repository. The checker uses Cargo's resolved workspace membership, including
 automatically admitted in-tree path dependencies. CI and tagged release
-validation run the policy and its regression fixtures.
+validation run the policy and its regression fixtures. The CI change classifier
+also discovers declared policy document paths so their deletion or movement
+cannot bypass validation as a documentation-only change.
 
 ## Internal package rules
 
