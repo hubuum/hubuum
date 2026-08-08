@@ -96,11 +96,11 @@ The machine values are:
 
 `scripts/check-rust-api-policy.py` rejects an unclassified package. Internal
 classifications require Cargo publishing to be disabled; public classifications
-require publishing to be enabled and a package-specific policy document that
-resolves to a readable file inside this repository. The checker uses Cargo's
-resolved workspace membership, including automatically admitted in-tree path
-dependencies. CI and tagged release validation run the policy and its
-regression fixtures.
+require `publish = true` or a registry allowlist containing `crates-io`, plus a
+package-specific policy document that resolves to a readable file inside this
+repository. The checker uses Cargo's resolved workspace membership, including
+automatically admitted in-tree path dependencies. CI and tagged release
+validation run the policy and its regression fixtures.
 
 ## Internal package rules
 
@@ -143,13 +143,13 @@ separate reviewed change. Its policy document must define:
 - deprecation and removal timelines; and
 - release ownership and downstream compatibility fixtures.
 
-The manifest must enable publishing and contain registry-ready metadata and
-versioned dependencies. Release CI then automatically selects the package and
-runs:
+The manifest must allow crates.io publishing and contain registry-ready
+metadata and versioned dependencies. Release CI then automatically selects the
+package and runs:
 
 - rustdoc with warnings denied and all declared features enabled;
 - `cargo package --locked`, including Cargo's clean packaged-source build; and
-- pinned `cargo-semver-checks` against the latest registry release.
+- pinned `cargo-semver-checks` against the latest crates.io release.
 
 For a crate's initial public release, CI records that no crates.io baseline
 exists and skips only the semantic comparison. Documentation and packaging

@@ -168,16 +168,27 @@ class RustApiPolicyTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must enable publishing", result.stderr)
 
-    def test_public_package_accepts_a_non_empty_publish_allowlist(self) -> None:
+    def test_public_package_accepts_an_allowlist_containing_crates_io(self) -> None:
         self.write_public_member(
             status="experimental-public",
-            publish='["crates-io"]',
+            publish='["company-registry", "crates-io"]',
         )
 
         result = self.run_checker("--supported-packages")
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "member\n")
+
+    def test_public_package_rejects_an_allowlist_without_crates_io(self) -> None:
+        self.write_public_member(
+            status="experimental-public",
+            publish='["company-registry"]',
+        )
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must allow crates.io publishing", result.stderr)
 
     def test_public_package_policy_document_must_exist(self) -> None:
         self.write_public_member(policy_path="docs/missing.md", create_policy=False)

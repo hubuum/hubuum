@@ -77,15 +77,18 @@ documented in [Rust API Boundary](rust_api_boundary.md).
 
 CI rejects missing classifications and any internal package that enables Cargo
 publishing. A future `experimental-public` or `stable-public` package is
-automatically checked with the pinned `cargo-semver-checks` version, rustdoc
-warnings denied, all features, and Cargo's clean packaged-source build. Promote
-a package only in a dedicated change containing its API policy, release owner,
-versioning rules, and downstream migration or compatibility fixtures.
+required to allow crates.io publishing with `publish = true` or an allowlist
+containing `crates-io`. It is automatically checked with the pinned
+`cargo-semver-checks` version, rustdoc warnings denied, all features, and
+Cargo's clean packaged-source build. Promote a package only in a dedicated
+change containing its API policy, release owner, versioning rules, and
+downstream migration or compatibility fixtures.
 
 For an initial public release, CI records the absence of a crates.io baseline
 and skips only semantic comparison; rustdoc and clean packaging remain
-mandatory. Once the first release exists, the semantic compatibility check is
-mandatory, and registry lookup errors fail rather than bypass the check.
+mandatory. Once the first crates.io release exists, the semantic compatibility
+check is mandatory, and registry lookup errors fail rather than bypass the
+check.
 
 ## OpenAPI compatibility gate
 

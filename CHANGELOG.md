@@ -11,8 +11,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Added machine-enforced Rust package support classifications. CI prevents
   internal crates from becoming publishable and automatically adds rustdoc,
-  clean-package, and registry-aware semantic compatibility checks when a crate
-  is deliberately promoted to a supported public status.
+  clean-package, and crates.io-backed semantic compatibility checks when a
+  crate is deliberately promoted to a supported public status.
 
 ### Changed
 

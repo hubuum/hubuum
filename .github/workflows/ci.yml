@@ -231,9 +231,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - name: Install semantic compatibility checker
         if: steps.supported.outputs.packages != ''
-        run: |
-          version="$(python3 scripts/check-supply-chain-policy.py --tool-value CARGO_SEMVER_CHECKS_VERSION)"
-          cargo install cargo-semver-checks --locked --version "$version"
+        run: bash scripts/install-cargo-semver-checks.sh
       - name: Verify supported Rust packages
         if: steps.supported.outputs.packages != ''
         env:
