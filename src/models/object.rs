@@ -42,6 +42,21 @@ pub struct HubuumObject {
     pub revision: ResourceRevision,
 }
 
+impl HubuumObject {
+    pub(crate) fn authorization_resource(&self) -> ResourceRef {
+        ResourceRef {
+            kind: ResourceKind::Object,
+            id: self.id,
+            attrs: ResourceAttrs {
+                collection_id: Some(self.collection_id),
+                class_id: Some(self.hubuum_class_id),
+                name: Some(self.name.clone()),
+                ..Default::default()
+            },
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Insertable, ToSchema)]
 #[schema(example = new_hubuum_object_example)]
 #[diesel(table_name = hubuumobject)]
@@ -407,16 +422,7 @@ crate::impl_history_pagination!(HubuumObjectHistory, "hubuumobject_history");
 #[async_trait]
 impl AuthzTarget for HubuumObject {
     async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
-        Ok(ResourceRef {
-            kind: ResourceKind::Object,
-            id: self.id,
-            attrs: ResourceAttrs {
-                collection_id: Some(self.collection_id),
-                class_id: Some(self.hubuum_class_id),
-                name: Some(self.name.clone()),
-                ..Default::default()
-            },
-        })
+        Ok(self.authorization_resource())
     }
 }
 

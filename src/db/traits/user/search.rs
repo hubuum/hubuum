@@ -3,20 +3,34 @@ use crate::db::traits::authz::scope_allows;
 use crate::db::traits::computed_field::{
     ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
 };
+use crate::db::traits::relations::{
+    object_authorization_resources, object_relation_authorization_resources,
+};
 use crate::db::traits::resource_scope::{
     class_scope_predicate, collection_scope_predicate, object_scope_predicate, resource_scope_ids,
 };
-use crate::db::traits::search::JsonPredicateExt;
+use crate::db::traits::search::{JsonPredicateExt, JsonSqlPredicate, dynamic_sql_predicate};
 use crate::models::RelatedObjectForRootRow;
 use crate::models::permissions::PermissionFilter;
-use crate::models::search::{ParsedQueryParamExt, ParsedQueryParamSqlExt, SQLValue};
+use crate::models::search::{
+    DEFAULT_RELATED_FILTER_DEPTH, Operator, ParsedQueryParamExt, ParsedQueryParamSqlExt,
+    RelatedClassField, RelatedFilterTarget, RelatedObjectField, SQLComponent, SQLValue,
+};
 use crate::models::token_scope::TokenScope;
-use crate::permissions::visibility::AuthorizedObjectIds;
+use crate::permissions::visibility::{
+    AuthorizedObjectIds, authorize_all_candidates, authorize_resource_permissions,
+};
+use crate::permissions::{PermissionBackend, PrincipalRef};
 use crate::traits::PrincipalIdAccessor;
 use crate::traits::{CursorPaginated, CursorSqlMapping};
 use crate::utilities::extensions::CustomStringExtensions;
 use diesel::BoolExpressionMethods;
 use diesel_async::RunQueryDsl;
+use std::collections::{BTreeMap, HashSet};
+
+const MAX_EXTERNAL_RELATED_FILTER_TARGETS: usize = 1_000;
+const MAX_EXTERNAL_RELATED_FILTER_OBJECTS: usize = 10_000;
+const MAX_EXTERNAL_RELATED_FILTER_RELATIONS: usize = 20_000;
 
 #[derive(diesel::QueryableByName)]
 struct CountRow {
@@ -143,6 +157,560 @@ impl<'a> ObjectQueryPlan<'a> {
     }
 }
 
+struct RelatedFilterGroup<'a> {
+    class_filter: &'a ParsedQueryParam,
+    object_filters: Vec<(&'a ParsedQueryParam, RelatedObjectField)>,
+    max_depth: i32,
+}
+
+fn related_filter_groups(
+    filters: &[ParsedQueryParam],
+) -> Result<Vec<RelatedFilterGroup<'_>>, ApiError> {
+    #[derive(Default)]
+    struct PendingGroup<'a> {
+        class_filter: Option<&'a ParsedQueryParam>,
+        object_filters: Vec<(&'a ParsedQueryParam, RelatedObjectField)>,
+        max_depth: Option<i32>,
+    }
+
+    let mut groups = BTreeMap::<&str, PendingGroup<'_>>::new();
+    for filter in filters {
+        let Some(field) = filter.field.related_query() else {
+            continue;
+        };
+        let group = groups.entry(field.alias()).or_default();
+        match field.target() {
+            RelatedFilterTarget::Class(_) => group.class_filter = Some(filter),
+            RelatedFilterTarget::Object(object_field) => {
+                group.object_filters.push((filter, object_field));
+            }
+            RelatedFilterTarget::Depth => {
+                group.max_depth = Some(filter.value.parse::<i32>().map_err(|_| {
+                    ApiError::BadRequest("Related filter depth must be an integer".to_string())
+                })?);
+            }
+        }
+    }
+
+    groups
+        .into_iter()
+        .map(|(alias, group)| {
+            Ok(RelatedFilterGroup {
+                class_filter: group.class_filter.ok_or_else(|| {
+                    ApiError::BadRequest(format!(
+                        "Related filter group '{alias}' requires a class selector"
+                    ))
+                })?,
+                object_filters: group.object_filters,
+                max_depth: group
+                    .max_depth
+                    .unwrap_or(i32::from(DEFAULT_RELATED_FILTER_DEPTH)),
+            })
+        })
+        .collect()
+}
+
+async fn related_object_filter_predicate<U>(
+    user: &U,
+    pool: &DbPool,
+    filters: &[ParsedQueryParam],
+    is_admin: bool,
+    scopes: Option<&TokenScope>,
+) -> Result<Option<JsonSqlPredicate>, ApiError>
+where
+    U: UserCollectionAccessors + ?Sized,
+{
+    let groups = related_filter_groups(filters)?;
+    if groups.is_empty() {
+        return Ok(None);
+    }
+    debug!(
+        message = "Planning related-object filters",
+        authorization = "sql_pushdown",
+        group_count = groups.len(),
+        max_depths = ?groups.iter().map(|group| group.max_depth).collect::<Vec<_>>()
+    );
+
+    let graph_permissions =
+        PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
+    let graph_collection_ids = user
+        .load_collections_with_permissions_with_admin_status(
+            pool,
+            &graph_permissions,
+            is_admin,
+            scopes,
+        )
+        .await?
+        .into_iter()
+        .map(|collection| collection.id)
+        .collect::<Vec<_>>();
+
+    let class_permissions =
+        PermissionsList::new([Permissions::ReadClass, Permissions::ReadCollection]);
+    let class_collection_ids = user
+        .load_collections_with_permissions_with_admin_status(
+            pool,
+            &class_permissions,
+            is_admin,
+            scopes,
+        )
+        .await?
+        .into_iter()
+        .map(|collection| collection.id)
+        .collect::<Vec<_>>();
+
+    if graph_collection_ids.is_empty() || class_collection_ids.is_empty() {
+        return dynamic_sql_predicate(SQLComponent {
+            sql: "FALSE".to_string(),
+            bind_variables: Vec::new(),
+        })
+        .map(Some);
+    }
+
+    let component = build_related_object_filter_sql(
+        &groups,
+        &graph_collection_ids,
+        &class_collection_ids,
+        scopes,
+    )?;
+    dynamic_sql_predicate(component).map(Some)
+}
+
+/// Dependencies and caller scope for external-policy related filtering.
+pub(crate) struct ExternalRelatedFilterAuthorization<'a> {
+    pool: &'a DbPool,
+    permission_backend: &'a dyn PermissionBackend,
+    principal: &'a PrincipalRef,
+    scopes: Option<&'a TokenScope>,
+}
+
+impl<'a> ExternalRelatedFilterAuthorization<'a> {
+    pub(crate) fn new(
+        pool: &'a DbPool,
+        permission_backend: &'a dyn PermissionBackend,
+        principal: &'a PrincipalRef,
+        scopes: Option<&'a TokenScope>,
+    ) -> Self {
+        Self {
+            pool,
+            permission_backend,
+            principal,
+            scopes,
+        }
+    }
+}
+
+/// Resolve related-object matches without relying on SQL permission joins.
+///
+/// This is the external-policy counterpart to [`related_object_filter_predicate`].
+/// Target objects are loaded without local ACL filtering and then authorized.
+/// From those targets, a bounded breadth-first traversal authorizes relations
+/// and newly encountered objects before adding them to the next frontier. A
+/// candidate is retained when a fully visible path reaches a target in every
+/// named group.
+pub(crate) async fn externally_authorized_related_object_ids<U>(
+    user: &U,
+    filters: &[ParsedQueryParam],
+    authorization: ExternalRelatedFilterAuthorization<'_>,
+) -> Result<Option<AuthorizedObjectIds>, ApiError>
+where
+    U: UserSearchBackend + ?Sized,
+{
+    let groups = related_filter_groups(filters)?;
+    if groups.is_empty() {
+        return Ok(None);
+    }
+    debug!(
+        message = "Planning related-object filters",
+        authorization = "external_policy",
+        group_count = groups.len(),
+        max_depths = ?groups.iter().map(|group| group.max_depth).collect::<Vec<_>>()
+    );
+    if !scope_allows(
+        authorization.scopes,
+        &[
+            Permissions::ReadCollection,
+            Permissions::ReadClass,
+            Permissions::ReadObject,
+            Permissions::ReadObjectRelation,
+        ],
+    ) {
+        return Ok(Some(AuthorizedObjectIds::empty()));
+    }
+
+    let mut intersection = None::<HashSet<i32>>;
+    for group in groups {
+        let Some(target_class) =
+            load_related_target_class(authorization.pool, group.class_filter).await?
+        else {
+            return Ok(Some(AuthorizedObjectIds::empty()));
+        };
+        let target_class_resource = target_class.authorization_resource();
+        let target_class_is_visible = authorize_resource_permissions(
+            authorization.permission_backend,
+            authorization.principal,
+            &target_class_resource,
+            authorization.scopes,
+            &[Permissions::ReadClass, Permissions::ReadCollection],
+        )
+        .await?;
+        if !target_class_is_visible {
+            return Ok(Some(AuthorizedObjectIds::empty()));
+        }
+
+        let mut target_query = related_target_query(&group, target_class.id);
+        target_query.limit = Some(MAX_EXTERNAL_RELATED_FILTER_TARGETS + 1);
+        let target_candidates = user
+            .search_objects_from_backend_with_admin_status(
+                authorization.pool,
+                target_query,
+                true,
+                None,
+            )
+            .await?;
+        RelatedTraversalResource::TargetObjects.ensure_count(target_candidates.len())?;
+        let target_objects = authorize_all_candidates(
+            authorization.permission_backend,
+            authorization.principal,
+            target_candidates,
+            authorization.scopes,
+            vec![Permissions::ReadObject],
+            HubuumObject::authorization_resource,
+        )
+        .await?;
+        let target_ids = target_objects
+            .into_iter()
+            .map(|object| object.id)
+            .collect::<Vec<_>>();
+        if target_ids.is_empty() {
+            return Ok(Some(AuthorizedObjectIds::empty()));
+        }
+
+        let group_matches =
+            externally_authorized_related_group_ids(&authorization, &target_ids, group.max_depth)
+                .await?;
+        intersection = Some(match intersection {
+            None => group_matches,
+            Some(existing) => existing.intersection(&group_matches).copied().collect(),
+        });
+        if intersection
+            .as_ref()
+            .is_some_and(|matches| matches.is_empty())
+        {
+            break;
+        }
+    }
+
+    AuthorizedObjectIds::new(intersection.unwrap_or_default()).map(Some)
+}
+
+async fn load_related_target_class(
+    pool: &DbPool,
+    class_filter: &ParsedQueryParam,
+) -> Result<Option<HubuumClass>, ApiError> {
+    use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
+    use diesel::OptionalExtension;
+
+    let class_field = class_filter
+        .field
+        .related_query()
+        .and_then(|field| match field.target() {
+            RelatedFilterTarget::Class(class_field) => Some(class_field),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            ApiError::InternalServerError(
+                "Related filter group lost its class selector".to_string(),
+            )
+        })?;
+
+    with_connection(pool, async |conn| match class_field {
+        RelatedClassField::Id => {
+            let values = class_filter.value_as_integer()?;
+            if values.len() != 1 {
+                return Err(ApiError::BadRequest(
+                    "related.<alias>.class.id requires exactly one integer".to_string(),
+                ));
+            }
+            hubuumclass
+                .filter(id.eq(values[0]))
+                .first::<HubuumClass>(conn)
+                .await
+                .optional()
+                .map_err(Into::into)
+        }
+        RelatedClassField::Name => hubuumclass
+            .filter(name.eq(&class_filter.value))
+            .first::<HubuumClass>(conn)
+            .await
+            .optional()
+            .map_err(Into::into),
+    })
+    .await
+}
+
+fn related_target_query(group: &RelatedFilterGroup<'_>, class_id: i32) -> QueryOptions {
+    let mut filters = Vec::with_capacity(group.object_filters.len() + 1);
+    filters.push(ParsedQueryParam {
+        field: FilterField::ClassId,
+        operator: SearchOperator::Equals { is_negated: false },
+        value: class_id.to_string(),
+    });
+    filters.extend(group.object_filters.iter().map(|(filter, field)| {
+        let mut filter = (*filter).clone();
+        filter.field = match field {
+            RelatedObjectField::Id => FilterField::Id,
+            RelatedObjectField::Name => FilterField::Name,
+            RelatedObjectField::Description => FilterField::Description,
+            RelatedObjectField::CollectionId => FilterField::Collections,
+            RelatedObjectField::CreatedAt => FilterField::CreatedAt,
+            RelatedObjectField::UpdatedAt => FilterField::UpdatedAt,
+            RelatedObjectField::Revision => FilterField::Revision,
+            RelatedObjectField::JsonData => FilterField::JsonData,
+        };
+        filter
+    }));
+    QueryOptions {
+        filters,
+        sort: Vec::new(),
+        limit: None,
+        cursor: None,
+        include_total: false,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RelatedTraversalResource {
+    TargetObjects,
+    Objects,
+    ObjectRelations,
+}
+
+impl RelatedTraversalResource {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::TargetObjects => "target objects",
+            Self::Objects => "objects",
+            Self::ObjectRelations => "object relations",
+        }
+    }
+
+    const fn limit(self) -> usize {
+        match self {
+            Self::TargetObjects => MAX_EXTERNAL_RELATED_FILTER_TARGETS,
+            Self::Objects => MAX_EXTERNAL_RELATED_FILTER_OBJECTS,
+            Self::ObjectRelations => MAX_EXTERNAL_RELATED_FILTER_RELATIONS,
+        }
+    }
+
+    fn ensure_count(self, candidate_count: usize) -> Result<(), ApiError> {
+        let limit = self.limit();
+        if candidate_count <= limit {
+            return Ok(());
+        }
+        Err(ApiError::BadRequest(format!(
+            "Related filter traversal exceeds the {limit} {} safety limit; narrow the target filters or reduce depth",
+            self.label()
+        )))
+    }
+}
+
+struct RelatedTraversalBudget {
+    examined_objects: usize,
+    examined_relations: usize,
+}
+
+impl RelatedTraversalBudget {
+    fn new(target_count: usize) -> Result<Self, ApiError> {
+        RelatedTraversalResource::Objects.ensure_count(target_count)?;
+        Ok(Self {
+            examined_objects: target_count,
+            examined_relations: 0,
+        })
+    }
+
+    fn relation_query_limit(&self) -> usize {
+        RelatedTraversalResource::ObjectRelations
+            .limit()
+            .saturating_sub(self.examined_relations)
+            .saturating_add(1)
+    }
+
+    fn record_objects(&mut self, count: usize) -> Result<(), ApiError> {
+        self.examined_objects = checked_related_traversal_total(
+            RelatedTraversalResource::Objects,
+            self.examined_objects,
+            count,
+        )?;
+        Ok(())
+    }
+
+    fn record_relations(&mut self, count: usize) -> Result<(), ApiError> {
+        self.examined_relations = checked_related_traversal_total(
+            RelatedTraversalResource::ObjectRelations,
+            self.examined_relations,
+            count,
+        )?;
+        Ok(())
+    }
+}
+
+fn checked_related_traversal_total(
+    resource: RelatedTraversalResource,
+    current: usize,
+    additional: usize,
+) -> Result<usize, ApiError> {
+    let total = current.saturating_add(additional);
+    resource.ensure_count(total)?;
+    Ok(total)
+}
+
+async fn load_object_relations_touching_frontier(
+    pool: &DbPool,
+    frontier: &HashSet<i32>,
+    seen_relation_ids: &HashSet<i32>,
+    limit: usize,
+) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+    use crate::schema::hubuumobject_relation::dsl::{
+        from_hubuum_object_id, hubuumobject_relation, id, to_hubuum_object_id,
+    };
+    use diesel::dsl::not;
+
+    if frontier.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut frontier = frontier.iter().copied().collect::<Vec<_>>();
+    frontier.sort_unstable();
+    let mut seen_relation_ids = seen_relation_ids.iter().copied().collect::<Vec<_>>();
+    seen_relation_ids.sort_unstable();
+    let mut query = hubuumobject_relation
+        .filter(
+            from_hubuum_object_id
+                .eq_any(&frontier)
+                .or(to_hubuum_object_id.eq_any(&frontier)),
+        )
+        .into_boxed();
+    if !seen_relation_ids.is_empty() {
+        query = query.filter(not(id.eq_any(&seen_relation_ids)));
+    }
+    let limit = i64::try_from(limit).map_err(|_| {
+        ApiError::InternalServerError("Related filter traversal limit overflow".to_string())
+    })?;
+
+    with_connection(pool, async |conn| {
+        query
+            .order(id.asc())
+            .limit(limit)
+            .load::<HubuumObjectRelation>(conn)
+            .await
+    })
+    .await
+}
+
+async fn externally_authorized_related_group_ids(
+    authorization: &ExternalRelatedFilterAuthorization<'_>,
+    target_ids: &[i32],
+    max_depth: i32,
+) -> Result<HashSet<i32>, ApiError> {
+    let mut visible_objects = target_ids.iter().copied().collect::<HashSet<_>>();
+    let mut examined_objects = visible_objects.clone();
+    let mut budget = RelatedTraversalBudget::new(examined_objects.len())?;
+    let mut frontier = visible_objects.clone();
+    let mut seen_relation_ids = HashSet::new();
+    let mut matches = HashSet::new();
+
+    for _ in 0..max_depth {
+        if frontier.is_empty() {
+            break;
+        }
+
+        let relation_candidates = load_object_relations_touching_frontier(
+            authorization.pool,
+            &frontier,
+            &seen_relation_ids,
+            budget.relation_query_limit(),
+        )
+        .await?;
+        budget.record_relations(relation_candidates.len())?;
+        if relation_candidates.is_empty() {
+            break;
+        }
+        seen_relation_ids.extend(relation_candidates.iter().map(|relation| relation.id));
+
+        let relation_resources =
+            object_relation_authorization_resources(authorization.pool, &relation_candidates)
+                .await?;
+        let relation_candidates = relation_candidates
+            .into_iter()
+            .zip(relation_resources)
+            .collect::<Vec<_>>();
+        let visible_relations = authorize_all_candidates(
+            authorization.permission_backend,
+            authorization.principal,
+            relation_candidates,
+            authorization.scopes,
+            vec![Permissions::ReadObjectRelation],
+            |(_, resource)| resource.clone(),
+        )
+        .await?
+        .into_iter()
+        .map(|(relation, _)| relation)
+        .collect::<Vec<_>>();
+
+        let mut new_object_ids = visible_relations
+            .iter()
+            .flat_map(|relation| [relation.from_hubuum_object_id, relation.to_hubuum_object_id])
+            .filter(|object_id| !examined_objects.contains(object_id))
+            .collect::<Vec<_>>();
+        new_object_ids.sort_unstable();
+        new_object_ids.dedup();
+        budget.record_objects(new_object_ids.len())?;
+        examined_objects.extend(new_object_ids.iter().copied());
+
+        let object_resources =
+            object_authorization_resources(authorization.pool, &new_object_ids).await?;
+        let object_candidates = new_object_ids
+            .into_iter()
+            .zip(object_resources)
+            .collect::<Vec<_>>();
+        let newly_visible_objects = authorize_all_candidates(
+            authorization.permission_backend,
+            authorization.principal,
+            object_candidates,
+            authorization.scopes,
+            vec![Permissions::ReadObject],
+            |(_, resource)| resource.clone(),
+        )
+        .await?
+        .into_iter()
+        .map(|(object_id, _)| object_id)
+        .collect::<HashSet<_>>();
+        visible_objects.extend(newly_visible_objects.iter().copied());
+
+        let mut next_frontier = HashSet::new();
+        for relation in visible_relations {
+            for (source_id, target_id) in [
+                (relation.from_hubuum_object_id, relation.to_hubuum_object_id),
+                (relation.to_hubuum_object_id, relation.from_hubuum_object_id),
+            ] {
+                if source_id != target_id
+                    && frontier.contains(&source_id)
+                    && visible_objects.contains(&target_id)
+                {
+                    matches.insert(target_id);
+                    if newly_visible_objects.contains(&target_id) {
+                        next_frontier.insert(target_id);
+                    }
+                }
+            }
+        }
+        frontier = next_frontier;
+    }
+
+    Ok(matches)
+}
+
 pub(crate) async fn search_computed_objects_with_authorized_ids<U>(
     user: &U,
     pool: &DbPool,
@@ -188,6 +756,7 @@ macro_rules! bind_raw_sql_query {
         for bind_var in spec.bind_variables {
             query = match bind_var {
                 SQLValue::Integer(i) => query.bind::<diesel::sql_types::Integer, _>(i),
+                SQLValue::BigInteger(i) => query.bind::<diesel::sql_types::BigInt, _>(i),
                 SQLValue::String(s) => query.bind::<diesel::sql_types::Text, _>(s),
                 SQLValue::Boolean(b) => query.bind::<diesel::sql_types::Bool, _>(b),
                 SQLValue::Date(d) => query.bind::<diesel::sql_types::Timestamp, _>(d),
@@ -770,6 +1339,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         if let Some(authorized_object_ids) = query_mode.authorized_object_ids() {
             base_query = base_query.filter(object_id.eq_any(authorized_object_ids.as_slice()));
         }
+        if let Some(predicate) =
+            related_object_filter_predicate(self, pool, &query_params, is_admin, scopes).await?
+        {
+            base_query = base_query.filter(predicate);
+        }
 
         let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
         if !json_data_queries.is_empty() {
@@ -787,6 +1361,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         for param in query_params {
             use crate::{date_search, numeric_search, revision_search, string_search};
+            if param.field.related_query().is_some() {
+                continue;
+            }
             if param.field.computed_query().is_some() {
                 let snapshot = query_mode.snapshot()?;
                 base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
@@ -927,6 +1504,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         if let Some(authorized_object_ids) = query_mode.authorized_object_ids() {
             base_query = base_query.filter(object_id.eq_any(authorized_object_ids.as_slice()));
         }
+        if let Some(predicate) =
+            related_object_filter_predicate(self, pool, &query_params, is_admin, scopes).await?
+        {
+            base_query = base_query.filter(predicate);
+        }
 
         let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
         if !json_data_queries.is_empty() {
@@ -937,6 +1519,9 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
         for param in query_params {
             use crate::{date_search, numeric_search, revision_search, string_search};
+            if param.field.related_query().is_some() {
+                continue;
+            }
             if param.field.computed_query().is_some() {
                 let snapshot = query_mode.snapshot()?;
                 base_query = base_query.filter(computed_filter_predicate(&param, snapshot)?);
@@ -3124,6 +3709,483 @@ fn sql_integer_array(values: &[i32], bind_variables: &mut Vec<SQLValue>) -> Stri
     format!("ARRAY[{placeholders}]::integer[]")
 }
 
+fn sql_bigint_array(values: &[i64], bind_variables: &mut Vec<SQLValue>) -> String {
+    let placeholders = values
+        .iter()
+        .map(|value| {
+            bind_variables.push(SQLValue::BigInteger(*value));
+            "?"
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("ARRAY[{placeholders}]::bigint[]")
+}
+
+fn sql_text_array(values: &[String], bind_variables: &mut Vec<SQLValue>) -> String {
+    let placeholders = values
+        .iter()
+        .map(|value| {
+            bind_variables.push(SQLValue::String(value.clone()));
+            "?"
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("ARRAY[{placeholders}]::text[]")
+}
+
+fn build_related_object_filter_sql(
+    groups: &[RelatedFilterGroup<'_>],
+    graph_collection_ids: &[i32],
+    class_collection_ids: &[i32],
+    scopes: Option<&TokenScope>,
+) -> Result<SQLComponent, ApiError> {
+    let mut bind_variables = Vec::new();
+    let graph_collections_sql = sql_integer_array(graph_collection_ids, &mut bind_variables);
+    let class_collections_sql = sql_integer_array(class_collection_ids, &mut bind_variables);
+    let valid_scope_objects_sql = if let Some(scope) = resource_scope_ids(scopes) {
+        let collection_scope_sql = sql_integer_array(scope.collection_ids(), &mut bind_variables);
+        let class_scope_sql = sql_integer_array(scope.class_ids(), &mut bind_variables);
+        let object_scope_sql = sql_integer_array(scope.object_ids(), &mut bind_variables);
+        format!(
+            "SELECT id AS object_id FROM hubuumobject WHERE collection_id = ANY({collection_scope_sql}) OR hubuum_class_id = ANY({class_scope_sql}) OR id = ANY({object_scope_sql})"
+        )
+    } else {
+        "SELECT id AS object_id FROM hubuumobject".to_string()
+    };
+    let valid_scope_classes_sql = if let Some(scope) = resource_scope_ids(scopes) {
+        let collection_scope_sql = sql_integer_array(scope.collection_ids(), &mut bind_variables);
+        let class_scope_sql = sql_integer_array(scope.class_ids(), &mut bind_variables);
+        format!(
+            "SELECT id AS class_id FROM hubuumclass WHERE collection_id = ANY({collection_scope_sql}) OR id = ANY({class_scope_sql})"
+        )
+    } else {
+        "SELECT id AS class_id FROM hubuumclass".to_string()
+    };
+
+    let mut seed_queries = Vec::with_capacity(groups.len());
+    for (group_id, group) in groups.iter().enumerate() {
+        bind_variables.push(SQLValue::Integer(i32::try_from(group_id).map_err(
+            |_| ApiError::InternalServerError("Related filter group index overflow".to_string()),
+        )?));
+        bind_variables.push(SQLValue::Integer(group.max_depth));
+
+        let class_field = group
+            .class_filter
+            .field
+            .related_query()
+            .and_then(|field| match field.target() {
+                RelatedFilterTarget::Class(class_field) => Some(class_field),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                ApiError::InternalServerError(
+                    "Related filter group lost its class selector".to_string(),
+                )
+            })?;
+        let class_clause = match class_field {
+            RelatedClassField::Id => {
+                let values = group.class_filter.value_as_integer()?;
+                if values.len() != 1 {
+                    return Err(ApiError::BadRequest(
+                        "related.<alias>.class.id requires exactly one integer".to_string(),
+                    ));
+                }
+                bind_variables.push(SQLValue::Integer(values[0]));
+                "target_class.id = ?".to_string()
+            }
+            RelatedClassField::Name => {
+                bind_variables.push(SQLValue::String(group.class_filter.value.clone()));
+                "target_class.name = ?".to_string()
+            }
+        };
+
+        let mut target_clauses = vec![class_clause];
+        for (filter, field) in &group.object_filters {
+            target_clauses.push(related_target_object_clause(
+                filter,
+                *field,
+                &mut bind_variables,
+            )?);
+        }
+        seed_queries.push(format!(
+            r#"    SELECT ?::integer AS group_id,
+           target_object.id AS seed_id,
+           ?::integer AS max_depth
+    FROM hubuumobject target_object
+    JOIN hubuumclass target_class
+      ON target_class.id = target_object.hubuum_class_id
+    WHERE target_object.collection_id IN (SELECT collection_id FROM valid_graph_collections)
+      AND target_class.collection_id IN (SELECT collection_id FROM valid_class_collections)
+      AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
+      AND target_class.id IN (SELECT class_id FROM valid_scope_classes)
+      AND {}"#,
+            target_clauses.join("\n      AND ")
+        ));
+    }
+
+    bind_variables.push(SQLValue::Integer(i32::try_from(groups.len()).map_err(
+        |_| ApiError::InternalServerError("Related filter group count overflow".to_string()),
+    )?));
+
+    let sql = format!(
+        r#"hubuumobject.id IN (
+WITH RECURSIVE
+valid_graph_collections AS (
+    SELECT unnest({graph_collections_sql}) AS collection_id
+),
+valid_class_collections AS (
+    SELECT unnest({class_collections_sql}) AS collection_id
+),
+valid_scope_objects AS (
+    {valid_scope_objects_sql}
+),
+valid_scope_classes AS (
+    {valid_scope_classes_sql}
+),
+target_seeds AS (
+{}
+),
+object_edges AS (
+    SELECT relation.from_hubuum_object_id AS source_object_id,
+           relation.to_hubuum_object_id AS target_object_id
+    FROM hubuumobject_relation relation
+    JOIN hubuumobject source_object
+      ON source_object.id = relation.from_hubuum_object_id
+    JOIN hubuumobject target_object
+      ON target_object.id = relation.to_hubuum_object_id
+    WHERE source_object.collection_id IN (SELECT collection_id FROM valid_graph_collections)
+      AND target_object.collection_id IN (SELECT collection_id FROM valid_graph_collections)
+      AND source_object.id IN (SELECT object_id FROM valid_scope_objects)
+      AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
+
+    UNION ALL
+
+    SELECT relation.to_hubuum_object_id AS source_object_id,
+           relation.from_hubuum_object_id AS target_object_id
+    FROM hubuumobject_relation relation
+    JOIN hubuumobject source_object
+      ON source_object.id = relation.to_hubuum_object_id
+    JOIN hubuumobject target_object
+      ON target_object.id = relation.from_hubuum_object_id
+    WHERE source_object.collection_id IN (SELECT collection_id FROM valid_graph_collections)
+      AND target_object.collection_id IN (SELECT collection_id FROM valid_graph_collections)
+      AND source_object.id IN (SELECT object_id FROM valid_scope_objects)
+      AND target_object.id IN (SELECT object_id FROM valid_scope_objects)
+),
+reachable AS (
+    SELECT target_seeds.group_id,
+           target_seeds.seed_id,
+           object_edges.target_object_id AS object_id,
+           1 AS depth,
+           target_seeds.max_depth
+    FROM target_seeds
+    JOIN object_edges
+      ON object_edges.source_object_id = target_seeds.seed_id
+    WHERE target_seeds.max_depth >= 1
+
+    UNION
+
+    SELECT reachable.group_id,
+           reachable.seed_id,
+           object_edges.target_object_id AS object_id,
+           reachable.depth + 1,
+           reachable.max_depth
+    FROM reachable
+    JOIN object_edges
+      ON object_edges.source_object_id = reachable.object_id
+    WHERE reachable.depth < reachable.max_depth
+)
+SELECT reachable.object_id
+FROM reachable
+WHERE reachable.object_id <> reachable.seed_id
+GROUP BY reachable.object_id
+HAVING COUNT(DISTINCT reachable.group_id) = ?
+)"#,
+        seed_queries.join("\n\n    UNION ALL\n\n")
+    );
+
+    Ok(SQLComponent {
+        sql,
+        bind_variables,
+    })
+}
+
+fn related_target_object_clause(
+    param: &ParsedQueryParam,
+    field: RelatedObjectField,
+    bind_variables: &mut Vec<SQLValue>,
+) -> Result<String, ApiError> {
+    let column = match field {
+        RelatedObjectField::Id => "target_object.id",
+        RelatedObjectField::Name => "target_object.name",
+        RelatedObjectField::Description => "target_object.description",
+        RelatedObjectField::CollectionId => "target_object.collection_id",
+        RelatedObjectField::CreatedAt => "target_object.created_at",
+        RelatedObjectField::UpdatedAt => "target_object.updated_at",
+        RelatedObjectField::Revision => "target_object.revision",
+        RelatedObjectField::JsonData => {
+            let mut json_param = param.clone();
+            json_param.field = FilterField::JsonData;
+            let predicate = json_param.as_json_sql_for_field_expr("target_object.data")?;
+            bind_variables.extend(predicate.bind_variables);
+            return Ok(format!("({})", predicate.sql));
+        }
+    };
+
+    let (operator, negated) = param.operator.op_and_neg();
+    if operator == Operator::IsNull {
+        let should_be_null = param.value_as_boolean()? != negated;
+        return Ok(format!(
+            "{column} IS {}NULL",
+            if should_be_null { "" } else { "NOT " }
+        ));
+    }
+
+    match field {
+        RelatedObjectField::Id | RelatedObjectField::CollectionId => {
+            related_integer_clause(param, column, bind_variables)
+        }
+        RelatedObjectField::Revision => related_revision_clause(param, column, bind_variables),
+        RelatedObjectField::CreatedAt | RelatedObjectField::UpdatedAt => {
+            related_date_clause(param, column, bind_variables)
+        }
+        RelatedObjectField::Name | RelatedObjectField::Description => {
+            related_string_clause(param, column, bind_variables)
+        }
+        RelatedObjectField::JsonData => unreachable!(),
+    }
+}
+
+fn wrap_negated(sql: String, negated: bool) -> String {
+    if negated { format!("NOT ({sql})") } else { sql }
+}
+
+fn related_integer_clause(
+    param: &ParsedQueryParam,
+    column: &str,
+    bind_variables: &mut Vec<SQLValue>,
+) -> Result<String, ApiError> {
+    let values = param.value_as_integer()?;
+    if values.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "Searching on field '{}' requires a value",
+            param.field
+        )));
+    }
+    let min = *values.iter().min().unwrap();
+    let max = *values.iter().max().unwrap();
+    let (operator, negated) = param.operator.op_and_neg();
+    let sql = match operator {
+        Operator::Equals | Operator::In => {
+            if values.len() > 50 {
+                return Err(ApiError::OperatorMismatch(format!(
+                    "Operator '{operator}' is limited to 50 values, got {}",
+                    values.len()
+                )));
+            }
+            let array = sql_integer_array(&values, bind_variables);
+            format!("{column} = ANY({array})")
+        }
+        Operator::Gt => {
+            bind_variables.push(SQLValue::Integer(max));
+            format!("{column} > ?")
+        }
+        Operator::Gte => {
+            bind_variables.push(SQLValue::Integer(max));
+            format!("{column} >= ?")
+        }
+        Operator::Lt => {
+            bind_variables.push(SQLValue::Integer(min));
+            format!("{column} < ?")
+        }
+        Operator::Lte => {
+            bind_variables.push(SQLValue::Integer(min));
+            format!("{column} <= ?")
+        }
+        Operator::Between if values.len() == 2 => {
+            bind_variables.push(SQLValue::Integer(values[0]));
+            bind_variables.push(SQLValue::Integer(values[1]));
+            format!("{column} BETWEEN ? AND ?")
+        }
+        Operator::Between => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator 'between' requires 2 values for field '{}'",
+                param.field
+            )));
+        }
+        _ => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{}' is not implemented for related numeric field '{}'",
+                param.operator, param.field
+            )));
+        }
+    };
+    Ok(wrap_negated(sql, negated))
+}
+
+fn related_revision_clause(
+    param: &ParsedQueryParam,
+    column: &str,
+    bind_variables: &mut Vec<SQLValue>,
+) -> Result<String, ApiError> {
+    let values = param.value_as_revision()?;
+    let (operator, negated) = param.operator.op_and_neg();
+    let sql = match operator {
+        Operator::Equals if values.len() == 1 => {
+            bind_variables.push(SQLValue::BigInteger(values[0]));
+            format!("{column} = ?")
+        }
+        Operator::Equals => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{operator}' requires exactly 1 value for field '{}'",
+                param.field
+            )));
+        }
+        Operator::In => {
+            let array = sql_bigint_array(&values, bind_variables);
+            format!("{column} = ANY({array})")
+        }
+        Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte if values.len() == 1 => {
+            bind_variables.push(SQLValue::BigInteger(values[0]));
+            let sql_operator = match operator {
+                Operator::Gt => ">",
+                Operator::Gte => ">=",
+                Operator::Lt => "<",
+                Operator::Lte => "<=",
+                _ => unreachable!(),
+            };
+            format!("{column} {sql_operator} ?")
+        }
+        Operator::Between if values.len() == 2 => {
+            bind_variables.push(SQLValue::BigInteger(values[0]));
+            bind_variables.push(SQLValue::BigInteger(values[1]));
+            format!("{column} BETWEEN ? AND ?")
+        }
+        Operator::Gt | Operator::Gte | Operator::Lt | Operator::Lte | Operator::Between => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{operator}' has the wrong number of values for field '{}'",
+                param.field
+            )));
+        }
+        _ => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{}' is not implemented for related revision field '{}'",
+                param.operator, param.field
+            )));
+        }
+    };
+    Ok(wrap_negated(sql, negated))
+}
+
+fn related_date_clause(
+    param: &ParsedQueryParam,
+    column: &str,
+    bind_variables: &mut Vec<SQLValue>,
+) -> Result<String, ApiError> {
+    let values = param.value_as_date()?;
+    if values.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "Searching on field '{}' requires a value",
+            param.field
+        )));
+    }
+    let min = *values.iter().min().unwrap();
+    let max = *values.iter().max().unwrap();
+    let (operator, negated) = param.operator.op_and_neg();
+    let sql = match operator {
+        Operator::Equals | Operator::In => {
+            let array = sql_date_array(&values, bind_variables);
+            format!("{column} = ANY({array})")
+        }
+        Operator::Gt => {
+            bind_variables.push(SQLValue::Date(max));
+            format!("{column} > ?")
+        }
+        Operator::Gte => {
+            bind_variables.push(SQLValue::Date(max));
+            format!("{column} >= ?")
+        }
+        Operator::Lt => {
+            bind_variables.push(SQLValue::Date(min));
+            format!("{column} < ?")
+        }
+        Operator::Lte => {
+            bind_variables.push(SQLValue::Date(min));
+            format!("{column} <= ?")
+        }
+        Operator::Between if values.len() == 2 => {
+            bind_variables.push(SQLValue::Date(values[0]));
+            bind_variables.push(SQLValue::Date(values[1]));
+            format!("{column} BETWEEN ? AND ?")
+        }
+        Operator::Between => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator 'between' requires 2 values for field '{}'",
+                param.field
+            )));
+        }
+        _ => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{}' is not implemented for related date field '{}'",
+                param.operator, param.field
+            )));
+        }
+    };
+    Ok(wrap_negated(sql, negated))
+}
+
+fn related_string_clause(
+    param: &ParsedQueryParam,
+    column: &str,
+    bind_variables: &mut Vec<SQLValue>,
+) -> Result<String, ApiError> {
+    let (operator, negated) = param.operator.op_and_neg();
+    let sql = match operator {
+        Operator::In => {
+            let values = param
+                .value
+                .split(',')
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            let array = sql_text_array(&values, bind_variables);
+            format!("{column} = ANY({array})")
+        }
+        Operator::Equals
+        | Operator::IEquals
+        | Operator::Contains
+        | Operator::IContains
+        | Operator::StartsWith
+        | Operator::IStartsWith
+        | Operator::EndsWith
+        | Operator::IEndsWith
+        | Operator::Like
+        | Operator::Regex => {
+            let (sql_operator, value) = match operator {
+                Operator::Equals => ("=", param.value.clone()),
+                Operator::IEquals => ("ILIKE", param.value.clone()),
+                Operator::Contains => ("LIKE", format!("%{}%", param.value)),
+                Operator::IContains => ("ILIKE", format!("%{}%", param.value)),
+                Operator::StartsWith => ("LIKE", format!("{}%", param.value)),
+                Operator::IStartsWith => ("ILIKE", format!("{}%", param.value)),
+                Operator::EndsWith => ("LIKE", format!("%{}", param.value)),
+                Operator::IEndsWith => ("ILIKE", format!("%{}", param.value)),
+                Operator::Like => ("LIKE", param.value.clone()),
+                Operator::Regex => ("~", param.value.clone()),
+                _ => unreachable!(),
+            };
+            bind_variables.push(SQLValue::String(value));
+            format!("{column} {sql_operator} ?")
+        }
+        _ => {
+            return Err(ApiError::OperatorMismatch(format!(
+                "Operator '{}' is not implemented for related string field '{}'",
+                param.operator, param.field
+            )));
+        }
+    };
+    Ok(wrap_negated(sql, negated))
+}
+
 fn append_related_class_scope_clause(
     where_clauses: &mut Vec<String>,
     scopes: Option<&TokenScope>,
@@ -4063,5 +5125,82 @@ impl User {
                 .await
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod related_filter_tests {
+    use super::*;
+    use crate::models::search::parse_query_parameter_with_computed_and_related_filters_and_passthrough;
+    use crate::models::{HubuumObjectID, TokenResourceScope};
+
+    #[test]
+    fn related_target_seed_applies_class_resource_scope() {
+        let (query, _) = parse_query_parameter_with_computed_and_related_filters_and_passthrough(
+            "related.room.class.id=7&related.room.object.name=foo",
+            &[],
+        )
+        .unwrap();
+        let groups = related_filter_groups(&query.filters).unwrap();
+        let scope = TokenScope::from_request_parts(
+            None,
+            Some(vec![TokenResourceScope::Object(
+                HubuumObjectID::new(11).unwrap(),
+            )]),
+        )
+        .unwrap()
+        .unwrap();
+
+        let component = build_related_object_filter_sql(&groups, &[2], &[2], Some(&scope)).unwrap();
+
+        assert!(
+            component
+                .sql
+                .contains("target_class.id IN (SELECT class_id FROM valid_scope_classes)")
+        );
+        assert!(component.sql.contains(
+            "SELECT id AS class_id FROM hubuumclass WHERE collection_id = ANY(ARRAY[]::integer[]) OR id = ANY(ARRAY[]::integer[])"
+        ));
+    }
+
+    #[test]
+    fn related_external_traversal_rejects_work_over_budget() {
+        let mut budget = RelatedTraversalBudget::new(1).unwrap();
+        let error = budget
+            .record_objects(MAX_EXTERNAL_RELATED_FILTER_OBJECTS)
+            .unwrap_err();
+
+        assert!(
+            matches!(error, ApiError::BadRequest(message) if message.contains("10000 objects"))
+        );
+    }
+
+    #[test]
+    fn related_revision_equality_rejects_multiple_values() {
+        let (query, _) = parse_query_parameter_with_computed_and_related_filters_and_passthrough(
+            "related.room.class.id=7&related.room.object.revision=1,2",
+            &[],
+        )
+        .unwrap();
+        let revision_filter = query
+            .filters
+            .iter()
+            .find(|filter| {
+                filter.field.related_query().is_some_and(|field| {
+                    field.target() == RelatedFilterTarget::Object(RelatedObjectField::Revision)
+                })
+            })
+            .unwrap();
+
+        let error = related_revision_clause(revision_filter, "target_object.revision", &mut vec![])
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            ApiError::OperatorMismatch(
+                "Operator 'equals' requires exactly 1 value for field 'related.room.object.revision'"
+                    .to_string()
+            )
+        );
     }
 }

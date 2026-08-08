@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::db::traits::authz::scope_allows_resource;
+use crate::db::traits::authz::{scope_allows, scope_allows_resource};
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{Permissions, TokenScope};
@@ -41,6 +41,10 @@ impl AuthorizationPage {
 pub(crate) struct AuthorizedObjectIds(Vec<i32>);
 
 impl AuthorizedObjectIds {
+    pub(crate) const fn empty() -> Self {
+        Self(Vec::new())
+    }
+
     pub(crate) fn new(ids: impl IntoIterator<Item = i32>) -> Result<Self, ApiError> {
         let mut ids = ids.into_iter().collect::<Vec<_>>();
         if ids.iter().any(|id| *id <= 0) {
@@ -57,9 +61,60 @@ impl AuthorizedObjectIds {
         self.0.is_empty()
     }
 
+    pub(crate) fn contains(&self, object_id: i32) -> bool {
+        self.0.binary_search(&object_id).is_ok()
+    }
+
+    pub(crate) fn intersection(&self, other: &Self) -> Self {
+        Self(
+            self.0
+                .iter()
+                .copied()
+                .filter(|object_id| other.contains(*object_id))
+                .collect(),
+        )
+    }
+
     pub(crate) fn as_slice(&self) -> &[i32] {
         &self.0
     }
+}
+
+/// Authorize a conjunctive permission set on one resource.
+///
+/// Resource scope is evaluated against the concrete resource before each
+/// permission is normalized to the resource kind expected by the policy
+/// schema. This supports checks such as `ReadClass + ReadCollection` without
+/// losing a class-scoped token boundary.
+pub(crate) async fn authorize_resource_permissions(
+    backend: &dyn PermissionBackend,
+    principal: &PrincipalRef,
+    resource: &ResourceRef,
+    scope: Option<&TokenScope>,
+    permissions: &[Permissions],
+) -> Result<bool, ApiError> {
+    if !scope_allows(scope, permissions) || !scope_allows_resource(scope, resource) {
+        return Ok(false);
+    }
+
+    let requests = permissions
+        .iter()
+        .map(|permission| PermissionRequest {
+            resource: resource.normalized_for_permission(*permission),
+            permissions: vec![*permission],
+        })
+        .collect::<Vec<_>>();
+    let expected_decisions = requests.len();
+    let decisions = backend.authorize_many(principal, requests).await?;
+    if decisions.len() != expected_decisions {
+        return Err(ApiError::InternalServerError(
+            "Permission backend returned an unexpected number of decisions".to_string(),
+        ));
+    }
+
+    Ok(decisions
+        .into_iter()
+        .all(|decision| decision == PermissionDecision::Allow))
 }
 
 struct ResourceScopedCandidate<T> {

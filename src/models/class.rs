@@ -86,6 +86,18 @@ impl UpdateHubuumClass {
 }
 
 impl HubuumClass {
+    pub(crate) fn authorization_resource(&self) -> ResourceRef {
+        ResourceRef {
+            kind: ResourceKind::Class,
+            id: self.id,
+            attrs: ResourceAttrs {
+                collection_id: Some(self.collection_id),
+                name: Some(self.name.clone()),
+                ..Default::default()
+            },
+        }
+    }
+
     /// Enforce the collection boundary shared by class-scoped domain records.
     pub(crate) fn ensure_in_collection(
         &self,
@@ -258,15 +270,7 @@ crate::impl_history_pagination!(HubuumClassHistory, "hubuumclass_history");
 #[async_trait]
 impl AuthzTarget for HubuumClass {
     async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
-        Ok(ResourceRef {
-            kind: ResourceKind::Class,
-            id: self.id,
-            attrs: ResourceAttrs {
-                collection_id: Some(self.collection_id),
-                name: Some(self.name.clone()),
-                ..Default::default()
-            },
-        })
+        Ok(self.authorization_resource())
     }
 }
 

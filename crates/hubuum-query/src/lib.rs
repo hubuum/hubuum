@@ -28,6 +28,19 @@ pub const MAX_QUERY_FILTERS: usize = 64;
 /// quadratic in this value, so keep it deliberately small and explicit.
 pub const MAX_QUERY_SORT_FIELDS: usize = 8;
 
+/// Maximum number of independent related-object predicates accepted by one
+/// object-list query.
+pub const MAX_RELATED_FILTER_GROUPS: usize = 4;
+
+/// Maximum relationship depth accepted by the GET query grammar.
+pub const MAX_RELATED_FILTER_DEPTH: u8 = 10;
+
+/// Relationship depth used when a related filter group omits `depth__lte`.
+pub const DEFAULT_RELATED_FILTER_DEPTH: u8 = 1;
+
+/// Maximum length of the caller-selected name that correlates related filters.
+pub const MAX_RELATED_FILTER_ALIAS_LENGTH: usize = 64;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryError {
     BadRequest(String),
@@ -55,7 +68,7 @@ pub fn parse_query_parameter_with_passthrough(
     qs: &str,
     passthrough_keys: &[&str],
 ) -> Result<(QueryOptions, HashMap<String, Vec<String>>), QueryError> {
-    parse_query_parameter_with_options(qs, passthrough_keys, false)
+    parse_query_parameter_with_options(qs, passthrough_keys, QueryParserFeatures::STANDARD)
 }
 
 /// Parse query parameters for a resource that explicitly supports filtering
@@ -64,13 +77,47 @@ pub fn parse_query_parameter_with_computed_filters_and_passthrough(
     qs: &str,
     passthrough_keys: &[&str],
 ) -> Result<(QueryOptions, HashMap<String, Vec<String>>), QueryError> {
-    parse_query_parameter_with_options(qs, passthrough_keys, true)
+    parse_query_parameter_with_options(qs, passthrough_keys, QueryParserFeatures::COMPUTED)
+}
+
+/// Parse query parameters for an object resource that supports both computed
+/// fields and bounded, named related-object filter groups.
+pub fn parse_query_parameter_with_computed_and_related_filters_and_passthrough(
+    qs: &str,
+    passthrough_keys: &[&str],
+) -> Result<(QueryOptions, HashMap<String, Vec<String>>), QueryError> {
+    parse_query_parameter_with_options(
+        qs,
+        passthrough_keys,
+        QueryParserFeatures::COMPUTED_AND_RELATED,
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+struct QueryParserFeatures {
+    computed_filters: bool,
+    related_filters: bool,
+}
+
+impl QueryParserFeatures {
+    const STANDARD: Self = Self {
+        computed_filters: false,
+        related_filters: false,
+    };
+    const COMPUTED: Self = Self {
+        computed_filters: true,
+        related_filters: false,
+    };
+    const COMPUTED_AND_RELATED: Self = Self {
+        computed_filters: true,
+        related_filters: true,
+    };
 }
 
 fn parse_query_parameter_with_options(
     qs: &str,
     passthrough_keys: &[&str],
-    allow_computed_filters: bool,
+    features: QueryParserFeatures,
 ) -> Result<(QueryOptions, HashMap<String, Vec<String>>), QueryError> {
     let mut filters = Vec::new();
     let mut sort = Vec::new();
@@ -156,13 +203,13 @@ fn parse_query_parameter_with_options(
                         "query accepts at most {MAX_QUERY_FILTERS} filters"
                     )));
                 }
-                filters.push(parse_single_filter(
-                    key.as_ref(),
-                    value.as_ref(),
-                    allow_computed_filters,
-                )?);
+                filters.push(parse_single_filter(key.as_ref(), value.as_ref(), features)?);
             }
         }
+    }
+
+    if features.related_filters {
+        validate_related_filter_groups(&filters)?;
     }
 
     Ok((
@@ -185,7 +232,7 @@ fn parse_sort_param(piece: &str) -> Result<SortParam, QueryError> {
     // This keeps valid keys named `asc` or `desc` addressable. Callers can use
     // the leading `-` form or append another suffix to set their direction.
     match FilterField::from_str(field_name) {
-        Ok(field) => Ok(SortParam {
+        Ok(field) => related_sort_error(field).map(|field| SortParam {
             field,
             descending: leading_descending,
         }),
@@ -199,11 +246,20 @@ fn parse_sort_param(piece: &str) -> Result<SortParam, QueryError> {
                     return Err(original_error);
                 };
             Ok(SortParam {
-                field: FilterField::from_str(field_name)?,
+                field: related_sort_error(FilterField::from_str(field_name)?)?,
                 descending: leading_descending || suffix_descending,
             })
         }
     }
+}
+
+fn related_sort_error(field: FilterField) -> Result<FilterField, QueryError> {
+    if field.related_query().is_some() {
+        return Err(QueryError::BadRequest(
+            "Related fields cannot be used for sorting".to_string(),
+        ));
+    }
+    Ok(field)
 }
 
 /// Decode an `application/x-www-form-urlencoded` query string into owned pairs.
@@ -276,7 +332,7 @@ fn parse_boolean(value: &str) -> Result<bool, QueryError> {
 fn parse_single_filter(
     key: &str,
     value: &str,
-    allow_computed_filters: bool,
+    features: QueryParserFeatures,
 ) -> Result<ParsedQueryParam, QueryError> {
     if value.is_empty() {
         return Err(QueryError::BadRequest(format!(
@@ -284,10 +340,10 @@ fn parse_single_filter(
         )));
     }
 
-    let (field_name, operator) = if is_computed_field_name(key) {
-        // Computed keys may themselves contain double underscores. Only a
-        // recognized terminal operator suffix is syntax; every other double
-        // underscore remains part of the key.
+    let (field_name, operator) = if is_computed_field_name(key) || key.starts_with("related.") {
+        // Computed keys and related aliases may themselves contain double
+        // underscores. Only a recognized terminal operator suffix is syntax;
+        // every other double underscore remains part of the key.
         match key.rsplit_once("__") {
             Some((field_name, suffix)) => match SearchOperator::new_from_string(suffix) {
                 Ok(operator) => (field_name, operator),
@@ -305,9 +361,14 @@ fn parse_single_filter(
     };
 
     let field = FilterField::from_str(field_name)?;
-    if field.computed_query().is_some() && !allow_computed_filters {
+    if field.computed_query().is_some() && !features.computed_filters {
         return Err(QueryError::BadRequest(
             "Computed fields are not supported in this filter context".to_string(),
+        ));
+    }
+    if field.related_query().is_some() && !features.related_filters {
+        return Err(QueryError::BadRequest(
+            "Related fields are not supported in this filter context".to_string(),
         ));
     }
 
@@ -316,6 +377,84 @@ fn parse_single_filter(
         operator,
         value: value.to_string(),
     })
+}
+
+fn validate_related_filter_groups(filters: &[ParsedQueryParam]) -> Result<(), QueryError> {
+    #[derive(Default)]
+    struct GroupCounts {
+        class_selectors: usize,
+        depth_filters: usize,
+    }
+
+    let mut aliases = HashMap::<&str, GroupCounts>::new();
+
+    for filter in filters {
+        let Some(field) = filter.field.related_query() else {
+            continue;
+        };
+        let counts = aliases.entry(field.alias()).or_default();
+        match field.target() {
+            RelatedFilterTarget::Class(_) => {
+                counts.class_selectors += 1;
+                if filter.operator != (SearchOperator::Equals { is_negated: false }) {
+                    return Err(QueryError::BadRequest(format!(
+                        "Related filter group '{}' requires an unnegated equality class selector",
+                        field.alias()
+                    )));
+                }
+            }
+            RelatedFilterTarget::Depth => {
+                counts.depth_filters += 1;
+                if filter.operator != (SearchOperator::Lte { is_negated: false }) {
+                    return Err(QueryError::BadRequest(format!(
+                        "Related filter group '{}' only supports depth__lte",
+                        field.alias()
+                    )));
+                }
+                let depth = filter.value.parse::<u8>().map_err(|_| {
+                    QueryError::BadRequest(format!(
+                        "Related filter depth must be an integer from 1 to {MAX_RELATED_FILTER_DEPTH}"
+                    ))
+                })?;
+                if !(1..=MAX_RELATED_FILTER_DEPTH).contains(&depth) {
+                    return Err(QueryError::BadRequest(format!(
+                        "Related filter depth must be an integer from 1 to {MAX_RELATED_FILTER_DEPTH}"
+                    )));
+                }
+            }
+            RelatedFilterTarget::Object(field) => {
+                if let Some(data_type) = field.data_type()
+                    && !filter.operator.is_applicable_to(data_type)
+                {
+                    return Err(QueryError::BadRequest(format!(
+                        "Operator '{}' is not applicable to related object field '{}'",
+                        filter.operator,
+                        field.as_str()
+                    )));
+                }
+            }
+        }
+    }
+
+    if aliases.len() > MAX_RELATED_FILTER_GROUPS {
+        return Err(QueryError::BadRequest(format!(
+            "query accepts at most {MAX_RELATED_FILTER_GROUPS} related filter groups"
+        )));
+    }
+    for (alias, counts) in aliases {
+        if counts.class_selectors != 1 {
+            return Err(QueryError::BadRequest(format!(
+                "Related filter group '{alias}' requires exactly one class.id or class.name selector"
+            )));
+        }
+        if counts.depth_filters > 1 {
+            return Err(QueryError::BadRequest(format!(
+                "Related filter group '{alias}' accepts at most one depth__lte filter"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn is_computed_field_name(key: &str) -> bool {
@@ -1017,12 +1156,164 @@ pub fn get_sql_mapped_type_from_value(
     None
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelatedClassField {
+    Id,
+    Name,
+}
+
+impl RelatedClassField {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Name => "name",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelatedObjectField {
+    Id,
+    Name,
+    Description,
+    CollectionId,
+    CreatedAt,
+    UpdatedAt,
+    Revision,
+    JsonData,
+}
+
+impl RelatedObjectField {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Name => "name",
+            Self::Description => "description",
+            Self::CollectionId => "collection_id",
+            Self::CreatedAt => "created_at",
+            Self::UpdatedAt => "updated_at",
+            Self::Revision => "revision",
+            Self::JsonData => "json_data",
+        }
+    }
+
+    pub const fn data_type(self) -> Option<DataType> {
+        match self {
+            Self::Id | Self::CollectionId | Self::Revision => Some(DataType::NumericOrDate),
+            Self::Name | Self::Description => Some(DataType::String),
+            Self::CreatedAt | Self::UpdatedAt => Some(DataType::NumericOrDate),
+            // JSON operators depend on the addressed value and are validated
+            // by the application-level JSON predicate compiler.
+            Self::JsonData => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelatedFilterTarget {
+    Class(RelatedClassField),
+    Object(RelatedObjectField),
+    Depth,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelatedQueryField {
+    alias: String,
+    target: RelatedFilterTarget,
+}
+
+impl RelatedQueryField {
+    fn parse(value: &str) -> Result<Self, QueryError> {
+        let segments = value.split('.').collect::<Vec<_>>();
+        if segments.first() != Some(&"related") {
+            return Err(invalid_related_field(value));
+        }
+        let Some(alias) = segments.get(1).copied() else {
+            return Err(invalid_related_field(value));
+        };
+        let valid_alias = !alias.is_empty()
+            && alias.len() <= MAX_RELATED_FILTER_ALIAS_LENGTH
+            && alias
+                .bytes()
+                .enumerate()
+                .all(|(index, byte)| match (index, byte) {
+                    (0, b'A'..=b'Z' | b'a'..=b'z' | b'_') => true,
+                    (0, _) => false,
+                    (_, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_') => true,
+                    (_, _) => false,
+                });
+        if !valid_alias {
+            return Err(QueryError::BadRequest(format!(
+                "Invalid related filter alias: '{alias}'"
+            )));
+        }
+
+        let target = match segments.as_slice() {
+            ["related", _, "class", "id"] => RelatedFilterTarget::Class(RelatedClassField::Id),
+            ["related", _, "class", "name"] => RelatedFilterTarget::Class(RelatedClassField::Name),
+            ["related", _, "object", "id"] => RelatedFilterTarget::Object(RelatedObjectField::Id),
+            ["related", _, "object", "name"] => {
+                RelatedFilterTarget::Object(RelatedObjectField::Name)
+            }
+            ["related", _, "object", "description"] => {
+                RelatedFilterTarget::Object(RelatedObjectField::Description)
+            }
+            ["related", _, "object", "collection_id"] => {
+                RelatedFilterTarget::Object(RelatedObjectField::CollectionId)
+            }
+            ["related", _, "object", "created_at"] => {
+                RelatedFilterTarget::Object(RelatedObjectField::CreatedAt)
+            }
+            ["related", _, "object", "updated_at"] => {
+                RelatedFilterTarget::Object(RelatedObjectField::UpdatedAt)
+            }
+            ["related", _, "object", "revision"] => {
+                RelatedFilterTarget::Object(RelatedObjectField::Revision)
+            }
+            ["related", _, "object", "json_data"] => {
+                RelatedFilterTarget::Object(RelatedObjectField::JsonData)
+            }
+            ["related", _, "depth"] => RelatedFilterTarget::Depth,
+            _ => return Err(invalid_related_field(value)),
+        };
+
+        Ok(Self {
+            alias: alias.to_string(),
+            target,
+        })
+    }
+
+    pub fn alias(&self) -> &str {
+        &self.alias
+    }
+
+    pub const fn target(&self) -> RelatedFilterTarget {
+        self.target
+    }
+}
+
+impl fmt::Display for RelatedQueryField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "related.{}.", self.alias)?;
+        match self.target {
+            RelatedFilterTarget::Class(field) => write!(f, "class.{}", field.as_str()),
+            RelatedFilterTarget::Object(field) => write!(f, "object.{}", field.as_str()),
+            RelatedFilterTarget::Depth => f.write_str("depth"),
+        }
+    }
+}
+
+fn invalid_related_field(value: &str) -> QueryError {
+    QueryError::BadRequest(format!("Invalid related search field: '{value}'"))
+}
+
 macro_rules! filter_fields {
     ($(($variant:ident, $str_rep:expr)),* $(,)?) => {
         #[derive(Debug, PartialEq, Clone)]
         pub enum FilterField {
             $($variant),*,
             Computed(Box<ComputedQueryField>),
+            Related(Box<RelatedQueryField>),
         }
 
         impl FromStr for FilterField {
@@ -1051,6 +1342,11 @@ macro_rules! filter_fields {
                             .map(Box::new)
                             .map(FilterField::Computed);
                         }
+                        if s.starts_with("related.") {
+                            return RelatedQueryField::parse(s)
+                                .map(Box::new)
+                                .map(FilterField::Related);
+                        }
                         Err(QueryError::BadRequest(format!(
                             "Invalid search field: '{}'",
                             s
@@ -1067,6 +1363,7 @@ macro_rules! filter_fields {
                     FilterField::Computed(field) => {
                         write!(f, "computed.{}.{}", field.scope().as_str(), field.key())
                     }
+                    FilterField::Related(field) => field.fmt(f),
                 }
             }
         }
@@ -1097,6 +1394,13 @@ macro_rules! filter_fields {
             pub fn computed_query_mut(&mut self) -> Option<&mut ComputedQueryField> {
                 match self {
                     FilterField::Computed(field) => Some(field),
+                    _ => None,
+                }
+            }
+
+            pub fn related_query(&self) -> Option<&RelatedQueryField> {
+                match self {
+                    FilterField::Related(field) => Some(field),
                     _ => None,
                 }
             }
@@ -1396,6 +1700,164 @@ mod tests {
         assert_eq!(parsed.sort.len(), 2);
         assert!(parsed.sort[0].descending);
         assert!(!parsed.sort[1].descending);
+    }
+
+    #[test]
+    fn parses_named_related_filter_groups() {
+        let (parsed, _) =
+            parse_query_parameter_with_computed_and_related_filters_and_passthrough(
+                "related.room.class.name=Room&related.room.object.name__iequals=foo&related.room.depth__lte=5&related.owner.class.id=42&related.owner.object.revision__gt=4",
+                &[],
+            )
+            .unwrap();
+
+        assert_eq!(parsed.filters.len(), 5);
+        let room = parsed.filters[0].field.related_query().unwrap();
+        assert_eq!(room.alias(), "room");
+        assert_eq!(
+            room.target(),
+            RelatedFilterTarget::Class(RelatedClassField::Name)
+        );
+        assert_eq!(
+            parsed.filters[1].field.related_query().unwrap().target(),
+            RelatedFilterTarget::Object(RelatedObjectField::Name)
+        );
+        assert_eq!(
+            parsed.filters[2].field.related_query().unwrap().target(),
+            RelatedFilterTarget::Depth
+        );
+    }
+
+    fn related_parse_error(query: &str) -> QueryError {
+        parse_query_parameter_with_computed_and_related_filters_and_passthrough(query, &[])
+            .unwrap_err()
+    }
+
+    #[test]
+    fn related_filter_group_requires_a_class_selector() {
+        let error = related_parse_error("related.room.object.name=foo");
+
+        assert!(
+            error
+                .to_string()
+                .contains("exactly one class.id or class.name")
+        );
+    }
+
+    #[test]
+    fn related_filter_group_rejects_multiple_class_selectors() {
+        let error = related_parse_error("related.room.class.name=Room&related.room.class.id=2");
+
+        assert!(
+            error
+                .to_string()
+                .contains("exactly one class.id or class.name")
+        );
+    }
+
+    #[test]
+    fn related_filters_enforce_the_group_count_limit() {
+        let groups = (0..=MAX_RELATED_FILTER_GROUPS)
+            .map(|index| format!("related.g{index}.class.name=Class{index}"))
+            .collect::<Vec<_>>()
+            .join("&");
+        let error = related_parse_error(&groups);
+
+        assert!(
+            error
+                .to_string()
+                .contains("at most 4 related filter groups")
+        );
+    }
+
+    #[test]
+    fn related_filter_depth_rejects_zero() {
+        let error = related_parse_error("related.room.class.name=Room&related.room.depth__lte=0");
+
+        assert!(error.to_string().contains("integer from 1 to 10"));
+    }
+
+    #[test]
+    fn related_filter_depth_rejects_values_above_the_limit() {
+        let error = related_parse_error("related.room.class.name=Room&related.room.depth__lte=11");
+
+        assert!(error.to_string().contains("integer from 1 to 10"));
+    }
+
+    #[test]
+    fn related_filter_depth_rejects_non_integer_values() {
+        let error = related_parse_error("related.room.class.name=Room&related.room.depth__lte=x");
+
+        assert!(error.to_string().contains("integer from 1 to 10"));
+    }
+
+    #[test]
+    fn related_filter_rejects_an_invalid_alias() {
+        assert!(
+            related_parse_error("related.1room.class.name=Room")
+                .to_string()
+                .contains("alias")
+        );
+    }
+
+    #[test]
+    fn related_filter_rejects_an_unknown_class_field() {
+        let error = related_parse_error("related.room.class.description=Room");
+
+        assert!(error.to_string().contains("Invalid related search field"));
+    }
+
+    #[test]
+    fn related_filter_class_selector_requires_equality() {
+        let error = related_parse_error("related.room.class.name__icontains=Room");
+
+        assert!(error.to_string().contains("unnegated equality"));
+    }
+
+    #[test]
+    fn related_filter_depth_requires_the_lte_suffix() {
+        let error = related_parse_error("related.room.class.name=Room&related.room.depth=2");
+
+        assert!(error.to_string().contains("only supports depth__lte"));
+    }
+
+    #[test]
+    fn related_filter_depth_rejects_other_operators() {
+        let error = related_parse_error("related.room.class.name=Room&related.room.depth__gte=2");
+
+        assert!(error.to_string().contains("only supports depth__lte"));
+    }
+
+    #[test]
+    fn standard_parser_rejects_related_filters() {
+        let error = parse_query_parameter("related.room.class.name=Room").unwrap_err();
+
+        assert!(error.to_string().contains("not supported"));
+    }
+
+    #[test]
+    fn parser_rejects_related_sort_fields() {
+        let error = parse_query_parameter("sort=related.room.object.name").unwrap_err();
+
+        assert!(error.to_string().contains("cannot be used for sorting"));
+    }
+
+    #[test]
+    fn related_filter_alias_may_contain_double_underscores() {
+        let (parsed, _) = parse_query_parameter_with_computed_and_related_filters_and_passthrough(
+            "related.room__west.class.name=Room&related.room__west.object.name__contains=foo",
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(
+            parsed.filters[0].field.related_query().unwrap().alias(),
+            "room__west"
+        );
+        assert_eq!(
+            parsed.filters[1].operator,
+            SearchOperator::Contains { is_negated: false }
+        );
     }
 
     #[test]
