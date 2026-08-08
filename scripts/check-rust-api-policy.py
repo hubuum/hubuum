@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import tomllib
 from dataclasses import asdict, dataclass
@@ -39,18 +40,123 @@ def read_manifest(path: Path) -> dict[str, object]:
         fail(f"cannot read {path}: {error}")
 
 
-def workspace_manifests(root: Path) -> list[Path]:
-    root_manifest = root / "Cargo.toml"
+def cargo_workspace_metadata(root: Path) -> dict[str, object]:
+    root_manifest = (root / "Cargo.toml").resolve()
     data = read_manifest(root_manifest)
     workspace = data.get("workspace")
     if not isinstance(workspace, dict):
         fail("root Cargo.toml must declare [workspace]")
-    members = workspace.get("members")
-    if not isinstance(members, list) or not all(
-        isinstance(member, str) for member in members
+
+    command = [
+        "cargo",
+        "metadata",
+        "--format-version",
+        "1",
+        "--no-deps",
+        "--manifest-path",
+        str(root_manifest),
+    ]
+    if (root / "Cargo.lock").is_file():
+        command.append("--locked")
+    try:
+        result = subprocess.run(
+            command,
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        fail(f"cannot execute cargo metadata: {error}")
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        fail(f"cargo metadata failed: {detail}")
+    try:
+        metadata = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        fail(f"cargo metadata returned invalid JSON: {error}")
+    if not isinstance(metadata, dict):
+        fail("cargo metadata must return a JSON object")
+    return metadata
+
+
+def workspace_manifests(root: Path) -> list[Path]:
+    root_manifest = (root / "Cargo.toml").resolve()
+    metadata = cargo_workspace_metadata(root)
+    workspace_members = metadata.get("workspace_members")
+    packages = metadata.get("packages")
+    if not isinstance(workspace_members, list) or not all(
+        isinstance(member, str) for member in workspace_members
     ):
-        fail("workspace.members must be an array of package paths")
-    return [root_manifest, *(root / member / "Cargo.toml" for member in members)]
+        fail("cargo metadata returned invalid workspace_members")
+    if not isinstance(packages, list):
+        fail("cargo metadata returned invalid packages")
+
+    manifests_by_id: dict[str, Path] = {}
+    for package in packages:
+        if not isinstance(package, dict):
+            fail("cargo metadata returned an invalid package")
+        package_id = package.get("id")
+        manifest_path = package.get("manifest_path")
+        if not isinstance(package_id, str) or not isinstance(manifest_path, str):
+            fail("cargo metadata package is missing its id or manifest_path")
+        manifest = Path(manifest_path).resolve()
+        try:
+            manifest.relative_to(root)
+        except ValueError:
+            fail(f"workspace manifest must remain inside the repository: {manifest}")
+        manifests_by_id[package_id] = manifest
+
+    manifests: list[Path] = []
+    for member in workspace_members:
+        manifest = manifests_by_id.get(member)
+        if manifest is None:
+            fail(f"cargo metadata omitted workspace member {member}")
+        manifests.append(manifest)
+    if root_manifest not in manifests:
+        fail("the root Cargo.toml package must be a Cargo workspace member")
+    if len(manifests) != len(set(manifests)):
+        fail("cargo metadata returned duplicate workspace manifests")
+
+    remaining = sorted(
+        (manifest for manifest in manifests if manifest != root_manifest),
+        key=lambda manifest: str(manifest.relative_to(root)),
+    )
+    return [root_manifest, *remaining]
+
+
+def publishing_enabled(name: str, publish_value: object) -> bool:
+    if isinstance(publish_value, bool):
+        return publish_value
+    if isinstance(publish_value, list) and all(
+        isinstance(registry, str) and registry for registry in publish_value
+    ):
+        return bool(publish_value)
+    fail(f"package {name} has an invalid Cargo publish setting")
+
+
+def public_policy_document(root: Path, name: str, declared: object) -> str:
+    if not isinstance(declared, str) or not declared.strip():
+        fail(f"public package {name} must declare a policy-document")
+    declared_path = Path(declared)
+    if declared_path.is_absolute():
+        fail(f"public package {name} policy-document must be repository-relative")
+    policy_path = (root / declared_path).resolve()
+    try:
+        relative_path = policy_path.relative_to(root)
+    except ValueError:
+        fail(f"public package {name} policy-document must remain inside the repository")
+    if not policy_path.is_file():
+        fail(
+            f"public package {name} policy-document does not exist as a file: "
+            f"{relative_path}"
+        )
+    try:
+        with policy_path.open("rb") as policy_file:
+            policy_file.read(1)
+    except OSError as error:
+        fail(f"public package {name} policy-document is not readable: {error}")
+    return relative_path.as_posix()
 
 
 def package_policy(root: Path, manifest: Path) -> PackagePolicy:
@@ -70,21 +176,26 @@ def package_policy(root: Path, manifest: Path) -> PackagePolicy:
             f"{sorted(VALID_STATUSES)!r}"
         )
 
-    publish_value = package.get("publish", True)
-    publish = publish_value is not False
+    publish = publishing_enabled(name, package.get("publish", True))
     policy_document = (
         hubuum.get("policy-document") if isinstance(hubuum, dict) else None
     )
     if rust_api in INTERNAL_STATUSES:
         if publish:
-            fail(f"internal package {name} must set publish = false")
+            fail(f"internal package {name} must disable publishing")
         if policy_document is not None:
             fail(f"internal package {name} must not declare policy-document")
     else:
         if not publish:
-            fail(f"public package {name} cannot set publish = false")
-        if not isinstance(policy_document, str) or not policy_document.strip():
-            fail(f"public package {name} must declare a policy-document")
+            fail(
+                f"public package {name} must enable publishing with publish = true "
+                "or a non-empty registry list"
+            )
+        policy_document = public_policy_document(
+            root,
+            name,
+            policy_document,
+        )
 
     return PackagePolicy(
         name=name,

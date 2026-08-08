@@ -18,6 +18,12 @@ class RustApiPolicyTests(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
         (self.root / "crates" / "member").mkdir(parents=True)
+        (self.root / "src").mkdir()
+        (self.root / "src" / "lib.rs").write_text("", encoding="utf-8")
+        (self.root / "crates" / "member" / "src").mkdir()
+        (self.root / "crates" / "member" / "src" / "lib.rs").write_text(
+            "", encoding="utf-8"
+        )
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -74,6 +80,11 @@ class RustApiPolicyTests(unittest.TestCase):
             text=True,
         )
 
+    def write_policy_document(self, path: str = "docs/member.md") -> None:
+        policy_path = self.root / path
+        policy_path.parent.mkdir(parents=True, exist_ok=True)
+        policy_path.write_text("# Member policy\n", encoding="utf-8")
+
     def test_internal_workspace_is_accepted(self) -> None:
         self.write_workspace()
 
@@ -88,7 +99,34 @@ class RustApiPolicyTests(unittest.TestCase):
         result = self.run_checker()
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("must set publish = false", result.stderr)
+        self.assertIn("must disable publishing", result.stderr)
+
+    def test_implicit_cargo_workspace_member_is_validated(self) -> None:
+        self.write_workspace()
+        implicit = self.root / "crates" / "implicit"
+        (implicit / "src").mkdir(parents=True)
+        (implicit / "src" / "lib.rs").write_text("", encoding="utf-8")
+        (implicit / "Cargo.toml").write_text(
+            textwrap.dedent(
+                """
+                [package]
+                name = "implicit"
+                version = "0.0.1"
+                edition = "2024"
+                publish = false
+                """
+            ),
+            encoding="utf-8",
+        )
+        with (self.root / "Cargo.toml").open("a", encoding="utf-8") as manifest:
+            manifest.write(
+                '\n[dependencies]\nimplicit = { path = "crates/implicit" }\n'
+            )
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("implicit must set package.metadata.hubuum.rust-api", result.stderr)
 
     def test_public_package_requires_policy_and_is_selected(self) -> None:
         self.write_workspace(
@@ -96,6 +134,7 @@ class RustApiPolicyTests(unittest.TestCase):
             member_publish="true",
             member_policy='policy-document = "docs/member.md"',
         )
+        self.write_policy_document()
 
         result = self.run_checker("--supported-packages")
 
@@ -112,7 +151,73 @@ class RustApiPolicyTests(unittest.TestCase):
         result = self.run_checker()
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("cannot set publish = false", result.stderr)
+        self.assertIn("must enable publishing", result.stderr)
+
+    def test_public_package_cannot_use_an_empty_publish_allowlist(self) -> None:
+        self.write_workspace(
+            member_status="experimental-public",
+            member_publish="[]",
+            member_policy='policy-document = "docs/member.md"',
+        )
+        self.write_policy_document()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must enable publishing", result.stderr)
+
+    def test_public_package_accepts_a_non_empty_publish_allowlist(self) -> None:
+        self.write_workspace(
+            member_status="experimental-public",
+            member_publish='["crates-io"]',
+            member_policy='policy-document = "docs/member.md"',
+        )
+        self.write_policy_document()
+
+        result = self.run_checker("--supported-packages")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "member\n")
+
+    def test_public_package_policy_document_must_exist(self) -> None:
+        self.write_workspace(
+            member_status="stable-public",
+            member_publish="true",
+            member_policy='policy-document = "docs/missing.md"',
+        )
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("policy-document does not exist as a file", result.stderr)
+
+    def test_public_package_policy_document_must_be_a_file(self) -> None:
+        self.write_workspace(
+            member_status="stable-public",
+            member_publish="true",
+            member_policy='policy-document = "docs/member"',
+        )
+        (self.root / "docs" / "member").mkdir(parents=True)
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("policy-document does not exist as a file", result.stderr)
+
+    def test_public_package_policy_document_must_stay_in_repository(self) -> None:
+        outside_path = self.root.parent / f"{self.root.name}-outside.md"
+        self.write_workspace(
+            member_status="stable-public",
+            member_publish="true",
+            member_policy=f'policy-document = "../{outside_path.name}"',
+        )
+        outside_path.write_text("policy\n", encoding="utf-8")
+        self.addCleanup(outside_path.unlink, missing_ok=True)
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must remain inside the repository", result.stderr)
 
     def test_unknown_classification_is_rejected(self) -> None:
         self.write_workspace(member_status="accidentally-public")

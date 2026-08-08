@@ -69,6 +69,16 @@ assert_flag "$supply_chain_docs_output" code true
 assert_flag "$supply_chain_docs_output" container true
 assert_flag "$supply_chain_docs_output" artifacts true
 
+rust_api_policy_output="$(bash "$classifier" \
+  scripts/check-rust-api-policy.py \
+  scripts/test-rust-api-policy.py \
+  scripts/check-crates-io-baseline.py \
+  scripts/test-crates-io-baseline.py)"
+assert_flag "$rust_api_policy_output" code true
+assert_flag "$rust_api_policy_output" container false
+assert_flag "$rust_api_policy_output" artifacts false
+assert_flag "$rust_api_policy_output" benchmarks false
+
 openapi_output="$(bash "$classifier" docs/openapi.json)"
 assert_flag "$openapi_output" openapi true
 assert_flag "$openapi_output" code false
