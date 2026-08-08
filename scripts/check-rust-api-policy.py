@@ -28,6 +28,12 @@ class PackagePolicy:
     policy_document: str | None
 
 
+@dataclass(frozen=True)
+class CargoPublishPolicy:
+    enabled: bool
+    crates_io_enabled: bool
+
+
 class PolicyError(RuntimeError):
     """Raised when the workspace violates the Rust API policy."""
 
@@ -126,15 +132,22 @@ def workspace_manifests(root: Path) -> list[Path]:
     return [root_manifest, *remaining]
 
 
-def publishing_enabled(name: str, publish_value: object) -> bool:
+def cargo_publish_policy(name: str, publish_value: object) -> CargoPublishPolicy:
     if isinstance(publish_value, bool):
-        return publish_value
+        return CargoPublishPolicy(
+            enabled=publish_value,
+            crates_io_enabled=publish_value,
+        )
     if isinstance(publish_value, list):
         if not all(
             isinstance(registry, str) and registry for registry in publish_value
         ):
             fail(f"package {name} has an invalid Cargo publish setting")
-        return bool(publish_value)
+        registries = set(publish_value)
+        return CargoPublishPolicy(
+            enabled=bool(registries),
+            crates_io_enabled="crates-io" in registries,
+        )
     fail(f"package {name} has an invalid Cargo publish setting")
 
 
@@ -178,20 +191,25 @@ def package_policy(root: Path, manifest: Path) -> PackagePolicy:
             f"{sorted(VALID_STATUSES)!r}"
         )
 
-    publish = publishing_enabled(name, package.get("publish", True))
+    publish = cargo_publish_policy(name, package.get("publish", True))
     policy_document = (
         hubuum.get("policy-document") if isinstance(hubuum, dict) else None
     )
     if rust_api in INTERNAL_STATUSES:
-        if publish:
+        if publish.enabled:
             fail(f"internal package {name} must disable publishing")
         if policy_document is not None:
             fail(f"internal package {name} must not declare policy-document")
     else:
-        if not publish:
+        if not publish.enabled:
             fail(
                 f"public package {name} must enable publishing with publish = true "
-                "or a non-empty registry list"
+                'or a registry list containing "crates-io"'
+            )
+        if not publish.crates_io_enabled:
+            fail(
+                f"public package {name} must allow crates.io publishing with "
+                'publish = true or a registry list containing "crates-io"'
             )
         policy_document = public_policy_document(
             root,
@@ -203,7 +221,7 @@ def package_policy(root: Path, manifest: Path) -> PackagePolicy:
         name=name,
         manifest=str(manifest.relative_to(root)),
         rust_api=rust_api,
-        publish=publish,
+        publish=publish.enabled,
         policy_document=policy_document,
     )
 

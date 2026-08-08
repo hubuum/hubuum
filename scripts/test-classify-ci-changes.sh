@@ -57,7 +57,14 @@ markdown_config_output="$(bash "$classifier" .markdownlint.json)"
 assert_flag "$markdown_config_output" markdown true
 assert_flag "$markdown_config_output" code false
 
-supply_chain_output="$(bash "$classifier" deny.toml .trivyignore .github/supply-chain-tools.env scripts/generate-container-evidence.sh scripts/test-generate-container-evidence.sh scripts/test-supply-chain-policy.py)"
+supply_chain_output="$(bash "$classifier" \
+  deny.toml \
+  .trivyignore \
+  .github/supply-chain-tools.env \
+  scripts/generate-container-evidence.sh \
+  scripts/install-cargo-semver-checks.sh \
+  scripts/test-generate-container-evidence.sh \
+  scripts/test-supply-chain-policy.py)"
 assert_flag "$supply_chain_output" code true
 assert_flag "$supply_chain_output" container true
 assert_flag "$supply_chain_output" artifacts true
