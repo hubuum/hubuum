@@ -3,6 +3,10 @@ name = "hubuum-auth-ldap"
 version = "0.0.1"
 edition = "2024"
 license = "MIT"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
 
 [dependencies]
 hubuum-auth-core = { path = "../hubuum-auth-core" }

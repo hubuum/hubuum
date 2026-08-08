@@ -23,6 +23,7 @@ SPEC.loader.exec_module(POLICY)
 DIGEST = "a" * 64
 VALID_VALUES = {
     "CARGO_DENY_VERSION": "0.20.2",
+    "CARGO_SEMVER_CHECKS_VERSION": "0.49.0",
     "DIESEL_CLI_VERSION": "2.3.11",
     "SYFT_IMAGE": f"anchore/syft:v1.50.0@sha256:{DIGEST}",
     "TRIVY_IMAGE": f"aquasec/trivy:0.73.0@sha256:{DIGEST}",

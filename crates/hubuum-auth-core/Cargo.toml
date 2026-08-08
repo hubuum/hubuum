@@ -3,6 +3,10 @@ name = "hubuum-auth-core"
 version = "0.0.1"
 edition = "2024"
 license = "MIT"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

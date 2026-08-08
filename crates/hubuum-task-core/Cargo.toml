@@ -3,3 +3,7 @@ name = "hubuum-task-core"
 version = "0.0.1"
 edition = "2024"
 license = "MIT"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"

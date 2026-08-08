@@ -40,14 +40,16 @@ An exception has this shape:
 GitHub Actions are pinned to full commit SHAs with their readable release name
 in a comment. CI service images and release tooling containers are pinned by
 OCI digest. `.github/supply-chain-tools.env` records exact versions and image
-digests for cargo-deny, Diesel CLI, Syft, Trivy, and cosign. Consumers read
-individual validated values rather than evaluating the manifest as shell code.
+digests for cargo-deny, cargo-semver-checks, Diesel CLI, Syft, Trivy, and
+cosign. Consumers read individual validated values rather than evaluating the
+manifest as shell code.
 
-Diesel CLI and cargo-deny are built from checksum-verified crates.io sources at
-exact versions. Syft and Trivy run from digest-pinned OCI images. The pinned
-cosign installer verifies the downloaded executable before use. Workflows
-record the executable or platform-image digest and tool version in their run
-summary.
+Diesel CLI, cargo-deny, and cargo-semver-checks are built from
+checksum-verified crates.io sources at exact versions. The semantic checker is
+installed only when a workspace package is deliberately classified as public.
+Syft and Trivy run from digest-pinned OCI images. The pinned cosign installer
+verifies the downloaded executable before use. Workflows record the executable
+or platform-image digest and tool version in their run summary.
 
 Validate these controls locally with:
 

@@ -5,6 +5,10 @@ edition = "2024"
 description = "Transport-neutral event sink helpers for Hubuum."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
 
 [dependencies]
 hubuum-events-core = { path = "../hubuum-events-core" }

@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 description = "Typed, deterministic computed-field evaluation for Hubuum"
 license = "MIT"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
 
 [dependencies]
 bigdecimal = "0.4"
