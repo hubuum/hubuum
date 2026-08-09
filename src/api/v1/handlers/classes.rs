@@ -38,10 +38,6 @@ use crate::permissions::{
     authorize_resources,
 };
 
-use crate::models::traits::{
-    CreateObjectInResolvedClass, DeleteResolvedObject, PatchObjectData, ResolveObjectTarget,
-    UpdateResolvedObject,
-};
 use crate::models::{
     ClassGraphRow, ClassSelector, CollectionID, GroupPermission, HistoryAuthorizationSnapshot,
     HubuumClass, HubuumClassExpanded, HubuumClassHistory, HubuumClassID, HubuumClassRelation,

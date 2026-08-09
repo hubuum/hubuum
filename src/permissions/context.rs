@@ -8,7 +8,7 @@ use futures_util::future::{Ready, ready};
 use crate::config::get_config;
 use crate::db::DbPool;
 use crate::errors::ApiError;
-use crate::services::{ClassService, CollectionService, Services};
+use crate::services::{ClassService, CollectionService, ObjectService, Services};
 use crate::traits::BackendContext;
 
 use super::backend::PermissionBackend;
@@ -52,6 +52,10 @@ impl AppContext {
 
     pub fn class_service(&self) -> &ClassService {
         self.services.classes()
+    }
+
+    pub fn object_service(&self) -> &ObjectService {
+        self.services.objects()
     }
 }
 

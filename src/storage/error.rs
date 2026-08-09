@@ -9,8 +9,11 @@ enum StorageErrorKind {
     Database,
     Internal,
     NotFound,
+    NotAcceptable,
+    PayloadTooLarge,
     PreconditionFailed,
     Unavailable,
+    Validation,
 }
 
 /// Backend-neutral failure returned by storage capabilities.
@@ -63,9 +66,17 @@ impl From<ApiError> for StorageError {
         match error {
             ApiError::BadRequest(message)
             | ApiError::InvalidIntegerRange(message)
-            | ApiError::OperatorMismatch(message)
-            | ApiError::ValidationError(message) => {
+            | ApiError::OperatorMismatch(message) => {
                 Self::new(StorageErrorKind::BadRequest, message, None)
+            }
+            ApiError::NotAcceptable(message) => {
+                Self::new(StorageErrorKind::NotAcceptable, message, None)
+            }
+            ApiError::ValidationError(message) => {
+                Self::new(StorageErrorKind::Validation, message, None)
+            }
+            ApiError::PayloadTooLarge(message) => {
+                Self::new(StorageErrorKind::PayloadTooLarge, message, None)
             }
             ApiError::Conflict(message) => Self::new(StorageErrorKind::Conflict, message, None),
             ApiError::DatabaseError(message) | ApiError::DbConnectionError(message) => {
@@ -100,10 +111,13 @@ impl From<StorageError> for ApiError {
             StorageErrorKind::Database => Self::DatabaseError(error.message),
             StorageErrorKind::Internal => Self::InternalServerError(error.message),
             StorageErrorKind::NotFound => Self::NotFound(error.message),
+            StorageErrorKind::NotAcceptable => Self::NotAcceptable(error.message),
+            StorageErrorKind::PayloadTooLarge => Self::PayloadTooLarge(error.message),
             StorageErrorKind::PreconditionFailed => {
                 Self::PreconditionFailed(error.message, error.current_etag)
             }
             StorageErrorKind::Unavailable => Self::ServiceUnavailable(error.message),
+            StorageErrorKind::Validation => Self::ValidationError(error.message),
         }
     }
 }
@@ -115,11 +129,13 @@ mod tests {
     use super::StorageError;
 
     #[test]
-    fn storage_errors_preserve_public_collection_failure_categories() {
+    fn storage_errors_preserve_public_failure_categories() {
         for error in [
             ApiError::BadRequest("invalid move".to_string()),
             ApiError::Conflict("collection has children".to_string()),
             ApiError::NotFound("collection missing".to_string()),
+            ApiError::ValidationError("object schema mismatch".to_string()),
+            ApiError::PayloadTooLarge("object data exceeds its limit".to_string()),
             ApiError::PreconditionFailed(
                 "stale collection".to_string(),
                 Some("\"collection-1-r2\"".to_string()),

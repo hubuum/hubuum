@@ -7,12 +7,13 @@ use tokio::sync::RwLock;
 
 use crate::events::{Action, EventContext};
 use crate::models::{
-    ClassSelector, ClassSelectorKind, Collection, CollectionID, HubuumClass,
-    NewCollectionWithAssignee, NewHubuumClass, ResolvedClassTarget, ResourceRevision,
-    UpdateCollection, UpdateHubuumClass,
+    ClassSelector, ClassSelectorKind, Collection, CollectionID, HubuumClass, HubuumObject,
+    NewCollectionWithAssignee, NewHubuumClass, NewHubuumObject, ObjectDataPatchDocument,
+    ObjectSelector, ObjectSelectorKind, ResolvedClassTarget, ResolvedObjectTarget,
+    ResourceRevision, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
 };
 
-use super::{ClassStore, CollectionStore, StorageError};
+use super::{ClassStore, CollectionStore, ObjectStore, StorageError};
 
 const ROOT_COLLECTION_ID: i32 = 1;
 
@@ -30,13 +31,23 @@ pub(crate) struct MemoryClassEvent {
     pub(crate) context: EventContext,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MemoryObjectEvent {
+    pub(crate) object_id: i32,
+    pub(crate) action: Action,
+    pub(crate) context: EventContext,
+}
+
 struct MemoryState {
     next_collection_id: i32,
     next_class_id: i32,
+    next_object_id: i32,
     collections: BTreeMap<i32, Collection>,
     classes: BTreeMap<i32, HubuumClass>,
+    objects: BTreeMap<i32, HubuumObject>,
     events: Vec<MemoryCollectionEvent>,
     class_events: Vec<MemoryClassEvent>,
+    object_events: Vec<MemoryObjectEvent>,
 }
 
 impl MemoryState {
@@ -54,10 +65,13 @@ impl MemoryState {
         Self {
             next_collection_id: ROOT_COLLECTION_ID + 1,
             next_class_id: 1,
+            next_object_id: 1,
             collections: BTreeMap::from([(root.id, root)]),
             classes: BTreeMap::new(),
+            objects: BTreeMap::new(),
             events: Vec::new(),
             class_events: Vec::new(),
+            object_events: Vec::new(),
         }
     }
 
@@ -104,6 +118,76 @@ impl MemoryState {
         Ok(current)
     }
 
+    fn object_for_selector(
+        &self,
+        selector: &ObjectSelector,
+    ) -> Result<(&HubuumClass, &HubuumObject), StorageError> {
+        let (class, object) = match selector.kind() {
+            ObjectSelectorKind::ById {
+                class_id,
+                object_id,
+            } => {
+                let class = self.classes.get(&class_id.id());
+                let object = self
+                    .objects
+                    .get(&object_id.id())
+                    .filter(|object| object.hubuum_class_id == class_id.id());
+                (class, object)
+            }
+            ObjectSelectorKind::ByName {
+                class_name,
+                object_name,
+            } => {
+                let class = self
+                    .classes
+                    .values()
+                    .find(|class| class.name == *class_name);
+                let object = class.and_then(|class| {
+                    self.objects.values().find(|object| {
+                        object.hubuum_class_id == class.id && object.name == *object_name
+                    })
+                });
+                (class, object)
+            }
+        };
+        match (class, object) {
+            (Some(class), Some(object)) => Ok((class, object)),
+            _ => Err(StorageError::not_found(
+                "Object was not found in the selected class",
+            )),
+        }
+    }
+
+    fn object_target(
+        &self,
+        target: &ResolvedObjectTarget,
+    ) -> Result<(&HubuumClass, &HubuumObject), StorageError> {
+        let (class, object) = self.object_for_selector(target.selector())?;
+        let resolved_class = target.class();
+        let resolved_object = target.object();
+        if class.id != resolved_class.id
+            || class.name != resolved_class.name
+            || class.collection_id != resolved_class.collection_id
+            || object.id != resolved_object.id
+            || object.name != resolved_object.name
+            || object.collection_id != resolved_object.collection_id
+            || object.hubuum_class_id != resolved_object.hubuum_class_id
+        {
+            return Err(StorageError::not_found(
+                "Object no longer matches the resolved route target",
+            ));
+        }
+        Ok((class, object))
+    }
+
+    fn object_name_in_use(&self, class_id: i32, name: &str, except_id: Option<i32>) -> bool {
+        self.objects.values().any(|object| {
+            object.hubuum_class_id == class_id
+                && object.name == name
+                && Some(object.id) != except_id
+        })
+    }
+
     fn record_event(&mut self, collection_id: i32, action: Action, context: &EventContext) {
         self.events.push(MemoryCollectionEvent {
             collection_id,
@@ -115,6 +199,14 @@ impl MemoryState {
     fn record_class_event(&mut self, class_id: i32, action: Action, context: &EventContext) {
         self.class_events.push(MemoryClassEvent {
             class_id,
+            action,
+            context: context.clone(),
+        });
+    }
+
+    fn record_object_event(&mut self, object_id: i32, action: Action, context: &EventContext) {
+        self.object_events.push(MemoryObjectEvent {
+            object_id,
             action,
             context: context.clone(),
         });
@@ -140,6 +232,10 @@ impl MemoryStorage {
 
     pub(crate) async fn class_events(&self) -> Vec<MemoryClassEvent> {
         self.state.read().await.class_events.clone()
+    }
+
+    pub(crate) async fn object_events(&self) -> Vec<MemoryObjectEvent> {
+        self.state.read().await.object_events.clone()
     }
 }
 
@@ -252,6 +348,9 @@ impl CollectionStore for MemoryStorage {
         state
             .classes
             .retain(|_, class| class.collection_id != id.id());
+        state
+            .objects
+            .retain(|_, object| object.collection_id != id.id());
         state.record_event(id.id(), Action::Deleted, context);
         Ok(())
     }
@@ -454,7 +553,145 @@ impl ClassStore for MemoryStorage {
         let mut state = self.state.write().await;
         let class = state.class_target(target)?.clone();
         state.classes.remove(&class.id);
+        state
+            .objects
+            .retain(|_, object| object.hubuum_class_id != class.id);
         state.record_class_event(class.id, Action::Deleted, context);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ObjectStore for MemoryStorage {
+    async fn resolve_object(
+        &self,
+        selector: ObjectSelector,
+    ) -> Result<ResolvedObjectTarget, StorageError> {
+        let state = self.state.read().await;
+        let (class, object) = state.object_for_selector(&selector)?;
+        Ok(ResolvedObjectTarget::new(
+            selector,
+            class.clone(),
+            object.clone(),
+        ))
+    }
+
+    async fn create_object(
+        &self,
+        class: &ResolvedClassTarget,
+        command: NewHubuumObject,
+        context: &EventContext,
+    ) -> Result<HubuumObject, StorageError> {
+        let mut state = self.state.write().await;
+        let current_class = state.class_target(class)?.clone();
+        command
+            .validate_for_class(&current_class)
+            .map_err(StorageError::from)?;
+        if state.object_name_in_use(current_class.id, &command.name, None) {
+            return Err(StorageError::conflict(format!(
+                "An object named '{}' already exists in class {}",
+                command.name, current_class.id
+            )));
+        }
+
+        let id = state.next_object_id;
+        state.next_object_id += 1;
+        let now = Utc::now().naive_utc();
+        let object = HubuumObject {
+            id,
+            name: command.name,
+            collection_id: command.collection_id,
+            hubuum_class_id: command.hubuum_class_id,
+            data: command.data,
+            description: command.description,
+            created_at: now,
+            updated_at: now,
+            revision: ResourceRevision::INITIAL,
+        };
+        state.objects.insert(id, object.clone());
+        state.record_object_event(id, Action::Created, context);
+        Ok(object)
+    }
+
+    async fn update_object(
+        &self,
+        target: &ResolvedObjectTarget,
+        changes: UpdateHubuumObject,
+        context: &EventContext,
+    ) -> Result<HubuumObject, StorageError> {
+        let mut state = self.state.write().await;
+        let (class, current) = state.object_target(target)?;
+        let class = class.clone();
+        let current = current.clone();
+        changes
+            .validate_for_class(&current, &class)
+            .map_err(StorageError::from)?;
+        if !changes.has_changes(&current) {
+            return Ok(current);
+        }
+        if let Some(name) = changes.name.as_deref()
+            && state.object_name_in_use(class.id, name, Some(current.id))
+        {
+            return Err(StorageError::conflict(format!(
+                "An object named '{name}' already exists in class {}",
+                class.id
+            )));
+        }
+
+        let mut updated = current.merge_update(&changes);
+        updated.updated_at = Utc::now().naive_utc();
+        updated.revision = current
+            .revision
+            .checked_advance()
+            .map_err(StorageError::from)?;
+        state.objects.insert(updated.id, updated.clone());
+        state.record_object_event(updated.id, Action::Updated, context);
+        Ok(updated)
+    }
+
+    async fn patch_object_data(
+        &self,
+        target: &ResolvedObjectTarget,
+        patch: ObjectDataPatchDocument,
+        context: &EventContext,
+    ) -> Result<HubuumObject, StorageError> {
+        let mut state = self.state.write().await;
+        let (class, current) = state.object_target(target)?;
+        let class = class.clone();
+        let current = current.clone();
+        let patched_data = patch.apply(&current.data).map_err(StorageError::from)?;
+        if class.validate_schema
+            && let Some(schema) = class.json_schema.as_ref()
+        {
+            crate::utilities::json_schema::validate_json_value(schema, &patched_data)
+                .map_err(StorageError::from)?;
+        }
+        if patched_data == current.data {
+            return Ok(current);
+        }
+
+        let mut updated = current.clone();
+        updated.data = patched_data;
+        updated.updated_at = Utc::now().naive_utc();
+        updated.revision = current
+            .revision
+            .checked_advance()
+            .map_err(StorageError::from)?;
+        state.objects.insert(updated.id, updated.clone());
+        state.record_object_event(updated.id, Action::Updated, context);
+        Ok(updated)
+    }
+
+    async fn delete_object(
+        &self,
+        target: &ResolvedObjectTarget,
+        context: &EventContext,
+    ) -> Result<(), StorageError> {
+        let mut state = self.state.write().await;
+        let (_, object) = state.object_target(target)?;
+        let object_id = object.id;
+        state.objects.remove(&object_id);
+        state.record_object_event(object_id, Action::Deleted, context);
         Ok(())
     }
 }
