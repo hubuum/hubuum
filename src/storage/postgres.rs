@@ -15,14 +15,20 @@ use crate::db::traits::object::{
     CreateObjectInResolvedClassRecord, DeleteResolvedObjectRecord, PatchObjectDataRecord,
     ResolveObjectSelectorRecord, UpdateResolvedObjectRecord,
 };
+use crate::db::traits::relations::{
+    CreatePreparedClassRelationRecord, DeleteResolvedClassRelationRecord,
+    PrepareClassRelationRecord, ResolveClassRelationTargetRecord,
+};
 use crate::events::EventContext;
 use crate::models::{
-    ClassSelector, Collection, CollectionID, HubuumClass, HubuumObject, NewCollectionWithAssignee,
-    NewHubuumClass, NewHubuumObject, ObjectDataPatchDocument, ObjectSelector, ResolvedClassTarget,
-    ResolvedObjectTarget, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
+    ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassRelationID, HubuumObject,
+    NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
+    ObjectDataPatchDocument, ObjectSelector, PreparedClassRelation, ResolvedClassRelationTarget,
+    ResolvedClassTarget, ResolvedObjectTarget, UpdateCollection, UpdateHubuumClass,
+    UpdateHubuumObject,
 };
 
-use super::{ClassStore, CollectionStore, ObjectStore, StorageError};
+use super::{ClassRelationStore, ClassStore, CollectionStore, ObjectStore, StorageError};
 
 /// Canonical production storage adapter.
 #[derive(Clone)]
@@ -148,6 +154,56 @@ impl ClassStore for PostgresStorage {
     ) -> Result<(), StorageError> {
         target
             .delete_resolved_class_record(&self.pool, context)
+            .await
+            .map_err(StorageError::from)
+    }
+}
+
+#[async_trait]
+impl ClassRelationStore for PostgresStorage {
+    async fn prepare_class_relation(
+        &self,
+        command: NewHubuumClassRelation,
+    ) -> Result<PreparedClassRelation, StorageError> {
+        command
+            .prepare_class_relation_record(&self.pool)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn resolve_class_relation(
+        &self,
+        id: HubuumClassRelationID,
+    ) -> Result<ResolvedClassRelationTarget, StorageError> {
+        id.resolve_class_relation_target_record(&self.pool)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn create_class_relation(
+        &self,
+        prepared: &PreparedClassRelation,
+        context: &EventContext,
+    ) -> Result<ResolvedClassRelationTarget, StorageError> {
+        let relation = prepared
+            .create_prepared_class_relation_record(&self.pool, context)
+            .await
+            .map_err(StorageError::from)?;
+        ResolvedClassRelationTarget::new(
+            relation,
+            prepared.from_class().clone(),
+            prepared.to_class().clone(),
+        )
+        .map_err(StorageError::from)
+    }
+
+    async fn delete_class_relation(
+        &self,
+        target: &ResolvedClassRelationTarget,
+        context: &EventContext,
+    ) -> Result<(), StorageError> {
+        target
+            .delete_resolved_class_relation_record(&self.pool, context)
             .await
             .map_err(StorageError::from)
     }

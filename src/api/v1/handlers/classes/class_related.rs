@@ -126,7 +126,11 @@ async fn create_class_relation(
 
     let relation = partial_relation.into_relation(class_id);
 
-    let resource = relation.to_resource_ref(&pool).await?;
+    let prepared = pool
+        .class_relation_service()
+        .prepare_create(relation)
+        .await?;
+    let resource = prepared.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -138,7 +142,11 @@ async fn create_class_relation(
     .await?;
 
     let event_context = requestor.event_context(&req);
-    let relation = relation.save(&pool, &event_context).await?;
+    let target = pool
+        .class_relation_service()
+        .create(&prepared, &event_context)
+        .await?;
+    let relation = target.relation().clone();
 
     let location = api_locations::class_relation(class_id.id(), relation.id())?;
     ApiResponse::created_revisioned(relation, location)
@@ -166,13 +174,11 @@ async fn get_class_relation(
     paths: web::Path<(HubuumClassID, HubuumClassRelationID)>,
 ) -> Result<impl Responder, ApiError> {
     let (class_id, relation_id) = paths.into_inner();
-    let relation = relation_id.instance(&pool).await?;
-    if relation.from_hubuum_class_id != class_id.id()
-        && relation.to_hubuum_class_id != class_id.id()
-    {
+    let target = pool.class_relation_service().resolve(relation_id).await?;
+    if !target.contains_class(class_id) {
         return Err(ApiError::NotFound("Class relation not found".to_string()));
     }
-    let resource = relation.to_resource_ref(&pool).await?;
+    let resource = target.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -182,7 +188,7 @@ async fn get_class_relation(
         vec![resource],
     )
     .await?;
-    ApiResponse::ok_revisioned(relation)
+    ApiResponse::ok_revisioned(target.relation().clone())
 }
 
 #[utoipa::path(
@@ -218,9 +224,10 @@ async fn delete_class_relation(
         relation_id = relation_id.id()
     );
 
-    let relation = relation_id.instance(&pool).await?;
+    let target = pool.class_relation_service().resolve(relation_id).await?;
+    let relation = target.relation();
 
-    let resource = relation.to_resource_ref(&pool).await?;
+    let resource = target.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -231,14 +238,16 @@ async fn delete_class_relation(
     )
     .await?;
 
-    if relation.from_hubuum_class_id == class_id.id()
-        || relation.to_hubuum_class_id == class_id.id()
-    {
+    if target.contains_class(class_id) {
         let etag = relation.entity_tag()?;
         let precondition = revision_precondition_for_tag(&req, &etag)?;
         let event_context = requestor.event_context(&req);
-        with_revision_precondition_scope(precondition, relation.delete(&pool, &event_context))
-            .await?;
+        with_revision_precondition_scope(
+            precondition,
+            pool.class_relation_service()
+                .delete(&target, &event_context),
+        )
+        .await?;
         Ok(ApiResponse::no_content_with_etag(etag))
     } else {
         info!(

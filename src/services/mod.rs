@@ -1,7 +1,9 @@
+mod class_relations;
 mod classes;
 mod collections;
 mod objects;
 
+pub use class_relations::ClassRelationService;
 pub use classes::ClassService;
 pub use collections::CollectionService;
 pub use objects::ObjectService;
@@ -39,6 +41,7 @@ pub(crate) fn storage_contract_prefix(label: &str) -> String {
 #[derive(Clone)]
 pub struct Services {
     classes: ClassService,
+    class_relations: ClassRelationService,
     collections: CollectionService,
     objects: ObjectService,
 }
@@ -51,6 +54,7 @@ impl Services {
     pub(crate) fn from_storage(storage: DynStorage) -> Self {
         Self {
             classes: ClassService::new(storage.clone()),
+            class_relations: ClassRelationService::new(storage.clone()),
             collections: CollectionService::new(storage.clone()),
             objects: ObjectService::new(storage),
         }
@@ -58,6 +62,10 @@ impl Services {
 
     pub fn classes(&self) -> &ClassService {
         &self.classes
+    }
+
+    pub fn class_relations(&self) -> &ClassRelationService {
+        &self.class_relations
     }
 
     pub fn collections(&self) -> &CollectionService {

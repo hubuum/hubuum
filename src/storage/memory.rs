@@ -7,13 +7,15 @@ use tokio::sync::RwLock;
 
 use crate::events::{Action, EventContext};
 use crate::models::{
-    ClassSelector, ClassSelectorKind, Collection, CollectionID, HubuumClass, HubuumObject,
-    NewCollectionWithAssignee, NewHubuumClass, NewHubuumObject, ObjectDataPatchDocument,
-    ObjectSelector, ObjectSelectorKind, ResolvedClassTarget, ResolvedObjectTarget,
-    ResourceRevision, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
+    ClassSelector, ClassSelectorKind, Collection, CollectionID, HubuumClass, HubuumClassRelation,
+    HubuumClassRelationID, HubuumObject, NewCollectionWithAssignee, NewHubuumClass,
+    NewHubuumClassRelation, NewHubuumObject, ObjectDataPatchDocument, ObjectSelector,
+    ObjectSelectorKind, PreparedClassRelation, ResolvedClassRelationTarget, ResolvedClassTarget,
+    ResolvedObjectTarget, ResourceRevision, UpdateCollection, UpdateHubuumClass,
+    UpdateHubuumObject,
 };
 
-use super::{ClassStore, CollectionStore, ObjectStore, StorageError};
+use super::{ClassRelationStore, ClassStore, CollectionStore, ObjectStore, StorageError};
 
 const ROOT_COLLECTION_ID: i32 = 1;
 
@@ -38,16 +40,26 @@ pub(crate) struct MemoryObjectEvent {
     pub(crate) context: EventContext,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MemoryClassRelationEvent {
+    pub(crate) class_relation_id: i32,
+    pub(crate) action: Action,
+    pub(crate) context: EventContext,
+}
+
 struct MemoryState {
     next_collection_id: i32,
     next_class_id: i32,
     next_object_id: i32,
+    next_class_relation_id: i32,
     collections: BTreeMap<i32, Collection>,
     classes: BTreeMap<i32, HubuumClass>,
     objects: BTreeMap<i32, HubuumObject>,
+    class_relations: BTreeMap<i32, HubuumClassRelation>,
     events: Vec<MemoryCollectionEvent>,
     class_events: Vec<MemoryClassEvent>,
     object_events: Vec<MemoryObjectEvent>,
+    class_relation_events: Vec<MemoryClassRelationEvent>,
 }
 
 impl MemoryState {
@@ -66,12 +78,15 @@ impl MemoryState {
             next_collection_id: ROOT_COLLECTION_ID + 1,
             next_class_id: 1,
             next_object_id: 1,
+            next_class_relation_id: 1,
             collections: BTreeMap::from([(root.id, root)]),
             classes: BTreeMap::new(),
             objects: BTreeMap::new(),
+            class_relations: BTreeMap::new(),
             events: Vec::new(),
             class_events: Vec::new(),
             object_events: Vec::new(),
+            class_relation_events: Vec::new(),
         }
     }
 
@@ -188,6 +203,69 @@ impl MemoryState {
         })
     }
 
+    fn class_relation(
+        &self,
+        id: HubuumClassRelationID,
+    ) -> Result<&HubuumClassRelation, StorageError> {
+        self.class_relations.get(&id.id()).ok_or_else(|| {
+            StorageError::not_found(format!("Class relation {} was not found", id.id()))
+        })
+    }
+
+    fn prepared_class_relation_endpoints(
+        &self,
+        prepared: &PreparedClassRelation,
+    ) -> Result<(&HubuumClass, &HubuumClass), StorageError> {
+        let command = prepared.command();
+        let from_class = self
+            .classes
+            .get(&command.from_hubuum_class_id)
+            .ok_or_else(|| StorageError::not_found("From class was not found"))?;
+        let to_class = self
+            .classes
+            .get(&command.to_hubuum_class_id)
+            .ok_or_else(|| StorageError::not_found("To class was not found"))?;
+        if from_class != prepared.from_class() || to_class != prepared.to_class() {
+            return Err(StorageError::not_found(
+                "Class relation endpoints no longer match the prepared target",
+            ));
+        }
+        Ok((from_class, to_class))
+    }
+
+    fn class_relation_target(
+        &self,
+        target: &ResolvedClassRelationTarget,
+    ) -> Result<&HubuumClassRelation, StorageError> {
+        let relation_id =
+            HubuumClassRelationID::new(target.relation().id).map_err(StorageError::from)?;
+        let current = self.class_relation(relation_id)?;
+        let from_class = self
+            .classes
+            .get(&current.from_hubuum_class_id)
+            .ok_or_else(|| StorageError::not_found("From class was not found"))?;
+        let to_class = self
+            .classes
+            .get(&current.to_hubuum_class_id)
+            .ok_or_else(|| StorageError::not_found("To class was not found"))?;
+        if current != target.relation()
+            || from_class != target.from_class()
+            || to_class != target.to_class()
+        {
+            return Err(StorageError::not_found(
+                "Class relation no longer matches the resolved target",
+            ));
+        }
+        Ok(current)
+    }
+
+    fn class_relation_pair_in_use(&self, from_class_id: i32, to_class_id: i32) -> bool {
+        self.class_relations.values().any(|relation| {
+            relation.from_hubuum_class_id == from_class_id
+                && relation.to_hubuum_class_id == to_class_id
+        })
+    }
+
     fn record_event(&mut self, collection_id: i32, action: Action, context: &EventContext) {
         self.events.push(MemoryCollectionEvent {
             collection_id,
@@ -207,6 +285,19 @@ impl MemoryState {
     fn record_object_event(&mut self, object_id: i32, action: Action, context: &EventContext) {
         self.object_events.push(MemoryObjectEvent {
             object_id,
+            action,
+            context: context.clone(),
+        });
+    }
+
+    fn record_class_relation_event(
+        &mut self,
+        class_relation_id: i32,
+        action: Action,
+        context: &EventContext,
+    ) {
+        self.class_relation_events.push(MemoryClassRelationEvent {
+            class_relation_id,
             action,
             context: context.clone(),
         });
@@ -236,6 +327,10 @@ impl MemoryStorage {
 
     pub(crate) async fn object_events(&self) -> Vec<MemoryObjectEvent> {
         self.state.read().await.object_events.clone()
+    }
+
+    pub(crate) async fn class_relation_events(&self) -> Vec<MemoryClassRelationEvent> {
+        self.state.read().await.class_relation_events.clone()
     }
 }
 
@@ -345,12 +440,22 @@ impl CollectionStore for MemoryStorage {
             ));
         }
         state.collections.remove(&id.id());
+        let deleted_class_ids = state
+            .classes
+            .values()
+            .filter(|class| class.collection_id == id.id())
+            .map(|class| class.id)
+            .collect::<Vec<_>>();
         state
             .classes
             .retain(|_, class| class.collection_id != id.id());
         state
             .objects
             .retain(|_, object| object.collection_id != id.id());
+        state.class_relations.retain(|_, relation| {
+            !deleted_class_ids.contains(&relation.from_hubuum_class_id)
+                && !deleted_class_ids.contains(&relation.to_hubuum_class_id)
+        });
         state.record_event(id.id(), Action::Deleted, context);
         Ok(())
     }
@@ -556,7 +661,105 @@ impl ClassStore for MemoryStorage {
         state
             .objects
             .retain(|_, object| object.hubuum_class_id != class.id);
+        state.class_relations.retain(|_, relation| {
+            relation.from_hubuum_class_id != class.id && relation.to_hubuum_class_id != class.id
+        });
         state.record_class_event(class.id, Action::Deleted, context);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ClassRelationStore for MemoryStorage {
+    async fn prepare_class_relation(
+        &self,
+        command: NewHubuumClassRelation,
+    ) -> Result<PreparedClassRelation, StorageError> {
+        let command = command.normalized().map_err(StorageError::from)?;
+        let state = self.state.read().await;
+        let from_class = state
+            .classes
+            .get(&command.from_hubuum_class_id)
+            .cloned()
+            .ok_or_else(|| StorageError::not_found("From class was not found"))?;
+        let to_class = state
+            .classes
+            .get(&command.to_hubuum_class_id)
+            .cloned()
+            .ok_or_else(|| StorageError::not_found("To class was not found"))?;
+        PreparedClassRelation::new(command, from_class, to_class).map_err(StorageError::from)
+    }
+
+    async fn resolve_class_relation(
+        &self,
+        id: HubuumClassRelationID,
+    ) -> Result<ResolvedClassRelationTarget, StorageError> {
+        let state = self.state.read().await;
+        let relation = state.class_relation(id)?.clone();
+        let from_class = state
+            .classes
+            .get(&relation.from_hubuum_class_id)
+            .cloned()
+            .ok_or_else(|| StorageError::not_found("From class was not found"))?;
+        let to_class = state
+            .classes
+            .get(&relation.to_hubuum_class_id)
+            .cloned()
+            .ok_or_else(|| StorageError::not_found("To class was not found"))?;
+        ResolvedClassRelationTarget::new(relation, from_class, to_class).map_err(StorageError::from)
+    }
+
+    async fn create_class_relation(
+        &self,
+        prepared: &PreparedClassRelation,
+        context: &EventContext,
+    ) -> Result<ResolvedClassRelationTarget, StorageError> {
+        let mut state = self.state.write().await;
+        state.prepared_class_relation_endpoints(prepared)?;
+        let command = prepared.command();
+        if state
+            .class_relation_pair_in_use(command.from_hubuum_class_id, command.to_hubuum_class_id)
+        {
+            return Err(StorageError::conflict(format!(
+                "A relation between classes {} and {} already exists",
+                command.from_hubuum_class_id, command.to_hubuum_class_id
+            )));
+        }
+
+        let id = state.next_class_relation_id;
+        state.next_class_relation_id += 1;
+        let now = Utc::now().naive_utc();
+        let relation = HubuumClassRelation {
+            id,
+            from_hubuum_class_id: command.from_hubuum_class_id,
+            to_hubuum_class_id: command.to_hubuum_class_id,
+            forward_template_alias: command.forward_template_alias.clone(),
+            reverse_template_alias: command.reverse_template_alias.clone(),
+            created_at: now,
+            updated_at: now,
+            from_max_relations: command.from_max_relations,
+            to_max_relations: command.to_max_relations,
+            revision: ResourceRevision::INITIAL,
+        };
+        state.class_relations.insert(id, relation.clone());
+        state.record_class_relation_event(id, Action::Created, context);
+        ResolvedClassRelationTarget::new(
+            relation,
+            prepared.from_class().clone(),
+            prepared.to_class().clone(),
+        )
+        .map_err(StorageError::from)
+    }
+
+    async fn delete_class_relation(
+        &self,
+        target: &ResolvedClassRelationTarget,
+        context: &EventContext,
+    ) -> Result<(), StorageError> {
+        let mut state = self.state.write().await;
+        let relation_id = state.class_relation_target(target)?.id;
+        state.class_relations.remove(&relation_id);
+        state.record_class_relation_event(relation_id, Action::Deleted, context);
         Ok(())
     }
 }

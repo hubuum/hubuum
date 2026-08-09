@@ -1,3 +1,4 @@
+mod class_relations;
 mod classes;
 mod collections;
 mod error;
@@ -6,6 +7,7 @@ mod memory;
 mod objects;
 mod postgres;
 
+pub use class_relations::ClassRelationStore;
 pub use classes::ClassStore;
 pub use collections::{CollectionStore, DynStorage, Storage};
 pub use error::StorageError;

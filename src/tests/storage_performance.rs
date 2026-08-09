@@ -18,9 +18,10 @@ use crate::events::EventContext;
 use crate::models::collection::effective_group_on;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    ClassSelector, CollectionID, GroupID, HubuumClassID, HubuumObjectID, NewCollectionWithAssignee,
-    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-    ObjectSelector, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject, UserID,
+    ClassSelector, CollectionID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
+    NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
+    NewHubuumObjectRelation, ObjectSelector, UpdateCollection, UpdateHubuumClass,
+    UpdateHubuumObject, UserID,
 };
 use crate::services::Services;
 use crate::tests::{TestScope, ensure_admin_user};
@@ -279,6 +280,190 @@ async fn class_storage_query_budget_no_op_avoids_writes_and_events() {
         .delete_without_events(&scope.pool)
         .await
         .expect("class cleanup");
+    fixture.cleanup().await.expect("collection fixture cleanup");
+}
+
+#[actix_web::test]
+async fn class_relation_storage_query_budget_point_resolution_is_fixed() {
+    let scope = TestScope::new();
+    let fixture = scope
+        .collection_fixture("query_budget_class_relation_point")
+        .await;
+    let services = Services::postgres(scope.pool.get_ref().clone());
+    let from_class = NewHubuumClass {
+        name: scope.scoped_name("query_budget_class_relation_point_from"),
+        collection_id: fixture.collection.id,
+        json_schema: None,
+        validate_schema: None,
+        description: "class relation point budget from class".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("from class fixture should save");
+    let to_class = NewHubuumClass {
+        name: scope.scoped_name("query_budget_class_relation_point_to"),
+        collection_id: fixture.collection.id,
+        json_schema: None,
+        validate_schema: None,
+        description: "class relation point budget to class".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("to class fixture should save");
+    let relation = NewHubuumClassRelation {
+        from_hubuum_class_id: from_class.id,
+        to_hubuum_class_id: to_class.id,
+        forward_template_alias: None,
+        reverse_template_alias: None,
+        from_max_relations: None,
+        to_max_relations: None,
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("relation fixture should save");
+
+    let (loaded, queries) = capture_queries(
+        services
+            .class_relations()
+            .resolve(HubuumClassRelationID::new(relation.id).expect("valid class relation id")),
+    )
+    .await;
+    assert_eq!(
+        loaded.expect("relation should resolve").relation(),
+        &relation
+    );
+    assert_eq!(queries.total_queries(), 2, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 2);
+    assert_eq!(queries.control_queries(), 0);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(queries.queries_matching("FROM \"hubuumclass_relation\""), 1);
+    assert_eq!(queries.queries_matching("FROM \"hubuumclass\""), 1);
+
+    fixture.cleanup().await.expect("collection fixture cleanup");
+}
+
+#[actix_web::test]
+async fn class_relation_storage_query_budget_create_with_event_is_fixed() {
+    let scope = TestScope::new();
+    let fixture = scope
+        .collection_fixture("query_budget_class_relation_create")
+        .await;
+    let services = Services::postgres(scope.pool.get_ref().clone());
+    let from_class = NewHubuumClass {
+        name: scope.scoped_name("query_budget_class_relation_create_from"),
+        collection_id: fixture.collection.id,
+        json_schema: None,
+        validate_schema: None,
+        description: "class relation create budget from class".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("from class fixture should save");
+    let to_class = NewHubuumClass {
+        name: scope.scoped_name("query_budget_class_relation_create_to"),
+        collection_id: fixture.collection.id,
+        json_schema: None,
+        validate_schema: None,
+        description: "class relation create budget to class".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("to class fixture should save");
+    let prepared = services
+        .class_relations()
+        .prepare_create(NewHubuumClassRelation {
+            from_hubuum_class_id: from_class.id,
+            to_hubuum_class_id: to_class.id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
+        })
+        .await
+        .expect("relation should prepare");
+
+    let (created, queries) = capture_queries(
+        services
+            .class_relations()
+            .create(&prepared, &EventContext::system()),
+    )
+    .await;
+    created.expect("relation should create with an event");
+    assert_eq!(queries.total_queries(), 6, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 4);
+    assert_eq!(queries.control_queries(), 2);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(
+        queries.queries_matching("INSERT INTO \"hubuumclass_relation\""),
+        1
+    );
+    assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 1);
+
+    fixture.cleanup().await.expect("collection fixture cleanup");
+}
+
+#[actix_web::test]
+async fn class_relation_storage_query_budget_delete_with_event_is_fixed() {
+    let scope = TestScope::new();
+    let fixture = scope
+        .collection_fixture("query_budget_class_relation_delete")
+        .await;
+    let services = Services::postgres(scope.pool.get_ref().clone());
+    let from_class = NewHubuumClass {
+        name: scope.scoped_name("query_budget_class_relation_delete_from"),
+        collection_id: fixture.collection.id,
+        json_schema: None,
+        validate_schema: None,
+        description: "class relation delete budget from class".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("from class fixture should save");
+    let to_class = NewHubuumClass {
+        name: scope.scoped_name("query_budget_class_relation_delete_to"),
+        collection_id: fixture.collection.id,
+        json_schema: None,
+        validate_schema: None,
+        description: "class relation delete budget to class".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("to class fixture should save");
+    let prepared = services
+        .class_relations()
+        .prepare_create(NewHubuumClassRelation {
+            from_hubuum_class_id: from_class.id,
+            to_hubuum_class_id: to_class.id,
+            forward_template_alias: None,
+            reverse_template_alias: None,
+            from_max_relations: None,
+            to_max_relations: None,
+        })
+        .await
+        .expect("relation should prepare");
+    let target = services
+        .class_relations()
+        .create(&prepared, &EventContext::system())
+        .await
+        .expect("relation should create");
+
+    let (deleted, queries) = capture_queries(
+        services
+            .class_relations()
+            .delete(&target, &EventContext::system()),
+    )
+    .await;
+    deleted.expect("relation should delete with an event");
+    assert_eq!(queries.total_queries(), 7, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 5);
+    assert_eq!(queries.control_queries(), 2);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(
+        queries.queries_matching("DELETE FROM \"hubuumclass_relation\""),
+        1
+    );
+    assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 1);
+
     fixture.cleanup().await.expect("collection fixture cleanup");
 }
 

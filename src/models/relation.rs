@@ -14,7 +14,8 @@ use utoipa::openapi::{KnownFormat, ObjectBuilder, RefOr, SchemaFormat};
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::{
-    HubuumClassID, HubuumClassWithPath, HubuumObjectID, HubuumObjectWithPath, ResourceRevision,
+    HubuumClass, HubuumClassID, HubuumClassWithPath, HubuumObjectID, HubuumObjectWithPath,
+    ResourceRevision,
 };
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::traits::SelfAccessors;
@@ -189,6 +190,125 @@ impl NewHubuumClassRelationFromClass {
             from_max_relations: self.from_max_relations,
             to_max_relations: self.to_max_relations,
         }
+    }
+}
+
+fn class_relation_authorization_resource(
+    relation_id: i32,
+    from_class: &HubuumClass,
+    to_class: &HubuumClass,
+) -> ResourceRef {
+    ResourceRef {
+        kind: ResourceKind::ClassRelation,
+        id: relation_id,
+        attrs: ResourceAttrs {
+            collection_id: (from_class.collection_id == to_class.collection_id)
+                .then_some(from_class.collection_id),
+            from_collection_id: Some(from_class.collection_id),
+            to_collection_id: Some(to_class.collection_id),
+            from_class_id: Some(from_class.id),
+            to_class_id: Some(to_class.id),
+            ..Default::default()
+        },
+    }
+}
+
+/// A normalized prospective class relation together with both endpoint classes.
+///
+/// Carrying the endpoints keeps authorization independent of the persistence
+/// adapter and lets creation recheck the exact aggregate that was authorized.
+#[derive(Clone, Debug)]
+pub struct PreparedClassRelation {
+    command: NewHubuumClassRelation,
+    from_class: HubuumClass,
+    to_class: HubuumClass,
+}
+
+impl PreparedClassRelation {
+    pub(crate) fn new(
+        command: NewHubuumClassRelation,
+        from_class: HubuumClass,
+        to_class: HubuumClass,
+    ) -> Result<Self, ApiError> {
+        let command = command.normalized()?;
+        if command.from_hubuum_class_id != from_class.id
+            || command.to_hubuum_class_id != to_class.id
+        {
+            return Err(ApiError::InternalServerError(
+                "prepared class relation endpoints do not match its normalized command".to_string(),
+            ));
+        }
+        Ok(Self {
+            command,
+            from_class,
+            to_class,
+        })
+    }
+
+    pub(crate) fn command(&self) -> &NewHubuumClassRelation {
+        &self.command
+    }
+
+    pub fn from_class(&self) -> &HubuumClass {
+        &self.from_class
+    }
+
+    pub fn to_class(&self) -> &HubuumClass {
+        &self.to_class
+    }
+
+    pub(crate) fn authorization_resource(&self) -> ResourceRef {
+        class_relation_authorization_resource(0, &self.from_class, &self.to_class)
+    }
+}
+
+/// A persisted class relation resolved with both endpoint classes.
+#[derive(Clone, Debug)]
+pub struct ResolvedClassRelationTarget {
+    relation: HubuumClassRelation,
+    from_class: HubuumClass,
+    to_class: HubuumClass,
+}
+
+impl ResolvedClassRelationTarget {
+    pub(crate) fn new(
+        relation: HubuumClassRelation,
+        from_class: HubuumClass,
+        to_class: HubuumClass,
+    ) -> Result<Self, ApiError> {
+        if relation.from_hubuum_class_id != from_class.id
+            || relation.to_hubuum_class_id != to_class.id
+        {
+            return Err(ApiError::InternalServerError(format!(
+                "class relation {} endpoints do not match the resolved classes",
+                relation.id
+            )));
+        }
+        Ok(Self {
+            relation,
+            from_class,
+            to_class,
+        })
+    }
+
+    pub fn relation(&self) -> &HubuumClassRelation {
+        &self.relation
+    }
+
+    pub fn from_class(&self) -> &HubuumClass {
+        &self.from_class
+    }
+
+    pub fn to_class(&self) -> &HubuumClass {
+        &self.to_class
+    }
+
+    pub fn contains_class(&self, class_id: HubuumClassID) -> bool {
+        self.from_class.id == class_id.id() || self.to_class.id == class_id.id()
+    }
+
+    pub(crate) fn authorization_resource(&self) -> ResourceRef {
+        class_relation_authorization_resource(self.relation.id, &self.from_class, &self.to_class)
     }
 }
 
