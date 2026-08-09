@@ -14,12 +14,13 @@ use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::{QueryParamsExt, parse_query_parameter};
 use crate::models::{
     HubuumClassRelation, HubuumClassRelationID, HubuumObjectRelation, HubuumObjectRelationID,
-    NewHubuumClassRelation, NewHubuumObjectRelation, Permissions,
+    NewHubuumClassRelation, NewHubuumObjectRelation, ObjectRelationCreateSelector,
+    ObjectRelationSelector, Permissions,
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
-use crate::permissions::{AppContext, AuthzTarget, PrincipalRef, authorize_resources};
-use crate::traits::{CanDelete, CanSave, SelfAccessors};
+use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
+use crate::traits::SelfAccessors;
 
 use actix_web::delete;
 use tracing::debug;
@@ -371,8 +372,11 @@ async fn get_object_relation(
         relation_id = ?relation_id,
     );
 
-    let relation = relation_id.instance(&pool).await?;
-    let resource = relation.to_resource_ref(&pool).await?;
+    let target = pool
+        .object_relation_service()
+        .resolve(ObjectRelationSelector::by_id(relation_id))
+        .await?;
+    let resource = target.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -383,7 +387,7 @@ async fn get_object_relation(
     )
     .await?;
 
-    ApiResponse::ok_revisioned(relation)
+    ApiResponse::ok_revisioned(*target.relation())
 }
 
 #[utoipa::path(
@@ -418,7 +422,11 @@ async fn create_object_relation(
         to_object = relation.to_hubuum_object_id,
     );
 
-    let resource = relation.to_resource_ref(&pool).await?;
+    let prepared = pool
+        .object_relation_service()
+        .prepare_create(ObjectRelationCreateSelector::explicit(relation))
+        .await?;
+    let resource = prepared.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -430,9 +438,12 @@ async fn create_object_relation(
     .await?;
 
     let event_context = requestor.event_context(&req);
-    let relation = relation.save(&pool, &event_context).await?;
+    let target = pool
+        .object_relation_service()
+        .create(&prepared, &event_context)
+        .await?;
 
-    ApiResponse::revisioned(relation, StatusCode::CREATED)
+    ApiResponse::revisioned(*target.relation(), StatusCode::CREATED)
 }
 
 #[utoipa::path(
@@ -465,8 +476,11 @@ async fn delete_object_relation(
         relation_id = ?relation_id,
     );
 
-    let relation = relation_id.instance(&pool).await?;
-    let resource = relation.to_resource_ref(&pool).await?;
+    let target = pool
+        .object_relation_service()
+        .resolve(ObjectRelationSelector::by_id(relation_id))
+        .await?;
+    let resource = target.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -477,11 +491,15 @@ async fn delete_object_relation(
     )
     .await?;
 
-    let etag = relation.entity_tag()?;
+    let etag = target.relation().entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(precondition, relation_id.delete(&pool, &event_context))
-        .await?;
+    with_revision_precondition_scope(
+        precondition,
+        pool.object_relation_service()
+            .delete(&target, &event_context),
+    )
+    .await?;
 
     Ok(ApiResponse::no_content_with_etag(etag))
 }

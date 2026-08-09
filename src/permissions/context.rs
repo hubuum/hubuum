@@ -9,7 +9,8 @@ use crate::config::get_config;
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::services::{
-    ClassRelationService, ClassService, CollectionService, ObjectService, Services,
+    ClassRelationService, ClassService, CollectionService, ObjectRelationService, ObjectService,
+    Services,
 };
 use crate::traits::BackendContext;
 
@@ -62,6 +63,10 @@ impl AppContext {
 
     pub fn object_service(&self) -> &ObjectService {
         self.services.objects()
+    }
+
+    pub fn object_relation_service(&self) -> &ObjectRelationService {
+        self.services.object_relations()
     }
 }
 

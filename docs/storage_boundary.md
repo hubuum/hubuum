@@ -6,7 +6,7 @@ is a compile-time dependency boundary and faster contract tests, not generic
 multi-database support.
 
 The first migrated capabilities cover the core collection, class, object, and
-class-relation lifecycles. Collections include:
+relation lifecycles. Collections include:
 
 - point reads;
 - create with an initial assignee grant and lifecycle event;
@@ -40,37 +40,51 @@ Class relations include:
 - directional alias and cardinality-limit preservation; and
 - class and collection delete cascades.
 
+Object relations include:
+
+- explicit point resolution by relation ID or a class/object endpoint pair;
+- endpoint and direct class-relation preparation before authorization;
+- normalized creation with duplicate and same-class rejection;
+- directional cardinality enforcement owned by the storage implementation;
+- create and delete with atomic lifecycle events; and
+- object, class, collection, and class-relation delete cascades.
+
 ## Dependency direction
 
 ```text
-collection/class/object/class-relation HTTP handlers
-                         |
-                         v
+collection/class/object/relation HTTP handlers
+                       |
+                       v
  CollectionService / ClassService / ObjectService
-               / ClassRelationService
-                         |
-                         v
+       / ClassRelationService / ObjectRelationService
+                       |
+                       v
  CollectionStore / ClassStore / ObjectStore
-               / ClassRelationStore
-                    /       \
-                   v         v
-             PostgreSQL    memory
-              adapter      adapter
-                   |
-                   v
-          Diesel transactions and queries
+       / ClassRelationStore / ObjectRelationStore
+                  /       \
+                 v         v
+           PostgreSQL    memory
+            adapter      adapter
+                 |
+                 v
+        Diesel transactions and queries
 ```
 
 `AppContext` constructs `Services` with `PostgresStorage` in production. Core
-collection, class, object, and class-relation point/lifecycle handlers call
-their services; they do not choose a Diesel query or transaction helper for
-migrated operations. Permission checks remain at the handler boundary.
+collection, class, object, and relation point/lifecycle handlers call their
+services; they do not choose a Diesel query or transaction helper for migrated
+operations. Permission checks remain at the handler boundary.
 
 Class-relation preparation and resolution return aggregates containing both
 endpoint classes. Handlers build permission resources from those aggregates,
 so authorization does not perform hidden PostgreSQL lookups. Transactional
 writes lock and recheck the same endpoint snapshots before inserting or
 deleting a relation.
+
+Object-relation preparation and resolution similarly carry both objects and
+the resolved class relation. The PostgreSQL adapter keeps cardinality
+serialization in the database trigger, where it locks only bounded endpoints;
+the service boundary does not introduce broader application-side locking.
 
 ## Responsibility split
 
@@ -88,19 +102,19 @@ and transaction implementation. `PostgresStorage` delegates to these existing
 operations without changing their query shape.
 
 `MemoryStorage` is compiled for tests and implements the logical collection,
-class, object, and class-relation contracts. It models hierarchy, selector
-resolution, endpoint preparation, schema validation, bounded JSON Patch
-behavior, revisions, no-op updates, delete constraints, cascades, and lifecycle
-event occurrence. It does not claim PostgreSQL locking, trigger,
-computed-field materialization, permission-row, or temporal-history
-equivalence.
+class, object, class-relation, and object-relation contracts. It models
+hierarchy, selector resolution, endpoint preparation, schema validation,
+bounded JSON Patch behavior, revisions, no-op updates, relation cardinality,
+delete constraints, cascades, and lifecycle event occurrence. It does not
+claim PostgreSQL locking, trigger, computed-field materialization,
+permission-row, or temporal-history equivalence.
 
 ## Contract and performance gates
 
 The shared contract suite runs each migrated collection, class, object, and
-class-relation behavior against both PostgreSQL and memory. Each test focuses
-on one behavior so backend differences cannot be hidden inside a large
-scenario.
+class-relation, and object-relation behavior against both PostgreSQL and
+memory. Each test focuses on one behavior so backend differences cannot be
+hidden inside a large scenario.
 
 The PostgreSQL query-capture tests exercise both services and retain exact
 point-read and mutation budgets. The opt-in PostgreSQL Criterion benchmark also
@@ -110,12 +124,11 @@ application-side pagination.
 
 ## Current migration boundary
 
-This is an incremental migration. Collection, class, object, and class-relation
-list/search, computed-field enrichment, permission management, object-relation
-lifecycles, graph traversal, history, and unrelated aggregates still use
-`BackendContext` and the existing model/database traits. Existing direct
-persistence APIs also remain for fixtures, imports, restore paths, and
-unmigrated callers.
+This is an incremental migration. Collection, class, object, and relation
+list/search, computed-field enrichment, permission management, graph traversal,
+history, and unrelated aggregates still use `BackendContext` and the existing
+model/database traits. Existing direct persistence APIs also remain for
+fixtures, imports, restore paths, and unmigrated callers.
 
 When expanding the boundary:
 

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use crate::events::EventContext;
 use crate::models::{Collection, CollectionID, NewCollectionWithAssignee, UpdateCollection};
 
-use super::{ClassRelationStore, ClassStore, ObjectStore, StorageError};
+use super::{ClassRelationStore, ClassStore, ObjectRelationStore, ObjectStore, StorageError};
 
 /// Persistence capability for the core collection lifecycle.
 ///
@@ -50,9 +50,15 @@ pub trait CollectionStore: Send + Sync {
 
 /// Umbrella storage boundary. New aggregate capabilities can be added here as
 /// vertical slices migrate without exposing a database pool to services.
-pub trait Storage: CollectionStore + ClassStore + ObjectStore + ClassRelationStore {}
+pub trait Storage:
+    CollectionStore + ClassStore + ObjectStore + ClassRelationStore + ObjectRelationStore
+{
+}
 
-impl<T> Storage for T where T: CollectionStore + ClassStore + ObjectStore + ClassRelationStore {}
+impl<T> Storage for T where
+    T: CollectionStore + ClassStore + ObjectStore + ClassRelationStore + ObjectRelationStore
+{
+}
 
 #[derive(Clone)]
 pub struct DynStorage {
