@@ -33,6 +33,7 @@ use crate::models::{
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID, RestoreJobRecord,
     RestoreJobStatus, RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
 };
+use crate::traits::{BackendContext, backend_pool};
 
 static RESTORE_COORDINATOR: Once = Once::new();
 static ACTIVE_MAINTENANCE_WORK: AtomicUsize = AtomicUsize::new(0);
@@ -627,10 +628,11 @@ fn validate_required_seed_rows(document: &BackupDocument) -> Result<(), ApiError
 }
 
 pub async fn stage_restore(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     settings: &RestoreSettings,
     request: RestoreStageRequest,
 ) -> Result<RestoreStageResponse, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let (initiator, document_bytes) = request.into_parts();
     if document_bytes.len() > settings.max_upload_bytes() {
         return Err(ApiError::PayloadTooLarge(format!(
@@ -697,10 +699,11 @@ pub async fn load_restore_job(
 }
 
 pub async fn restore_status(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     job_id: RestoreJobID,
     capability: &str,
 ) -> Result<RestoreStageResponse, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let job = match load_restore_status_job_db(pool, job_id.id()).await {
         Ok(job) => Some(job),
         Err(ApiError::NotFound(_)) => None,
@@ -791,10 +794,11 @@ fn restore_error_for_storage(error: &ApiError) -> String {
 }
 
 pub async fn confirm_restore(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     job_id: RestoreJobID,
     confirmation: &RestoreConfirmRequest,
 ) -> Result<RestoreStageResponse, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let job = match load_restore_job(pool, job_id).await {
         Ok(job) => Some(job),
         Err(ApiError::NotFound(_)) => None,
@@ -1031,7 +1035,11 @@ async fn reconcile_interrupted_restore_with_heartbeat(
     }
 }
 
-pub fn ensure_restore_coordinator_running(pool: DbPool) {
+pub fn ensure_restore_coordinator_running<C>(backend: C)
+where
+    C: BackendContext,
+{
+    let pool = backend_pool(&backend).clone();
     RESTORE_COORDINATOR.call_once(move || {
         spawn_background_worker("restore-coordinator", move |shutdown| {
             let system = actix_rt::System::new();
@@ -1089,7 +1097,10 @@ pub fn ensure_restore_coordinator_running(pool: DbPool) {
     });
 }
 
-pub(crate) async fn current_maintenance_state(pool: &DbPool) -> Result<MaintenanceState, ApiError> {
+pub(crate) async fn current_maintenance_state(
+    pool: &impl crate::traits::BackendContext,
+) -> Result<MaintenanceState, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     maintenance_state_db(pool).await
 }
 
@@ -1100,9 +1111,10 @@ pub async fn maintenance_state(pool: &DbPool) -> Result<String, ApiError> {
 }
 
 pub async fn identity_scope_name(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     identity_scope_id: i32,
 ) -> Result<String, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     identity_scope_name_by_id(pool, identity_scope_id).await
 }
 

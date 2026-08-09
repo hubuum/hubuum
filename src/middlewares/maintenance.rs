@@ -4,10 +4,11 @@ use actix_web::middleware::Next;
 use actix_web::web::Data;
 use actix_web::{Error, ResponseError};
 
+use crate::backend::{DbCallSite, with_db_call_site};
 use crate::config::DEFAULT_METRICS_PATH;
 use crate::config::running::RunningConfig;
-use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
+use crate::permissions::AppContext;
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
 
 fn allowed_during_maintenance(path: &str, metrics_path: Option<&str>) -> bool {
@@ -37,12 +38,10 @@ pub async fn reject_during_maintenance(
             // cannot wait on itself. Its transactional state transition and
             // advisory lock serialize concurrent confirmations.
             let _activity = (!initiates_restore(req.path())).then(MaintenanceActivityGuard::begin);
-            let pool = req.app_data::<Data<DbPool>>().cloned().ok_or_else(|| {
-                ApiError::InternalServerError("Database pool is unavailable".to_string())
-            })?;
+            let backend = AppContext::from_http_request(req.request())?;
             let state = with_db_call_site(
                 DbCallSite::RequestMaintenance,
-                current_maintenance_state(&pool),
+                current_maintenance_state(&backend),
             )
             .await?;
             if !state.is_normal() {

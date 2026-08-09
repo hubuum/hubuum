@@ -1,5 +1,5 @@
 use crate::db::prelude::*;
-use crate::db::{DbPool, with_connection};
+use crate::db::with_connection;
 use crate::errors::ApiError;
 use crate::events::PrincipalNames;
 use crate::models::search::QueryOptions;
@@ -15,9 +15,10 @@ pub enum HistoryCollectionFilter<'a> {
 /// Batch-resolve principal ids for provenance responses (anonymized users keep
 /// their tombstoned principal name; ids with no matching principal are absent).
 pub(crate) async fn resolve_principal_names(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     mut principal_ids: Vec<i32>,
 ) -> Result<PrincipalNames, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::principals::dsl::{id, name, principals};
     principal_ids.sort_unstable();
     principal_ids.dedup();
@@ -45,10 +46,11 @@ macro_rules! history_db_fns {
     ) => {
         pub async fn $paginate_fn(
             entity_id: i32,
-            pool: &$crate::db::DbPool,
+            pool: &impl $crate::traits::BackendContext,
             query_options: &$crate::models::search::QueryOptions,
             collection_filter: $crate::db::traits::history::HistoryCollectionFilter<'_>,
         ) -> Result<(Vec<$ty>, i64), $crate::errors::ApiError> {
+            let pool = $crate::traits::backend_pool(pool);
             use $crate::db::prelude::*;
             use $($schema)::+::dsl::*;
             let total = $crate::pagination::exact_count_or_skipped(query_options, async || {
@@ -109,8 +111,9 @@ macro_rules! history_db_fns {
         pub async fn $as_of_fn(
             entity_id: i32,
             at: chrono::DateTime<chrono::Utc>,
-            pool: &$crate::db::DbPool,
+            pool: &impl $crate::traits::BackendContext,
         ) -> Result<Option<$ty>, $crate::errors::ApiError> {
+            let pool = $crate::traits::backend_pool(pool);
             use $crate::db::prelude::*;
             use $($schema)::+::dsl::*;
             $crate::db::with_connection(pool, async |conn| {
@@ -164,10 +167,11 @@ history_db_fns!(
 pub async fn object_history_paginated_with_total_count(
     object_id: i32,
     class_id: i32,
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     query_options: &QueryOptions,
     collection_filter: HistoryCollectionFilter<'_>,
 ) -> Result<(Vec<crate::models::HubuumObjectHistory>, i64), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::hubuumobject_history::dsl as history;
 
     let total = crate::pagination::exact_count_or_skipped(query_options, async || {
@@ -231,8 +235,9 @@ pub async fn object_as_of(
     object_id: i32,
     class_id: i32,
     at: DateTime<Utc>,
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
 ) -> Result<Option<crate::models::HubuumObjectHistory>, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::hubuumobject_history::dsl as history;
 
     with_connection(pool, async |conn| {

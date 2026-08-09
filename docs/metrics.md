@@ -32,6 +32,7 @@ Use these metrics to identify a target:
 
 - `hubuum_build_info{version,git_sha}`
 - `hubuum_runtime_info{role}`
+- `hubuum_storage_backend_info{backend,contract_version}`
 - `hubuum_process_start_time_seconds`
 
 Check the target mix before interpreting process-local worker metrics:
@@ -201,6 +202,9 @@ max by (template_id, template_name) (
 | `hubuum_db_connection_acquire_failures_total` | `caller` | Pool connection acquisition failures |
 | `hubuum_db_operation_duration_seconds` | `caller`, `operation`, `result` | `with_connection` and `with_transaction` helper duration |
 | `hubuum_db_operation_errors_total` | `caller`, `operation`, `result` | Database helper failures by broad public error class |
+| `hubuum_storage_backend_info` | `backend`, `contract_version` | Complete storage backend selected for the process |
+| `hubuum_storage_operation_duration_seconds` | `backend`, `capability`, `operation`, `result` | Backend-neutral lifecycle storage duration |
+| `hubuum_storage_operation_errors_total` | `backend`, `capability`, `operation`, `result` | Backend-neutral lifecycle storage failures |
 | `hubuum_metrics_refresh_duration_seconds` | `source` | Duration of the latest refresh attempt |
 | `hubuum_metrics_refresh_last_success_timestamp_seconds` | `source` | Unix timestamp of the latest successful refresh |
 | `hubuum_metrics_refresh_failures_total` | `source` | Best-effort refresh failures |
@@ -213,6 +217,14 @@ The bounded database `caller` values are `event_delivery`, `event_fanout`,
 `event_retention`, `http_request`, `metrics_refresh`, `readiness`,
 `request_maintenance`, `restore_coordinator`, `task_lease`, `task_worker`,
 `token_retention`, and `unattributed`.
+
+Storage `capability`, `operation`, and `result` values come from closed Rust
+enums or fixed call sites. Expected domain failures are included in
+`hubuum_storage_operation_errors_total`; use the `result` label to distinguish
+them from `database`, `unavailable`, and `internal` backend failures. Storage
+metrics describe logical use cases, while `hubuum_db_*` metrics describe the
+PostgreSQL implementation. Do not sum the two as though they were the same
+operation count.
 
 The standard unprefixed `process_*` families are available on Linux, macOS, and
 Windows. The names intentionally match the Prometheus ecosystem so existing

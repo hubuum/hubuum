@@ -17,14 +17,15 @@ pub trait UserPermissions: AuthzSubject {
     /// ### Returns
     ///
     /// * Nothing if the subject has the required permissions, or an ApiError::Forbidden if they do not.
-    async fn can<P, N, I>(
+    async fn can<C, P, N, I>(
         &self,
-        pool: &DbPool,
+        backend: &C,
         permissions: P,
         collections: I,
         scopes: Option<&TokenScope>,
     ) -> Result<(), ApiError>
     where
+        C: crate::traits::BackendContext + ?Sized,
         P: IntoIterator<Item = Permissions>,
         I: IntoIterator<Item = N>,
         N: CollectionAccessors,
@@ -35,6 +36,7 @@ pub trait UserPermissions: AuthzSubject {
 
         let requested: Vec<Permissions> = permissions.into_iter().collect();
         let principal_id = self.principal_id();
+        let pool = crate::traits::backend_pool(backend);
 
         // Fail-closed scope pre-filter, before the admin bypass.
         if !scope_allows(scopes, &requested) {

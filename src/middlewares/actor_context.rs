@@ -1,14 +1,14 @@
 use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::middleware::Next;
-use actix_web::web::Data;
 use actix_web::{Error, HttpMessage};
 
-use crate::db::traits::Status;
-use crate::db::{DbPool, with_mutation_provenance_scope};
+use crate::backend::capabilities::Status;
+use crate::backend::with_mutation_provenance_scope;
 use crate::events::MutationProvenance;
 use crate::middlewares::tracing::record_principal_on_current_span;
 use crate::models::token::{PrincipalToken, Token};
+use crate::permissions::AppContext;
 
 /// Outcome of resolving the bearer token once per request. Stored in request
 /// extensions and consumed by the auth extractors so they never re-query.
@@ -40,11 +40,11 @@ async fn resolve_auth(req: &ServiceRequest) -> ResolvedAuth {
         Some(token) => token,
         None => return ResolvedAuth::Missing,
     };
-    let pool = match req.app_data::<Data<DbPool>>() {
-        Some(pool) => pool.clone(),
-        None => return ResolvedAuth::Invalid,
+    let backend = match AppContext::from_http_request(req.request()) {
+        Ok(backend) => backend,
+        Err(_) => return ResolvedAuth::Invalid,
     };
-    match token.is_valid(&pool).await {
+    match token.is_valid(&backend).await {
         Ok(token_meta) => ResolvedAuth::Authenticated { token, token_meta },
         Err(_) => ResolvedAuth::Invalid,
     }

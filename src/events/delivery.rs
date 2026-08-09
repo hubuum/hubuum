@@ -29,6 +29,7 @@ use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
+use crate::traits::{BackendContext, backend_pool};
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();
 static EVENT_DELIVERY_LISTENER: Once = Once::new();
@@ -344,7 +345,11 @@ fn spawn_event_delivery_worker_loop(
     );
 }
 
-pub fn ensure_event_delivery_worker_running(pool: DbPool) {
+pub fn ensure_event_delivery_worker_running<C>(backend: C)
+where
+    C: BackendContext,
+{
+    let pool = backend_pool(&backend).clone();
     let worker_count = configured_event_delivery_worker_count();
     if worker_count == 0 {
         return;
@@ -387,8 +392,11 @@ pub fn ensure_event_delivery_worker_running(pool: DbPool) {
     });
 }
 
-pub fn kick_event_delivery_worker(pool: DbPool) {
-    ensure_event_delivery_worker_running(pool);
+pub fn kick_event_delivery_worker<C>(backend: C)
+where
+    C: BackendContext,
+{
+    ensure_event_delivery_worker_running(backend);
     EVENT_DELIVERY_NOTIFICATIONS_SENT.fetch_add(1, Ordering::Relaxed);
     metrics::event_worker_wakeup("delivery", "notifications_sent");
     get_event_delivery_notify().notify_one();

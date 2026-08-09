@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use opentelemetry::KeyValue;
 
-use crate::db::DbPool;
+use crate::db::traits::meta::load_database_pool_state;
 
 use super::{Metrics, current};
 
@@ -62,23 +62,22 @@ pub(crate) fn db_operation_finished(
     }
 }
 
-pub(super) fn refresh_pool_gauges(metrics: &Metrics, pool: &DbPool) {
-    let state = pool.state();
+pub(super) fn refresh_pool_gauges(metrics: &Metrics, backend: &impl crate::traits::BackendContext) {
+    let state = load_database_pool_state(backend);
     metrics.db_pool_connections.record(
-        u64::from(pool.config().max_size),
+        u64::from(state.max_connections),
         &[KeyValue::new("state", "configured")],
     );
     metrics.db_pool_connections.record(
-        u64::from(state.connections),
+        u64::from(state.total_connections),
         &[KeyValue::new("state", "open")],
     );
     metrics.db_pool_connections.record(
         u64::from(state.idle_connections),
         &[KeyValue::new("state", "idle")],
     );
-    let checked_out = state.connections.saturating_sub(state.idle_connections);
     metrics.db_pool_connections.record(
-        u64::from(checked_out),
+        u64::from(state.in_use_connections),
         &[KeyValue::new("state", "checked_out")],
     );
 }

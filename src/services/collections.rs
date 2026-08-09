@@ -1,7 +1,7 @@
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{Collection, CollectionID, NewCollectionWithAssignee, UpdateCollection};
-use crate::storage::DynStorage;
+use crate::storage::DynLifecycleStorage;
 
 /// Application-facing collection use cases.
 ///
@@ -10,11 +10,11 @@ use crate::storage::DynStorage;
 /// while persistence invariants stay behind the storage capability.
 #[derive(Clone)]
 pub struct CollectionService {
-    storage: DynStorage,
+    storage: DynLifecycleStorage,
 }
 
 impl CollectionService {
-    pub(crate) fn new(storage: DynStorage) -> Self {
+    pub(crate) fn new(storage: DynLifecycleStorage) -> Self {
         Self { storage }
     }
 
@@ -101,18 +101,14 @@ mod tests {
         Collection, CollectionID, Group, GroupID, NewCollectionWithAssignee, NewGroup,
         UpdateCollection,
     };
-    use crate::services::{
-        Services, storage_contract_pool, storage_contract_postgres_permit, storage_contract_prefix,
+    use crate::services::Services;
+    use crate::storage::{DynLifecycleStorage, MemoryStorageModel, PostgresStorage};
+    use crate::tests::storage_contract::{
+        LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
+        postgres_permit as storage_contract_postgres_permit, prefix as storage_contract_prefix,
     };
-    use crate::storage::{DynStorage, MemoryStorage, PostgresStorage};
 
     use super::CollectionService;
-
-    #[derive(Clone, Copy, Debug)]
-    enum ContractBackend {
-        Memory,
-        Postgres,
-    }
 
     struct ContractHarness {
         service: CollectionService,
@@ -123,18 +119,20 @@ mod tests {
     }
 
     impl ContractHarness {
-        async fn new(backend: ContractBackend, label: &str) -> Self {
+        async fn new(backend: ContractImplementation, label: &str) -> Self {
             match backend {
-                ContractBackend::Memory => Self {
-                    service: Services::from_storage(DynStorage::new(MemoryStorage::new()))
-                        .collections()
-                        .clone(),
+                ContractImplementation::MemoryModel => Self {
+                    service: Services::from_lifecycle_storage(DynLifecycleStorage::new(
+                        MemoryStorageModel::new(),
+                    ))
+                    .collections()
+                    .clone(),
                     group_id: GroupID::new(1).expect("valid memory group id"),
                     prefix: format!("memory_{label}"),
                     postgres_cleanup: None,
                     _postgres_permit: None,
                 },
-                ContractBackend::Postgres => {
+                ContractImplementation::PostgresAdapter => {
                     let permit = storage_contract_postgres_permit().await;
                     let pool = storage_contract_pool();
                     let prefix = storage_contract_prefix(label);
@@ -147,9 +145,9 @@ mod tests {
                     .await
                     .expect("contract owner group should save");
                     Self {
-                        service: Services::from_storage(DynStorage::new(PostgresStorage::new(
-                            pool.get_ref().clone(),
-                        )))
+                        service: Services::from_lifecycle_storage(DynLifecycleStorage::new(
+                            PostgresStorage::new(pool.get_ref().clone()),
+                        ))
                         .collections()
                         .clone(),
                         group_id: GroupID::new(owner_group.id).expect("valid owner group id"),
@@ -191,11 +189,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn collection_contract_create_is_visible_to_point_reads(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "create_read").await;
         let created = harness.create("collection", None).await;
@@ -214,10 +212,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn collection_contract_lists_direct_children(#[case] backend: ContractBackend) {
+    async fn collection_contract_lists_direct_children(#[case] backend: ContractImplementation) {
         let harness = ContractHarness::new(backend, "children").await;
         let parent = harness.create("parent", None).await;
         let child = harness.create("child", Some(id(&parent))).await;
@@ -245,10 +243,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn collection_contract_orders_ancestors_nearest_first(#[case] backend: ContractBackend) {
+    async fn collection_contract_orders_ancestors_nearest_first(
+        #[case] backend: ContractImplementation,
+    ) {
         let harness = ContractHarness::new(backend, "ancestors").await;
         let parent = harness.create("parent", None).await;
         let child = harness.create("child", Some(id(&parent))).await;
@@ -275,11 +275,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn collection_contract_changed_update_advances_revision(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "changed_update").await;
         let collection = harness.create("collection", None).await;
@@ -307,10 +307,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn collection_contract_no_op_update_preserves_revision(#[case] backend: ContractBackend) {
+    async fn collection_contract_no_op_update_preserves_revision(
+        #[case] backend: ContractImplementation,
+    ) {
         let harness = ContractHarness::new(backend, "no_op_update").await;
         let collection = harness.create("collection", None).await;
 
@@ -337,10 +339,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn collection_contract_move_reparents_the_subtree(#[case] backend: ContractBackend) {
+    async fn collection_contract_move_reparents_the_subtree(
+        #[case] backend: ContractImplementation,
+    ) {
         let harness = ContractHarness::new(backend, "move").await;
         let old_parent = harness.create("old_parent", None).await;
         let new_parent = harness.create("new_parent", None).await;
@@ -370,11 +374,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn collection_contract_rejects_deleting_a_parent_with_children(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "delete_parent").await;
         let parent = harness.create("parent", None).await;
@@ -401,10 +405,124 @@ mod tests {
         harness.finish().await;
     }
 
+    #[rstest]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
+    #[actix_web::test]
+    async fn collection_contract_allows_matching_names_under_different_parents(
+        #[case] backend: ContractImplementation,
+    ) {
+        let harness = ContractHarness::new(backend, "scoped_name").await;
+        let first_parent = harness.create("first_parent", None).await;
+        let second_parent = harness.create("second_parent", None).await;
+        let first_child = harness.create("child", Some(id(&first_parent))).await;
+        let second_child = harness.create("child", Some(id(&second_parent))).await;
+
+        assert_eq!(first_child.name, second_child.name);
+
+        for child in [first_child, second_child] {
+            harness
+                .service
+                .delete(id(&child), &EventContext::system())
+                .await
+                .expect("child cleanup");
+        }
+        for parent in [first_parent, second_parent] {
+            harness
+                .service
+                .delete(id(&parent), &EventContext::system())
+                .await
+                .expect("parent cleanup");
+        }
+        harness.finish().await;
+    }
+
+    #[rstest]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
+    #[actix_web::test]
+    async fn collection_contract_rejects_matching_sibling_names(
+        #[case] backend: ContractImplementation,
+    ) {
+        let harness = ContractHarness::new(backend, "sibling_name").await;
+        let parent = harness.create("parent", None).await;
+        let child = harness.create("child", Some(id(&parent))).await;
+
+        assert!(matches!(
+            harness
+                .service
+                .create(
+                    NewCollectionWithAssignee {
+                        name: child.name.clone(),
+                        description: "duplicate sibling".to_string(),
+                        group_id: harness.group_id,
+                        parent_collection_id: Some(id(&parent)),
+                    },
+                    &EventContext::system(),
+                )
+                .await,
+            Err(ApiError::Conflict(_))
+        ));
+
+        harness
+            .service
+            .delete(id(&child), &EventContext::system())
+            .await
+            .expect("child cleanup");
+        harness
+            .service
+            .delete(id(&parent), &EventContext::system())
+            .await
+            .expect("parent cleanup");
+        harness.finish().await;
+    }
+
+    #[rstest]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
+    #[actix_web::test]
+    async fn collection_contract_rejects_move_into_matching_sibling_name(
+        #[case] backend: ContractImplementation,
+    ) {
+        let harness = ContractHarness::new(backend, "move_name").await;
+        let first_parent = harness.create("first_parent", None).await;
+        let second_parent = harness.create("second_parent", None).await;
+        let first_child = harness.create("child", Some(id(&first_parent))).await;
+        let second_child = harness.create("child", Some(id(&second_parent))).await;
+
+        assert!(matches!(
+            harness
+                .service
+                .move_to(
+                    id(&first_child),
+                    id(&second_parent),
+                    &EventContext::system(),
+                )
+                .await,
+            Err(ApiError::Conflict(_))
+        ));
+
+        for child in [first_child, second_child] {
+            harness
+                .service
+                .delete(id(&child), &EventContext::system())
+                .await
+                .expect("child cleanup");
+        }
+        for parent in [first_parent, second_parent] {
+            harness
+                .service
+                .delete(id(&parent), &EventContext::system())
+                .await
+                .expect("parent cleanup");
+        }
+        harness.finish().await;
+    }
+
     #[actix_web::test]
     async fn memory_collection_events_exclude_no_op_updates() {
-        let storage = MemoryStorage::new();
-        let service = Services::from_storage(DynStorage::new(storage.clone()))
+        let storage = MemoryStorageModel::new();
+        let service = Services::from_lifecycle_storage(DynLifecycleStorage::new(storage.clone()))
             .collections()
             .clone();
         let context = EventContext::system();

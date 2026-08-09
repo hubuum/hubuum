@@ -1,3 +1,5 @@
+mod error;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -19,8 +21,10 @@ use crate::models::{
 };
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore, StorageError,
+    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
+    StorageError, StorageIdentity,
 };
+use error::map_memory_error;
 
 const ROOT_COLLECTION_ID: i32 = 1;
 
@@ -114,10 +118,17 @@ impl MemoryState {
             .ok_or_else(|| StorageError::not_found(format!("Collection {} was not found", id.id())))
     }
 
-    fn name_in_use(&self, name: &str, except_id: Option<i32>) -> bool {
-        self.collections
-            .values()
-            .any(|collection| collection.name == name && Some(collection.id) != except_id)
+    fn collection_name_in_use(
+        &self,
+        parent_collection_id: i32,
+        name: &str,
+        except_id: Option<i32>,
+    ) -> bool {
+        self.collections.values().any(|collection| {
+            collection.parent_collection_id == Some(parent_collection_id)
+                && collection.name == name
+                && Some(collection.id) != except_id
+        })
     }
 
     fn class_name_in_use(&self, name: &str, except_id: Option<i32>) -> bool {
@@ -256,7 +267,7 @@ impl MemoryState {
         target: &ResolvedClassRelationTarget,
     ) -> Result<&HubuumClassRelation, StorageError> {
         let relation_id =
-            HubuumClassRelationID::new(target.relation().id).map_err(StorageError::from)?;
+            HubuumClassRelationID::new(target.relation().id).map_err(map_memory_error)?;
         let current = self.class_relation(relation_id)?;
         let from_class = self
             .classes
@@ -299,7 +310,7 @@ impl MemoryState {
             .cloned()
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
         ResolvedClassRelationTarget::new(relation.clone(), from_class, to_class)
-            .map_err(StorageError::from)
+            .map_err(map_memory_error)
     }
 
     fn direct_class_relation(
@@ -381,7 +392,7 @@ impl MemoryState {
             ));
         }
         let class_relation_id = HubuumClassRelationID::new(prepared.command().class_relation_id)
-            .map_err(StorageError::from)?;
+            .map_err(map_memory_error)?;
         let class_relation = self.class_relation(class_relation_id)?;
         if class_relation != prepared.class_relation().relation() {
             return Err(StorageError::not_found(
@@ -396,7 +407,7 @@ impl MemoryState {
         target: &ResolvedObjectRelationTarget,
     ) -> Result<(), StorageError> {
         let relation_id =
-            HubuumObjectRelationID::new(target.relation().id).map_err(StorageError::from)?;
+            HubuumObjectRelationID::new(target.relation().id).map_err(map_memory_error)?;
         let relation = self.object_relation(relation_id)?;
         let command = NewHubuumObjectRelation {
             from_hubuum_object_id: relation.from_hubuum_object_id,
@@ -479,11 +490,11 @@ impl MemoryState {
 
 /// Deterministic collection adapter used by shared storage contract tests.
 #[derive(Clone)]
-pub(crate) struct MemoryStorage {
+pub(crate) struct MemoryStorageModel {
     state: Arc<RwLock<MemoryState>>,
 }
 
-impl MemoryStorage {
+impl MemoryStorageModel {
     pub(crate) fn new() -> Self {
         Self {
             state: Arc::new(RwLock::new(MemoryState::new())),
@@ -511,8 +522,14 @@ impl MemoryStorage {
     }
 }
 
+impl StorageIdentity for MemoryStorageModel {
+    fn storage_name(&self) -> &'static str {
+        "memory_contract_model"
+    }
+}
+
 #[async_trait]
-impl CollectionStore for MemoryStorage {
+impl CollectionStore for MemoryStorageModel {
     async fn get_collection(&self, id: CollectionID) -> Result<Collection, StorageError> {
         self.state.read().await.collection(id).cloned()
     }
@@ -523,12 +540,6 @@ impl CollectionStore for MemoryStorage {
         context: &EventContext,
     ) -> Result<Collection, StorageError> {
         let mut state = self.state.write().await;
-        if state.name_in_use(&command.name, None) {
-            return Err(StorageError::conflict(format!(
-                "A collection named '{}' already exists",
-                command.name
-            )));
-        }
         let parent_id = command
             .parent_collection_id
             .map(CollectionID::id)
@@ -536,6 +547,12 @@ impl CollectionStore for MemoryStorage {
         if !state.collections.contains_key(&parent_id) {
             return Err(StorageError::not_found(format!(
                 "Parent collection {parent_id} was not found"
+            )));
+        }
+        if state.collection_name_in_use(parent_id, &command.name, None) {
+            return Err(StorageError::conflict(format!(
+                "A collection named '{}' already exists under parent {parent_id}",
+                command.name
             )));
         }
 
@@ -567,11 +584,12 @@ impl CollectionStore for MemoryStorage {
         if !changes.has_changes(&current) {
             return Ok(current);
         }
-        if let Some(name) = changes.name.as_deref()
-            && state.name_in_use(name, Some(id.id()))
+        if let (Some(name), Some(parent_id)) =
+            (changes.name.as_deref(), current.parent_collection_id)
+            && state.collection_name_in_use(parent_id, name, Some(id.id()))
         {
             return Err(StorageError::conflict(format!(
-                "A collection named '{name}' already exists"
+                "A collection named '{name}' already exists under the same parent"
             )));
         }
 
@@ -589,7 +607,7 @@ impl CollectionStore for MemoryStorage {
         collection.revision = collection
             .revision
             .checked_advance()
-            .map_err(StorageError::from)?;
+            .map_err(map_memory_error)?;
         let updated = collection.clone();
         state.record_event(id.id(), Action::Updated, context);
         Ok(updated)
@@ -710,6 +728,13 @@ impl CollectionStore for MemoryStorage {
                 .get(&current_id)
                 .and_then(|current| current.parent_collection_id);
         }
+        if state.collection_name_in_use(new_parent_id.id(), &collection.name, Some(id.id())) {
+            return Err(StorageError::conflict(format!(
+                "A collection named '{}' already exists under parent {}",
+                collection.name,
+                new_parent_id.id()
+            )));
+        }
 
         let collection = state
             .collections
@@ -720,7 +745,7 @@ impl CollectionStore for MemoryStorage {
         collection.revision = collection
             .revision
             .checked_advance()
-            .map_err(StorageError::from)?;
+            .map_err(map_memory_error)?;
         let moved = collection.clone();
         state.record_event(id.id(), Action::Updated, context);
         Ok(moved)
@@ -728,7 +753,7 @@ impl CollectionStore for MemoryStorage {
 }
 
 #[async_trait]
-impl ClassStore for MemoryStorage {
+impl ClassStore for MemoryStorageModel {
     async fn resolve_class(
         &self,
         selector: ClassSelector,
@@ -743,7 +768,7 @@ impl ClassStore for MemoryStorage {
         command: NewHubuumClass,
         context: &EventContext,
     ) -> Result<HubuumClass, StorageError> {
-        command.validate_schema().map_err(StorageError::from)?;
+        command.validate_schema().map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         if state.class_name_in_use(&command.name, None) {
             return Err(StorageError::conflict(format!(
@@ -787,7 +812,7 @@ impl ClassStore for MemoryStorage {
         let current = state.class_target(target)?.clone();
         changes
             .validate_schema_update(&current)
-            .map_err(StorageError::from)?;
+            .map_err(map_memory_error)?;
         if !changes.has_changes(&current) {
             return Ok(current);
         }
@@ -826,10 +851,7 @@ impl ClassStore for MemoryStorage {
             class.description = description;
         }
         class.updated_at = Utc::now().naive_utc();
-        class.revision = class
-            .revision
-            .checked_advance()
-            .map_err(StorageError::from)?;
+        class.revision = class.revision.checked_advance().map_err(map_memory_error)?;
         let updated = class.clone();
         state.record_class_event(updated.id, Action::Updated, context);
         Ok(updated)
@@ -863,12 +885,12 @@ impl ClassStore for MemoryStorage {
 }
 
 #[async_trait]
-impl ClassRelationStore for MemoryStorage {
+impl ClassRelationStore for MemoryStorageModel {
     async fn prepare_class_relation(
         &self,
         command: NewHubuumClassRelation,
     ) -> Result<PreparedClassRelation, StorageError> {
-        let command = command.normalized().map_err(StorageError::from)?;
+        let command = command.normalized().map_err(map_memory_error)?;
         let state = self.state.read().await;
         let from_class = state
             .classes
@@ -880,7 +902,7 @@ impl ClassRelationStore for MemoryStorage {
             .get(&command.to_hubuum_class_id)
             .cloned()
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
-        PreparedClassRelation::new(command, from_class, to_class).map_err(StorageError::from)
+        PreparedClassRelation::new(command, from_class, to_class).map_err(map_memory_error)
     }
 
     async fn resolve_class_relation(
@@ -899,7 +921,7 @@ impl ClassRelationStore for MemoryStorage {
             .get(&relation.to_hubuum_class_id)
             .cloned()
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
-        ResolvedClassRelationTarget::new(relation, from_class, to_class).map_err(StorageError::from)
+        ResolvedClassRelationTarget::new(relation, from_class, to_class).map_err(map_memory_error)
     }
 
     async fn create_class_relation(
@@ -941,7 +963,7 @@ impl ClassRelationStore for MemoryStorage {
             prepared.from_class().clone(),
             prepared.to_class().clone(),
         )
-        .map_err(StorageError::from)
+        .map_err(map_memory_error)
     }
 
     async fn delete_class_relation(
@@ -961,7 +983,7 @@ impl ClassRelationStore for MemoryStorage {
 }
 
 #[async_trait]
-impl ObjectRelationStore for MemoryStorage {
+impl ObjectRelationStore for MemoryStorageModel {
     async fn prepare_object_relation(
         &self,
         selector: ObjectRelationCreateSelector,
@@ -969,10 +991,10 @@ impl ObjectRelationStore for MemoryStorage {
         let state = self.state.read().await;
         match selector.kind() {
             ObjectRelationCreateSelectorKind::Explicit(command) => {
-                let command = command.clone().normalized().map_err(StorageError::from)?;
+                let command = command.clone().normalized().map_err(map_memory_error)?;
                 let (from_object, to_object) = state.object_relation_endpoints(&command)?;
                 let class_relation_id = HubuumClassRelationID::new(command.class_relation_id)
-                    .map_err(StorageError::from)?;
+                    .map_err(map_memory_error)?;
                 let class_relation = state.class_relation(class_relation_id)?;
                 let class_relation = state.resolved_class_relation(class_relation)?;
                 PreparedObjectRelation::new(
@@ -981,31 +1003,26 @@ impl ObjectRelationStore for MemoryStorage {
                     to_object.clone(),
                     class_relation,
                 )
-                .map_err(StorageError::from)
+                .map_err(map_memory_error)
             }
-            ObjectRelationCreateSelectorKind::Between {
-                from_class_id,
-                from_object_id,
-                to_class_id,
-                to_object_id,
-            } => {
+            ObjectRelationCreateSelectorKind::Between { from, to } => {
                 let route_from_object = state
                     .objects
-                    .get(&from_object_id.id())
+                    .get(&from.object_id().id())
                     .ok_or_else(|| StorageError::not_found("From object was not found"))?;
                 let route_to_object = state
                     .objects
-                    .get(&to_object_id.id())
+                    .get(&to.object_id().id())
                     .ok_or_else(|| StorageError::not_found("To object was not found"))?;
-                if route_from_object.hubuum_class_id != from_class_id.id()
-                    || route_to_object.hubuum_class_id != to_class_id.id()
+                if route_from_object.hubuum_class_id != from.class_id().id()
+                    || route_to_object.hubuum_class_id != to.class_id().id()
                 {
                     return Err(StorageError::not_found(
                         "Object was not found in the selected class",
                     ));
                 }
                 let class_relation =
-                    state.direct_class_relation(from_class_id.id(), to_class_id.id())?;
+                    state.direct_class_relation(from.class_id().id(), to.class_id().id())?;
                 let class_relation = state.resolved_class_relation(class_relation)?;
                 let command = NewHubuumObjectRelation {
                     from_hubuum_object_id: route_from_object.id,
@@ -1013,7 +1030,7 @@ impl ObjectRelationStore for MemoryStorage {
                     class_relation_id: class_relation.relation().id,
                 }
                 .normalized()
-                .map_err(StorageError::from)?;
+                .map_err(map_memory_error)?;
                 let (from_object, to_object) =
                     if route_from_object.id == command.from_hubuum_object_id {
                         (route_from_object.clone(), route_to_object.clone())
@@ -1021,7 +1038,7 @@ impl ObjectRelationStore for MemoryStorage {
                         (route_to_object.clone(), route_from_object.clone())
                     };
                 PreparedObjectRelation::new(command, from_object, to_object, class_relation)
-                    .map_err(StorageError::from)
+                    .map_err(map_memory_error)
             }
         }
     }
@@ -1035,29 +1052,24 @@ impl ObjectRelationStore for MemoryStorage {
             ObjectRelationSelectorKind::ById(relation_id) => {
                 state.object_relation(*relation_id)?.to_owned()
             }
-            ObjectRelationSelectorKind::Between {
-                from_class_id,
-                from_object_id,
-                to_class_id,
-                to_object_id,
-            } => {
+            ObjectRelationSelectorKind::Between { from, to } => {
                 let route_from_object = state
                     .objects
-                    .get(&from_object_id.id())
+                    .get(&from.object_id().id())
                     .ok_or_else(|| StorageError::not_found("From object was not found"))?;
                 let route_to_object = state
                     .objects
-                    .get(&to_object_id.id())
+                    .get(&to.object_id().id())
                     .ok_or_else(|| StorageError::not_found("To object was not found"))?;
-                if route_from_object.hubuum_class_id != from_class_id.id()
-                    || route_to_object.hubuum_class_id != to_class_id.id()
+                if route_from_object.hubuum_class_id != from.class_id().id()
+                    || route_to_object.hubuum_class_id != to.class_id().id()
                 {
                     return Err(StorageError::not_found(
                         "Object relation was not found for the selected classes",
                     ));
                 }
                 state
-                    .object_relation_by_pair(from_object_id.id(), to_object_id.id())?
+                    .object_relation_by_pair(from.object_id().id(), to.object_id().id())?
                     .to_owned()
             }
         };
@@ -1068,7 +1080,7 @@ impl ObjectRelationStore for MemoryStorage {
         };
         let (from_object, to_object) = state.object_relation_endpoints(&command)?;
         let class_relation_id =
-            HubuumClassRelationID::new(relation.class_relation_id).map_err(StorageError::from)?;
+            HubuumClassRelationID::new(relation.class_relation_id).map_err(map_memory_error)?;
         let class_relation =
             state.resolved_class_relation(state.class_relation(class_relation_id)?)?;
         ResolvedObjectRelationTarget::new(
@@ -1077,7 +1089,7 @@ impl ObjectRelationStore for MemoryStorage {
             to_object.clone(),
             class_relation,
         )
-        .map_err(StorageError::from)
+        .map_err(map_memory_error)
     }
 
     async fn create_object_relation(
@@ -1138,7 +1150,7 @@ impl ObjectRelationStore for MemoryStorage {
             prepared.to_object().clone(),
             prepared.class_relation().clone(),
         )
-        .map_err(StorageError::from)
+        .map_err(map_memory_error)
     }
 
     async fn delete_object_relation(
@@ -1156,7 +1168,7 @@ impl ObjectRelationStore for MemoryStorage {
 }
 
 #[async_trait]
-impl ObjectStore for MemoryStorage {
+impl ObjectStore for MemoryStorageModel {
     async fn resolve_object(
         &self,
         selector: ObjectSelector,
@@ -1180,7 +1192,7 @@ impl ObjectStore for MemoryStorage {
         let current_class = state.class_target(class)?.clone();
         command
             .validate_for_class(&current_class)
-            .map_err(StorageError::from)?;
+            .map_err(map_memory_error)?;
         if state.object_name_in_use(current_class.id, &command.name, None) {
             return Err(StorageError::conflict(format!(
                 "An object named '{}' already exists in class {}",
@@ -1219,7 +1231,7 @@ impl ObjectStore for MemoryStorage {
         let current = current.clone();
         changes
             .validate_for_class(&current, &class)
-            .map_err(StorageError::from)?;
+            .map_err(map_memory_error)?;
         if !changes.has_changes(&current) {
             return Ok(current);
         }
@@ -1237,7 +1249,7 @@ impl ObjectStore for MemoryStorage {
         updated.revision = current
             .revision
             .checked_advance()
-            .map_err(StorageError::from)?;
+            .map_err(map_memory_error)?;
         state.objects.insert(updated.id, updated.clone());
         state.record_object_event(updated.id, Action::Updated, context);
         Ok(updated)
@@ -1253,12 +1265,12 @@ impl ObjectStore for MemoryStorage {
         let (class, current) = state.object_target(target)?;
         let class = class.clone();
         let current = current.clone();
-        let patched_data = patch.apply(&current.data).map_err(StorageError::from)?;
+        let patched_data = patch.apply(&current.data).map_err(map_memory_error)?;
         if class.validate_schema
             && let Some(schema) = class.json_schema.as_ref()
         {
             crate::utilities::json_schema::validate_json_value(schema, &patched_data)
-                .map_err(StorageError::from)?;
+                .map_err(map_memory_error)?;
         }
         if patched_data == current.data {
             return Ok(current);
@@ -1270,7 +1282,7 @@ impl ObjectStore for MemoryStorage {
         updated.revision = current
             .revision
             .checked_advance()
-            .map_err(StorageError::from)?;
+            .map_err(map_memory_error)?;
         state.objects.insert(updated.id, updated.clone());
         state.record_object_event(updated.id, Action::Updated, context);
         Ok(updated)

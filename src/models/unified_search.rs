@@ -466,7 +466,7 @@ where
             candidate_spec.limit_per_kind = usize::MAX;
             let candidates = user
                 .search_unified_collections_from_backend_with_admin_status(
-                    backend.db_pool(),
+                    crate::traits::backend_pool(backend),
                     &candidate_spec,
                     None,
                     true,
@@ -538,7 +538,7 @@ where
             candidate_spec.limit_per_kind = usize::MAX;
             let candidates = user
                 .search_unified_classes_from_backend_with_admin_status(
-                    backend.db_pool(),
+                    crate::traits::backend_pool(backend),
                     &candidate_spec,
                     None,
                     true,
@@ -616,7 +616,7 @@ where
             candidate_spec.limit_per_kind = usize::MAX;
             let candidates = user
                 .search_unified_objects_from_backend_with_admin_status(
-                    backend.db_pool(),
+                    crate::traits::backend_pool(backend),
                     &candidate_spec,
                     None,
                     true,
@@ -686,7 +686,7 @@ where
         .permission_backend()
         .filter(|permission_backend| !permission_backend.supports_sql_visibility_pushdown());
     let principal = if external_backend.is_some() {
-        Some(PrincipalRef::load(backend.db_pool(), user).await?)
+        Some(PrincipalRef::load(crate::traits::backend_pool(backend), user).await?)
     } else {
         None
     };
@@ -755,7 +755,7 @@ where
         .permission_backend()
         .filter(|permission_backend| !permission_backend.supports_sql_visibility_pushdown());
     let principal = if external_backend.is_some() {
-        Some(PrincipalRef::load(backend.db_pool(), user).await?)
+        Some(PrincipalRef::load(crate::traits::backend_pool(backend), user).await?)
     } else {
         None
     };

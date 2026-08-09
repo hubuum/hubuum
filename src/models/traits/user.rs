@@ -43,8 +43,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.search_collections_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        self.search_collections_from_backend(
+            crate::traits::backend_pool(backend),
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn count_collections<C>(
@@ -56,8 +60,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.count_collections_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        self.count_collections_from_backend(
+            crate::traits::backend_pool(backend),
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn search_classes<C>(
@@ -69,8 +77,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.search_classes_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        self.search_classes_from_backend(
+            crate::traits::backend_pool(backend),
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn count_classes<C>(
@@ -82,7 +94,7 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.count_classes_from_backend(backend.db_pool(), query_options, scopes)
+        self.count_classes_from_backend(crate::traits::backend_pool(backend), query_options, scopes)
             .await
     }
 
@@ -95,8 +107,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.search_objects_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        self.search_objects_from_backend(
+            crate::traits::backend_pool(backend),
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn count_objects<C>(
@@ -108,7 +124,7 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.count_objects_from_backend(backend.db_pool(), query_options, scopes)
+        self.count_objects_from_backend(crate::traits::backend_pool(backend), query_options, scopes)
             .await
     }
 
@@ -121,8 +137,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.search_class_relations_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        self.search_class_relations_from_backend(
+            crate::traits::backend_pool(backend),
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn class_relations_page<C>(
@@ -134,8 +154,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.class_relations_page_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        self.class_relations_page_from_backend(
+            crate::traits::backend_pool(backend),
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn search_classes_related_to<C, K>(
@@ -149,8 +173,13 @@ pub trait Search: UserCollectionAccessors {
         C: BackendContext + ?Sized,
         K: SelfAccessors<HubuumClass>,
     {
-        self.search_classes_related_to_from_backend(backend.db_pool(), class, query_options, scopes)
-            .await
+        self.search_classes_related_to_from_backend(
+            crate::traits::backend_pool(backend),
+            class,
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn classes_related_to_page<C, K>(
@@ -164,8 +193,13 @@ pub trait Search: UserCollectionAccessors {
         C: BackendContext + ?Sized,
         K: SelfAccessors<HubuumClass>,
     {
-        self.classes_related_to_page_from_backend(backend.db_pool(), class, query_options, scopes)
-            .await
+        self.classes_related_to_page_from_backend(
+            crate::traits::backend_pool(backend),
+            class,
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn class_relations_touching_page<C, K>(
@@ -180,7 +214,7 @@ pub trait Search: UserCollectionAccessors {
         K: SelfAccessors<HubuumClass>,
     {
         self.class_relations_touching_page_from_backend(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             class,
             query_options,
             scopes,
@@ -197,8 +231,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.search_class_relations_between_ids_from_backend(backend.db_pool(), class_ids, scopes)
-            .await
+        self.search_class_relations_between_ids_from_backend(
+            crate::traits::backend_pool(backend),
+            class_ids,
+            scopes,
+        )
+        .await
     }
 
     async fn search_object_relations<C>(
@@ -210,8 +248,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.search_object_relations_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        self.search_object_relations_from_backend(
+            crate::traits::backend_pool(backend),
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn object_relations_page<C>(
@@ -223,8 +265,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.object_relations_page_from_backend(backend.db_pool(), query_options, scopes)
-            .await
+        self.object_relations_page_from_backend(
+            crate::traits::backend_pool(backend),
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn search_objects_related_to<C, O>(
@@ -239,7 +285,7 @@ pub trait Search: UserCollectionAccessors {
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
         self.search_objects_related_to_from_backend(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             object,
             query_options,
             scopes,
@@ -258,8 +304,13 @@ pub trait Search: UserCollectionAccessors {
         C: BackendContext + ?Sized,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        self.objects_related_to_page_from_backend(backend.db_pool(), object, query_options, scopes)
-            .await
+        self.objects_related_to_page_from_backend(
+            crate::traits::backend_pool(backend),
+            object,
+            query_options,
+            scopes,
+        )
+        .await
     }
 
     async fn related_objects_for_roots<C>(
@@ -273,7 +324,7 @@ pub trait Search: UserCollectionAccessors {
         C: BackendContext + ?Sized,
     {
         self.related_objects_for_roots_from_backend(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             root_object_ids,
             include,
             scopes,
@@ -293,7 +344,7 @@ pub trait Search: UserCollectionAccessors {
         C: BackendContext + ?Sized,
     {
         self.bidirectionally_related_objects_for_roots_from_backend(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             root_object_ids,
             max_depth,
             per_root_cap,
@@ -314,7 +365,7 @@ pub trait Search: UserCollectionAccessors {
         O: SelfAccessors<HubuumObject>,
     {
         self.object_relations_touching_page_from_backend(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             object,
             query_options,
             scopes,
@@ -331,8 +382,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.search_object_relations_between_ids_from_backend(backend.db_pool(), object_ids, scopes)
-            .await
+        self.search_object_relations_between_ids_from_backend(
+            crate::traits::backend_pool(backend),
+            object_ids,
+            scopes,
+        )
+        .await
     }
 
     async fn search_unified_collections<C>(
@@ -344,8 +399,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.search_unified_collections_from_backend(backend.db_pool(), query, scopes)
-            .await
+        self.search_unified_collections_from_backend(
+            crate::traits::backend_pool(backend),
+            query,
+            scopes,
+        )
+        .await
     }
 
     async fn search_unified_classes<C>(
@@ -357,8 +416,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.search_unified_classes_from_backend(backend.db_pool(), query, scopes)
-            .await
+        self.search_unified_classes_from_backend(
+            crate::traits::backend_pool(backend),
+            query,
+            scopes,
+        )
+        .await
     }
 
     async fn search_unified_objects<C>(
@@ -370,8 +433,12 @@ pub trait Search: UserCollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.search_unified_objects_from_backend(backend.db_pool(), query, scopes)
-            .await
+        self.search_unified_objects_from_backend(
+            crate::traits::backend_pool(backend),
+            query,
+            scopes,
+        )
+        .await
     }
 }
 
@@ -383,7 +450,8 @@ pub trait GroupAccessors: AuthzSubject {
     where
         C: BackendContext + ?Sized,
     {
-        self.load_user_groups(backend.db_pool()).await
+        self.load_user_groups(crate::traits::backend_pool(backend))
+            .await
     }
 
     #[allow(async_fn_in_trait)]
@@ -395,8 +463,11 @@ pub trait GroupAccessors: AuthzSubject {
     where
         C: BackendContext + ?Sized,
     {
-        self.load_user_groups_paginated_with_total_count(backend.db_pool(), query_options)
-            .await
+        self.load_user_groups_paginated_with_total_count(
+            crate::traits::backend_pool(backend),
+            query_options,
+        )
+        .await
     }
 }
 
@@ -425,8 +496,12 @@ pub trait UserCollectionAccessors: GroupAccessors + AuthzSubject {
         // threading through the collection/search visibility helpers is wired in
         // the handler/search-scope pass; the admin fast path stays correct for
         // the `None` case.
-        self.load_collections_with_permissions(backend.db_pool(), permissions_list, None)
-            .await
+        self.load_collections_with_permissions(
+            crate::traits::backend_pool(backend),
+            permissions_list,
+            None,
+        )
+        .await
     }
 }
 

@@ -187,10 +187,11 @@ async fn tokens_by_principal_id_paginated_with_total_count(
 
 pub(crate) async fn retained_token_metadata_by_principal_id_paginated_with_total_count(
     principal: crate::models::PrincipalID,
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     query_options: &QueryOptions,
     state: TokenListState,
 ) -> Result<(Vec<PrincipalTokenMetadata>, i64), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let active_after = active_tokens_cutoff()?;
     let now = chrono::Utc::now().naive_utc();
 

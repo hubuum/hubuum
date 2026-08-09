@@ -8,6 +8,7 @@ pub mod permissions;
 
 pub use accessors::{ClassAccessors, CollectionAccessors, ObjectAccessors, SelfAccessors};
 pub use context::BackendContext;
+pub(crate) use context::{BackendHandle, backend_pool};
 pub use crud::{CanDelete, CanSave, CanUpdate, Validate, ValidateAgainstSchema};
 pub use pagination::*;
 pub use permissions::PermissionController;

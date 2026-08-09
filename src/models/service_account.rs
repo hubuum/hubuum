@@ -44,7 +44,7 @@ impl ServiceAccount {
         C: BackendContext + ?Sized,
     {
         crate::db::traits::principal::load_service_account_point_response(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             self.id,
         )
         .await

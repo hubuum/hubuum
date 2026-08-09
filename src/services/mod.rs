@@ -11,33 +11,7 @@ pub use object_relations::ObjectRelationService;
 pub use objects::ObjectService;
 
 use crate::db::DbPool;
-use crate::storage::{DynStorage, PostgresStorage};
-
-#[cfg(test)]
-pub(crate) async fn storage_contract_postgres_permit() -> tokio::sync::OwnedSemaphorePermit {
-    use std::sync::{Arc, LazyLock};
-    use tokio::sync::Semaphore;
-
-    static LIMITER: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(4)));
-    LIMITER
-        .clone()
-        .acquire_owned()
-        .await
-        .expect("storage contract semaphore should remain open")
-}
-
-#[cfg(test)]
-pub(crate) fn storage_contract_pool() -> actix_web::web::Data<DbPool> {
-    let config = crate::tests::integration_test_config()
-        .expect("integration test config should be initialized");
-    actix_web::web::Data::new(crate::db::init_pool(&config.database_url, 2))
-}
-
-#[cfg(test)]
-pub(crate) fn storage_contract_prefix(label: &str) -> String {
-    let suffix = crate::utilities::auth::generate_random_password(12).to_ascii_lowercase();
-    format!("storage_contract_{label}_{suffix}")
-}
+use crate::storage::{DynLifecycleStorage, PostgresStorage};
 
 /// Application use-case facade.
 #[derive(Clone)]
@@ -51,10 +25,12 @@ pub struct Services {
 
 impl Services {
     pub fn postgres(pool: DbPool) -> Self {
-        Self::from_storage(DynStorage::new(PostgresStorage::new(pool)))
+        Self::from_lifecycle_storage(DynLifecycleStorage::from_backend(PostgresStorage::new(
+            pool,
+        )))
     }
 
-    pub(crate) fn from_storage(storage: DynStorage) -> Self {
+    pub(crate) fn from_lifecycle_storage(storage: DynLifecycleStorage) -> Self {
         Self {
             classes: ClassService::new(storage.clone()),
             class_relations: ClassRelationService::new(storage.clone()),

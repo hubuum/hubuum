@@ -46,7 +46,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::api::etag::RevisionPrecondition;
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
@@ -348,13 +348,79 @@ async fn acquire_connection(pool: &DbPool) -> Result<PooledConnection<'_, DbConn
             let mut conn = conn;
             #[cfg(any(test, feature = "query-capture", feature = "integration-test-support"))]
             query_capture::configure_connection(&mut conn);
-            metrics::db_connection_acquired(call_site.as_str(), start.elapsed());
+            let duration = start.elapsed();
+            metrics::db_connection_acquired(call_site.as_str(), duration);
+            debug!(
+                message = "storage backend connection acquired",
+                backend = "postgresql",
+                caller = call_site.as_str(),
+                elapsed_ms = duration.as_millis(),
+            );
             Ok(conn)
         }
         Err(error) => {
-            metrics::db_connection_acquire_failed(call_site.as_str(), start.elapsed());
+            let duration = start.elapsed();
+            metrics::db_connection_acquire_failed(call_site.as_str(), duration);
+            warn!(
+                message = "storage backend connection acquisition failed",
+                backend = "postgresql",
+                caller = call_site.as_str(),
+                elapsed_ms = duration.as_millis(),
+                error = %error,
+            );
             Err(ApiError::from(error))
         }
+    }
+}
+
+fn record_database_operation<R>(
+    call_site: DbCallSite,
+    operation: &'static str,
+    duration: Duration,
+    result: &Result<R, ApiError>,
+) {
+    let result_kind = match result {
+        Ok(_) => ResultKind::Ok,
+        Err(error) => ResultKind::Error(error.class()),
+    };
+    metrics::db_operation_finished(call_site.as_str(), operation, duration, &result_kind);
+
+    match result {
+        Ok(_) => debug!(
+            message = "storage backend operation complete",
+            backend = "postgresql",
+            caller = call_site.as_str(),
+            operation,
+            elapsed_ms = duration.as_millis(),
+        ),
+        Err(error)
+            if matches!(
+                error,
+                ApiError::DatabaseError(_)
+                    | ApiError::DbConnectionError(_)
+                    | ApiError::InternalServerError(_)
+                    | ApiError::ServiceUnavailable(_)
+            ) =>
+        {
+            warn!(
+                message = "storage backend operation failed",
+                backend = "postgresql",
+                caller = call_site.as_str(),
+                operation,
+                error_class = error.class(),
+                elapsed_ms = duration.as_millis(),
+                error = %error,
+            )
+        }
+        Err(error) => debug!(
+            message = "storage backend operation rejected",
+            backend = "postgresql",
+            caller = call_site.as_str(),
+            operation,
+            error_class = error.class(),
+            elapsed_ms = duration.as_millis(),
+            error = %error,
+        ),
     }
 }
 
@@ -707,16 +773,7 @@ where
         })
         .await
     };
-    let result_kind = match &result {
-        Ok(_) => ResultKind::Ok,
-        Err(error) => ResultKind::Error(error.class()),
-    };
-    metrics::db_operation_finished(
-        call_site.as_str(),
-        "connection",
-        start.elapsed(),
-        &result_kind,
-    );
+    record_database_operation(call_site, "connection", start.elapsed(), &result);
     result
 }
 
@@ -819,16 +876,7 @@ where
         }),
     )
     .await;
-    let result_kind = match &result {
-        Ok(_) => ResultKind::Ok,
-        Err(error) => ResultKind::Error(error.class()),
-    };
-    metrics::db_operation_finished(
-        call_site.as_str(),
-        "transaction",
-        start.elapsed(),
-        &result_kind,
-    );
+    record_database_operation(call_site, "transaction", start.elapsed(), &result);
     result
 }
 

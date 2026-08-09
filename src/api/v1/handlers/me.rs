@@ -8,8 +8,8 @@ use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::principals::{
     PrincipalCollectionPermissions, parse_token_list_query, principal_permissions_response,
 };
-use crate::db::traits::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
-use crate::db::{DbPool, with_revision_precondition_scope};
+use crate::backend::capabilities::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
+use crate::backend::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{
     AccessEventContext, Authenticated, ManagementAccess, PrincipalSettingsPatchPayload,
@@ -20,6 +20,7 @@ use crate::models::{
     PrincipalToken, TokenListState,
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
+use crate::permissions::AppContext;
 use crate::traits::GroupAccessors;
 
 pub use crate::models::CurrentTokenMetadata;
@@ -61,7 +62,7 @@ pub struct MeResponse {
 #[get("")]
 #[get("/")]
 pub async fn get_me(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
     let token = CurrentTokenMetadata::from_token_and_scope(&requestor.token_meta, requestor.scope)?;
@@ -69,7 +70,7 @@ pub async fn get_me(
     Ok(ApiResponse::new(
         MeResponse {
             principal: crate::models::MembershipPrincipalResponse::from_principal(
-                &pool,
+                &context,
                 requestor.principal,
             )
             .await?,
@@ -95,7 +96,7 @@ pub async fn get_me(
 )]
 #[get("/tokens")]
 pub async fn list_my_tokens(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: ManagementAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -104,7 +105,7 @@ pub async fn list_my_tokens(
     let (metadata, total_count) =
         retained_token_metadata_by_principal_id_paginated_with_total_count(
             PrincipalID::new(requestor.user.id)?,
-            &pool,
+            &context,
             &search_params,
             state,
         )
@@ -132,7 +133,7 @@ pub async fn list_my_tokens(
 )]
 #[get("/groups")]
 pub async fn list_my_groups(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -140,9 +141,9 @@ pub async fn list_my_groups(
     let search_params = prepare_db_pagination::<Group>(&params)?;
     let (groups, total_count) = requestor
         .principal
-        .groups_paginated_with_total_count(&pool, &search_params)
+        .groups_paginated_with_total_count(&context, &search_params)
         .await?;
-    let response = GroupResponse::from_groups(&pool, groups).await?;
+    let response = GroupResponse::from_groups(&context, groups).await?;
     ApiResponse::paginated(response, total_count, &params)
 }
 
@@ -158,10 +159,10 @@ pub async fn list_my_groups(
 )]
 #[get("/permissions")]
 pub async fn list_my_permissions(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
-    let export = principal_permissions_response(&pool, &requestor.principal).await?;
+    let export = principal_permissions_response(&context, &requestor.principal).await?;
     Ok(ApiResponse::new(export, StatusCode::OK))
 }
 
@@ -177,11 +178,11 @@ pub async fn list_my_permissions(
 )]
 #[get("/settings")]
 pub async fn get_my_settings(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
     let principal_id = PrincipalID::new(requestor.principal.id)?;
-    ApiResponse::ok_revisioned(principal_id.settings(&pool).await?)
+    ApiResponse::ok_revisioned(principal_id.settings(&context).await?)
 }
 
 #[utoipa::path(
@@ -198,18 +199,18 @@ pub async fn get_my_settings(
 )]
 #[put("/settings")]
 pub async fn put_my_settings(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
     settings: web::Json<PrincipalSettings>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let principal_id = PrincipalID::new(requestor.principal.id)?;
-    let current = principal_id.settings(&pool).await?;
+    let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let settings = with_revision_precondition_scope(
         precondition,
-        principal_id.replace_settings(&pool, settings.into_inner(), &event_context),
+        principal_id.replace_settings(&context, settings.into_inner(), &event_context),
     )
     .await?;
     ApiResponse::ok_revisioned(settings)
@@ -251,18 +252,18 @@ pub async fn put_my_settings(
 )]
 #[patch("/settings")]
 pub async fn patch_my_settings(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
     patch: PrincipalSettingsPatchPayload,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let principal_id = PrincipalID::new(requestor.principal.id)?;
-    let current = principal_id.settings(&pool).await?;
+    let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let settings = with_revision_precondition_scope(
         precondition,
-        principal_id.apply_settings_patch(&pool, patch.into_inner(), &event_context),
+        principal_id.apply_settings_patch(&context, patch.into_inner(), &event_context),
     )
     .await?;
     ApiResponse::ok_revisioned(settings)
@@ -280,17 +281,17 @@ pub async fn patch_my_settings(
 )]
 #[delete("/settings")]
 pub async fn delete_my_settings(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let principal_id = PrincipalID::new(requestor.principal.id)?;
-    let current = principal_id.settings(&pool).await?;
+    let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let reset = with_revision_precondition_scope(
         precondition,
-        principal_id.reset_settings(&pool, &event_context),
+        principal_id.reset_settings(&context, &event_context),
     )
     .await?;
     Ok(ApiResponse::no_content_with_etag(reset.entity_tag()?))

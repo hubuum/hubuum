@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 
 use opentelemetry::KeyValue;
 
-use crate::db::DbPool;
 use crate::db::traits::metrics::{MetricsRefreshBackend, TaskGaugeSnapshot};
 use crate::models::{TaskKind, TaskStatus};
 
@@ -119,14 +118,17 @@ pub fn task_output_cleanup_deleted(kind: TaskOutputKind, count: usize) {
     }
 }
 
-pub(super) async fn refresh_task_gauges(metrics: &Metrics, pool: &DbPool) {
+pub(super) async fn refresh_task_gauges(
+    metrics: &Metrics,
+    backend: &impl crate::traits::BackendContext,
+) {
     if let Some(snapshot) = cached_task_snapshot(metrics) {
         record_task_snapshot(metrics, &snapshot);
         return;
     }
 
     let refresh_started_at = Instant::now();
-    match pool.metrics_task_gauge_snapshot().await {
+    match backend.metrics_task_gauge_snapshot().await {
         Ok(snapshot) => {
             record_refresh_attempt(
                 metrics,

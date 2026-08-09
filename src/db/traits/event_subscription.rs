@@ -32,33 +32,45 @@ impl LoadEventSinkRecord for EventSinkID {
 }
 
 pub(crate) trait SaveEventSinkRecord {
-    async fn save_event_sink_record(
+    async fn save_event_sink_record<C>(
         &self,
-        pool: &DbPool,
+        pool: &C,
         event_context: &EventContext,
-    ) -> Result<EventSinkRow, ApiError>;
+    ) -> Result<EventSinkRow, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized;
 
     #[cfg(any(test, feature = "integration-test-support"))]
-    async fn save_event_sink_record_without_events(
+    async fn save_event_sink_record_without_events<C>(
         &self,
-        pool: &DbPool,
-    ) -> Result<EventSinkRow, ApiError>;
+        pool: &C,
+    ) -> Result<EventSinkRow, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized;
 }
 
 impl SaveEventSinkRecord for NewEventSinkRow {
-    async fn save_event_sink_record(
+    async fn save_event_sink_record<C>(
         &self,
-        pool: &DbPool,
+        pool: &C,
         event_context: &EventContext,
-    ) -> Result<EventSinkRow, ApiError> {
+    ) -> Result<EventSinkRow, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized,
+    {
+        let pool = crate::traits::backend_pool(pool);
         insert_event_sink_record(self, pool, Some(event_context)).await
     }
 
     #[cfg(any(test, feature = "integration-test-support"))]
-    async fn save_event_sink_record_without_events(
+    async fn save_event_sink_record_without_events<C>(
         &self,
-        pool: &DbPool,
-    ) -> Result<EventSinkRow, ApiError> {
+        pool: &C,
+    ) -> Result<EventSinkRow, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized,
+    {
+        let pool = crate::traits::backend_pool(pool);
         insert_event_sink_record(self, pool, None).await
     }
 }
@@ -82,21 +94,27 @@ async fn insert_event_sink_record(
 }
 
 pub(crate) trait UpdateEventSinkRecord {
-    async fn update_event_sink_record(
+    async fn update_event_sink_record<C>(
         &self,
-        pool: &DbPool,
+        pool: &C,
         sink_id: i32,
         event_context: &EventContext,
-    ) -> Result<EventSinkRow, ApiError>;
+    ) -> Result<EventSinkRow, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized;
 }
 
 impl UpdateEventSinkRecord for UpdateEventSinkRow {
-    async fn update_event_sink_record(
+    async fn update_event_sink_record<C>(
         &self,
-        pool: &DbPool,
+        pool: &C,
         sink_id: i32,
         event_context: &EventContext,
-    ) -> Result<EventSinkRow, ApiError> {
+    ) -> Result<EventSinkRow, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized,
+    {
+        let pool = crate::traits::backend_pool(pool);
         update_event_sink_record_impl(self, pool, sink_id, Some(event_context)).await
     }
 }
@@ -142,19 +160,25 @@ async fn update_event_sink_record_impl(
 }
 
 pub(crate) trait DeleteEventSinkRecord {
-    async fn delete_event_sink_record(
+    async fn delete_event_sink_record<C>(
         &self,
-        pool: &DbPool,
+        pool: &C,
         event_context: &EventContext,
-    ) -> Result<(), ApiError>;
+    ) -> Result<(), ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized;
 }
 
 impl DeleteEventSinkRecord for EventSinkID {
-    async fn delete_event_sink_record(
+    async fn delete_event_sink_record<C>(
         &self,
-        pool: &DbPool,
+        pool: &C,
         event_context: &EventContext,
-    ) -> Result<(), ApiError> {
+    ) -> Result<(), ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized,
+    {
+        let pool = crate::traits::backend_pool(pool);
         delete_event_sink_record_impl(self, pool, Some(event_context)).await
     }
 }
@@ -210,7 +234,7 @@ impl LoadEventSubscriptionRecord for EventSubscriptionID {
 pub(crate) trait SaveEventSubscriptionRecord {
     async fn save_event_subscription_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError>;
 
@@ -224,9 +248,10 @@ pub(crate) trait SaveEventSubscriptionRecord {
 impl SaveEventSubscriptionRecord for NewEventSubscriptionRow {
     async fn save_event_subscription_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         insert_event_subscription_record(self, pool, Some(event_context)).await
     }
 
@@ -264,7 +289,7 @@ async fn insert_event_subscription_record(
 pub(crate) trait UpdateEventSubscriptionRecord {
     async fn update_event_subscription_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         subscription_id: i32,
         event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError>;
@@ -273,10 +298,11 @@ pub(crate) trait UpdateEventSubscriptionRecord {
 impl UpdateEventSubscriptionRecord for UpdateEventSubscriptionRow {
     async fn update_event_subscription_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         subscription_id: i32,
         event_context: &EventContext,
     ) -> Result<EventSubscriptionRow, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         update_event_subscription_record_impl(self, pool, subscription_id, Some(event_context))
             .await
     }
@@ -328,7 +354,7 @@ async fn update_event_subscription_record_impl(
 pub(crate) trait DeleteEventSubscriptionRecord {
     async fn delete_event_subscription_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         event_context: &EventContext,
     ) -> Result<(), ApiError>;
 }
@@ -336,9 +362,10 @@ pub(crate) trait DeleteEventSubscriptionRecord {
 impl DeleteEventSubscriptionRecord for EventSubscriptionID {
     async fn delete_event_subscription_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         event_context: &EventContext,
     ) -> Result<(), ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         delete_event_subscription_record_impl(self, pool, Some(event_context)).await
     }
 }
@@ -478,11 +505,15 @@ pub(crate) async fn list_event_sink_rows_with_total_count(
     Ok((rows, total_count))
 }
 
-pub async fn enabled_event_sink_count(pool: &DbPool) -> Result<i64, ApiError> {
+pub async fn enabled_event_sink_count<C>(backend: &C) -> Result<i64, ApiError>
+where
+    C: crate::traits::BackendContext + ?Sized,
+{
     use diesel::dsl::count_star;
 
     use crate::schema::event_sinks::dsl::{enabled, event_sinks};
 
+    let pool = crate::traits::backend_pool(backend);
     with_connection(pool, async |conn| {
         event_sinks
             .filter(enabled.eq(true))
@@ -570,22 +601,31 @@ fn build_event_subscription_query(
 }
 
 impl EventSinkID {
-    pub async fn instance(&self, pool: &DbPool) -> Result<EventSink, ApiError> {
+    pub async fn instance(
+        &self,
+        pool: &impl crate::traits::BackendContext,
+    ) -> Result<EventSink, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         self.load_event_sink_record(pool).await?.try_into()
     }
 }
 
 impl EventSubscriptionID {
-    pub async fn instance(&self, pool: &DbPool) -> Result<EventSubscription, ApiError> {
+    pub async fn instance(
+        &self,
+        pool: &impl crate::traits::BackendContext,
+    ) -> Result<EventSubscription, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         self.load_event_subscription_record(pool).await?.try_into()
     }
 }
 
 impl EventSink {
     pub async fn list_with_total_count(
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: &QueryOptions,
     ) -> Result<(Vec<EventSink>, i64), ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let (rows, total) = list_event_sink_rows_with_total_count(pool, query_options).await?;
         let sinks = rows
             .into_iter()
@@ -597,10 +637,11 @@ impl EventSink {
 
 impl EventSubscription {
     pub async fn list_with_total_count(
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         collection_id: i32,
         query_options: &QueryOptions,
     ) -> Result<(Vec<EventSubscription>, i64), ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let (rows, total) =
             list_event_subscription_rows_with_total_count(pool, collection_id, query_options)
                 .await?;

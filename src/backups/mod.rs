@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
-use crate::db::DbPool;
 use crate::db::traits::backup::snapshot_backup_db;
 use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
@@ -94,9 +93,10 @@ fn build_manifest(state: &BackupState, history: Option<&BackupHistory>) -> Backu
 }
 
 pub async fn create_backup_document(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     request: &BackupRequest,
 ) -> Result<BackupDocument, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let include_history = request.include_history;
     let (state, history) = snapshot_backup_db(pool, include_history).await?;
     let manifest = build_manifest(&state, history.as_ref());

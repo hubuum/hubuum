@@ -11,6 +11,7 @@ use std::num::ParseIntError;
 use tracing::{debug, error};
 
 use crate::observability::metrics;
+use crate::storage::{StorageError, StorageErrorKind};
 
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
@@ -156,6 +157,24 @@ impl ApiError {
             | ApiError::OperatorMismatch(message)
             | ApiError::InvalidIntegerRange(message)
             | ApiError::ValidationError(message) => message,
+        }
+    }
+}
+
+impl From<StorageError> for ApiError {
+    fn from(error: StorageError) -> Self {
+        let (kind, message, current_etag) = error.into_parts();
+        match kind {
+            StorageErrorKind::BadRequest => Self::BadRequest(message),
+            StorageErrorKind::Conflict => Self::Conflict(message),
+            StorageErrorKind::Database => Self::DatabaseError(message),
+            StorageErrorKind::Internal => Self::InternalServerError(message),
+            StorageErrorKind::NotFound => Self::NotFound(message),
+            StorageErrorKind::NotAcceptable => Self::NotAcceptable(message),
+            StorageErrorKind::PayloadTooLarge => Self::PayloadTooLarge(message),
+            StorageErrorKind::PreconditionFailed => Self::PreconditionFailed(message, current_etag),
+            StorageErrorKind::Unavailable => Self::ServiceUnavailable(message),
+            StorageErrorKind::Validation => Self::ValidationError(message),
         }
     }
 }
@@ -428,6 +447,46 @@ mod tests {
 
         let generic_error = ApiError::InternalServerError("internal error".to_string());
         assert_eq!(generic_error.exit_code(), EXIT_CODE_GENERIC_ERROR);
+    }
+
+    #[test]
+    fn storage_errors_preserve_public_failure_categories() {
+        for (error, expected_class) in [
+            (
+                StorageError::new(StorageErrorKind::BadRequest, "invalid move", None),
+                "bad_request",
+            ),
+            (
+                StorageError::new(StorageErrorKind::Conflict, "collection has children", None),
+                "conflict",
+            ),
+            (
+                StorageError::new(StorageErrorKind::NotFound, "collection missing", None),
+                "not_found",
+            ),
+            (
+                StorageError::new(StorageErrorKind::Validation, "object schema mismatch", None),
+                "validation_error",
+            ),
+            (
+                StorageError::new(
+                    StorageErrorKind::PayloadTooLarge,
+                    "object data exceeds its limit",
+                    None,
+                ),
+                "payload_too_large",
+            ),
+            (
+                StorageError::new(
+                    StorageErrorKind::PreconditionFailed,
+                    "stale collection",
+                    Some("\"collection-1-r2\"".to_string()),
+                ),
+                "precondition_failed",
+            ),
+        ] {
+            assert_eq!(ApiError::from(error).class(), expected_class);
+        }
     }
 
     #[test]

@@ -56,23 +56,28 @@ for package classifications, publishing policy, and promotion requirements.
   choosing persistence helpers directly.
 - `src/storage/*`:
   Backend-neutral capability traits plus PostgreSQL adapters. The test-only
-  memory adapter implements selected logical contracts without claiming
-  PostgreSQL concurrency equivalence.
+  memory contract model exercises focused logical behavior. It is not a
+  selectable backend and does not represent partial application support.
 - `src/models/*`:
   Application domain models and high-level operations.
   These should not contain Diesel query construction for non-trivial backend logic.
 - `src/traits/*`:
   Behavioral interfaces used by handlers and models inside the application.
-  `BackendContext` remains the compatibility boundary for unmigrated APIs that
-  accept either `DbPool` or wrappers such as `web::Data<DbPool>`.
+  `BackendContext` is a sealed, opaque persistence capability. Consumers pass
+  it to operations but cannot extract or select the database implementation.
+- `src/backend.rs`:
+  Application-facing capability facade for query, workflow, and operational
+  contracts that do not yet have multiple storage implementations.
 - `src/db/traits/*`:
   Diesel/Postgres-backed implementations behind model and storage adapters.
   This is where query details, joins, filters, and transactions belong.
 
-The collection lifecycle and class resolution/lifecycle are the first
-service/storage capabilities. See
-[Service and Storage Boundary](storage_boundary.md) for responsibilities,
-contract testing, performance gates, and current migration limits.
+The collection, class, object, class-relation, and object-relation point and
+lifecycle operations are the first backend-neutral service/storage ports. A
+selectable backend must nevertheless satisfy the complete application storage
+contract. See [Application and Storage Boundary](storage_boundary.md) for the
+required families, compatibility tests, performance gates, and opaque backend
+boundary.
 
 ### Practical layering rule
 
@@ -86,7 +91,9 @@ When adding a feature:
    PostgreSQL storage implementation.
 4. Keep model methods thin while they remain in unmigrated paths.
 5. Add shared logical contract tests and retain PostgreSQL-specific query,
-   transaction, and concurrency tests.
+   transaction, migration, recovery, and concurrency tests.
+6. Do not register the implementation as selectable until it satisfies every
+   storage capability family and the available-backend compatibility suite.
 
 ### Module layout notes
 
@@ -111,9 +118,10 @@ permission reads in `src/db/traits/collection/permissions.rs` or
 Normal collection and class lifecycle handlers enter this implementation
 through their service and storage capabilities. Do not bypass those services
 from a migrated handler. Imports, restore code, fixtures, list/search,
-permissions, and history remain explicitly outside the pilot until their
-complete use cases can move without weakening transaction, authorization, or
-performance behavior.
+permissions, and history still use operation-shaped PostgreSQL adapters during
+the internal migration. That location does not make them optional backend
+features: a selectable backend must supply equivalent capabilities before it
+can be registered.
 
 When adding a collection creation path, use the shared collection insert helper
 from the collection backend so `collections` and `collection_closure` stay in

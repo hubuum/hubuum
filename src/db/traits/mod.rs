@@ -62,7 +62,9 @@ pub trait Status<T> {
     ///
     /// Validity implies that the structure exists in the database and that it is not expired, disabled,
     /// or otherwise inactive.
-    async fn is_valid(&self, pool: &DbPool) -> Result<T, ApiError>;
+    async fn is_valid<C>(&self, backend: &C) -> Result<T, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized;
 }
 
 /// Trait for getting all active tokens for a given structure.

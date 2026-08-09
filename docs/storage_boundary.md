@@ -1,148 +1,310 @@
-# Service and Storage Boundary
+# Application and Storage Boundary
 
-Hubuum is incrementally separating application use cases from PostgreSQL and
-Diesel details. PostgreSQL remains the production semantic reference; the goal
-is a compile-time dependency boundary and faster contract tests, not generic
-multi-database support.
+Hubuum has one application-facing storage boundary. A storage backend is a
+complete implementation of that boundary, not a collection of optional
+features. PostgreSQL is currently the only selectable backend.
 
-The first migrated capabilities cover the core collection, class, object, and
-relation lifecycles. Collections include:
+The in-memory implementation used by lifecycle tests is deliberately named a
+contract model. It is not selectable, is not advertised to administrators, and
+does not satisfy the complete `StorageBackend` trait. It may become a backend
+only after it implements every required capability family and passes the full
+compatibility suite.
 
-- point reads;
-- create with an initial assignee grant and lifecycle event;
-- update, including no-op behavior;
-- delete constraints;
-- direct children and ordered ancestors; and
-- hierarchy moves.
+The immediate goal is a hard dependency boundary around PostgreSQL and Diesel,
+not support for additional production databases.
 
-Classes include:
-
-- explicit point resolution by ID or name;
-- create with schema validation and a lifecycle event;
-- update, including no-op behavior and collection moves;
-- selector-aware mutations that reject stale name targets; and
-- delete with a lifecycle event.
-
-Objects include:
-
-- explicit point resolution by class/object ID or class/object name;
-- create within a resolved class, including JSON Schema validation;
-- update and atomic JSON Patch, including revision-preserving no-ops;
-- selector-aware mutations that reject stale class or object names; and
-- delete with a lifecycle event.
-
-Class relations include:
-
-- normalization and endpoint preparation before authorization;
-- point resolution with both endpoint classes;
-- create and delete with atomic lifecycle events;
-- stale endpoint rejection between authorization and a transactional write;
-- directional alias and cardinality-limit preservation; and
-- class and collection delete cascades.
-
-Object relations include:
-
-- explicit point resolution by relation ID or a class/object endpoint pair;
-- endpoint and direct class-relation preparation before authorization;
-- normalized creation with duplicate and same-class rejection;
-- directional cardinality enforcement owned by the storage implementation;
-- create and delete with atomic lifecycle events; and
-- object, class, collection, and class-relation delete cascades.
-
-## Dependency direction
+## Dependency Direction
 
 ```text
-collection/class/object/relation HTTP handlers
-                       |
-                       v
- CollectionService / ClassService / ObjectService
-       / ClassRelationService / ObjectRelationService
-                       |
-                       v
- CollectionStore / ClassStore / ObjectStore
-       / ClassRelationStore / ObjectRelationStore
-                  /       \
-                 v         v
-           PostgreSQL    memory
-            adapter      adapter
-                 |
-                 v
-        Diesel transactions and queries
+HTTP / workers / administration
+              |
+              v
+     application use cases
+              |
+              v
+      opaque BackendContext
+              |
+              v
+ complete StorageBackend contract
+              |
+              v
+      PostgreSQL adapter
+              |
+              v
+ Diesel, SQL, pools, transactions
 ```
 
-`AppContext` constructs `Services` with `PostgresStorage` in production. Core
-collection, class, object, and relation point/lifecycle handlers call their
-services; they do not choose a Diesel query or transaction helper for migrated
-operations. Permission checks remain at the handler boundary.
+Lifecycle services use a narrower internal `LifecycleStorage` view of the
+selected complete backend:
 
-Class-relation preparation and resolution return aggregates containing both
-endpoint classes. Handlers build permission resources from those aggregates,
-so authorization does not perform hidden PostgreSQL lookups. Transactional
-writes lock and recheck the same endpoint snapshots before inserting or
-deleting a relation.
+```text
+CollectionService / ClassService / ObjectService
+       / ClassRelationService / ObjectRelationService
+                           |
+                           v
+                    LifecycleStorage
+                      /          \
+                     v            v
+          selected PostgreSQL   memory contract model
+                backend             (tests only)
+```
 
-Object-relation preparation and resolution similarly carry both objects and
-the resolved class relation. The PostgreSQL adapter keeps cardinality
-serialization in the database trigger, where it locks only bounded endpoints;
-the service boundary does not introduce broader application-side locking.
+This narrower view exists so domain behavior can be tested without pretending
+that the test model is a complete application backend. Production composition
+uses `DynLifecycleStorage::from_backend`, which requires `StorageBackend`.
+`DynLifecycleStorage::new` is reserved for focused contract harnesses.
 
-## Responsibility split
+## Complete Backend Contract
 
-`src/services/*` owns application-facing use-case entrypoints. Services accept
-domain request types and return application errors after translating the
-backend-neutral storage error taxonomy.
+`StorageBackend` is a sealed aggregate trait. A selectable implementation must
+satisfy every capability family below before `BackendHandle` can compose it:
 
-`src/storage/*` owns capability traits and adapters. Capability methods are
-aggregate-shaped rather than table-shaped so implementations retain control of
-transactions, batching, hierarchy maintenance, initial permission grants, and
-atomic lifecycle events.
+| Required family | Contract responsibility |
+| --- | --- |
+| Domain lifecycle | Collection, class, object, class-relation, and object-relation resolution and lifecycle behavior |
+| Identity and authorization data | Principals, credentials, memberships, grants, and data needed by configured authorization providers |
+| Queries and history | Lists, filtering, stable pagination, search, aggregates, computed enrichment, graphs, and temporal history |
+| Workflows | Imports, restores, tasks, backups, exports, remote calls, and their atomic state transitions |
+| Operations | Probes, metrics snapshots, retention, event delivery, leases, locking, and worker coordination |
 
-`src/db/traits/*` continues to own Diesel expressions, PostgreSQL SQL, locks,
-and transaction implementation. `PostgresStorage` delegates to these existing
-operations without changing their query shape.
+The families are not feature flags and the admin configuration does not report
+optional support. Every selectable backend implements the entire list. The
+central certification implementations in `src/storage/contract.rs` make adding
+a backend an explicit architecture change rather than an incidental trait impl.
 
-`MemoryStorage` is compiled for tests and implements the logical collection,
-class, object, class-relation, and object-relation contracts. It models
-hierarchy, selector resolution, endpoint preparation, schema validation,
-bounded JSON Patch behavior, revisions, no-op updates, relation cardinality,
-delete constraints, cascades, and lifecycle event occurrence. It does not
-claim PostgreSQL locking, trigger, computed-field materialization,
-permission-row, or temporal-history equivalence.
+Some PostgreSQL capability implementations remain in `src/db/traits/*` while
+the internal migration continues. That is an implementation-location detail,
+not partial backend support. `BackendHandle` selects one certified PostgreSQL
+adapter, and compatibility helpers may recover its pool only behind the sealed
+boundary. No second backend can be added to composition while those adapters
+remain PostgreSQL-only without completing their backend-neutral ports.
 
-## Contract and performance gates
+The storage contract version changes when a required family is added or when
+observable semantics change. The selected backend and contract version are
+reported in startup logs, process metrics, and the redacted admin configuration.
 
-The shared contract suite runs each migrated collection, class, object, and
-class-relation, and object-relation behavior against both PostgreSQL and
-memory. Each test focuses on one behavior so backend differences cannot be
-hidden inside a large scenario.
+## Lifecycle Semantics
 
-The PostgreSQL query-capture tests exercise both services and retain exact
-point-read and mutation budgets. The opt-in PostgreSQL Criterion benchmark also
-times the collection service path. Trait dispatch or service composition must
-therefore not introduce extra pool checkouts, SQL statements, or
-application-side pagination.
+The currently shared lifecycle contract covers the following behavior.
 
-## Current migration boundary
+Collections provide:
 
-This is an incremental migration. Collection, class, object, and relation
-list/search, computed-field enrichment, permission management, graph traversal,
-history, and unrelated aggregates still use `BackendContext` and the existing
-model/database traits. Existing direct persistence APIs also remain for
-fixtures, imports, restore paths, and unmigrated callers.
+- point reads;
+- create with an initial assignee grant and atomic lifecycle event;
+- update and revision-preserving no-op behavior;
+- delete constraints;
+- direct children and ordered ancestors; and
+- hierarchy moves with sibling-scoped name uniqueness.
 
-When expanding the boundary:
+Classes provide:
 
-1. Add a use-case-shaped storage capability rather than a generic repository.
-2. Preserve set-based SQL, batching, transactions, and event atomicity in the
-   PostgreSQL adapter.
-3. Add focused shared logical contract tests.
-4. Keep PostgreSQL-only query-budget, locking, rollback, trigger, and
-   concurrency tests.
-5. Route the selected high-level caller through a service before removing its
-   direct `DbPool` dependency.
-6. Remove old model/database entrypoints only after every production,
-   administrative, worker, import, restore, and test caller has migrated.
+- point resolution by ID or name;
+- create with schema validation and an atomic lifecycle event;
+- update, no-op behavior, and collection moves;
+- stale selector rejection; and
+- delete with lifecycle and cascade semantics.
 
-Search and cursor pagination remain PostgreSQL-oriented until a concrete
-backend-neutral query contract can preserve filtering, stable ordering, count
-behavior, authorization, and query budgets without leaking SQL types.
+Objects provide:
+
+- point resolution by ID or name within a class;
+- create and update with JSON Schema validation;
+- bounded, atomic JSON Patch and revision-preserving no-ops;
+- stale selector rejection; and
+- delete with lifecycle and cascade semantics.
+
+Class and object relations provide:
+
+- endpoint preparation before authorization;
+- resolution with the endpoint aggregates required by policy checks;
+- stale endpoint rejection between authorization and mutation;
+- normalized direction, aliases, duplicates, and cardinality semantics;
+- atomic lifecycle events; and
+- the documented object, class, collection, and relation cascades.
+
+Capability methods are use-case or aggregate shaped. Implementations own
+transactions, batching, locking, hierarchy maintenance, initial grants,
+cardinality enforcement, and atomic event persistence. The contract must not
+devolve into table repositories or expose query builders.
+
+## Error Direction
+
+Errors cross the boundary in one direction:
+
+```text
+PostgresStorageError / contract-model error
+                    |
+                    v
+              StorageError
+                    |
+                    v
+                 ApiError
+```
+
+Each adapter owns its implementation error and converts it to the bounded
+`StorageErrorKind` taxonomy at the adapter edge. Backend-neutral storage code
+does not import `ApiError`. The application error layer alone converts
+`StorageError` into the public `ApiError` response surface. There is no reverse
+application-error-to-storage-error conversion.
+
+Expected domain outcomes such as not found, conflict, validation, and stale
+preconditions retain their useful public classification. Database, unavailable,
+and internal failures retain diagnostic detail for logs while public HTTP
+responses use the existing safe generic messages.
+
+## Observability Contract
+
+Every lifecycle call is wrapped outside the implementation, so backends cannot
+silently omit common diagnostics. The wrapper provides:
+
+- a `storage_operation` tracing span with bounded `backend`, `capability`, and
+  `operation` fields;
+- a `storage operation complete` debug event on success;
+- a debug rejection event for expected domain failures;
+- a warning event for database, unavailable, and internal failures; and
+- backend-neutral duration and error metrics with the same bounded labels.
+
+The PostgreSQL connection and transaction helpers provide the equivalent
+completion and failure logs for capability families still backed by legacy
+operation-shaped adapters. Their existing low-cardinality database metrics
+remain the implementation-level view. Storage metrics describe logical calls;
+database metrics describe pool and transaction behavior. Operators should use
+both rather than deriving one from the other.
+
+Logs and metric labels must never contain entity IDs, user-controlled names,
+queries, URLs, credentials, or payloads. Detailed mutation audit logs remain
+commit-aware and separate from diagnostic backend events.
+
+## Administrator Configuration
+
+`GET /api/v1/admin/config` reports the effective non-secret storage selection:
+
+- backend name;
+- storage contract version;
+- the complete required capability-family list;
+- whether a connection URL is configured;
+- pool size;
+- pool acquisition timeout; and
+- statement timeout.
+
+The connection URL and credentials are never returned. Startup metadata and
+`hubuum_storage_backend_info` report the same backend identity and contract
+version so configuration, logs, and metrics cannot disagree about composition.
+
+## Compatibility and Backend-Specific Tests
+
+There are two complementary test layers:
+
+1. Shared lifecycle contract tests run the same focused behaviors against the
+   PostgreSQL adapter and the in-memory contract model.
+2. The available-backend compatibility registry iterates every selectable
+   `StorageBackendKind`, composes it through `BackendHandle`, verifies its
+   contract descriptor, and exercises the service boundary.
+
+PostgreSQL-specific tests remain responsible for behavior a logical model
+cannot reproduce: transactions, rollbacks, isolation, row locks, trigger
+serialization, migrations, temporal history, recovery, concurrency, query
+budgets, and production feature combinations. The complete repository test
+suite is therefore part of PostgreSQL backend certification, not a substitute
+for the shared logical contracts.
+
+Adding another selectable backend requires all of the following in one change:
+
+1. Implement every capability family in `StorageBackend`.
+2. Add the backend to the sealed certification module and
+   `StorageBackendKind::ALL`.
+3. Add an exhaustive `BackendHandle` composition variant without a fallback.
+4. Run every shared compatibility contract against the implementation.
+5. Add backend-specific unit and integration coverage for its native failure,
+   consistency, concurrency, and recovery behavior.
+6. Provide adapter-owned error conversion into `StorageError`.
+7. Verify the common tracing and metric wrapper labels.
+8. Add a redacted administrator configuration projection for its settings.
+9. Preserve the PostgreSQL integration and query-budget suite unless
+   PostgreSQL is deliberately removed as an available backend.
+
+If any item is absent, the implementation is a test model or internal adapter,
+not an available storage backend.
+
+## Workspace Extraction Path
+
+The boundary is intended to become a set of workspace crates. The target
+dependency graph is:
+
+```text
+root hubuum application
+|-- depends on --> hubuum-domain
+|-- depends on --> hubuum-storage-core
+|                    `-- depends on --> hubuum-domain
+`-- depends on --> hubuum-storage-postgres
+                     |-- depends on --> hubuum-storage-core
+                     `-- depends on --> hubuum-domain
+
+hubuum-storage-contract-tests
+|-- depends on --> hubuum-storage-core
+`-- exercised with --> each backend adapter
+```
+
+No workspace crate depends on the root application package.
+
+The crates have deliberately different responsibilities:
+
+- `hubuum-domain` owns validated identifiers, commands, aggregates, and result
+  types without Diesel, Actix, global configuration, or `ApiError`.
+- `hubuum-storage-core` owns the complete traits, `StorageError`, backend
+  descriptors, and the adapter-independent observation contract.
+- `hubuum-storage-postgres` intentionally owns Diesel, generated schema,
+  migrations, pool and TLS setup, transaction helpers, persistence rows,
+  PostgreSQL queries, and `PostgresStorageError`.
+- `hubuum-storage-contract-tests` supplies the reusable compatibility suite and
+  focused logical model. Every available adapter runs that suite; each adapter
+  also retains native unit and integration tests.
+- The root package owns application services and composition, administrator
+  configuration projection, Actix/OpenAPI types, and `StorageError` to
+  `ApiError` conversion.
+
+Moving Diesel first without separating types would either make the adapter
+depend on the root package or move application and HTTP concerns into the
+adapter. Both create the wrong dependency direction. Existing structs that
+combine domain behavior with `Queryable`, `Insertable`, schema references, or
+SQL methods therefore need to split into backend-neutral types and private
+PostgreSQL row types at the adapter edge.
+
+A safe extraction stack is:
+
+1. Introduce backend-neutral domain command/result types and explicit
+   conversions to private PostgreSQL rows.
+2. Move the contract, errors, descriptors, and compatibility harness into
+   `hubuum-storage-core` and `hubuum-storage-contract-tests`.
+3. Move the pool/TLS runtime and transaction boundary, then queries and adapter
+   errors, into `hubuum-storage-postgres`.
+4. Move `src/schema.rs` and `migrations/` together so generated schema,
+   embedded migrations, and production queries stay owned by one crate.
+5. Forward root package features such as embedded migrations and TLS to the
+   adapter crate, and update the CLI migration entrypoint to call its narrow
+   migration API.
+6. Update the Docker manifest-copy stage, CI change classifier, Rust API policy,
+   and production container build in the same stack layers that add the crates.
+
+The pool/TLS/transaction runtime can be extracted before all queries if its API
+uses crate-owned configuration and errors. It should not expose Diesel pool or
+connection types to the root application; closures or adapter-owned operation
+APIs keep those implementation details on the PostgreSQL side.
+
+## Boundary Enforcement
+
+Architecture tests enforce that:
+
+- handlers, extractors, middleware, and metrics scraping do not import Diesel,
+  `DbPool`, transaction helpers, or database implementation modules;
+- backend-neutral services and storage contracts do not import PostgreSQL or
+  application API errors;
+- only adapter modules translate implementation errors to `StorageError`;
+- the application error layer owns `StorageError` to `ApiError` conversion;
+- `AppContext` owns an opaque `BackendHandle` and composes services from a
+  complete backend;
+- the complete backend trait contains every required capability family; and
+- the memory contract model cannot be certified or selected as a full backend.
+
+Direct persistence APIs remain internal implementation machinery for adapters,
+administrative workflows, and fixtures. They are not an application-facing
+escape hatch.

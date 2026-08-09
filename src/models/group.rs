@@ -47,7 +47,8 @@ impl GroupID {
     where
         C: BackendContext + ?Sized,
     {
-        self.load_group_record(backend.db_pool()).await
+        self.load_group_record(crate::traits::backend_pool(backend))
+            .await
     }
 
     /// Delete this group without emitting domain events.
@@ -59,7 +60,7 @@ impl GroupID {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_group_record_without_events(backend.db_pool())
+        self.delete_group_record_without_events(crate::traits::backend_pool(backend))
             .await
     }
 
@@ -71,7 +72,8 @@ impl GroupID {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_group_record(backend.db_pool(), context).await
+        self.delete_group_record(crate::traits::backend_pool(backend), context)
+            .await
     }
 }
 
@@ -177,9 +179,11 @@ impl GroupResponse {
             .iter()
             .map(|group| group.identity_scope_id)
             .collect::<Vec<_>>();
-        let scope_names =
-            crate::db::traits::identity::identity_scope_names_by_ids(backend.db_pool(), &scope_ids)
-                .await?;
+        let scope_names = crate::db::traits::identity::identity_scope_names_by_ids(
+            crate::traits::backend_pool(backend),
+            &scope_ids,
+        )
+        .await?;
 
         groups
             .into_iter()
@@ -249,7 +253,8 @@ impl Group {
     where
         C: BackendContext + ?Sized,
     {
-        let identity_scope = group_identity_scope_name(backend.db_pool(), self.id).await?;
+        let identity_scope =
+            group_identity_scope_name(crate::traits::backend_pool(backend), self.id).await?;
         Ok(GroupResponse::from_parts(self, identity_scope))
     }
 
@@ -264,7 +269,8 @@ impl Group {
     where
         C: BackendContext + ?Sized,
     {
-        self.load_group_members(backend.db_pool()).await
+        self.load_group_members(crate::traits::backend_pool(backend))
+            .await
     }
 
     pub async fn members_paginated<C>(
@@ -275,7 +281,7 @@ impl Group {
     where
         C: BackendContext + ?Sized,
     {
-        self.load_group_members_paginated(backend.db_pool(), query_options)
+        self.load_group_members_paginated(crate::traits::backend_pool(backend), query_options)
             .await
     }
 
@@ -287,7 +293,7 @@ impl Group {
     where
         C: BackendContext + ?Sized,
     {
-        self.count_group_members_paginated(backend.db_pool(), query_options)
+        self.count_group_members_paginated(crate::traits::backend_pool(backend), query_options)
             .await
     }
 
@@ -320,7 +326,7 @@ impl Group {
             principal_id: member.principal_id(),
             group_id: self.id,
         }
-        .save_principal_group_record_without_events(backend.db_pool())
+        .save_principal_group_record_without_events(crate::traits::backend_pool(backend))
         .await?;
 
         Ok(())
@@ -340,7 +346,7 @@ impl Group {
             principal_id: member.principal_id(),
             group_id: self.id,
         }
-        .save_principal_group_record(backend.db_pool(), context)
+        .save_principal_group_record(crate::traits::backend_pool(backend), context)
         .await
     }
 
@@ -360,7 +366,7 @@ impl Group {
     {
         self.remove_group_member_from_backend_without_events(
             member.principal_id(),
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
         )
         .await
     }
@@ -375,8 +381,12 @@ impl Group {
         C: BackendContext + ?Sized,
         P: PrincipalIdAccessor,
     {
-        self.remove_group_member_from_backend(member.principal_id(), backend.db_pool(), context)
-            .await
+        self.remove_group_member_from_backend(
+            member.principal_id(),
+            crate::traits::backend_pool(backend),
+            context,
+        )
+        .await
     }
 
     /// Delete this group without emitting domain events.
@@ -388,7 +398,7 @@ impl Group {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_group_record_without_events(backend.db_pool())
+        self.delete_group_record_without_events(crate::traits::backend_pool(backend))
             .await
     }
 }
@@ -411,7 +421,7 @@ impl NewGroup {
     where
         C: BackendContext + ?Sized,
     {
-        self.save_group_record_without_events(backend.db_pool())
+        self.save_group_record_without_events(crate::traits::backend_pool(backend))
             .await
     }
 
@@ -423,7 +433,8 @@ impl NewGroup {
     where
         C: BackendContext + ?Sized,
     {
-        self.save_group_record(backend.db_pool(), context).await
+        self.save_group_record(crate::traits::backend_pool(backend), context)
+            .await
     }
 }
 
@@ -457,7 +468,7 @@ impl UpdateGroup {
     where
         C: BackendContext + ?Sized,
     {
-        self.update_group_record_without_events(group_id.id(), backend.db_pool())
+        self.update_group_record_without_events(group_id.id(), crate::traits::backend_pool(backend))
             .await
     }
 
@@ -470,7 +481,7 @@ impl UpdateGroup {
     where
         C: BackendContext + ?Sized,
     {
-        self.update_group_record(group_id.id(), backend.db_pool(), context)
+        self.update_group_record(group_id.id(), crate::traits::backend_pool(backend), context)
             .await
     }
 }

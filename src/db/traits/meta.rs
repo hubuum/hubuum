@@ -1,7 +1,7 @@
 use crate::db::prelude::*;
 use diesel::sql_types::{BigInt, Nullable, Timestamp};
 
-use crate::db::{DbPool, with_connection};
+use crate::db::with_connection;
 use crate::errors::ApiError;
 
 #[derive(QueryableByName, Debug)]
@@ -12,6 +12,26 @@ pub struct DatabaseState {
     pub db_size: i64,
     #[diesel(sql_type = Nullable<Timestamp>)]
     pub last_vacuum_time: Option<chrono::NaiveDateTime>,
+}
+
+#[derive(Debug)]
+pub struct DatabasePoolState {
+    pub max_connections: u32,
+    pub total_connections: u32,
+    pub available_connections: u32,
+    pub idle_connections: u32,
+    pub in_use_connections: u32,
+    pub pending_acquisitions: u64,
+    pub acquisitions_started: u64,
+    pub acquisitions_direct: u64,
+    pub acquisitions_waited: u64,
+    pub acquisitions_timed_out: u64,
+    pub acquisition_wait_time_ms: u64,
+    pub connections_created: u64,
+    pub connections_closed_broken: u64,
+    pub connections_closed_invalid: u64,
+    pub connections_closed_max_lifetime: u64,
+    pub connections_closed_idle_timeout: u64,
 }
 
 #[derive(QueryableByName, Debug)]
@@ -48,7 +68,10 @@ pub struct TaskQueueState {
     pub oldest_active_at: Option<chrono::NaiveDateTime>,
 }
 
-pub async fn load_database_state(pool: &DbPool) -> Result<DatabaseState, ApiError> {
+pub async fn load_database_state(
+    pool: &impl crate::traits::BackendContext,
+) -> Result<DatabaseState, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     const QUERY: &str = r#"
         SELECT
           (SELECT count(*) FROM pg_stat_activity WHERE state = 'active') AS active_connections,
@@ -68,7 +91,36 @@ pub async fn load_database_state(pool: &DbPool) -> Result<DatabaseState, ApiErro
     })
 }
 
-pub async fn load_task_queue_state(pool: &DbPool) -> Result<TaskQueueState, ApiError> {
+pub fn load_database_pool_state(backend: &impl crate::traits::BackendContext) -> DatabasePoolState {
+    let pool = crate::traits::backend_pool(backend);
+    let state = pool.state();
+    let max_connections = pool.config().max_size;
+    let in_use_connections = state.connections.saturating_sub(state.idle_connections);
+    DatabasePoolState {
+        max_connections,
+        total_connections: state.connections,
+        available_connections: max_connections.saturating_sub(in_use_connections),
+        idle_connections: state.idle_connections,
+        in_use_connections,
+        pending_acquisitions: state.statistics.pending_gets(),
+        acquisitions_started: state.statistics.get_started,
+        acquisitions_direct: state.statistics.get_direct,
+        acquisitions_waited: state.statistics.get_waited,
+        acquisitions_timed_out: state.statistics.get_timed_out,
+        acquisition_wait_time_ms: u64::try_from(state.statistics.get_wait_time.as_millis())
+            .unwrap_or(u64::MAX),
+        connections_created: state.statistics.connections_created,
+        connections_closed_broken: state.statistics.connections_closed_broken,
+        connections_closed_invalid: state.statistics.connections_closed_invalid,
+        connections_closed_max_lifetime: state.statistics.connections_closed_max_lifetime,
+        connections_closed_idle_timeout: state.statistics.connections_closed_idle_timeout,
+    }
+}
+
+pub async fn load_task_queue_state(
+    pool: &impl crate::traits::BackendContext,
+) -> Result<TaskQueueState, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     const QUERY: &str = r#"
         SELECT
           COUNT(*)::bigint AS total_tasks,

@@ -869,10 +869,11 @@ async fn load_principal_group(
 }
 
 pub async fn principal_group_by_ids(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     principal: i32,
     group: i32,
 ) -> Result<PrincipalGroup, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     with_connection(pool, async |conn| {
         load_principal_group(conn, principal, group).await
     })

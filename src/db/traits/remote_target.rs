@@ -56,9 +56,10 @@ pub(crate) trait SaveRemoteTargetRecord {
 
     async fn save_remote_target_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         context: Option<&EventContext>,
     ) -> Result<RemoteTargetRow, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let _ = context;
         self.save_remote_target_record_without_events(pool).await
     }
@@ -82,9 +83,10 @@ impl SaveRemoteTargetRecord for NewRemoteTargetRow {
 
     async fn save_remote_target_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         context: Option<&EventContext>,
     ) -> Result<RemoteTargetRow, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let Some(context) = context else {
             return self.save_remote_target_record_without_events(pool).await;
         };
@@ -119,10 +121,11 @@ pub(crate) trait UpdateRemoteTargetRecord {
 
     async fn update_remote_target_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         target_id: i32,
         context: Option<&EventContext>,
     ) -> Result<RemoteTargetRow, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let _ = context;
         self.update_remote_target_record_without_events(pool, target_id)
             .await
@@ -153,10 +156,11 @@ impl UpdateRemoteTargetRecord for UpdateRemoteTargetRow {
 
     async fn update_remote_target_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         target_id: i32,
         context: Option<&EventContext>,
     ) -> Result<RemoteTargetRow, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let Some(context) = context else {
             return self
                 .update_remote_target_record_without_events(pool, target_id)
@@ -207,9 +211,10 @@ pub(crate) trait DeleteRemoteTargetRecord {
 
     async fn delete_remote_target_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let _ = context;
         self.delete_remote_target_record_without_events(pool).await
     }
@@ -233,9 +238,10 @@ impl DeleteRemoteTargetRecord for RemoteTargetID {
 
     async fn delete_remote_target_record(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         context: Option<&EventContext>,
     ) -> Result<(), ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let Some(context) = context else {
             return self.delete_remote_target_record_without_events(pool).await;
         };
@@ -266,13 +272,14 @@ impl DeleteRemoteTargetRecord for RemoteTargetID {
 }
 
 pub(crate) async fn emit_remote_target_invoked_event(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     target: &RemoteTarget,
     context: &EventContext,
     task_id: i32,
     subject_type: &str,
     subject_id: i32,
 ) -> Result<(), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     with_connection(pool, async |conn| -> Result<(), ApiError> {
         let event = NewEvent::new(
             EntityType::RemoteTarget,
@@ -389,17 +396,22 @@ pub async fn insert_remote_call_result(
 }
 
 impl RemoteTargetID {
-    pub async fn instance(&self, pool: &DbPool) -> Result<RemoteTarget, ApiError> {
+    pub async fn instance(
+        &self,
+        pool: &impl crate::traits::BackendContext,
+    ) -> Result<RemoteTarget, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         self.load_remote_target_record(pool).await?.try_into()
     }
 }
 
 impl RemoteTarget {
     pub async fn list_with_total_count(
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         allowed_collection_ids: &[i32],
         query_options: &QueryOptions,
     ) -> Result<(Vec<RemoteTarget>, i64), ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let (rows, total) =
             list_rows_with_total_count(pool, allowed_collection_ids, query_options).await?;
         let targets = rows

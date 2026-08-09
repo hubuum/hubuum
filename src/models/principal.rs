@@ -310,7 +310,7 @@ impl MembershipPrincipalResponse {
         C: BackendContext + ?Sized,
     {
         let identity_scope = crate::db::traits::identity::identity_scope_name_by_id(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             principal.identity_scope_id,
         )
         .await?;
@@ -364,9 +364,11 @@ impl PrincipalMemberResponse {
             .iter()
             .map(|(_, principal)| principal.identity_scope_id)
             .collect::<Vec<_>>();
-        let scope_names =
-            crate::db::traits::identity::identity_scope_names_by_ids(backend.db_pool(), &scope_ids)
-                .await?;
+        let scope_names = crate::db::traits::identity::identity_scope_names_by_ids(
+            crate::traits::backend_pool(backend),
+            &scope_ids,
+        )
+        .await?;
 
         memberships
             .into_iter()
@@ -530,14 +532,18 @@ impl PrincipalID {
     where
         C: BackendContext + ?Sized,
     {
-        load_principal_by_id(backend.db_pool(), self.id()).await
+        load_principal_by_id(crate::traits::backend_pool(backend), self.id()).await
     }
 
     pub async fn settings<C>(&self, backend: &C) -> Result<PrincipalSettingsResponse, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        crate::db::traits::principal::load_principal_settings(backend.db_pool(), self.id()).await
+        crate::db::traits::principal::load_principal_settings(
+            crate::traits::backend_pool(backend),
+            self.id(),
+        )
+        .await
     }
 
     pub async fn replace_settings<C>(
@@ -550,7 +556,7 @@ impl PrincipalID {
         C: BackendContext + ?Sized,
     {
         crate::db::traits::principal::mutate_principal_settings(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             self.id(),
             PrincipalSettingsMutation::Replace,
             settings,
@@ -569,7 +575,7 @@ impl PrincipalID {
         C: BackendContext + ?Sized,
     {
         crate::db::traits::principal::mutate_principal_settings(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             self.id(),
             PrincipalSettingsMutation::Patch,
             patch,
@@ -588,7 +594,7 @@ impl PrincipalID {
         C: BackendContext + ?Sized,
     {
         crate::db::traits::principal::apply_principal_settings_patch(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             self.id(),
             patch,
             event_context,
@@ -605,7 +611,7 @@ impl PrincipalID {
         C: BackendContext + ?Sized,
     {
         crate::db::traits::principal::mutate_principal_settings(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             self.id(),
             PrincipalSettingsMutation::Reset,
             PrincipalSettings::default(),
@@ -616,7 +622,11 @@ impl PrincipalID {
 }
 
 /// Load a principal by id.
-pub async fn load_principal_by_id(pool: &DbPool, principal_id: i32) -> Result<Principal, ApiError> {
+pub async fn load_principal_by_id(
+    pool: &impl crate::traits::BackendContext,
+    principal_id: i32,
+) -> Result<Principal, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     crate::db::traits::principal::load_principal_by_id(pool, principal_id).await
 }
 

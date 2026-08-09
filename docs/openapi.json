@@ -20253,12 +20253,32 @@
       "DatabaseConfig": {
         "type": "object",
         "required": [
+          "backend",
+          "contract_version",
+          "capabilities",
           "url",
           "pool_size",
           "pool_acquire_timeout_ms",
           "statement_timeout_ms"
         ],
         "properties": {
+          "backend": {
+            "type": "string",
+            "description": "Complete storage backend selected by the application composition root."
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Required capability families. Selectable backends always report the complete set."
+          },
+          "contract_version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Version of the all-or-nothing storage contract implemented by the backend.",
+            "minimum": 0
+          },
           "pool_acquire_timeout_ms": {
             "type": "integer",
             "format": "int64",
@@ -20370,7 +20390,7 @@
           "connections_created": {
             "type": "integer",
             "format": "int64",
-            "description": "Cumulative connections established by the pool.",
+            "description": "Cumulative connections established by the context.",
             "minimum": 0
           },
           "db_size": {
@@ -20381,13 +20401,13 @@
           "idle_connections": {
             "type": "integer",
             "format": "int32",
-            "description": "Established connections currently waiting in the pool.",
+            "description": "Established connections currently waiting in the context.",
             "minimum": 0
           },
           "in_use_connections": {
             "type": "integer",
             "format": "int32",
-            "description": "Established connections currently checked out of the pool.",
+            "description": "Established connections currently checked out of the context.",
             "minimum": 0
           },
           "last_vacuum_time": {
@@ -20400,7 +20420,7 @@
           "max_connections": {
             "type": "integer",
             "format": "int32",
-            "description": "Configured maximum number of connections in this process-local pool.",
+            "description": "Configured maximum number of connections in this process-local context.",
             "minimum": 0
           },
           "pending_acquisitions": {
@@ -20412,7 +20432,7 @@
           "total_connections": {
             "type": "integer",
             "format": "int32",
-            "description": "Connections currently managed by this process-local pool.",
+            "description": "Connections currently managed by this process-local context.",
             "minimum": 0
           }
         }

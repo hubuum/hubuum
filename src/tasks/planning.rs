@@ -279,7 +279,7 @@ where
         return Ok(is_admin);
     }
 
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     let is_admin = match backend.permission_backend() {
         Some(permission_backend) if !permission_backend.uses_sql_permission_store() => {
             let principal = PrincipalRef::load(pool, user)
@@ -481,7 +481,7 @@ async fn plan_import_with_admin_status<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     let mode = request.mode();
     let mut state = PlanningState::new();
     state.scopes = scopes.cloned();
@@ -946,7 +946,7 @@ pub(super) async fn plan_collection<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     if let Some(reference) = &input.ref_
         && state.collections_by_ref.contains_key(reference)
     {
@@ -1163,7 +1163,7 @@ pub(super) async fn plan_class<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     if let Some(schema) = input.json_schema.as_ref() {
         crate::utilities::json_schema::validate_json_schema(schema).map_err(|error| {
             PlanningFailure {
@@ -1387,7 +1387,7 @@ pub(super) async fn plan_object<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     if let Some(reference) = &input.ref_
         && state.objects_by_ref.contains_key(reference)
     {
@@ -1601,7 +1601,7 @@ pub(super) async fn plan_class_relation<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     let from_class = resolve_class_planning(
         pool,
         state,
@@ -1747,7 +1747,7 @@ pub(super) async fn plan_object_relation<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     let from_object = resolve_object_planning(
         pool,
         state,
@@ -1917,7 +1917,7 @@ pub(super) async fn plan_collection_permission<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     let collection = resolve_collection_planning(
         pool,
         state,

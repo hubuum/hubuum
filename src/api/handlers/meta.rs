@@ -1,14 +1,16 @@
 use crate::api::openapi::{ApiErrorResponse, CountsResponse};
 use crate::api::response::ApiResponse;
+use crate::backend::capabilities::meta::{
+    load_database_pool_state, load_database_state, load_task_queue_state,
+};
 use crate::config::{get_config, login_rate_limit_config};
-use crate::db::DbPool;
-use crate::db::traits::meta::{load_database_state, load_task_queue_state};
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
 use crate::middlewares::rate_limit;
 use crate::models::class::total_class_count;
 use crate::models::collection::total_collection_count;
 use crate::models::object::{objects_per_class_count, total_object_count};
+use crate::permissions::AppContext;
 use actix_web::{Responder, delete, get, http::StatusCode, web};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -18,15 +20,15 @@ use utoipa::ToSchema;
 
 #[derive(Serialize, Debug, ToSchema)]
 pub struct DbStateResponse {
-    /// Configured maximum number of connections in this process-local pool.
+    /// Configured maximum number of connections in this process-local context.
     max_connections: u32,
-    /// Connections currently managed by this process-local pool.
+    /// Connections currently managed by this process-local context.
     total_connections: u32,
     /// Remaining capacity: idle connections plus capacity to create connections.
     available_connections: u32,
-    /// Established connections currently waiting in the pool.
+    /// Established connections currently waiting in the context.
     idle_connections: u32,
-    /// Established connections currently checked out of the pool.
+    /// Established connections currently checked out of the context.
     in_use_connections: u32,
     /// Connection acquisitions currently waiting to complete.
     pending_acquisitions: u64,
@@ -40,7 +42,7 @@ pub struct DbStateResponse {
     acquisitions_timed_out: u64,
     /// Cumulative time spent waiting for connections, in milliseconds.
     acquisition_wait_time_ms: u64,
-    /// Cumulative connections established by the pool.
+    /// Cumulative connections established by the context.
     connections_created: u64,
     /// Cumulative connections discarded because they were broken.
     connections_closed_broken: u64,
@@ -94,38 +96,33 @@ pub struct TaskQueueStateResponse {
 )]
 #[get("db")]
 pub async fn get_db_state(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
-    let row = load_database_state(&pool).await?;
-    let state = pool.state();
-    let max_connections = pool.config().max_size;
-    let in_use_connections = state.connections.saturating_sub(state.idle_connections);
-    let available_connections = max_connections.saturating_sub(in_use_connections);
-    let acquisition_wait_time_ms =
-        u64::try_from(state.statistics.get_wait_time.as_millis()).unwrap_or(u64::MAX);
+    let row = load_database_state(&context).await?;
+    let state = load_database_pool_state(&context);
     debug!(
         message = "DB state requested",
         requestor = requestor.user.id
     );
 
     let response = DbStateResponse {
-        max_connections,
-        total_connections: state.connections,
-        available_connections,
+        max_connections: state.max_connections,
+        total_connections: state.total_connections,
+        available_connections: state.available_connections,
         idle_connections: state.idle_connections,
-        in_use_connections,
-        pending_acquisitions: state.statistics.pending_gets(),
-        acquisitions_started: state.statistics.get_started,
-        acquisitions_direct: state.statistics.get_direct,
-        acquisitions_waited: state.statistics.get_waited,
-        acquisitions_timed_out: state.statistics.get_timed_out,
-        acquisition_wait_time_ms,
-        connections_created: state.statistics.connections_created,
-        connections_closed_broken: state.statistics.connections_closed_broken,
-        connections_closed_invalid: state.statistics.connections_closed_invalid,
-        connections_closed_max_lifetime: state.statistics.connections_closed_max_lifetime,
-        connections_closed_idle_timeout: state.statistics.connections_closed_idle_timeout,
+        in_use_connections: state.in_use_connections,
+        pending_acquisitions: state.pending_acquisitions,
+        acquisitions_started: state.acquisitions_started,
+        acquisitions_direct: state.acquisitions_direct,
+        acquisitions_waited: state.acquisitions_waited,
+        acquisitions_timed_out: state.acquisitions_timed_out,
+        acquisition_wait_time_ms: state.acquisition_wait_time_ms,
+        connections_created: state.connections_created,
+        connections_closed_broken: state.connections_closed_broken,
+        connections_closed_invalid: state.connections_closed_invalid,
+        connections_closed_max_lifetime: state.connections_closed_max_lifetime,
+        connections_closed_idle_timeout: state.connections_closed_idle_timeout,
         active_connections: row.active_connections,
         db_size: row.db_size,
         last_vacuum_time: row.last_vacuum_time.map(|dt| dt.to_string()),
@@ -146,7 +143,7 @@ pub async fn get_db_state(
 )]
 #[get("counts")]
 pub async fn get_object_and_class_count(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
     debug!(
@@ -155,10 +152,10 @@ pub async fn get_object_and_class_count(
     );
 
     let response = CountsResponse {
-        total_objects: total_object_count(&pool).await?,
-        total_classes: total_class_count(&pool).await?,
-        total_collections: total_collection_count(&pool).await?,
-        objects_per_class: objects_per_class_count(&pool).await?,
+        total_objects: total_object_count(&context).await?,
+        total_classes: total_class_count(&context).await?,
+        total_collections: total_collection_count(&context).await?,
+        objects_per_class: objects_per_class_count(&context).await?,
     };
 
     Ok(ApiResponse::new(response, StatusCode::OK))
@@ -177,11 +174,11 @@ pub async fn get_object_and_class_count(
 )]
 #[get("tasks")]
 pub async fn get_task_queue_state(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
     let config = get_config()?.clone();
-    let state = load_task_queue_state(&pool).await?;
+    let state = load_task_queue_state(&context).await?;
 
     debug!(
         message = "Task queue state requested",

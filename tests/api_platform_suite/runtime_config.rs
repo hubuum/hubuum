@@ -36,6 +36,18 @@ mod tests {
         let body: Value = test::read_body_json(response).await;
         let serialized = serde_json::to_string(&body).unwrap();
 
+        assert_eq!(body["database"]["backend"], "postgresql");
+        assert_eq!(body["database"]["contract_version"], 1);
+        assert_eq!(
+            body["database"]["capabilities"],
+            serde_json::json!([
+                "domain_lifecycle",
+                "identity_and_authorization_data",
+                "queries_and_history",
+                "workflows",
+                "operations"
+            ])
+        );
         assert_eq!(body["database"]["url"]["configured"], true);
         assert!(body["database"]["pool_size"].is_number());
         assert!(!serialized.contains("postgres://"));

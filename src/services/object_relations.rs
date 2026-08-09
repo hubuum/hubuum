@@ -4,16 +4,16 @@ use crate::models::{
     ObjectRelationCreateSelector, ObjectRelationSelector, PreparedObjectRelation,
     ResolvedObjectRelationTarget,
 };
-use crate::storage::DynStorage;
+use crate::storage::DynLifecycleStorage;
 
 /// Application-facing object-relation lifecycle use cases.
 #[derive(Clone)]
 pub struct ObjectRelationService {
-    storage: DynStorage,
+    storage: DynLifecycleStorage,
 }
 
 impl ObjectRelationService {
-    pub(crate) fn new(storage: DynStorage) -> Self {
+    pub(crate) fn new(storage: DynLifecycleStorage) -> Self {
         Self { storage }
     }
 
@@ -75,21 +75,17 @@ mod tests {
         ClassSelector, GroupID, HubuumClass, HubuumClassID, HubuumObject, HubuumObjectID,
         HubuumObjectRelationID, NewCollectionWithAssignee, NewGroup, NewHubuumClass,
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-        ObjectRelationCreateSelector, ObjectRelationLimit, ObjectRelationSelector,
-        ResolvedClassRelationTarget, ResourceRevision,
+        ObjectRelationCreateSelector, ObjectRelationEndpoint, ObjectRelationLimit,
+        ObjectRelationSelector, ResolvedClassRelationTarget, ResourceRevision,
     };
-    use crate::services::{
-        Services, storage_contract_pool, storage_contract_postgres_permit, storage_contract_prefix,
-    };
-    use crate::storage::{DynStorage, MemoryStorage, PostgresStorage};
+    use crate::services::Services;
+    use crate::storage::{DynLifecycleStorage, MemoryStorageModel, PostgresStorage};
     use crate::tests::CollectionFixture;
+    use crate::tests::storage_contract::{
+        LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
+        postgres_permit as storage_contract_postgres_permit, prefix as storage_contract_prefix,
+    };
     use crate::traits::CanSave;
-
-    #[derive(Clone, Copy, Debug)]
-    enum ContractBackend {
-        Memory,
-        Postgres,
-    }
 
     #[derive(Clone, Copy, Debug)]
     enum RelationAddress {
@@ -107,7 +103,7 @@ mod tests {
 
     struct ContractHarness {
         services: Services,
-        storage: Option<MemoryStorage>,
+        storage: Option<MemoryStorageModel>,
         collection_id: i32,
         prefix: String,
         postgres_cleanup: Option<CollectionFixture>,
@@ -115,11 +111,12 @@ mod tests {
     }
 
     impl ContractHarness {
-        async fn new(backend: ContractBackend, label: &str) -> Self {
+        async fn new(backend: ContractImplementation, label: &str) -> Self {
             match backend {
-                ContractBackend::Memory => {
-                    let storage = MemoryStorage::new();
-                    let services = Services::from_storage(DynStorage::new(storage.clone()));
+                ContractImplementation::MemoryModel => {
+                    let storage = MemoryStorageModel::new();
+                    let services =
+                        Services::from_lifecycle_storage(DynLifecycleStorage::new(storage.clone()));
                     Self {
                         services,
                         storage: Some(storage),
@@ -129,7 +126,7 @@ mod tests {
                         _postgres_permit: None,
                     }
                 }
-                ContractBackend::Postgres => {
+                ContractImplementation::PostgresAdapter => {
                     let permit = storage_contract_postgres_permit().await;
                     let pool = storage_contract_pool();
                     let prefix = storage_contract_prefix(label);
@@ -158,9 +155,9 @@ mod tests {
                         prefix: prefix.clone(),
                     };
                     Self {
-                        services: Services::from_storage(DynStorage::new(PostgresStorage::new(
-                            pool.get_ref().clone(),
-                        ))),
+                        services: Services::from_lifecycle_storage(DynLifecycleStorage::new(
+                            PostgresStorage::new(pool.get_ref().clone()),
+                        )),
                         storage: None,
                         collection_id,
                         prefix,
@@ -275,10 +272,14 @@ mod tests {
             fixture: &RelationFixture,
         ) -> ObjectRelationCreateSelector {
             ObjectRelationCreateSelector::between(
-                HubuumClassID::new(fixture.from_class.id).expect("valid from class id"),
-                HubuumObjectID::new(fixture.from_object.id).expect("valid from object id"),
-                HubuumClassID::new(fixture.to_class.id).expect("valid to class id"),
-                HubuumObjectID::new(fixture.to_object.id).expect("valid to object id"),
+                ObjectRelationEndpoint::new(
+                    HubuumClassID::new(fixture.from_class.id).expect("valid from class id"),
+                    HubuumObjectID::new(fixture.from_object.id).expect("valid from object id"),
+                ),
+                ObjectRelationEndpoint::new(
+                    HubuumClassID::new(fixture.to_class.id).expect("valid to class id"),
+                    HubuumObjectID::new(fixture.to_object.id).expect("valid to object id"),
+                ),
             )
         }
 
@@ -293,10 +294,14 @@ mod tests {
                     HubuumObjectRelationID::new(relation_id).expect("valid object relation id"),
                 ),
                 RelationAddress::Between => ObjectRelationSelector::between(
-                    HubuumClassID::new(fixture.from_class.id).expect("valid from class id"),
-                    HubuumObjectID::new(fixture.from_object.id).expect("valid from object id"),
-                    HubuumClassID::new(fixture.to_class.id).expect("valid to class id"),
-                    HubuumObjectID::new(fixture.to_object.id).expect("valid to object id"),
+                    ObjectRelationEndpoint::new(
+                        HubuumClassID::new(fixture.from_class.id).expect("valid from class id"),
+                        HubuumObjectID::new(fixture.from_object.id).expect("valid from object id"),
+                    ),
+                    ObjectRelationEndpoint::new(
+                        HubuumClassID::new(fixture.to_class.id).expect("valid to class id"),
+                        HubuumObjectID::new(fixture.to_object.id).expect("valid to object id"),
+                    ),
                 ),
             }
         }
@@ -309,11 +314,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn object_relation_contract_prepares_a_normalized_endpoint_aggregate(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "normalize").await;
         let fixture = harness.fixture("normalize").await;
@@ -347,13 +352,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres_id(ContractBackend::Postgres, RelationAddress::Id)]
-    #[case::postgres_between(ContractBackend::Postgres, RelationAddress::Between)]
-    #[case::memory_id(ContractBackend::Memory, RelationAddress::Id)]
-    #[case::memory_between(ContractBackend::Memory, RelationAddress::Between)]
+    #[case::postgres_id(ContractImplementation::PostgresAdapter, RelationAddress::Id)]
+    #[case::postgres_between(ContractImplementation::PostgresAdapter, RelationAddress::Between)]
+    #[case::memory_id(ContractImplementation::MemoryModel, RelationAddress::Id)]
+    #[case::memory_between(ContractImplementation::MemoryModel, RelationAddress::Between)]
     #[actix_web::test]
     async fn object_relation_contract_resolves_explicit_addresses(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
         #[case] address: RelationAddress,
     ) {
         let harness = ContractHarness::new(backend, "resolve").await;
@@ -385,11 +390,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn object_relation_contract_between_preparation_validates_path_membership(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "path_membership").await;
         let fixture = harness.fixture("path_membership").await;
@@ -397,10 +402,14 @@ mod tests {
             .services
             .object_relations()
             .prepare_create(ObjectRelationCreateSelector::between(
-                HubuumClassID::new(fixture.to_class.id).expect("valid wrong class id"),
-                HubuumObjectID::new(fixture.from_object.id).expect("valid object id"),
-                HubuumClassID::new(fixture.from_class.id).expect("valid wrong class id"),
-                HubuumObjectID::new(fixture.to_object.id).expect("valid object id"),
+                ObjectRelationEndpoint::new(
+                    HubuumClassID::new(fixture.to_class.id).expect("valid wrong class id"),
+                    HubuumObjectID::new(fixture.from_object.id).expect("valid object id"),
+                ),
+                ObjectRelationEndpoint::new(
+                    HubuumClassID::new(fixture.from_class.id).expect("valid wrong class id"),
+                    HubuumObjectID::new(fixture.to_object.id).expect("valid object id"),
+                ),
             ))
             .await
             .expect_err("path membership mismatch should fail");
@@ -409,10 +418,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn object_relation_contract_rejects_self_relations(#[case] backend: ContractBackend) {
+    async fn object_relation_contract_rejects_self_relations(
+        #[case] backend: ContractImplementation,
+    ) {
         let harness = ContractHarness::new(backend, "self_relation").await;
         let fixture = harness.fixture("self_relation").await;
         let error = harness
@@ -432,11 +443,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn object_relation_contract_rejects_objects_from_the_same_class(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "same_class").await;
         let fixture = harness.fixture("same_class").await;
@@ -460,11 +471,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn object_relation_contract_rejects_a_mismatched_class_relation(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "class_mismatch").await;
         let fixture = harness.fixture("class_mismatch").await;
@@ -489,10 +500,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn object_relation_contract_rejects_reverse_duplicates(#[case] backend: ContractBackend) {
+    async fn object_relation_contract_rejects_reverse_duplicates(
+        #[case] backend: ContractImplementation,
+    ) {
         let harness = ContractHarness::new(backend, "duplicate").await;
         let fixture = harness.fixture("duplicate").await;
         let prepared = harness
@@ -530,11 +543,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn object_relation_contract_enforces_directional_cardinality(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "cardinality").await;
         let from_class = harness.create_class("cardinality_from_class").await;
@@ -590,11 +603,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn object_relation_contract_deletes_the_resolved_relation(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "delete").await;
         let fixture = harness.fixture("delete").await;
@@ -630,11 +643,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn object_relation_contract_object_delete_cascades_the_relation(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "object_cascade").await;
         let fixture = harness.fixture("object_cascade").await;
@@ -679,11 +692,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn object_relation_contract_class_relation_delete_cascades_the_relation(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "class_relation_cascade").await;
         let fixture = harness.fixture("class_relation_cascade").await;
@@ -720,7 +733,7 @@ mod tests {
 
     #[actix_web::test]
     async fn memory_object_relation_events_cover_explicit_lifecycle_writes() {
-        let harness = ContractHarness::new(ContractBackend::Memory, "events").await;
+        let harness = ContractHarness::new(ContractImplementation::MemoryModel, "events").await;
         let fixture = harness.fixture("events").await;
         let context = EventContext::system();
         let prepared = harness

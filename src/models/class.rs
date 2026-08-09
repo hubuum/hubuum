@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
 use crate::db::traits::class::total_class_count_from_backend;
 use crate::errors::ApiError;
 use crate::models::ResourceRevision;
@@ -233,7 +232,7 @@ pub async fn total_class_count<C>(backend: &C) -> Result<i64, ApiError>
 where
     C: BackendContext + ?Sized,
 {
-    total_class_count_from_backend(backend.db_pool()).await
+    total_class_count_from_backend(crate::traits::backend_pool(backend)).await
 }
 
 fn new_hubuum_class_example() -> NewHubuumClass {
@@ -282,14 +281,20 @@ crate::impl_history_pagination!(HubuumClassHistory, "hubuumclass_history");
 
 #[async_trait]
 impl AuthzTarget for HubuumClass {
-    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        _pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         Ok(self.authorization_resource())
     }
 }
 
 #[async_trait]
 impl AuthzTarget for HubuumClassID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }

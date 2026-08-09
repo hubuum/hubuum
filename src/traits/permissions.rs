@@ -68,8 +68,13 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         C: BackendContext + ?Sized,
         S: AuthzSubject,
     {
-        self.user_can_all_from_backend(backend.db_pool(), subject, permission, scopes)
-            .await
+        self.user_can_all_from_backend(
+            crate::traits::backend_pool(backend),
+            subject,
+            permission,
+            scopes,
+        )
+        .await
     }
 
     /// Grant a set of permissions to a group.
@@ -144,7 +149,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         C: BackendContext + ?Sized,
     {
         self.apply_permissions_from_backend_without_events(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             group_id_for_grant,
             permission_list,
             replace_existing,
@@ -164,7 +169,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         C: BackendContext + ?Sized,
     {
         self.apply_permissions_from_backend(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             group_id_for_grant,
             permission_list,
             replace_existing,
@@ -208,7 +213,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         C: BackendContext + ?Sized,
     {
         self.revoke_permissions_from_backend_without_events(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             group_id_for_revoke,
             permission_list,
         )
@@ -226,7 +231,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         C: BackendContext + ?Sized,
     {
         self.revoke_permissions_from_backend(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             group_id_for_revoke,
             permission_list,
             context,
@@ -390,8 +395,11 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.revoke_all_from_backend_without_events(backend.db_pool(), group_id_for_revoke)
-            .await
+        self.revoke_all_from_backend_without_events(
+            crate::traits::backend_pool(backend),
+            group_id_for_revoke,
+        )
+        .await
     }
 
     async fn revoke_all<C>(
@@ -403,7 +411,11 @@ pub trait PermissionController: Serialize + CollectionAccessors {
     where
         C: BackendContext + ?Sized,
     {
-        self.revoke_all_from_backend(backend.db_pool(), group_id_for_revoke, context)
-            .await
+        self.revoke_all_from_backend(
+            crate::traits::backend_pool(backend),
+            group_id_for_revoke,
+            context,
+        )
+        .await
     }
 }

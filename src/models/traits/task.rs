@@ -16,9 +16,10 @@ impl TaskID {
     /// Load this task for `requestor`, enforcing principal-centric authorization.
     pub async fn load_authorized(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         requestor: &impl AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         self.load_authorized_of_kind(pool, requestor, None, "Task")
             .await
     }
@@ -26,18 +27,20 @@ impl TaskID {
     /// Load this task, additionally requiring it to be an export task.
     pub async fn load_authorized_export(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         requestor: &impl AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Export), "Export task")
             .await
     }
 
     pub async fn load_authorized_backup(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         requestor: &impl crate::db::traits::authz::AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Backup), "Backup task")
             .await
     }
@@ -45,9 +48,10 @@ impl TaskID {
     /// Load this task, additionally requiring it to be an import task.
     pub async fn load_authorized_import(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         requestor: &impl AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Import), "Import task")
             .await
     }

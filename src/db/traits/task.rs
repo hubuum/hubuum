@@ -343,7 +343,11 @@ impl<T: TaskIdentifier + ?Sized> TaskIdentifier for &T {
 /// `task.find_record(pool)` / `task.update_state(pool, ..)` rather than passing a bare id to a free
 /// function; all Diesel query construction stays here in the backend layer.
 pub trait TaskBackend: TaskIdentifier {
-    async fn find_record(&self, pool: &DbPool) -> Result<TaskRecord, ApiError> {
+    async fn find_record(
+        &self,
+        pool: &impl crate::traits::BackendContext,
+    ) -> Result<TaskRecord, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::tasks::dsl::{id, tasks};
 
         let task_id_value = self.task_id();
@@ -358,9 +362,10 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn list_events_with_total_count(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: &QueryOptions,
     ) -> Result<(Vec<TaskEventRecord>, i64), ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::events::dsl::{entity_id, entity_type, events, id};
 
         let task_id_value = self.task_id();
@@ -425,9 +430,10 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn list_import_results_with_total_count(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: &QueryOptions,
     ) -> Result<(Vec<ImportTaskResultRecord>, i64), ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::import_task_results::dsl::{id, import_task_results, task_id};
 
         let task_id_value = self.task_id();
@@ -487,8 +493,9 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn find_export_output(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
     ) -> Result<ExportOutputLookup<ExportTaskOutputRecord>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::export_task_outputs::dsl::{export_task_outputs, task_id};
 
         let task_id_value = self.task_id();
@@ -515,8 +522,9 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn find_export_output_summary(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
     ) -> Result<ExportOutputLookup<ExportTaskOutputSummaryRecord>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::export_task_outputs::dsl::{export_task_outputs, task_id};
 
         let task_id_value = self.task_id();
@@ -542,8 +550,9 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn find_backup_output(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
     ) -> Result<BackupOutputLookup<BackupTaskOutputRecord>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::backup_task_outputs::dsl::{backup_task_outputs, task_id};
 
         let task_id_value = self.task_id();
@@ -568,8 +577,9 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn find_backup_output_summary(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
     ) -> Result<BackupOutputLookup<BackupTaskOutputSummaryRecord>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::backup_task_outputs::dsl::{backup_task_outputs, task_id};
 
         let task_id_value = self.task_id();
@@ -813,11 +823,12 @@ pub trait TaskBackend: TaskIdentifier {
 
     async fn finalize_backup_with_output(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         update: TaskStateUpdate,
         event: NewTaskEventRecord,
         output: NewBackupTaskOutputRecord,
     ) -> Result<TaskRecord, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::backup_task_outputs::dsl::{
             backup_task_outputs, task_id as backup_output_task_id,
         };
@@ -960,12 +971,13 @@ fn build_task_query<'a>(
 }
 
 pub async fn list_tasks_with_total_count(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     submitted_by_filter: Option<i32>,
     kind_filter: Option<&str>,
     status_filter: Option<&str>,
     query_options: &QueryOptions,
 ) -> Result<(Vec<TaskRecord>, i64), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
         with_connection(pool, async |conn| {
             build_task_query(submitted_by_filter, kind_filter, status_filter)
@@ -990,9 +1002,10 @@ pub async fn list_tasks_with_total_count(
 /// Enrich one task-event page with legacy queued-event initiators and one
 /// batched principal-name lookup.
 pub(crate) async fn task_event_responses(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     mut records: Vec<TaskEventRecord>,
 ) -> Result<Vec<crate::models::TaskEventResponse>, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::events::dsl as stored;
 
     let legacy_task_ids = records
@@ -1045,9 +1058,10 @@ pub(crate) async fn task_event_responses(
 }
 
 pub async fn list_export_task_output_summaries(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     task_ids: &[i32],
 ) -> Result<Vec<ExportTaskOutputSummaryRecord>, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::export_task_outputs::dsl::{export_task_outputs, task_id};
 
     if task_ids.is_empty() {
@@ -1068,9 +1082,10 @@ pub async fn list_export_task_output_summaries(
 }
 
 pub async fn list_backup_task_output_summaries(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     task_ids: &[i32],
 ) -> Result<Vec<BackupTaskOutputSummaryRecord>, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::backup_task_outputs::dsl::{backup_task_outputs, task_id};
 
     if task_ids.is_empty() {
@@ -1324,9 +1339,10 @@ fn task_kind_claim_order(start: usize) -> [&'static str; TaskKind::ALL.len()] {
 }
 
 pub(crate) async fn claim_next_queued_task(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     lease_duration: TaskLeaseDuration,
 ) -> Result<Option<TaskRecord>, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::tasks::dsl::{
         attempt_count, id, lease_expires_at, lease_token, started_at, status, tasks, updated_at,
     };
@@ -1594,9 +1610,10 @@ impl TaskCreateRequest {
     /// closes the race between concurrent requests carrying the same key.
     pub async fn create_idempotently_with_active_limit(
         self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         max_active_tasks: usize,
     ) -> Result<TaskRecord, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let kind = self.kind;
         let submitted_by = self.submitted_by;
         let idempotency_key = self.idempotency_key.clone();

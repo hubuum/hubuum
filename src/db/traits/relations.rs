@@ -32,9 +32,10 @@ use super::{ObjectRelationsFromUser, Relations, SelfRelations};
 /// queries per relation that `AuthzTarget::to_resource_ref` would otherwise
 /// require on list paths.
 pub async fn class_relation_authorization_resources(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     relations: &[HubuumClassRelation],
 ) -> Result<Vec<ResourceRef>, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::hubuumclass::dsl::{hubuumclass, id};
 
     let class_ids = relations
@@ -135,9 +136,10 @@ async fn load_objects_by_id(
 /// Build Cedar authorization resources for object relations with one bulk
 /// object lookup, rather than issuing endpoint lookups for every row.
 pub async fn object_relation_authorization_resources(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     relations: &[HubuumObjectRelation],
 ) -> Result<Vec<ResourceRef>, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let object_ids = relations
         .iter()
         .flat_map(|relation| [relation.from_hubuum_object_id, relation.to_hubuum_object_id])
@@ -924,7 +926,7 @@ async fn load_class_relation_endpoint_records(
     Ok((from_class, to_class))
 }
 
-pub trait PrepareClassRelationRecord {
+pub(crate) trait PrepareClassRelationRecord {
     async fn prepare_class_relation_record(
         &self,
         pool: &DbPool,
@@ -950,7 +952,7 @@ impl PrepareClassRelationRecord for NewHubuumClassRelation {
     }
 }
 
-pub trait ResolveClassRelationTargetRecord {
+pub(crate) trait ResolveClassRelationTargetRecord {
     async fn resolve_class_relation_target_record(
         &self,
         pool: &DbPool,
@@ -1220,7 +1222,7 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
     }
 }
 
-pub trait CreatePreparedClassRelationRecord {
+pub(crate) trait CreatePreparedClassRelationRecord {
     async fn create_prepared_class_relation_record(
         &self,
         pool: &DbPool,
@@ -1281,7 +1283,7 @@ impl CreatePreparedClassRelationRecord for PreparedClassRelation {
     }
 }
 
-pub trait DeleteResolvedClassRelationRecord {
+pub(crate) trait DeleteResolvedClassRelationRecord {
     async fn delete_resolved_class_relation_record(
         &self,
         pool: &DbPool,
@@ -1420,7 +1422,7 @@ fn order_object_relation_endpoints(
     }
 }
 
-pub trait PrepareObjectRelationRecord {
+pub(crate) trait PrepareObjectRelationRecord {
     async fn prepare_object_relation_record(
         &self,
         pool: &DbPool,
@@ -1448,20 +1450,15 @@ impl PrepareObjectRelationRecord for ObjectRelationCreateSelector {
                 .await?;
                 PreparedObjectRelation::new(command, from_object, to_object, class_relation)
             }
-            ObjectRelationCreateSelectorKind::Between {
-                from_class_id,
-                from_object_id,
-                to_class_id,
-                to_object_id,
-            } => {
+            ObjectRelationCreateSelectorKind::Between { from, to } => {
                 let (route_from_object, route_to_object) = load_object_relation_endpoint_records(
                     conn,
-                    from_object_id.id(),
-                    to_object_id.id(),
+                    from.object_id().id(),
+                    to.object_id().id(),
                 )
                 .await?;
-                if route_from_object.hubuum_class_id != from_class_id.id()
-                    || route_to_object.hubuum_class_id != to_class_id.id()
+                if route_from_object.hubuum_class_id != from.class_id().id()
+                    || route_to_object.hubuum_class_id != to.class_id().id()
                 {
                     return Err(ApiError::NotFound(
                         "Object was not found in the selected class".to_string(),
@@ -1469,8 +1466,8 @@ impl PrepareObjectRelationRecord for ObjectRelationCreateSelector {
                 }
                 let class_relation = load_direct_class_relation_target_on_connection(
                     conn,
-                    from_class_id.id(),
-                    to_class_id.id(),
+                    from.class_id().id(),
+                    to.class_id().id(),
                 )
                 .await?;
                 let command = NewHubuumObjectRelation {
@@ -1488,7 +1485,7 @@ impl PrepareObjectRelationRecord for ObjectRelationCreateSelector {
     }
 }
 
-pub trait ResolveObjectRelationTargetRecord {
+pub(crate) trait ResolveObjectRelationTargetRecord {
     async fn resolve_object_relation_target_record(
         &self,
         pool: &DbPool,
@@ -1519,28 +1516,23 @@ impl ResolveObjectRelationTargetRecord for ObjectRelationSelector {
                     .await?;
                     (relation, from_object, to_object)
                 }
-                ObjectRelationSelectorKind::Between {
-                    from_class_id,
-                    from_object_id,
-                    to_class_id,
-                    to_object_id,
-                } => {
+                ObjectRelationSelectorKind::Between { from, to } => {
                     let (route_from_object, route_to_object) =
                         load_object_relation_endpoint_records(
                             conn,
-                            from_object_id.id(),
-                            to_object_id.id(),
+                            from.object_id().id(),
+                            to.object_id().id(),
                         )
                         .await?;
-                    if route_from_object.hubuum_class_id != from_class_id.id()
-                        || route_to_object.hubuum_class_id != to_class_id.id()
+                    if route_from_object.hubuum_class_id != from.class_id().id()
+                        || route_to_object.hubuum_class_id != to.class_id().id()
                     {
                         return Err(ApiError::NotFound(
                             "Object relation was not found for the selected classes".to_string(),
                         ));
                     }
-                    let lower_object_id = from_object_id.id().min(to_object_id.id());
-                    let higher_object_id = from_object_id.id().max(to_object_id.id());
+                    let lower_object_id = from.object_id().id().min(to.object_id().id());
+                    let higher_object_id = from.object_id().id().max(to.object_id().id());
                     let relation = hubuumobject_relation
                         .filter(from_hubuum_object_id.eq(lower_object_id))
                         .filter(to_hubuum_object_id.eq(higher_object_id))
@@ -1574,7 +1566,7 @@ fn object_relation_scope_matches(current: &HubuumObject, expected: &HubuumObject
         && current.hubuum_class_id == expected.hubuum_class_id
 }
 
-pub trait CreatePreparedObjectRelationRecord {
+pub(crate) trait CreatePreparedObjectRelationRecord {
     async fn create_prepared_object_relation_record(
         &self,
         pool: &DbPool,
@@ -1649,7 +1641,7 @@ impl CreatePreparedObjectRelationRecord for PreparedObjectRelation {
     }
 }
 
-pub trait DeleteResolvedObjectRelationRecord {
+pub(crate) trait DeleteResolvedObjectRelationRecord {
     async fn delete_resolved_object_relation_record(
         &self,
         pool: &DbPool,

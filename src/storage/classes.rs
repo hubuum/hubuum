@@ -12,7 +12,7 @@ use super::StorageError;
 /// Resolved targets preserve the route-selected address so implementations can
 /// recheck ID- and name-based mutations atomically before writing.
 #[async_trait]
-pub trait ClassStore: Send + Sync {
+pub(crate) trait ClassStore: Send + Sync {
     async fn resolve_class(
         &self,
         selector: ClassSelector,

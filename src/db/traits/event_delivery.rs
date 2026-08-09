@@ -388,9 +388,10 @@ fn truncate_delivery_error(error: &str) -> String {
 }
 
 pub async fn load_event_delivery(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     delivery_id: EventDeliveryID,
 ) -> Result<EventDelivery, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::event_deliveries::dsl::{event_deliveries, id};
 
     with_connection(pool, async |conn| {
@@ -403,9 +404,10 @@ pub async fn load_event_delivery(
 }
 
 pub async fn list_event_deliveries_with_total_count(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventDelivery>, i64), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let query = build_event_delivery_query(query_options)?;
     let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
         with_connection(pool, async |conn| {
@@ -472,9 +474,10 @@ fn build_event_delivery_query(
 }
 
 pub async fn release_event_delivery_for_retry(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     delivery_id: EventDeliveryID,
 ) -> Result<EventDelivery, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::event_deliveries::dsl::{
         claim_token, event_deliveries, id, last_error, locked_until, next_attempt_at, status,
     };
@@ -505,9 +508,10 @@ pub async fn release_event_delivery_for_retry(
 }
 
 pub async fn mark_event_delivery_dead(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     delivery_id: EventDeliveryID,
 ) -> Result<EventDelivery, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::event_deliveries::dsl::{
         claim_token, event_deliveries, id, last_error, locked_until, status,
     };

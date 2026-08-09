@@ -35,7 +35,7 @@ use crate::traits::{AuthzSubject, BackendContext, PrincipalIdAccessor};
 
 pub async fn authorize_resources<S>(
     backend: &dyn PermissionBackend,
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     subject: S,
     scopes: Option<&TokenScope>,
     permissions: Vec<Permissions>,
@@ -44,6 +44,7 @@ pub async fn authorize_resources<S>(
 where
     S: PrincipalIdAccessor,
 {
+    let pool = crate::traits::backend_pool(pool);
     if !scope_allows(scopes, &permissions) {
         return Err(ApiError::Forbidden("Permission denied".to_string()));
     }
@@ -91,7 +92,7 @@ where
         ));
     }
 
-    let pool = context.db_pool();
+    let pool = crate::traits::backend_pool(context);
     let is_admin = match context.permission_backend() {
         Some(backend) => {
             let principal = PrincipalRef::load(pool, subject).await?;

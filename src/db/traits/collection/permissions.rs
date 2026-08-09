@@ -9,10 +9,11 @@ use std::collections::HashMap;
 /// database snapshot. When `group_id` is present, only that group's row is
 /// included while the aggregate revision still describes the complete ACL.
 pub(crate) async fn collection_permission_set_from_backend(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     collection_id: i32,
     group_id: Option<i32>,
 ) -> Result<CollectionPermissionSet, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::{collection_authorization_state, permissions};
 
     let rows = with_connection(pool, async |conn| {

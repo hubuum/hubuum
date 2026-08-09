@@ -2,7 +2,7 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::traits::task::{
+use crate::backend::capabilities::task::{
     TaskBackend, list_backup_task_output_summaries, list_export_task_output_summaries,
     list_tasks_with_total_count, task_event_responses,
 };
@@ -100,15 +100,15 @@ fn parse_task_list_query(query_string: &str) -> Result<(QueryOptions, TaskListFi
 #[get("")]
 #[get("/")]
 pub async fn get_tasks(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.clone());
+    ensure_task_worker_running(context.clone());
     let (params, filters) = parse_task_list_query(req.query_string())?;
     let search_params = prepare_db_pagination::<TaskResponse>(&params)?;
-    let backend = pool.permission_backend();
-    let principal = PrincipalRef::load(&pool, &requestor.principal).await?;
+    let backend = context.permission_backend();
+    let principal = PrincipalRef::load(&context, &requestor.principal).await?;
     let is_admin = backend.is_admin(&principal).await?;
     let submitted_by_filter = if is_admin {
         filters.submitted_by
@@ -119,7 +119,7 @@ pub async fn get_tasks(
     };
     let (tasks, total_count) = if backend.supports_sql_visibility_pushdown() {
         list_tasks_with_total_count(
-            &pool,
+            &context,
             submitted_by_filter,
             filters.kind.map(TaskKind::as_str),
             filters.status.map(TaskStatus::as_str),
@@ -130,7 +130,7 @@ pub async fn get_tasks(
         let mut candidate_options = count_query_options(&params);
         candidate_options.include_total = false;
         let (candidates, _) = list_tasks_with_total_count(
-            &pool,
+            &context,
             submitted_by_filter,
             filters.kind.map(TaskKind::as_str),
             filters.status.map(TaskStatus::as_str),
@@ -139,7 +139,7 @@ pub async fn get_tasks(
         .await?;
         let resources = candidates
             .iter()
-            .map(|task| task.to_resource_ref(&pool))
+            .map(|task| task.to_resource_ref(&context))
             .collect::<Vec<_>>();
         let mut task_resources = Vec::with_capacity(resources.len());
         for resource in resources {
@@ -159,7 +159,7 @@ pub async fn get_tasks(
         .filter(|task| task.kind == TaskKind::Export.as_str())
         .map(|task| task.id)
         .collect::<Vec<_>>();
-    let export_outputs = list_export_task_output_summaries(&pool, &export_task_ids)
+    let export_outputs = list_export_task_output_summaries(&context, &export_task_ids)
         .await?
         .into_iter()
         .map(|output| (output.task_id, output))
@@ -169,7 +169,7 @@ pub async fn get_tasks(
         .filter(|task| task.kind == TaskKind::Backup.as_str())
         .map(|task| task.id)
         .collect::<Vec<_>>();
-    let backup_outputs = list_backup_task_output_summaries(&pool, &backup_task_ids)
+    let backup_outputs = list_backup_task_output_summaries(&context, &backup_task_ids)
         .await?
         .into_iter()
         .map(|output| (output.task_id, output))
@@ -222,19 +222,21 @@ pub async fn get_tasks(
 )]
 #[get("/{task_id}")]
 pub async fn get_task(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.clone());
+    ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    let task = if pool.permission_backend().uses_sql_permission_store() {
-        task_id.load_authorized(&pool, &requestor.principal).await?
+    let task = if context.permission_backend().uses_sql_permission_store() {
+        task_id
+            .load_authorized(&context, &requestor.principal)
+            .await?
     } else {
-        let task = task_id.find_record(&pool).await?;
-        let principal = PrincipalRef::load(&pool, &requestor.principal).await?;
-        let resource = task.to_resource_ref(&pool).await?;
-        if pool
+        let task = task_id.find_record(&context).await?;
+        let principal = PrincipalRef::load(&context, &requestor.principal).await?;
+        let resource = task.to_resource_ref(&context).await?;
+        if context
             .permission_backend()
             .authorize_task(&principal, &resource)
             .await?
@@ -245,12 +247,12 @@ pub async fn get_task(
         task
     };
     let export_output = if task.kind == TaskKind::Export.as_str() {
-        task.find_export_output_summary(&pool).await?
+        task.find_export_output_summary(&context).await?
     } else {
         ExportOutputLookup::Missing
     };
     let backup_output = if task.kind == TaskKind::Backup.as_str() {
-        task.find_backup_output_summary(&pool).await?
+        task.find_backup_output_summary(&context).await?
     } else {
         BackupOutputLookup::Missing
     };
@@ -277,20 +279,22 @@ pub async fn get_task(
 )]
 #[get("/{task_id}/events")]
 pub async fn get_task_events(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.clone());
+    ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    if pool.permission_backend().uses_sql_permission_store() {
-        task_id.load_authorized(&pool, &requestor.principal).await?;
+    if context.permission_backend().uses_sql_permission_store() {
+        task_id
+            .load_authorized(&context, &requestor.principal)
+            .await?;
     } else {
-        let task = task_id.find_record(&pool).await?;
-        let principal = PrincipalRef::load(&pool, &requestor.principal).await?;
-        let resource = task.to_resource_ref(&pool).await?;
-        if pool
+        let task = task_id.find_record(&context).await?;
+        let principal = PrincipalRef::load(&context, &requestor.principal).await?;
+        let resource = task.to_resource_ref(&context).await?;
+        if context
             .permission_backend()
             .authorize_task(&principal, &resource)
             .await?
@@ -302,8 +306,8 @@ pub async fn get_task_events(
     let (params, _) = parse_query_parameter_with_passthrough(req.query_string(), &[])?;
     let search_params = prepare_db_pagination::<TaskEventResponse>(&params)?;
     let (events, total_count) = task_id
-        .list_events_with_total_count(&pool, &search_params)
+        .list_events_with_total_count(&context, &search_params)
         .await?;
-    let events = task_event_responses(&pool, events).await?;
+    let events = task_event_responses(&context, events).await?;
     ApiResponse::paginated(events, total_count, &params)
 }

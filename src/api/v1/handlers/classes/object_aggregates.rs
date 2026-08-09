@@ -44,16 +44,16 @@ use crate::traits::{Search, SelfAccessors};
 #[get("/{class_id}/object-aggregates")]
 #[get("/{class_id}/object-aggregates/")]
 pub(crate) async fn get_object_aggregates(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = pool
+    let target = context
         .class_service()
         .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
-    read_object_aggregates(pool, requestor, target, req).await
+    read_object_aggregates(context, requestor, target, req).await
 }
 
 #[utoipa::path(
@@ -79,20 +79,20 @@ pub(crate) async fn get_object_aggregates(
 )]
 #[get("/by-name/{class_name}/object-aggregates")]
 pub(crate) async fn get_object_aggregates_by_name(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = pool
+    let target = context
         .class_service()
         .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
-    read_object_aggregates(pool, requestor, target, req).await
+    read_object_aggregates(context, requestor, target, req).await
 }
 
 async fn read_object_aggregates(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     class_target: ResolvedClassTarget,
     req: HttpRequest,
@@ -113,7 +113,7 @@ async fn read_object_aggregates(
             ));
         }
         Some(UserID::new(
-            computed_personal_owner(&pool, &requestor, class)
+            computed_personal_owner(&context, &requestor, class)
                 .await?
                 .ok_or_else(|| {
                     ApiError::BadRequest(
@@ -145,7 +145,7 @@ async fn read_object_aggregates(
     if let Some(owner_id) = personal_owner_id {
         request = request.personal_owner(owner_id);
     }
-    let page = user.aggregate_objects(&pool, request.build()?).await?;
+    let page = user.aggregate_objects(&context, request.build()?).await?;
     let (rows, total_count, next_cursor) = page.into_parts();
     Ok(ApiResponse::paginated_items(
         rows,

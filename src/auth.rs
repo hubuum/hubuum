@@ -374,7 +374,11 @@ impl AuthProviderBackend for LdapAuthProvider {
     }
 }
 
-pub async fn login(pool: &DbPool, login: LoginUser) -> Result<User, ApiError> {
+pub async fn login(
+    pool: &impl crate::traits::BackendContext,
+    login: LoginUser,
+) -> Result<User, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     login.validate()?;
     let scope = login
         .identity_scope
@@ -388,7 +392,11 @@ pub async fn login(pool: &DbPool, login: LoginUser) -> Result<User, ApiError> {
         .await
 }
 
-pub async fn refresh_principal_if_needed(pool: &DbPool, principal_id: i32) -> Result<(), ApiError> {
+pub async fn refresh_principal_if_needed(
+    pool: &impl crate::traits::BackendContext,
+    principal_id: i32,
+) -> Result<(), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let Some(state) = external_user_state(pool, principal_id).await? else {
         return Ok(());
     };

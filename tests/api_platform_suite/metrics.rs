@@ -112,6 +112,33 @@ async fn metrics_endpoint_is_best_effort_when_database_refresh_fails() {
 }
 
 #[actix_web::test]
+async fn storage_metrics_export_backend_identity_and_bounded_operation_labels() {
+    let body = scrape_recorded_metrics(|| {
+        metrics::storage_backend_identity("postgresql", 1);
+        metrics::storage_operation_finished(
+            "postgresql",
+            "objects",
+            "update",
+            "conflict",
+            Duration::from_millis(5),
+        );
+    })
+    .await;
+
+    assert!(
+        body.contains(
+            "hubuum_storage_backend_info{backend=\"postgresql\",contract_version=\"1\"} 1"
+        )
+    );
+    assert!(body.contains(
+        "hubuum_storage_operation_duration_seconds_bucket{backend=\"postgresql\",capability=\"objects\",operation=\"update\",result=\"conflict\""
+    ));
+    assert!(body.contains(
+        "hubuum_storage_operation_errors_total{backend=\"postgresql\",capability=\"objects\",operation=\"update\",result=\"conflict\"} 1"
+    ));
+}
+
+#[actix_web::test]
 async fn export_metrics_use_bounded_phase_and_template_labels() {
     let body = scrape_recorded_metrics(|| {
         metrics::export_completed("objects_in_class", "application/json");

@@ -46,13 +46,13 @@ fn sse_event<T: Serialize>(event: &str, payload: &T) -> Result<Bytes, ApiError> 
 )]
 #[get("")]
 pub async fn get_search(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let params = parse_unified_search_query(req.query_string())?;
     let response =
-        execute_unified_search(&requestor.principal, &pool, &params, requestor.scopes()).await?;
+        execute_unified_search(&requestor.principal, &context, &params, requestor.scopes()).await?;
     Ok(ApiResponse::new_with_headers(
         response,
         StatusCode::OK,
@@ -86,7 +86,7 @@ pub async fn get_search(
 )]
 #[get("/stream")]
 pub async fn stream_search(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
@@ -109,7 +109,7 @@ pub async fn stream_search(
 
         match execute_unified_search_batch(
             &requestor.principal,
-            &pool,
+            &context,
             &params,
             kind,
             requestor.scopes(),

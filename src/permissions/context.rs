@@ -1,10 +1,9 @@
-use std::ops::Deref;
 use std::sync::Arc;
 
 use actix_web::{FromRequest, HttpRequest, dev::Payload, web::Data};
 use futures_util::future::{Ready, ready};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "integration-test-support"))]
 use crate::config::get_config;
 use crate::db::DbPool;
 use crate::errors::ApiError;
@@ -12,39 +11,68 @@ use crate::services::{
     ClassRelationService, ClassService, CollectionService, ObjectRelationService, ObjectService,
     Services,
 };
-use crate::traits::BackendContext;
+use crate::traits::{BackendContext, BackendHandle};
 
 use super::backend::PermissionBackend;
-#[cfg(test)]
+#[cfg(any(test, feature = "integration-test-support"))]
 use super::local::LocalPermissionBackend;
 
 #[derive(Clone)]
 pub struct AppContext {
-    pub db_pool: DbPool,
-    pub permissions: Arc<dyn PermissionBackend>,
+    backend: BackendHandle,
+    permissions: Arc<dyn PermissionBackend>,
     services: Services,
 }
 
 impl AppContext {
     pub fn new(db_pool: DbPool, permissions: Arc<dyn PermissionBackend>) -> Self {
-        let services = Services::postgres(db_pool.clone());
+        let backend = BackendHandle::postgres(db_pool);
+        let services = Services::from_lifecycle_storage(backend.lifecycle_storage());
         Self {
-            db_pool,
+            backend,
             permissions,
             services,
         }
     }
-}
 
-impl Deref for AppContext {
-    type Target = DbPool;
+    pub(crate) fn from_http_request(req: &HttpRequest) -> Result<Self, ApiError> {
+        if let Some(context) = req.app_data::<Data<Self>>() {
+            return Ok(context.get_ref().clone());
+        }
 
-    fn deref(&self) -> &Self::Target {
-        &self.db_pool
+        #[cfg(any(test, feature = "integration-test-support"))]
+        if let Some(pool) = req.app_data::<Data<DbPool>>() {
+            let admin_groupname = get_config()
+                .map(|config| config.admin_groupname.clone())
+                .unwrap_or_else(|_| "admin".to_string());
+            return Ok(Self::new(
+                pool.get_ref().clone(),
+                Arc::new(LocalPermissionBackend::new(
+                    pool.get_ref().clone(),
+                    admin_groupname,
+                )),
+            ));
+        }
+
+        Err(ApiError::InternalServerError(
+            "Application context not found".to_string(),
+        ))
     }
 }
 
 impl AppContext {
+    pub(crate) fn backend(&self) -> &BackendHandle {
+        &self.backend
+    }
+
+    pub(crate) fn clone_backend(&self) -> BackendHandle {
+        self.backend.clone()
+    }
+
+    pub(crate) fn storage_backend_descriptor(&self) -> crate::storage::StorageBackendDescriptor {
+        self.backend.descriptor()
+    }
+
     pub fn permission_backend(&self) -> &dyn PermissionBackend {
         self.permissions.as_ref()
     }
@@ -71,10 +99,6 @@ impl AppContext {
 }
 
 impl BackendContext for AppContext {
-    fn db_pool(&self) -> &DbPool {
-        &self.db_pool
-    }
-
     fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
         Some(self.permissions.as_ref())
     }
@@ -85,26 +109,6 @@ impl FromRequest for AppContext {
     type Future = Ready<Result<Self, Self::Error>>;
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        if let Some(context) = req.app_data::<Data<Self>>() {
-            return ready(Ok(context.get_ref().clone()));
-        }
-
-        #[cfg(test)]
-        if let Some(pool) = req.app_data::<Data<DbPool>>() {
-            let admin_groupname = get_config()
-                .map(|config| config.admin_groupname.clone())
-                .unwrap_or_else(|_| "admin".to_string());
-            return ready(Ok(Self::new(
-                pool.get_ref().clone(),
-                Arc::new(LocalPermissionBackend::new(
-                    pool.get_ref().clone(),
-                    admin_groupname,
-                )),
-            )));
-        }
-
-        ready(Err(ApiError::InternalServerError(
-            "Application permission context not found".to_string(),
-        )))
+        ready(Self::from_http_request(req))
     }
 }

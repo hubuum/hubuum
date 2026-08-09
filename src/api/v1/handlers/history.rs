@@ -5,9 +5,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
-use crate::db::traits::authz::scope_allows;
-use crate::db::traits::history::resolve_principal_names;
+use crate::backend::capabilities::authz::scope_allows;
+use crate::backend::capabilities::history::resolve_principal_names;
 use crate::errors::ApiError;
 use crate::events::{PrincipalNames, Provenance, StoredProvenance};
 use crate::models::collection::user_can_on_any;
@@ -52,7 +51,7 @@ where
 
 /// Resolve the union of actor and initiator ids with one principal query.
 pub(crate) async fn resolve_history_principal_names<T>(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     rows: &[T],
 ) -> Result<PrincipalNames, ApiError>
 where

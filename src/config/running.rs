@@ -84,6 +84,12 @@ pub struct TlsConfig {
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct DatabaseConfig {
+    /// Complete storage backend selected by the application composition root.
+    pub backend: String,
+    /// Version of the all-or-nothing storage contract implemented by the backend.
+    pub contract_version: u16,
+    /// Required capability families. Selectable backends always report the complete set.
+    pub capabilities: Vec<String>,
     pub url: SecretStatus,
     pub pool_size: u32,
     pub pool_acquire_timeout_ms: u64,
@@ -237,8 +243,11 @@ impl From<&RunningConfig> for ClientConfig {
     }
 }
 
-impl From<&AppConfig> for RunningConfig {
-    fn from(config: &AppConfig) -> Self {
+impl RunningConfig {
+    pub(crate) fn from_app_config_and_storage(
+        config: &AppConfig,
+        storage: crate::storage::StorageBackendDescriptor,
+    ) -> Self {
         let client_allowlist = match &config.client_allowlist {
             ClientAllowlist::Any => ClientAllowlistStatus {
                 allows_any: true,
@@ -275,6 +284,12 @@ impl From<&AppConfig> for RunningConfig {
                 },
             },
             database: DatabaseConfig {
+                backend: storage.kind().as_str().to_string(),
+                contract_version: storage.contract_version(),
+                capabilities: storage
+                    .capabilities()
+                    .map(|capability| capability.as_str().to_string())
+                    .collect(),
                 url: SecretStatus {
                     configured: !config.database_url.trim().is_empty(),
                 },
@@ -398,6 +413,17 @@ impl From<&AppConfig> for RunningConfig {
     }
 }
 
+impl From<&AppConfig> for RunningConfig {
+    fn from(config: &AppConfig) -> Self {
+        Self::from_app_config_and_storage(
+            config,
+            crate::storage::StorageBackendDescriptor::new(
+                crate::storage::StorageBackendKind::Postgresql,
+            ),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -426,6 +452,9 @@ mod tests {
         assert!(!json.contains("valkey.example"));
         assert!(!json.contains("treetop-token"));
         assert!(json.contains("\"configured\":true"));
+        assert!(json.contains("\"backend\":\"postgresql\""));
+        assert!(json.contains("\"contract_version\":1"));
+        assert!(json.contains("\"queries_and_history\""));
         assert!(!debug.contains("secret-password"));
         assert!(!debug.contains("correct horse battery staple"));
     }

@@ -26,6 +26,7 @@ use crate::errors::ApiError;
 use crate::events::{Event, EventRetentionSettings};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::restores::MaintenanceActivityGuard;
+use crate::traits::{BackendContext, backend_pool};
 
 static EVENT_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
 
@@ -157,7 +158,11 @@ fn spawn_event_retention_worker_loop(pool: DbPool, config: EventRetentionWorkerC
     });
 }
 
-pub fn ensure_event_retention_worker_running(pool: DbPool) {
+pub fn ensure_event_retention_worker_running<C>(backend: C)
+where
+    C: BackendContext,
+{
+    let pool = backend_pool(&backend).clone();
     if get_config().is_ok_and(|config| !config.runtime_role.runs_background_workers()) {
         return;
     }
