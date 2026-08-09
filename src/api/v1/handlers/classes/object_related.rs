@@ -28,8 +28,9 @@ async fn get_related_objects(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (class_id, object_id) = paths.into_inner();
-    let target = ObjectSelector::by_id(class_id, object_id)
-        .resolve_object_target(&pool)
+    let target = pool
+        .object_service()
+        .resolve(ObjectSelector::by_id(class_id, object_id))
         .await?;
     read_related_objects(pool, requestor, target, req).await
 }
@@ -61,8 +62,9 @@ async fn get_related_objects_by_name(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (class_name, object_name) = paths.into_inner();
-    let target = ObjectSelector::by_name(class_name, object_name)
-        .resolve_object_target(&pool)
+    let target = pool
+        .object_service()
+        .resolve(ObjectSelector::by_name(class_name, object_name))
         .await?;
     read_related_objects(pool, requestor, target, req).await
 }
@@ -154,8 +156,9 @@ async fn get_related_object_relations(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (class_id, object_id) = paths.into_inner();
-    let target = ObjectSelector::by_id(class_id, object_id)
-        .resolve_object_target(&pool)
+    let target = pool
+        .object_service()
+        .resolve(ObjectSelector::by_id(class_id, object_id))
         .await?;
     read_related_object_relations(pool, requestor, target, req).await
 }
@@ -185,8 +188,9 @@ async fn get_related_object_relations_by_name(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (class_name, object_name) = paths.into_inner();
-    let target = ObjectSelector::by_name(class_name, object_name)
-        .resolve_object_target(&pool)
+    let target = pool
+        .object_service()
+        .resolve(ObjectSelector::by_name(class_name, object_name))
         .await?;
     read_related_object_relations(pool, requestor, target, req).await
 }
@@ -297,8 +301,9 @@ async fn get_related_object_graph(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (class_id, object_id) = paths.into_inner();
-    let target = ObjectSelector::by_id(class_id, object_id)
-        .resolve_object_target(&pool)
+    let target = pool
+        .object_service()
+        .resolve(ObjectSelector::by_id(class_id, object_id))
         .await?;
     read_related_object_graph(pool, requestor, target, req).await
 }
@@ -328,8 +333,9 @@ async fn get_related_object_graph_by_name(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let (class_name, object_name) = paths.into_inner();
-    let target = ObjectSelector::by_name(class_name, object_name)
-        .resolve_object_target(&pool)
+    let target = pool
+        .object_service()
+        .resolve(ObjectSelector::by_name(class_name, object_name))
         .await?;
     read_related_object_graph(pool, requestor, target, req).await
 }

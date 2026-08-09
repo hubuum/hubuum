@@ -3,6 +3,7 @@ mod collections;
 mod error;
 #[cfg(test)]
 mod memory;
+mod objects;
 mod postgres;
 
 pub use classes::ClassStore;
@@ -10,4 +11,5 @@ pub use collections::{CollectionStore, DynStorage, Storage};
 pub use error::StorageError;
 #[cfg(test)]
 pub(crate) use memory::MemoryStorage;
+pub use objects::ObjectStore;
 pub use postgres::PostgresStorage;

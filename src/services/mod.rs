@@ -1,8 +1,10 @@
 mod classes;
 mod collections;
+mod objects;
 
 pub use classes::ClassService;
 pub use collections::CollectionService;
+pub use objects::ObjectService;
 
 use crate::db::DbPool;
 use crate::storage::{DynStorage, PostgresStorage};
@@ -38,6 +40,7 @@ pub(crate) fn storage_contract_prefix(label: &str) -> String {
 pub struct Services {
     classes: ClassService,
     collections: CollectionService,
+    objects: ObjectService,
 }
 
 impl Services {
@@ -48,7 +51,8 @@ impl Services {
     pub(crate) fn from_storage(storage: DynStorage) -> Self {
         Self {
             classes: ClassService::new(storage.clone()),
-            collections: CollectionService::new(storage),
+            collections: CollectionService::new(storage.clone()),
+            objects: ObjectService::new(storage),
         }
     }
 
@@ -58,5 +62,9 @@ impl Services {
 
     pub fn collections(&self) -> &CollectionService {
         &self.collections
+    }
+
+    pub fn objects(&self) -> &ObjectService {
+        &self.objects
     }
 }

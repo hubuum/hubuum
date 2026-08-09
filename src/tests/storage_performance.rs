@@ -18,9 +18,9 @@ use crate::events::EventContext;
 use crate::models::collection::effective_group_on;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    ClassSelector, CollectionID, GroupID, HubuumClassID, NewCollectionWithAssignee, NewHubuumClass,
-    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, UpdateCollection,
-    UpdateHubuumClass, UserID,
+    ClassSelector, CollectionID, GroupID, HubuumClassID, HubuumObjectID, NewCollectionWithAssignee,
+    NewHubuumClass, NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
+    ObjectSelector, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject, UserID,
 };
 use crate::services::Services;
 use crate::tests::{TestScope, ensure_admin_user};
@@ -279,6 +279,158 @@ async fn class_storage_query_budget_no_op_avoids_writes_and_events() {
         .delete_without_events(&scope.pool)
         .await
         .expect("class cleanup");
+    fixture.cleanup().await.expect("collection fixture cleanup");
+}
+
+#[actix_web::test]
+async fn object_storage_query_budget_point_read_uses_one_query() {
+    let scope = TestScope::new();
+    let fixture = scope
+        .collection_fixture("query_budget_object_point_read")
+        .await;
+    let services = Services::postgres(scope.pool.get_ref().clone());
+    let class = NewHubuumClass {
+        name: scope.scoped_name("query_budget_object_point_read_class"),
+        collection_id: fixture.collection.id,
+        json_schema: None,
+        validate_schema: None,
+        description: "object point read query budget class".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("class fixture should save");
+    let object = NewHubuumObject {
+        name: scope.scoped_name("query_budget_object_point_read"),
+        collection_id: fixture.collection.id,
+        hubuum_class_id: class.id,
+        data: serde_json::json!({"value": 1}),
+        description: "object point read query budget".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("object fixture should save");
+
+    let (loaded, queries) = capture_queries(services.objects().resolve(ObjectSelector::by_id(
+        HubuumClassID::new(class.id).expect("valid class id"),
+        HubuumObjectID::new(object.id).expect("valid object id"),
+    )))
+    .await;
+    assert_eq!(loaded.expect("object should load").object(), &object);
+    assert_eq!(queries.total_queries(), 1, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 1);
+    assert_eq!(queries.control_queries(), 0);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(queries.queries_matching("INNER JOIN \"hubuumclass\""), 1);
+
+    fixture.cleanup().await.expect("collection fixture cleanup");
+}
+
+#[actix_web::test]
+async fn object_storage_query_budget_create_with_event_is_fixed() {
+    let scope = TestScope::new();
+    let fixture = scope.collection_fixture("query_budget_object_create").await;
+    let services = Services::postgres(scope.pool.get_ref().clone());
+    let class = NewHubuumClass {
+        name: scope.scoped_name("query_budget_object_create_class"),
+        collection_id: fixture.collection.id,
+        json_schema: None,
+        validate_schema: None,
+        description: "object create query budget class".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("class fixture should save");
+    let class_target = services
+        .classes()
+        .resolve(ClassSelector::by_id(
+            HubuumClassID::new(class.id).expect("valid class id"),
+        ))
+        .await
+        .expect("class fixture should resolve");
+    let command = NewHubuumObject {
+        name: scope.scoped_name("query_budget_object_create"),
+        collection_id: fixture.collection.id,
+        hubuum_class_id: class.id,
+        data: serde_json::json!({"value": 1}),
+        description: "object create query budget".to_string(),
+    };
+
+    let (created, queries) = capture_queries(services.objects().create(
+        &class_target,
+        command,
+        &EventContext::system(),
+    ))
+    .await;
+    created.expect("object should save with an event");
+    assert_eq!(queries.total_queries(), 10, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 8);
+    assert_eq!(queries.control_queries(), 2);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(queries.queries_matching("INSERT INTO \"hubuumobject\""), 1);
+    assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 1);
+
+    fixture.cleanup().await.expect("collection fixture cleanup");
+}
+
+#[actix_web::test]
+async fn object_storage_query_budget_no_op_avoids_object_writes_and_events() {
+    let scope = TestScope::new();
+    let fixture = scope.collection_fixture("query_budget_object_no_op").await;
+    let services = Services::postgres(scope.pool.get_ref().clone());
+    let class = NewHubuumClass {
+        name: scope.scoped_name("query_budget_object_no_op_class"),
+        collection_id: fixture.collection.id,
+        json_schema: None,
+        validate_schema: None,
+        description: "object no-op query budget class".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("class fixture should save");
+    let object = NewHubuumObject {
+        name: scope.scoped_name("query_budget_object_no_op"),
+        collection_id: fixture.collection.id,
+        hubuum_class_id: class.id,
+        data: serde_json::json!({"value": 1}),
+        description: "object no-op query budget".to_string(),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("object fixture should save");
+    let target = services
+        .objects()
+        .resolve(ObjectSelector::by_id(
+            HubuumClassID::new(class.id).expect("valid class id"),
+            HubuumObjectID::new(object.id).expect("valid object id"),
+        ))
+        .await
+        .expect("object fixture should resolve");
+    let update = UpdateHubuumObject {
+        name: Some(object.name.clone()),
+        collection_id: Some(object.collection_id),
+        hubuum_class_id: Some(object.hubuum_class_id),
+        data: Some(object.data.clone()),
+        description: Some(object.description.clone()),
+    };
+
+    let (updated, queries) = capture_queries(services.objects().update(
+        &target,
+        update,
+        &EventContext::system(),
+    ))
+    .await;
+    assert_eq!(updated.expect("no-op update should succeed"), object);
+    assert_eq!(queries.total_queries(), 9, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 7);
+    assert_eq!(queries.control_queries(), 2);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(
+        queries.queries_matching("SELECT hubuum_assert_revision_precondition"),
+        1
+    );
+    assert_eq!(queries.queries_matching("UPDATE \"hubuumobject\""), 0);
+    assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 0);
+
     fixture.cleanup().await.expect("collection fixture cleanup");
 }
 
