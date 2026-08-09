@@ -63,6 +63,12 @@ Hubuum is designed around the idea of classes and objects, where the classes are
 
 ## API Documentation
 
+The supported programmatic contract is HTTP/OpenAPI. The root Rust library is
+an internal application crate used to compose Hubuum's binaries, tests, and
+benchmarks; it is not a supported server embedding API. Rust clients should use
+`hubuum-client-rust`. See the [Rust API boundary](docs/rust_api_boundary.md) for
+the workspace package classifications and promotion policy.
+
 - OpenAPI JSON is served at `/api-doc/openapi.json`.
 - Swagger UI is served at `/swagger-ui/` when built with the `swagger-ui` feature.
 

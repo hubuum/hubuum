@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
+import os
 import subprocess
 import tempfile
 import unittest
@@ -14,15 +16,20 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("check-supply-chain-policy.py")
 INSTALL_DIESEL = Path(__file__).with_name("install-diesel-cli.sh")
+INSTALL_SEMVER_CHECKS = Path(__file__).with_name("install-cargo-semver-checks.sh")
 SPEC = importlib.util.spec_from_file_location("supply_chain_policy", SCRIPT)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"could not load {SCRIPT}")
 POLICY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(POLICY)
+SEMVER_CHECKS_VERSION = POLICY.parse_tool_manifest(
+    SCRIPT.parent.parent / ".github" / "supply-chain-tools.env"
+)["CARGO_SEMVER_CHECKS_VERSION"]
 
 DIGEST = "a" * 64
 VALID_VALUES = {
     "CARGO_DENY_VERSION": "0.20.2",
+    "CARGO_SEMVER_CHECKS_VERSION": "0.49.0",
     "DIESEL_CLI_VERSION": "2.3.11",
     "SYFT_IMAGE": f"anchore/syft:v1.50.0@sha256:{DIGEST}",
     "TRIVY_IMAGE": f"aquasec/trivy:0.73.0@sha256:{DIGEST}",
@@ -96,6 +103,43 @@ class DieselVersionTests(unittest.TestCase):
         result = self.parse("diesel\n Supported Backends: postgres\n")
 
         self.assertNotEqual(result.returncode, 0)
+
+
+class SemverChecksInstallerTests(unittest.TestCase):
+    def test_records_installed_version_and_executable_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "bin" / "cargo-semver-checks"
+            binary.parent.mkdir()
+            binary.write_text(
+                "#!/usr/bin/env bash\n"
+                f"echo 'cargo-semver-checks {SEMVER_CHECKS_VERSION}'\n",
+                encoding="utf-8",
+            )
+            binary.chmod(0o755)
+            summary = root / "summary.md"
+            environment = os.environ.copy()
+            environment["CARGO_HOME"] = str(root)
+            environment["GITHUB_STEP_SUMMARY"] = str(summary)
+
+            result = subprocess.run(
+                [str(INSTALL_SEMVER_CHECKS)],
+                text=True,
+                capture_output=True,
+                check=False,
+                env=environment,
+            )
+
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            version_label = f"cargo-semver-checks {SEMVER_CHECKS_VERSION}"
+            self.assertIn(version_label, result.stdout)
+            self.assertIn(f"cargo-semver-checks sha256:{digest}", result.stdout)
+            self.assertEqual(
+                summary.read_text(encoding="utf-8"),
+                f"- cargo-semver-checks: `{version_label}`\n"
+                f"- cargo-semver-checks executable: `sha256:{digest}`\n",
+            )
 
 
 if __name__ == "__main__":

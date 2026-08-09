@@ -10,6 +10,10 @@ homepage = "https://github.com/hubuum/hubuum"
 documentation = "https://github.com/hubuum/hubuum"
 keywords = ["asset-management", "cmdb", "rest", "api"]
 categories = ["web-programming::http-server"]
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "internal-application"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

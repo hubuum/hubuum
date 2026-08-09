@@ -46,12 +46,15 @@ cargo run --quiet --bin hubuum-openapi > docs/openapi.json
 ## Architecture Overview
 
 The codebase is intentionally split into model-facing APIs and database-facing implementations.
+The root Rust library is an internal application composition crate rather than
+a supported embedding interface. See [Rust API Boundary](rust_api_boundary.md)
+for package classifications, publishing policy, and promotion requirements.
 
 - `src/models/*`:
-  Public domain models and high-level operations.
+  Application domain models and high-level operations.
   These should not contain Diesel query construction for non-trivial backend logic.
 - `src/traits/*`:
-  Public behavioral interfaces used by handlers and models.
+  Behavioral interfaces used by handlers and models inside the application.
   `BackendContext` is the boundary type that allows these APIs to accept either `DbPool` or wrappers (for example `web::Data<DbPool>`).
 - `src/db/traits/*`:
   Diesel/Postgres-backed implementations behind the public traits.
@@ -121,6 +124,15 @@ diff, JSON, and Markdown evidence. The policy scripts, severity configuration,
 and breaking-change exception file are themselves classified as OpenAPI inputs.
 See [the release guide](releasing.md#openapi-compatibility-gate) for the baseline
 and intentional-break rules.
+
+The Rust API policy check classifies every Cargo package and prevents internal
+packages from becoming publishable accidentally. If a package is deliberately
+promoted to experimental or stable public status, the same job adds rustdoc,
+clean package, and semantic compatibility checks automatically. The change
+classifier discovers each declared policy document so deleting or moving one
+still selects this job in an otherwise documentation-only change. Run the local
+fixtures with `python3 scripts/test-rust-api-policy.py` and
+`python3 scripts/test-crates-io-baseline.py`.
 
 The `ci:full` pull request label forces the complete CI and benchmark suites,
 including on a draft or documentation-only pull request. The `ci:benchmarks`

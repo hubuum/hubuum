@@ -48,6 +48,7 @@ jobs:
     outputs:
       markdown: ${{ steps.paths.outputs.markdown }}
       code: ${{ steps.paths.outputs.code }}
+      rust_api_policy: ${{ steps.paths.outputs.rust_api_policy }}
       openapi: ${{ steps.paths.outputs.openapi }}
       container: ${{ steps.paths.outputs.container }}
       artifacts: ${{ steps.paths.outputs.artifacts }}
@@ -198,6 +199,67 @@ jobs:
       - name: Enforce dependency audit result
         if: steps.dependency_audit.outcome != 'success'
         run: exit 1
+
+  rust-api-policy:
+    name: Rust API policy
+    needs: changes
+    if: >-
+      always() &&
+      (
+        startsWith(github.ref, 'refs/tags/v') ||
+        needs.changes.outputs.code == 'true' ||
+        needs.changes.outputs.rust_api_policy == 'true'
+      )
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Validate Rust API classifications
+        run: python3 scripts/check-rust-api-policy.py
+      - name: Test Rust API classification policy
+        run: python3 scripts/test-rust-api-policy.py
+      - name: Test Rust API registry baseline detection
+        run: python3 scripts/test-crates-io-baseline.py
+      - name: Select supported Rust packages
+        id: supported
+        run: |
+          packages="$(python3 scripts/check-rust-api-policy.py --supported-packages)"
+          {
+            echo 'packages<<EOF'
+            echo "$packages"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Install semantic compatibility checker
+        if: steps.supported.outputs.packages != ''
+        run: bash scripts/install-cargo-semver-checks.sh
+      - name: Verify supported Rust packages
+        if: steps.supported.outputs.packages != ''
+        env:
+          SUPPORTED_PACKAGES: ${{ steps.supported.outputs.packages }}
+        run: |
+          echo '### Rust API registry baselines' >> "$GITHUB_STEP_SUMMARY"
+          while IFS= read -r package; do
+            [[ -n "$package" ]] || continue
+            RUSTDOCFLAGS='-D warnings' cargo doc --locked --no-deps --all-features --package "$package"
+            cargo package --locked --package "$package"
+            baseline="$(python3 scripts/check-crates-io-baseline.py "$package")"
+            case "$baseline" in
+              present)
+                cargo semver-checks --package "$package"
+                echo "- \`$package\`: checked against its latest crates.io release" >> "$GITHUB_STEP_SUMMARY"
+                ;;
+              missing)
+                echo "::notice title=No Rust API registry baseline::$package has no crates.io release; compatibility checks begin after its first release"
+                echo "- \`$package\`: no crates.io release yet; recorded as an initial public release" >> "$GITHUB_STEP_SUMMARY"
+                ;;
+              *)
+                echo "Unexpected registry baseline result for $package: $baseline" >&2
+                exit 1
+                ;;
+            esac
+          done <<< "$SUPPORTED_PACKAGES"
 
   lint:
     name: Lint
@@ -898,6 +960,7 @@ jobs:
       - changes
       - static-checks
       - dependency-policy
+      - rust-api-policy
       - lint
       - release-metadata
       - openapi-contract
@@ -961,11 +1024,13 @@ jobs:
       startsWith(github.ref, 'refs/tags/v') &&
       needs.verify-tag-main-ci-success.result == 'success' &&
       needs.dependency-policy.result == 'success' &&
+      needs.rust-api-policy.result == 'success' &&
       needs.openapi-contract.result == 'success' &&
       needs.container-build.result == 'success'
     needs:
       - verify-tag-main-ci-success
       - dependency-policy
+      - rust-api-policy
       - openapi-contract
       - container-build
     runs-on: ubuntu-24.04
