@@ -34,6 +34,8 @@ pub mod pagination;
 pub mod permissions;
 pub mod restores;
 pub mod schema;
+pub mod services;
+pub mod storage;
 pub mod tasks;
 #[cfg(feature = "integration-test-support")]
 #[doc(hidden)]

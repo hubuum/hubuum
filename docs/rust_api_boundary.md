@@ -130,6 +130,11 @@ Public traits in internal crates are not third-party extension points. Backend,
 permission, provider, and storage traits become extension contracts only after
 an explicit promotion decision.
 
+The root crate's `services` and `storage` modules are therefore internal
+application boundaries even though Rust visibility is required by binaries and
+benchmarks. See [Service and Storage Boundary](storage_boundary.md) for the
+incremental collection pilot.
+
 ## Promotion policy
 
 Promoting a crate to `experimental-public` or `stable-public` requires a

@@ -8,6 +8,7 @@ use futures_util::future::{Ready, ready};
 use crate::config::get_config;
 use crate::db::DbPool;
 use crate::errors::ApiError;
+use crate::services::{CollectionService, Services};
 use crate::traits::BackendContext;
 
 use super::backend::PermissionBackend;
@@ -18,13 +19,16 @@ use super::local::LocalPermissionBackend;
 pub struct AppContext {
     pub db_pool: DbPool,
     pub permissions: Arc<dyn PermissionBackend>,
+    services: Services,
 }
 
 impl AppContext {
     pub fn new(db_pool: DbPool, permissions: Arc<dyn PermissionBackend>) -> Self {
+        let services = Services::postgres(db_pool.clone());
         Self {
             db_pool,
             permissions,
+            services,
         }
     }
 }
@@ -40,6 +44,10 @@ impl Deref for AppContext {
 impl AppContext {
     pub fn permission_backend(&self) -> &dyn PermissionBackend {
         self.permissions.as_ref()
+    }
+
+    pub fn collection_service(&self) -> &CollectionService {
+        self.services.collections()
     }
 }
 
