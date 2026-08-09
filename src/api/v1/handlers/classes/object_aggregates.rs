@@ -11,7 +11,6 @@ use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::object_aggregate::parse_object_aggregate_query;
 use crate::models::search::QueryParamsExt;
-use crate::models::traits::ResolveClassTarget;
 use crate::models::{
     ClassSelector, HubuumClassID, ObjectAggregateAuthorization, ObjectAggregateBackendRequest,
     ObjectAggregateCursorBudget, ObjectAggregateRow, ObjectAggregateTarget, Permissions,
@@ -50,8 +49,9 @@ pub(crate) async fn get_object_aggregates(
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_id(class_id.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
     read_object_aggregates(pool, requestor, target, req).await
 }
@@ -84,8 +84,9 @@ pub(crate) async fn get_object_aggregates_by_name(
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     read_object_aggregates(pool, requestor, target, req).await
 }

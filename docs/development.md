@@ -69,7 +69,8 @@ for package classifications, publishing policy, and promotion requirements.
   Diesel/Postgres-backed implementations behind model and storage adapters.
   This is where query details, joins, filters, and transactions belong.
 
-The collection lifecycle is the first service/storage pilot. See
+The collection lifecycle and class resolution/lifecycle are the first
+service/storage capabilities. See
 [Service and Storage Boundary](storage_boundary.md) for responsibilities,
 contract testing, performance gates, and current migration limits.
 
@@ -107,11 +108,12 @@ semantics. Keep hierarchy writes in `src/db/traits/collection/records.rs` and
 permission reads in `src/db/traits/collection/permissions.rs` or
 `src/db/traits/user/*`.
 
-Normal collection lifecycle handlers enter this implementation through
-`CollectionService` and `CollectionStore`. Do not bypass that service from a
-migrated handler. Imports, restore code, fixtures, list/search, permissions, and
-history remain explicitly outside the pilot until their complete use cases can
-move without weakening transaction, authorization, or performance behavior.
+Normal collection and class lifecycle handlers enter this implementation
+through their service and storage capabilities. Do not bypass those services
+from a migrated handler. Imports, restore code, fixtures, list/search,
+permissions, and history remain explicitly outside the pilot until their
+complete use cases can move without weakening transaction, authorization, or
+performance behavior.
 
 When adding a collection creation path, use the shared collection insert helper
 from the collection backend so `collections` and `collection_closure` stay in

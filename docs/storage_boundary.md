@@ -5,7 +5,8 @@ Diesel details. PostgreSQL remains the production semantic reference; the goal
 is a compile-time dependency boundary and faster contract tests, not generic
 multi-database support.
 
-The first migrated slice is the core collection lifecycle:
+The first migrated capabilities cover the core collection and class lifecycles.
+Collections include:
 
 - point reads;
 - create with an initial assignee grant and lifecycle event;
@@ -14,28 +15,37 @@ The first migrated slice is the core collection lifecycle:
 - direct children and ordered ancestors; and
 - hierarchy moves.
 
+Classes include:
+
+- explicit point resolution by ID or name;
+- create with schema validation and a lifecycle event;
+- update, including no-op behavior and collection moves;
+- selector-aware mutations that reject stale name targets; and
+- delete with a lifecycle event.
+
 ## Dependency direction
 
 ```text
-collection HTTP handlers
-          |
-          v
-  CollectionService
-          |
-          v
-    CollectionStore
-       /       \
-      v         v
-PostgreSQL    memory
- adapter      adapter
-      |
-      v
+collection/class HTTP handlers
+             |
+             v
+ CollectionService / ClassService
+             |
+             v
+   CollectionStore / ClassStore
+          /       \
+         v         v
+   PostgreSQL    memory
+    adapter      adapter
+         |
+         v
 existing Diesel transactions and queries
 ```
 
 `AppContext` constructs `Services` with `PostgresStorage` in production. Core
-collection handlers call `CollectionService`; they do not choose a Diesel query
-or transaction helper. Permission checks remain at the handler boundary.
+collection and class handlers call their services; they do not choose a Diesel
+query or transaction helper for migrated operations. Permission checks remain
+at the handler boundary.
 
 ## Responsibility split
 
@@ -52,29 +62,30 @@ atomic lifecycle events.
 and transaction implementation. `PostgresStorage` delegates to these existing
 operations without changing their query shape.
 
-`MemoryStorage` is compiled for tests and implements the logical collection
-contract. It models hierarchy, revisions, no-op updates, delete constraints,
-and lifecycle event occurrence. It does not claim PostgreSQL locking, trigger,
-permission-row, or temporal-history equivalence.
+`MemoryStorage` is compiled for tests and implements the logical collection and
+class contracts. It models hierarchy, selector resolution, schema validation,
+revisions, no-op updates, delete constraints, and lifecycle event occurrence.
+It does not claim PostgreSQL locking, trigger, permission-row, or
+temporal-history equivalence.
 
 ## Contract and performance gates
 
-The shared contract suite runs each collection behavior against both
-PostgreSQL and memory. Each test focuses on one behavior so backend differences
-cannot be hidden inside a large scenario.
+The shared contract suite runs each migrated collection and class behavior
+against both PostgreSQL and memory. Each test focuses on one behavior so
+backend differences cannot be hidden inside a large scenario.
 
-The PostgreSQL query-capture tests exercise `CollectionService` and retain the
-pre-migration query budgets. The opt-in PostgreSQL Criterion benchmark also
-times the service path. Trait dispatch or service composition must therefore
-not introduce extra pool checkouts, SQL statements, or application-side
-pagination.
+The PostgreSQL query-capture tests exercise both services and retain exact
+point-read and mutation budgets. The opt-in PostgreSQL Criterion benchmark also
+times the collection service path. Trait dispatch or service composition must
+therefore not introduce extra pool checkouts, SQL statements, or
+application-side pagination.
 
 ## Current migration boundary
 
-This is an incremental pilot. Collection list/search, permission management,
-history, and unrelated aggregates still use `BackendContext` and the existing
-model/database traits. Existing direct persistence APIs also remain for
-fixtures, imports, restore paths, and unmigrated callers.
+This is an incremental migration. Collection and class list/search, permission
+management, history, and unrelated aggregates still use `BackendContext` and
+the existing model/database traits. Existing direct persistence APIs also
+remain for fixtures, imports, restore paths, and unmigrated callers.
 
 When expanding the boundary:
 

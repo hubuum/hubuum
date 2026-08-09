@@ -24,8 +24,9 @@ async fn get_related_classes(
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_id(class_id.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
     read_related_classes(pool, requestor, target, req).await
 }
@@ -51,8 +52,9 @@ async fn get_related_classes_by_name(
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     read_related_classes(pool, requestor, target, req).await
 }
@@ -279,8 +281,9 @@ async fn get_related_class_relations(
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_id(class_id.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
     read_related_class_relations(pool, requestor, target, req).await
 }
@@ -306,8 +309,9 @@ async fn get_related_class_relations_by_name(
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     read_related_class_relations(pool, requestor, target, req).await
 }
@@ -408,8 +412,9 @@ async fn get_related_class_graph(
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_id(class_id.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
     read_related_class_graph(pool, requestor, target, req).await
 }
@@ -435,8 +440,9 @@ async fn get_related_class_graph_by_name(
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     read_related_class_graph(pool, requestor, target, req).await
 }
