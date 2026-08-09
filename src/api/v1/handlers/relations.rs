@@ -136,8 +136,8 @@ async fn get_class_relation(
         relation_id = ?relation_id,
     );
 
-    let relation = relation_id.instance(&pool).await?;
-    let resource = relation.to_resource_ref(&pool).await?;
+    let target = pool.class_relation_service().resolve(relation_id).await?;
+    let resource = target.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -148,7 +148,7 @@ async fn get_class_relation(
     )
     .await?;
 
-    ApiResponse::ok_revisioned(relation)
+    ApiResponse::ok_revisioned(target.relation().clone())
 }
 
 #[utoipa::path(
@@ -183,7 +183,11 @@ async fn create_class_relation(
         to_class = relation.to_hubuum_class_id,
     );
 
-    let resource = relation.to_resource_ref(&pool).await?;
+    let prepared = pool
+        .class_relation_service()
+        .prepare_create(relation)
+        .await?;
+    let resource = prepared.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -195,9 +199,12 @@ async fn create_class_relation(
     .await?;
 
     let event_context = requestor.event_context(&req);
-    let relation = relation.save(&pool, &event_context).await?;
+    let target = pool
+        .class_relation_service()
+        .create(&prepared, &event_context)
+        .await?;
 
-    ApiResponse::revisioned(relation, StatusCode::CREATED)
+    ApiResponse::revisioned(target.relation().clone(), StatusCode::CREATED)
 }
 
 #[utoipa::path(
@@ -230,8 +237,8 @@ async fn delete_class_relation(
         relation_id = ?relation_id,
     );
 
-    let relation = relation_id.instance(&pool).await?;
-    let resource = relation.to_resource_ref(&pool).await?;
+    let target = pool.class_relation_service().resolve(relation_id).await?;
+    let resource = target.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -242,11 +249,15 @@ async fn delete_class_relation(
     )
     .await?;
 
-    let etag = relation.entity_tag()?;
+    let etag = target.relation().entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(precondition, relation_id.delete(&pool, &event_context))
-        .await?;
+    with_revision_precondition_scope(
+        precondition,
+        pool.class_relation_service()
+            .delete(&target, &event_context),
+    )
+    .await?;
 
     Ok(ApiResponse::no_content_with_etag(etag))
 }

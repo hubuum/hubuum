@@ -5,15 +5,15 @@ use crate::db::traits::ClassRelation;
 
 pub use crate::config::max_transitive_depth as max_transitive_depth_from_config;
 
-use crate::db::{DbPool, with_connection, with_transaction};
+use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
 use crate::models::search::{FilterField, ParsedQueryParam, ParsedQueryParamExt, QueryOptions};
 use crate::models::{
     HubuumClass, HubuumClassRelation, HubuumClassRelationID, HubuumClassRelationTransitive,
     HubuumObject, HubuumObjectID, HubuumObjectRelation, HubuumObjectRelationID,
-    HubuumObjectTransitiveLink, NewHubuumClassRelation, NewHubuumObjectRelation, User,
-    user_can_on_any,
+    HubuumObjectTransitiveLink, NewHubuumClassRelation, NewHubuumObjectRelation,
+    PreparedClassRelation, ResolvedClassRelationTarget, User, user_can_on_any,
 };
 use crate::permissions::{ResourceAttrs, ResourceKind, ResourceRef};
 use crate::{
@@ -899,6 +899,86 @@ impl LoadClassRelationRecord for HubuumClassRelationID {
     }
 }
 
+async fn load_class_relation_endpoint_records(
+    conn: &mut DbConnection,
+    from_class_id: i32,
+    to_class_id: i32,
+) -> Result<(HubuumClass, HubuumClass), ApiError> {
+    use crate::schema::hubuumclass::dsl::{hubuumclass, id};
+
+    let classes = hubuumclass
+        .filter(id.eq_any([from_class_id, to_class_id]))
+        .load::<HubuumClass>(conn)
+        .await?;
+    let from_class = classes
+        .iter()
+        .find(|class| class.id == from_class_id)
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound(format!("Class {from_class_id} was not found")))?;
+    let to_class = classes
+        .into_iter()
+        .find(|class| class.id == to_class_id)
+        .ok_or_else(|| ApiError::NotFound(format!("Class {to_class_id} was not found")))?;
+    Ok((from_class, to_class))
+}
+
+pub trait PrepareClassRelationRecord {
+    async fn prepare_class_relation_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<PreparedClassRelation, ApiError>;
+}
+
+impl PrepareClassRelationRecord for NewHubuumClassRelation {
+    async fn prepare_class_relation_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<PreparedClassRelation, ApiError> {
+        let command = self.clone().normalized()?;
+        with_connection(pool, async |conn| {
+            let (from_class, to_class) = load_class_relation_endpoint_records(
+                conn,
+                command.from_hubuum_class_id,
+                command.to_hubuum_class_id,
+            )
+            .await?;
+            PreparedClassRelation::new(command, from_class, to_class)
+        })
+        .await
+    }
+}
+
+pub trait ResolveClassRelationTargetRecord {
+    async fn resolve_class_relation_target_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<ResolvedClassRelationTarget, ApiError>;
+}
+
+impl ResolveClassRelationTargetRecord for HubuumClassRelationID {
+    async fn resolve_class_relation_target_record(
+        &self,
+        pool: &DbPool,
+    ) -> Result<ResolvedClassRelationTarget, ApiError> {
+        use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
+
+        with_connection(pool, async |conn| {
+            let relation = hubuumclass_relation
+                .filter(id.eq(self.id()))
+                .first::<HubuumClassRelation>(conn)
+                .await?;
+            let (from_class, to_class) = load_class_relation_endpoint_records(
+                conn,
+                relation.from_hubuum_class_id,
+                relation.to_hubuum_class_id,
+            )
+            .await?;
+            ResolvedClassRelationTarget::new(relation, from_class, to_class)
+        })
+        .await
+    }
+}
+
 pub trait DeleteClassRelationRecord {
     async fn delete_class_relation_record_without_events(
         &self,
@@ -1127,6 +1207,132 @@ impl SaveClassRelationRecord for NewHubuumClassRelation {
                 Ok(relation)
             },
         )
+        .await
+    }
+}
+
+pub trait CreatePreparedClassRelationRecord {
+    async fn create_prepared_class_relation_record(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<HubuumClassRelation, ApiError>;
+}
+
+impl CreatePreparedClassRelationRecord for PreparedClassRelation {
+    async fn create_prepared_class_relation_record(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<HubuumClassRelation, ApiError> {
+        use crate::schema::hubuumclass::dsl::{hubuumclass, id};
+        use crate::schema::hubuumclass_relation::dsl::hubuumclass_relation;
+
+        with_transaction(
+            pool,
+            async |conn| -> Result<HubuumClassRelation, ApiError> {
+                let from_class = hubuumclass
+                    .filter(id.eq(self.command().from_hubuum_class_id))
+                    .for_update()
+                    .first::<HubuumClass>(conn)
+                    .await?;
+                let to_class = hubuumclass
+                    .filter(id.eq(self.command().to_hubuum_class_id))
+                    .for_update()
+                    .first::<HubuumClass>(conn)
+                    .await?;
+                if &from_class != self.from_class() || &to_class != self.to_class() {
+                    return Err(ApiError::NotFound(
+                        "Class relation endpoints no longer match the prepared target".to_string(),
+                    ));
+                }
+
+                let relation = diesel::insert_into(hubuumclass_relation)
+                    .values(self.command())
+                    .get_result::<HubuumClassRelation>(conn)
+                    .await?;
+                let event = NewEvent::new(
+                    EntityType::ClassRelation,
+                    Action::Created,
+                    context.actor_kind(),
+                    format!(
+                        "Class relation {} -> {} created",
+                        relation.from_hubuum_class_id, relation.to_hubuum_class_id
+                    ),
+                )?
+                .with_context(context)
+                .with_entity_id(relation.id)
+                .with_after(class_relation_snapshot(&relation))
+                .with_metadata(class_relation_metadata(&from_class, &to_class));
+                emit_event(conn, &event).await?;
+                Ok(relation)
+            },
+        )
+        .await
+    }
+}
+
+pub trait DeleteResolvedClassRelationRecord {
+    async fn delete_resolved_class_relation_record(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<(), ApiError>;
+}
+
+impl DeleteResolvedClassRelationRecord for ResolvedClassRelationTarget {
+    async fn delete_resolved_class_relation_record(
+        &self,
+        pool: &DbPool,
+        context: &EventContext,
+    ) -> Result<(), ApiError> {
+        use crate::schema::hubuumclass::dsl::{hubuumclass, id as class_id};
+        use crate::schema::hubuumclass_relation::dsl::{hubuumclass_relation, id};
+
+        with_transaction(pool, async |conn| -> Result<(), ApiError> {
+            let relation = hubuumclass_relation
+                .filter(id.eq(self.relation().id))
+                .for_update()
+                .first::<HubuumClassRelation>(conn)
+                .await?;
+            let from_class = hubuumclass
+                .filter(class_id.eq(relation.from_hubuum_class_id))
+                .for_update()
+                .first::<HubuumClass>(conn)
+                .await?;
+            let to_class = hubuumclass
+                .filter(class_id.eq(relation.to_hubuum_class_id))
+                .for_update()
+                .first::<HubuumClass>(conn)
+                .await?;
+            if &relation != self.relation()
+                || &from_class != self.from_class()
+                || &to_class != self.to_class()
+            {
+                return Err(ApiError::NotFound(
+                    "Class relation no longer matches the resolved target".to_string(),
+                ));
+            }
+
+            diesel::delete(hubuumclass_relation.filter(id.eq(relation.id)))
+                .execute(conn)
+                .await?;
+            let event = NewEvent::new(
+                EntityType::ClassRelation,
+                Action::Deleted,
+                context.actor_kind(),
+                format!(
+                    "Class relation {} -> {} deleted",
+                    relation.from_hubuum_class_id, relation.to_hubuum_class_id
+                ),
+            )?
+            .with_context(context)
+            .with_entity_id(relation.id)
+            .with_before(class_relation_snapshot(&relation))
+            .with_metadata(class_relation_metadata(&from_class, &to_class));
+            emit_event(conn, &event).await?;
+            Ok(())
+        })
         .await
     }
 }
