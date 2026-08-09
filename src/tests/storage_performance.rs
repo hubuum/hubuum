@@ -19,15 +19,80 @@ use crate::models::collection::effective_group_on;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     ClassSelector, CollectionID, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
-    NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
-    NewHubuumObjectRelation, ObjectSelector, UpdateCollection, UpdateHubuumClass,
-    UpdateHubuumObject, UserID,
+    HubuumObjectRelationID, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
+    NewHubuumObject, NewHubuumObjectRelation, ObjectRelationCreateSelector, ObjectRelationSelector,
+    ObjectSelector, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject, UserID,
 };
 use crate::services::Services;
-use crate::tests::{TestScope, ensure_admin_user};
+use crate::tests::{CollectionFixture, TestScope, ensure_admin_user};
 use crate::traits::{CanDelete, CanSave, CanUpdate};
 
 const REPRESENTATIVE_COLLECTION_ROWS: i32 = 2_000;
+
+async fn object_relation_budget_fixture(
+    scope: &TestScope,
+    label: &str,
+) -> (CollectionFixture, Services, ObjectRelationCreateSelector) {
+    let fixture = scope.collection_fixture(label).await;
+    let services = Services::postgres(scope.pool.get_ref().clone());
+    let class_one = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: scope.scoped_name(&format!("{label}_class_one")),
+        description: "object relation budget class one".to_string(),
+        json_schema: None,
+        validate_schema: None,
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("first class should save");
+    let class_two = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: scope.scoped_name(&format!("{label}_class_two")),
+        description: "object relation budget class two".to_string(),
+        json_schema: None,
+        validate_schema: None,
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("second class should save");
+    let class_relation = NewHubuumClassRelation {
+        from_hubuum_class_id: class_one.id,
+        to_hubuum_class_id: class_two.id,
+        forward_template_alias: None,
+        reverse_template_alias: None,
+        from_max_relations: None,
+        to_max_relations: None,
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("class relation should save");
+    let object_one = NewHubuumObject {
+        collection_id: fixture.collection.id,
+        hubuum_class_id: class_one.id,
+        name: scope.scoped_name(&format!("{label}_object_one")),
+        description: "object relation budget object one".to_string(),
+        data: serde_json::json!({}),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("first object should save");
+    let object_two = NewHubuumObject {
+        collection_id: fixture.collection.id,
+        hubuum_class_id: class_two.id,
+        name: scope.scoped_name(&format!("{label}_object_two")),
+        description: "object relation budget object two".to_string(),
+        data: serde_json::json!({}),
+    }
+    .save_without_events(&scope.pool)
+    .await
+    .expect("second object should save");
+    let selector = ObjectRelationCreateSelector::explicit(NewHubuumObjectRelation {
+        from_hubuum_object_id: object_one.id,
+        to_hubuum_object_id: object_two.id,
+        class_relation_id: class_relation.id,
+    });
+    (fixture, services, selector)
+}
 
 #[derive(QueryableByName)]
 struct ExplainPlanRow {
@@ -1082,6 +1147,132 @@ async fn object_relation_create_has_a_fixed_query_and_checkout_budget() {
     assert_eq!(queries.queries_matching("FROM \"hubuumobject\""), 2);
     assert_eq!(
         queries.queries_matching("INSERT INTO \"hubuumobject_relation\""),
+        1
+    );
+    assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 1);
+
+    fixture.cleanup().await.expect("fixture cleanup");
+}
+
+#[actix_web::test]
+async fn object_relation_storage_query_budget_preparation_is_fixed() {
+    let scope = TestScope::new();
+    let (fixture, services, selector) =
+        object_relation_budget_fixture(&scope, "query_budget_object_relation_prepare").await;
+
+    let (prepared, queries) =
+        capture_queries(services.object_relations().prepare_create(selector)).await;
+    prepared.expect("object relation should prepare");
+    assert_eq!(queries.total_queries(), 3, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 3);
+    assert_eq!(queries.control_queries(), 0);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(queries.queries_matching("FROM \"hubuumobject\""), 1);
+    assert_eq!(queries.queries_matching("FROM \"hubuumclass_relation\""), 1);
+    assert_eq!(queries.queries_matching("FROM \"hubuumclass\""), 1);
+
+    fixture.cleanup().await.expect("fixture cleanup");
+}
+
+#[actix_web::test]
+async fn object_relation_storage_query_budget_point_resolution_is_fixed() {
+    let scope = TestScope::new();
+    let (fixture, services, selector) =
+        object_relation_budget_fixture(&scope, "query_budget_object_relation_resolve").await;
+    let prepared = services
+        .object_relations()
+        .prepare_create(selector)
+        .await
+        .expect("object relation should prepare");
+    let created = services
+        .object_relations()
+        .create(&prepared, &EventContext::system())
+        .await
+        .expect("object relation should create");
+
+    let (resolved, queries) = capture_queries(services.object_relations().resolve(
+        ObjectRelationSelector::by_id(
+            HubuumObjectRelationID::new(created.relation().id).expect("valid object relation id"),
+        ),
+    ))
+    .await;
+    assert_eq!(
+        resolved.expect("object relation should resolve").relation(),
+        created.relation()
+    );
+    assert_eq!(queries.total_queries(), 4, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 4);
+    assert_eq!(queries.control_queries(), 0);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(
+        queries.queries_matching("FROM \"hubuumobject_relation\""),
+        1
+    );
+    assert_eq!(queries.queries_matching("FROM \"hubuumobject\""), 1);
+
+    fixture.cleanup().await.expect("fixture cleanup");
+}
+
+#[actix_web::test]
+async fn object_relation_storage_query_budget_create_with_event_is_fixed() {
+    let scope = TestScope::new();
+    let (fixture, services, selector) =
+        object_relation_budget_fixture(&scope, "query_budget_object_relation_service_create").await;
+    let prepared = services
+        .object_relations()
+        .prepare_create(selector)
+        .await
+        .expect("object relation should prepare");
+
+    let (created, queries) = capture_queries(
+        services
+            .object_relations()
+            .create(&prepared, &EventContext::system()),
+    )
+    .await;
+    created.expect("object relation should create with an event");
+    assert_eq!(queries.total_queries(), 6, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 4);
+    assert_eq!(queries.control_queries(), 2);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(
+        queries.queries_matching("INSERT INTO \"hubuumobject_relation\""),
+        1
+    );
+    assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 1);
+
+    fixture.cleanup().await.expect("fixture cleanup");
+}
+
+#[actix_web::test]
+async fn object_relation_storage_query_budget_delete_with_event_is_fixed() {
+    let scope = TestScope::new();
+    let (fixture, services, selector) =
+        object_relation_budget_fixture(&scope, "query_budget_object_relation_service_delete").await;
+    let prepared = services
+        .object_relations()
+        .prepare_create(selector)
+        .await
+        .expect("object relation should prepare");
+    let target = services
+        .object_relations()
+        .create(&prepared, &EventContext::system())
+        .await
+        .expect("object relation should create");
+
+    let (deleted, queries) = capture_queries(
+        services
+            .object_relations()
+            .delete(&target, &EventContext::system()),
+    )
+    .await;
+    deleted.expect("object relation should delete with an event");
+    assert_eq!(queries.total_queries(), 6, "{:#?}", queries.query_counts());
+    assert_eq!(queries.domain_queries(), 4);
+    assert_eq!(queries.control_queries(), 2);
+    assert_eq!(queries.connection_checkouts(), 1);
+    assert_eq!(
+        queries.queries_matching("DELETE FROM \"hubuumobject_relation\""),
         1
     );
     assert_eq!(queries.queries_matching("INSERT INTO \"events\""), 1);

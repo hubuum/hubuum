@@ -14,8 +14,8 @@ use utoipa::openapi::{KnownFormat, ObjectBuilder, RefOr, SchemaFormat};
 use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::{
-    HubuumClass, HubuumClassID, HubuumClassWithPath, HubuumObjectID, HubuumObjectWithPath,
-    ResourceRevision,
+    HubuumClass, HubuumClassID, HubuumClassWithPath, HubuumObject, HubuumObjectID,
+    HubuumObjectWithPath, ResourceRevision,
 };
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::traits::SelfAccessors;
@@ -330,13 +330,277 @@ pub struct HubuumObjectRelation {
     pub revision: ResourceRevision,
 }
 
-#[derive(Debug, Serialize, Deserialize, Insertable, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Insertable, ToSchema)]
 #[schema(example = new_hubuum_object_relation_example)]
 #[diesel(table_name = hubuumobject_relation)]
 pub struct NewHubuumObjectRelation {
     pub from_hubuum_object_id: i32,
     pub to_hubuum_object_id: i32,
     pub class_relation_id: i32,
+}
+
+impl NewHubuumObjectRelation {
+    /// Validate and normalize an object relation before persistence.
+    pub(crate) fn normalized(mut self) -> Result<Self, ApiError> {
+        if self.from_hubuum_object_id == self.to_hubuum_object_id {
+            return Err(ApiError::BadRequest(
+                "from_hubuum_object_id and to_hubuum_object_id cannot be the same".to_string(),
+            ));
+        }
+        if self.from_hubuum_object_id > self.to_hubuum_object_id {
+            std::mem::swap(
+                &mut self.from_hubuum_object_id,
+                &mut self.to_hubuum_object_id,
+            );
+        }
+        Ok(self)
+    }
+}
+
+/// Explicit address for a persisted object relation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObjectRelationSelector(ObjectRelationSelectorKind);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ObjectRelationSelectorKind {
+    ById(HubuumObjectRelationID),
+    Between {
+        from_class_id: HubuumClassID,
+        from_object_id: HubuumObjectID,
+        to_class_id: HubuumClassID,
+        to_object_id: HubuumObjectID,
+    },
+}
+
+impl ObjectRelationSelector {
+    pub fn by_id(id: HubuumObjectRelationID) -> Self {
+        Self(ObjectRelationSelectorKind::ById(id))
+    }
+
+    pub fn between(
+        from_class_id: HubuumClassID,
+        from_object_id: HubuumObjectID,
+        to_class_id: HubuumClassID,
+        to_object_id: HubuumObjectID,
+    ) -> Self {
+        Self(ObjectRelationSelectorKind::Between {
+            from_class_id,
+            from_object_id,
+            to_class_id,
+            to_object_id,
+        })
+    }
+
+    pub(crate) fn kind(&self) -> &ObjectRelationSelectorKind {
+        &self.0
+    }
+}
+
+/// Explicit source for preparing a prospective object relation.
+#[derive(Clone, Debug)]
+pub struct ObjectRelationCreateSelector(ObjectRelationCreateSelectorKind);
+
+#[derive(Clone, Debug)]
+pub(crate) enum ObjectRelationCreateSelectorKind {
+    Explicit(NewHubuumObjectRelation),
+    Between {
+        from_class_id: HubuumClassID,
+        from_object_id: HubuumObjectID,
+        to_class_id: HubuumClassID,
+        to_object_id: HubuumObjectID,
+    },
+}
+
+impl ObjectRelationCreateSelector {
+    pub fn explicit(command: NewHubuumObjectRelation) -> Self {
+        Self(ObjectRelationCreateSelectorKind::Explicit(command))
+    }
+
+    pub fn between(
+        from_class_id: HubuumClassID,
+        from_object_id: HubuumObjectID,
+        to_class_id: HubuumClassID,
+        to_object_id: HubuumObjectID,
+    ) -> Self {
+        Self(ObjectRelationCreateSelectorKind::Between {
+            from_class_id,
+            from_object_id,
+            to_class_id,
+            to_object_id,
+        })
+    }
+
+    pub(crate) fn kind(&self) -> &ObjectRelationCreateSelectorKind {
+        &self.0
+    }
+}
+
+fn object_relation_authorization_resource(
+    relation_id: i32,
+    class_relation_id: i32,
+    from_object: &HubuumObject,
+    to_object: &HubuumObject,
+) -> ResourceRef {
+    ResourceRef {
+        kind: ResourceKind::ObjectRelation,
+        id: relation_id,
+        attrs: ResourceAttrs {
+            collection_id: (from_object.collection_id == to_object.collection_id)
+                .then_some(from_object.collection_id),
+            from_collection_id: Some(from_object.collection_id),
+            to_collection_id: Some(to_object.collection_id),
+            from_class_id: Some(from_object.hubuum_class_id),
+            to_class_id: Some(to_object.hubuum_class_id),
+            from_object_id: Some(from_object.id),
+            to_object_id: Some(to_object.id),
+            class_relation_id: Some(class_relation_id),
+            ..Default::default()
+        },
+    }
+}
+
+fn validate_object_relation_membership(
+    command: &NewHubuumObjectRelation,
+    from_object: &HubuumObject,
+    to_object: &HubuumObject,
+    class_relation: &ResolvedClassRelationTarget,
+) -> Result<(), ApiError> {
+    if command.from_hubuum_object_id != from_object.id
+        || command.to_hubuum_object_id != to_object.id
+        || command.class_relation_id != class_relation.relation().id
+    {
+        return Err(ApiError::InternalServerError(
+            "object relation aggregate does not match its command".to_string(),
+        ));
+    }
+    if from_object.hubuum_class_id == to_object.hubuum_class_id {
+        return Err(ApiError::BadRequest(
+            "from_hubuum_object_id and to_hubuum_object_id must not have the same class"
+                .to_string(),
+        ));
+    }
+    let matches_class_relation = (from_object.hubuum_class_id == class_relation.from_class().id
+        && to_object.hubuum_class_id == class_relation.to_class().id)
+        || (from_object.hubuum_class_id == class_relation.to_class().id
+            && to_object.hubuum_class_id == class_relation.from_class().id);
+    if !matches_class_relation {
+        return Err(ApiError::BadRequest(
+            "objects do not match the specified class relation".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// A prospective object relation with both objects and its class relation.
+#[derive(Clone, Debug)]
+pub struct PreparedObjectRelation {
+    command: NewHubuumObjectRelation,
+    from_object: HubuumObject,
+    to_object: HubuumObject,
+    class_relation: ResolvedClassRelationTarget,
+}
+
+impl PreparedObjectRelation {
+    pub(crate) fn new(
+        command: NewHubuumObjectRelation,
+        from_object: HubuumObject,
+        to_object: HubuumObject,
+        class_relation: ResolvedClassRelationTarget,
+    ) -> Result<Self, ApiError> {
+        let command = command.normalized()?;
+        validate_object_relation_membership(&command, &from_object, &to_object, &class_relation)?;
+        Ok(Self {
+            command,
+            from_object,
+            to_object,
+            class_relation,
+        })
+    }
+
+    pub(crate) fn command(&self) -> &NewHubuumObjectRelation {
+        &self.command
+    }
+
+    pub fn from_object(&self) -> &HubuumObject {
+        &self.from_object
+    }
+
+    pub fn to_object(&self) -> &HubuumObject {
+        &self.to_object
+    }
+
+    pub fn class_relation(&self) -> &ResolvedClassRelationTarget {
+        &self.class_relation
+    }
+
+    pub(crate) fn authorization_resource(&self) -> ResourceRef {
+        object_relation_authorization_resource(
+            0,
+            self.class_relation.relation().id,
+            &self.from_object,
+            &self.to_object,
+        )
+    }
+}
+
+/// A persisted object relation resolved with both objects and its class relation.
+#[derive(Clone, Debug)]
+pub struct ResolvedObjectRelationTarget {
+    relation: HubuumObjectRelation,
+    from_object: HubuumObject,
+    to_object: HubuumObject,
+    class_relation: ResolvedClassRelationTarget,
+}
+
+impl ResolvedObjectRelationTarget {
+    pub(crate) fn new(
+        relation: HubuumObjectRelation,
+        from_object: HubuumObject,
+        to_object: HubuumObject,
+        class_relation: ResolvedClassRelationTarget,
+    ) -> Result<Self, ApiError> {
+        validate_object_relation_membership(
+            &NewHubuumObjectRelation {
+                from_hubuum_object_id: relation.from_hubuum_object_id,
+                to_hubuum_object_id: relation.to_hubuum_object_id,
+                class_relation_id: relation.class_relation_id,
+            },
+            &from_object,
+            &to_object,
+            &class_relation,
+        )?;
+        Ok(Self {
+            relation,
+            from_object,
+            to_object,
+            class_relation,
+        })
+    }
+
+    pub fn relation(&self) -> &HubuumObjectRelation {
+        &self.relation
+    }
+
+    pub fn from_object(&self) -> &HubuumObject {
+        &self.from_object
+    }
+
+    pub fn to_object(&self) -> &HubuumObject {
+        &self.to_object
+    }
+
+    pub fn class_relation(&self) -> &ResolvedClassRelationTarget {
+        &self.class_relation
+    }
+
+    pub(crate) fn authorization_resource(&self) -> ResourceRef {
+        object_relation_authorization_resource(
+            self.relation.id,
+            self.relation.class_relation_id,
+            &self.from_object,
+            &self.to_object,
+        )
+    }
 }
 
 /// To create new relations between objects from within a

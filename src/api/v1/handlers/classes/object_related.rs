@@ -421,11 +421,14 @@ async fn get_object_relation_from_class_and_objects(
         to_object_id = to_object.id()
     );
 
-    check_if_object_in_class(&pool, &from_class, &from_object).await?;
-    check_if_object_in_class(&pool, &to_class, &to_object).await?;
-
-    let relation = from_object
-        .object_relation(&pool, &from_class, &to_object)
+    let target = pool
+        .object_relation_service()
+        .resolve(ObjectRelationSelector::between(
+            from_class,
+            from_object,
+            to_class,
+            to_object,
+        ))
         .await
         .map_err(|_| {
             ApiError::NotFound(format!(
@@ -435,7 +438,7 @@ async fn get_object_relation_from_class_and_objects(
                 to_object.id()
             ))
         })?;
-    let resource = relation.to_resource_ref(&pool).await?;
+    let resource = target.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -445,7 +448,7 @@ async fn get_object_relation_from_class_and_objects(
         vec![resource],
     )
     .await?;
-    ApiResponse::ok_revisioned(relation)
+    ApiResponse::ok_revisioned(*target.relation())
 }
 
 #[utoipa::path(
@@ -475,9 +478,6 @@ async fn delete_object_relation(
     let user = &requestor.principal;
     let (from_class, from_object, to_class, to_object) = paths.into_inner();
 
-    check_if_object_in_class(&pool, &from_class, &from_object).await?;
-    check_if_object_in_class(&pool, &to_class, &to_object).await?;
-
     debug!(
         message = "Deleting object relation",
         user_id = user.id(),
@@ -487,29 +487,24 @@ async fn delete_object_relation(
         to_object_id = to_object.id()
     );
 
-    let relation = from_object
-        .object_relation(&pool, &from_class, &to_object)
-        .await;
-
-    if relation.is_err() {
-        debug!(
-            message = "Relation does not exist",
-            user_id = user.id(),
-            from_class_id = from_class.id(),
-            from_object_id = from_object.id(),
-            to_class_id = to_class.id(),
-            to_object_id = to_object.id()
-        );
-        return Err(ApiError::NotFound(format!(
-            "Class {} is not related to class {}",
-            from_class.id(),
-            to_class.id()
-        )));
-    }
-
-    let relation = relation.expect("Relation should exist after is_err check");
-
-    let resource = relation.to_resource_ref(&pool).await?;
+    let target = pool
+        .object_relation_service()
+        .resolve(ObjectRelationSelector::between(
+            from_class,
+            from_object,
+            to_class,
+            to_object,
+        ))
+        .await
+        .map_err(|_| {
+            ApiError::NotFound(format!(
+                "Class {} is not related to class {}",
+                from_class.id(),
+                to_class.id()
+            ))
+        })?;
+    let relation = target.relation();
+    let resource = target.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -532,7 +527,12 @@ async fn delete_object_relation(
     let etag = relation.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(precondition, relation.delete(&pool, &event_context)).await?;
+    with_revision_precondition_scope(
+        precondition,
+        pool.object_relation_service()
+            .delete(&target, &event_context),
+    )
+    .await?;
     Ok(ApiResponse::no_content_with_etag(etag))
 }
 
@@ -574,31 +574,16 @@ async fn create_object_relation(
         to_object = to_object.id()
     );
 
-    let is_related = from_class.direct_relation_to(&pool, &to_class).await?;
-
-    if is_related.is_none() {
-        debug!(
-            message = "Relation does not exist",
-            user_id = user.id(),
-            from_class = from_class.id(),
-            to_class = to_class.id()
-        );
-        return Err(ApiError::NotFound(format!(
-            "Class {} is not related to class {}",
-            from_class.id(),
-            to_class.id()
-        )));
-    }
-
-    let relation = is_related.expect("Relation should exist after is_none check");
-
-    let relation = NewHubuumObjectRelation {
-        class_relation_id: relation.id,
-        from_hubuum_object_id: from_object.id(),
-        to_hubuum_object_id: to_object.id(),
-    };
-
-    let resource = relation.to_resource_ref(&pool).await?;
+    let prepared = pool
+        .object_relation_service()
+        .prepare_create(ObjectRelationCreateSelector::between(
+            from_class,
+            from_object,
+            to_class,
+            to_object,
+        ))
+        .await?;
+    let resource = prepared.authorization_resource();
     authorize_resources(
         pool.permission_backend(),
         &pool,
@@ -610,7 +595,11 @@ async fn create_object_relation(
     .await?;
 
     let event_context = requestor.event_context(&req);
-    let relation = relation.save(&pool, &event_context).await?;
+    let target = pool
+        .object_relation_service()
+        .create(&prepared, &event_context)
+        .await?;
+    let relation = *target.relation();
 
     let location = api_locations::object_relation(
         from_class.id(),

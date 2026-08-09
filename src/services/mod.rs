@@ -1,11 +1,13 @@
 mod class_relations;
 mod classes;
 mod collections;
+mod object_relations;
 mod objects;
 
 pub use class_relations::ClassRelationService;
 pub use classes::ClassService;
 pub use collections::CollectionService;
+pub use object_relations::ObjectRelationService;
 pub use objects::ObjectService;
 
 use crate::db::DbPool;
@@ -44,6 +46,7 @@ pub struct Services {
     class_relations: ClassRelationService,
     collections: CollectionService,
     objects: ObjectService,
+    object_relations: ObjectRelationService,
 }
 
 impl Services {
@@ -56,7 +59,8 @@ impl Services {
             classes: ClassService::new(storage.clone()),
             class_relations: ClassRelationService::new(storage.clone()),
             collections: CollectionService::new(storage.clone()),
-            objects: ObjectService::new(storage),
+            objects: ObjectService::new(storage.clone()),
+            object_relations: ObjectRelationService::new(storage),
         }
     }
 
@@ -74,5 +78,9 @@ impl Services {
 
     pub fn objects(&self) -> &ObjectService {
         &self.objects
+    }
+
+    pub fn object_relations(&self) -> &ObjectRelationService {
+        &self.object_relations
     }
 }

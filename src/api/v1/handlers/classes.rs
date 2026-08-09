@@ -12,6 +12,7 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::can;
+use crate::db::traits::UserPermissions;
 use crate::db::traits::authz::scope_allows;
 use crate::db::traits::computed_field::enrich_objects_with_computed;
 use crate::db::traits::history::{
@@ -22,7 +23,6 @@ use crate::db::traits::relations::{
     class_relation_authorization_resources, object_relation_authorization_resources,
 };
 use crate::db::traits::user::UserSearchBackend;
-use crate::db::traits::{ClassRelation, ObjectRelationMemberships, UserPermissions};
 use crate::db::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated, ObjectDataPatchPayload};
@@ -43,12 +43,12 @@ use crate::models::{
     HubuumClass, HubuumClassExpanded, HubuumClassHistory, HubuumClassID, HubuumClassRelation,
     HubuumClassRelationID, HubuumClassWithPath, HubuumObject, HubuumObjectHistory, HubuumObjectID,
     HubuumObjectReadResponse, HubuumObjectRelation, HubuumObjectWithPath, NewHubuumClass,
-    NewHubuumClassRelationFromClass, NewHubuumObjectRelation, NewHubuumObjectRequest,
-    ObjectDataPatchDocument, ObjectSelector, Permissions, RelatedClassGraph, RelatedObjectGraph,
-    RelatedObjectGraphRow, ResolvedClassTarget, ResolvedObjectTarget, UpdateHubuumClass,
-    UpdateHubuumObject, UpdateHubuumObjectRequest,
+    NewHubuumClassRelationFromClass, NewHubuumObjectRequest, ObjectDataPatchDocument,
+    ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector, Permissions,
+    RelatedClassGraph, RelatedObjectGraph, RelatedObjectGraphRow, ResolvedClassTarget,
+    ResolvedObjectTarget, UpdateHubuumClass, UpdateHubuumObject, UpdateHubuumObjectRequest,
 };
-use crate::traits::{BackendContext, CanDelete, CanSave, Search, SelfAccessors};
+use crate::traits::{BackendContext, Search, SelfAccessors};
 use crate::utilities::extensions::CustomStringExtensions;
 
 use crate::models::search::{
