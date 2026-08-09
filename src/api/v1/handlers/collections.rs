@@ -29,9 +29,7 @@ use actix_web::{
 };
 use tracing::{debug, info};
 
-use crate::traits::{
-    BackendContext, CanDelete, CanSave, CanUpdate, PermissionController, Search, SelfAccessors,
-};
+use crate::traits::{BackendContext, PermissionController, Search};
 
 async fn sql_collection_permission_set(
     pool: &AppContext,
@@ -152,7 +150,10 @@ pub async fn create_collection(
     );
 
     let event_context = requestor.event_context(&req);
-    let created_collection = new_collection_request.save(&pool, &event_context).await?;
+    let created_collection = pool
+        .collection_service()
+        .create(new_collection_request, &event_context)
+        .await?;
 
     let location = api_locations::collection(created_collection.id)?;
     ApiResponse::created_revisioned(created_collection, location)
@@ -184,7 +185,7 @@ pub async fn get_collection(
         collection_id = collection_id.id()
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(*collection_id).await?;
 
     can!(
         &pool,
@@ -228,7 +229,7 @@ pub async fn update_collection(
         collection_id = collection_id.id()
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
 
     can!(
         &pool,
@@ -242,9 +243,8 @@ pub async fn update_collection(
     let event_context = requestor.event_context(&req);
     let updated_collection = with_revision_precondition_scope(
         precondition,
-        update_data
-            .into_inner()
-            .update(&pool, collection_id, &event_context),
+        pool.collection_service()
+            .update(collection_id, update_data.into_inner(), &event_context),
     )
     .await?;
     ApiResponse::accepted_revisioned(updated_collection)
@@ -277,7 +277,7 @@ pub async fn delete_collection(
         collection_id = collection_id.id()
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(*collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -289,8 +289,12 @@ pub async fn delete_collection(
     let etag = collection.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(precondition, collection.delete(&pool, &event_context))
-        .await?;
+    with_revision_precondition_scope(
+        precondition,
+        pool.collection_service()
+            .delete(*collection_id, &event_context),
+    )
+    .await?;
     Ok(ApiResponse::no_content_with_etag(etag))
 }
 
@@ -314,7 +318,7 @@ pub async fn get_collection_children(
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
 ) -> Result<impl Responder, ApiError> {
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(*collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -323,7 +327,7 @@ pub async fn get_collection_children(
         collection.clone()
     );
 
-    let children = collection_model::collection_children(&pool, collection).await?;
+    let children = pool.collection_service().children(*collection_id).await?;
     Ok(ApiResponse::new(children, StatusCode::OK))
 }
 
@@ -347,7 +351,7 @@ pub async fn get_collection_ancestors(
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
 ) -> Result<impl Responder, ApiError> {
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(*collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -356,7 +360,7 @@ pub async fn get_collection_ancestors(
         collection.clone()
     );
 
-    let ancestors = collection_model::collection_ancestors(&pool, collection).await?;
+    let ancestors = pool.collection_service().ancestors(*collection_id).await?;
     Ok(ApiResponse::new(ancestors, StatusCode::OK))
 }
 
@@ -386,9 +390,9 @@ pub async fn move_collection_parent(
     update_parent: web::Json<UpdateCollectionParent>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(*collection_id).await?;
     let new_parent_id = update_parent.into_inner().parent_collection_id;
-    let new_parent = new_parent_id.instance(&pool).await?;
+    let new_parent = pool.collection_service().get(new_parent_id).await?;
 
     can!(
         &pool,
@@ -399,7 +403,10 @@ pub async fn move_collection_parent(
     );
 
     if let Some(old_parent_id) = collection.parent_collection_id {
-        let old_parent = CollectionID::new(old_parent_id)?.instance(&pool).await?;
+        let old_parent = pool
+            .collection_service()
+            .get(CollectionID::new(old_parent_id)?)
+            .await?;
         can!(
             &pool,
             &requestor.principal,
@@ -421,12 +428,8 @@ pub async fn move_collection_parent(
     let event_context = requestor.event_context(&req);
     let updated = with_revision_precondition_scope(
         precondition,
-        collection_model::move_collection(
-            &pool,
-            collection.id,
-            new_parent_id.id(),
-            Some(&event_context),
-        ),
+        pool.collection_service()
+            .move_to(*collection_id, new_parent_id, &event_context),
     )
     .await?;
 
@@ -463,7 +466,7 @@ pub async fn get_collection_permissions(
 
     let params = parse_query_parameter(req.query_string())?;
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(*collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -522,7 +525,7 @@ pub async fn get_collection_group_permissions(
         group_id = group_id.id()
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -581,7 +584,7 @@ pub async fn get_collection_effective_group_permissions(
         ));
     }
     let (collection_id, group_id) = params.into_inner();
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -642,7 +645,7 @@ pub async fn grant_collection_group_permissions(
         permissions = ?permissions
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -711,7 +714,7 @@ pub async fn replace_collection_group_permissions(
         permissions = ?permissions
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -778,7 +781,7 @@ pub async fn revoke_collection_group_permissions(
         group_id = group_id.id()
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -840,7 +843,7 @@ pub async fn get_collection_group_permission(
         permission = ?permission
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -898,7 +901,7 @@ pub async fn grant_collection_group_permission(
         permission = ?permission
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -964,7 +967,7 @@ pub async fn revoke_collection_group_permission(
         permission = ?permission
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -1031,7 +1034,7 @@ pub async fn get_collection_principal_permissions(
         principal_id = principal_id.id()
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -1083,7 +1086,7 @@ pub async fn get_collection_effective_principal_permissions(
         ));
     }
     let (collection_id, principal_id) = params.into_inner();
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -1131,7 +1134,7 @@ pub async fn get_collection_groups_with_permission(
         permission = ?permission
     );
 
-    let collection = collection_id.instance(&pool).await?;
+    let collection = pool.collection_service().get(collection_id).await?;
     can!(
         &pool,
         &requestor.principal,
@@ -1193,7 +1196,7 @@ pub async fn get_collection_history(
 
     let user = &requestor.principal;
     let collection_id = collection_id.into_inner();
-    let (entity_id, require_history) = match collection_id.instance(&pool).await {
+    let (entity_id, require_history) = match pool.collection_service().get(collection_id).await {
         Ok(instance) => {
             can!(
                 &pool,
@@ -1308,7 +1311,7 @@ pub async fn get_collection_as_of(
 
     let user = &requestor.principal;
     let collection_id = collection_id.into_inner();
-    let (entity_id, deleted) = match collection_id.instance(&pool).await {
+    let (entity_id, deleted) = match pool.collection_service().get(collection_id).await {
         Ok(instance) => {
             can!(
                 &pool,

@@ -45,28 +45,47 @@ cargo run --quiet --bin hubuum-openapi > docs/openapi.json
 
 ## Architecture Overview
 
-The codebase is intentionally split into model-facing APIs and database-facing implementations.
+The codebase is incrementally split into application services, backend-neutral
+storage capabilities, model-facing APIs, and database-facing implementations.
 The root Rust library is an internal application composition crate rather than
 a supported embedding interface. See [Rust API Boundary](rust_api_boundary.md)
 for package classifications, publishing policy, and promotion requirements.
 
+- `src/services/*`:
+  Application-facing use cases. Migrated handlers call services instead of
+  choosing persistence helpers directly.
+- `src/storage/*`:
+  Backend-neutral capability traits plus PostgreSQL adapters. The test-only
+  memory adapter implements selected logical contracts without claiming
+  PostgreSQL concurrency equivalence.
 - `src/models/*`:
   Application domain models and high-level operations.
   These should not contain Diesel query construction for non-trivial backend logic.
 - `src/traits/*`:
   Behavioral interfaces used by handlers and models inside the application.
-  `BackendContext` is the boundary type that allows these APIs to accept either `DbPool` or wrappers (for example `web::Data<DbPool>`).
+  `BackendContext` remains the compatibility boundary for unmigrated APIs that
+  accept either `DbPool` or wrappers such as `web::Data<DbPool>`.
 - `src/db/traits/*`:
-  Diesel/Postgres-backed implementations behind the public traits.
+  Diesel/Postgres-backed implementations behind model and storage adapters.
   This is where query details, joins, filters, and transactions belong.
+
+The collection lifecycle is the first service/storage pilot. See
+[Service and Storage Boundary](storage_boundary.md) for responsibilities,
+contract testing, performance gates, and current migration limits.
 
 ### Practical layering rule
 
 When adding a feature:
 
-1. Extend or add a trait in `src/traits` (or `src/models/traits`) that expresses the behavior.
-2. Implement database details in `src/db/traits`.
-3. Keep model methods thin by delegating to backend traits.
+1. Put new use-case orchestration in `src/services` when the surrounding slice
+   has migrated.
+2. Express persistence as an aggregate- or query-shaped capability in
+   `src/storage`; avoid generic table repositories.
+3. Implement database details in `src/db/traits` and adapt them through the
+   PostgreSQL storage implementation.
+4. Keep model methods thin while they remain in unmigrated paths.
+5. Add shared logical contract tests and retain PostgreSQL-specific query,
+   transaction, and concurrency tests.
 
 ### Module layout notes
 
@@ -87,6 +106,12 @@ closure-table SQL, temporal history, `ApiError`, and Hubuum's permission
 semantics. Keep hierarchy writes in `src/db/traits/collection/records.rs` and
 permission reads in `src/db/traits/collection/permissions.rs` or
 `src/db/traits/user/*`.
+
+Normal collection lifecycle handlers enter this implementation through
+`CollectionService` and `CollectionStore`. Do not bypass that service from a
+migrated handler. Imports, restore code, fixtures, list/search, permissions, and
+history remain explicitly outside the pilot until their complete use cases can
+move without weakening transaction, authorization, or performance behavior.
 
 When adding a collection creation path, use the shared collection insert helper
 from the collection backend so `collections` and `collection_closure` stay in

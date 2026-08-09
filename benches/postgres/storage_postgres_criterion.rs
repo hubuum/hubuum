@@ -7,9 +7,9 @@ use hubuum::db::{DbPool, ensure_database_schema_ready, init_pool_with_statement_
 use hubuum::events::EventContext;
 use hubuum::models::{
     Collection, CollectionID, Group, GroupID, NewCollectionWithAssignee, NewGroup,
-    collection_ancestors,
 };
-use hubuum::traits::{CanDelete, CanSave, CollectionAccessors};
+use hubuum::services::Services;
+use hubuum::traits::{CanDelete, CanSave};
 use tokio::runtime::{Builder, Runtime};
 
 static NEXT_NAME_ID: AtomicU64 = AtomicU64::new(1);
@@ -136,21 +136,23 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
 
     let runtime = runtime();
     let fixture = StorageFixture::new(&runtime, &database_url);
+    let services = Services::postgres(fixture.pool.clone());
+    let collections = services.collections();
     let point_read_id = fixture.point_read_id();
     let leaf_id = fixture.leaf_id();
 
     runtime
-        .block_on(point_read_id.collection(&fixture.pool))
+        .block_on(collections.get(point_read_id))
         .expect("point-read warmup should succeed");
     runtime
-        .block_on(collection_ancestors(&fixture.pool, leaf_id))
+        .block_on(collections.ancestors(leaf_id))
         .expect("ancestor warmup should succeed");
 
     let mut group = c.benchmark_group("storage_postgres");
     group.bench_function("collection_point_read", |b| {
         b.iter(|| {
             let collection = runtime
-                .block_on(black_box(point_read_id).collection(black_box(&fixture.pool)))
+                .block_on(collections.get(black_box(point_read_id)))
                 .expect("point read should succeed");
             black_box(collection);
         });
@@ -158,10 +160,7 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
     group.bench_function("collection_ancestors_depth_16", |b| {
         b.iter(|| {
             let ancestors = runtime
-                .block_on(collection_ancestors(
-                    black_box(&fixture.pool),
-                    black_box(leaf_id),
-                ))
+                .block_on(collections.ancestors(black_box(leaf_id)))
                 .expect("ancestor read should succeed");
             black_box(ancestors);
         });
@@ -179,7 +178,7 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
                 };
                 let started = Instant::now();
                 let collection = runtime
-                    .block_on(command.save(&fixture.pool, &EventContext::system()))
+                    .block_on(collections.create(command, &EventContext::system()))
                     .expect("timed collection create should succeed");
                 measured += started.elapsed();
 

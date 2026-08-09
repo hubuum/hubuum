@@ -27,9 +27,18 @@
   promise. Keep package classifications consistent with
   `docs/rust_api_boundary.md` and the Rust API policy checker.
 - Keep public domain behavior in `src/models/*` and `src/traits/*`.
+- Put migrated application use-case orchestration in `src/services/*` and
+  backend-neutral persistence capabilities in `src/storage/*`.
 - Keep Diesel/Postgres query construction and backend details in `src/db/traits/*`.
 - Model methods should stay thin and delegate persistence-heavy work to backend traits.
-- Use `BackendContext` for APIs that should accept either `DbPool` or wrappers such as `web::Data<DbPool>`.
+- Route migrated high-level callers through services rather than adding new
+  direct `DbPool` dependencies. Use `BackendContext` as the compatibility
+  boundary for APIs that have not migrated and still need to accept either
+  `DbPool` or wrappers such as `web::Data<DbPool>`.
+- Keep storage capabilities aggregate- or query-shaped rather than table-shaped.
+  Shared memory/Postgres contract tests cover logical behavior; PostgreSQL-only
+  tests must retain transaction, locking, trigger, concurrency, and query-budget
+  coverage.
 - Put multi-step database writes in `with_transaction`; use `with_connection` for single reads, single writes, and non-atomic database work.
 - Workspace crates should expose small, explicit interfaces with private fields. Prefer typed request/builder APIs over long positional argument lists when callers must provide several settings.
 - Keep workspace crate boundaries clean of app-specific errors, global config, Actix, Diesel, and task persistence unless the crate explicitly owns that layer.

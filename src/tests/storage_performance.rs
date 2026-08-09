@@ -1,4 +1,4 @@
-//! Pre-refactor PostgreSQL query budgets for the storage boundary.
+//! PostgreSQL query budgets for the storage boundary.
 //!
 //! These are deliberately model/storage-level checks rather than HTTP tests:
 //! authentication and routing should not hide an extra pool checkout or an
@@ -19,10 +19,11 @@ use crate::models::collection::effective_group_on;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     CollectionID, GroupID, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
-    NewHubuumObject, NewHubuumObjectRelation, UpdateCollection, UserID, collection_ancestors,
+    NewHubuumObject, NewHubuumObjectRelation, UpdateCollection, UserID,
 };
+use crate::services::Services;
 use crate::tests::{TestScope, ensure_admin_user};
-use crate::traits::{CanDelete, CanSave, CanUpdate, CollectionAccessors};
+use crate::traits::{CanDelete, CanSave, CanUpdate};
 
 const REPRESENTATIVE_COLLECTION_ROWS: i32 = 2_000;
 
@@ -146,8 +147,9 @@ async fn collection_point_read_uses_one_query() {
     let scope = TestScope::new();
     let fixture = scope.collection_fixture("query_budget_point_read").await;
     let collection_id = CollectionID::new(fixture.collection.id).expect("valid collection id");
+    let services = Services::postgres(scope.pool.get_ref().clone());
 
-    let (loaded, queries) = capture_queries(collection_id.collection(&scope.pool)).await;
+    let (loaded, queries) = capture_queries(services.collections().get(collection_id)).await;
     assert_eq!(loaded.expect("collection should load"), fixture.collection);
     assert_eq!(queries.total_queries(), 1, "{:#?}", queries.query_counts());
     assert_eq!(queries.domain_queries(), 1);
@@ -192,6 +194,7 @@ async fn collection_point_read_plan_has_bounded_logical_work_at_representative_s
 #[actix_web::test]
 async fn collection_ancestor_query_count_is_constant_with_depth() {
     let scope = TestScope::new();
+    let services = Services::postgres(scope.pool.get_ref().clone());
     let root_fixture = scope.collection_fixture("query_budget_ancestors").await;
     let mut collections = vec![root_fixture.collection.clone()];
 
@@ -213,12 +216,12 @@ async fn collection_ancestor_query_count_is_constant_with_depth() {
 
     let shallow_id = CollectionID::new(collections[1].id).expect("valid shallow collection id");
     let (shallow_ancestors, shallow_queries) =
-        capture_queries(collection_ancestors(&scope.pool, shallow_id)).await;
+        capture_queries(services.collections().ancestors(shallow_id)).await;
     assert_eq!(shallow_ancestors.expect("shallow ancestors").len(), 2);
 
     let leaf_id =
         CollectionID::new(collections.last().expect("leaf").id).expect("valid leaf collection id");
-    let (ancestors, queries) = capture_queries(collection_ancestors(&scope.pool, leaf_id)).await;
+    let (ancestors, queries) = capture_queries(services.collections().ancestors(leaf_id)).await;
     let ancestors = ancestors.expect("ancestors should load");
 
     assert_eq!(ancestors.len(), 33);
@@ -304,6 +307,7 @@ async fn collection_ancestor_plan_has_bounded_logical_work_at_representative_sca
 #[actix_web::test]
 async fn collection_create_with_event_has_a_fixed_query_budget() {
     let scope = TestScope::new();
+    let services = Services::postgres(scope.pool.get_ref().clone());
     let parent = scope.collection_fixture("query_budget_create_parent").await;
     let command = NewCollectionWithAssignee {
         name: scope.scoped_name("query_budget_create_child"),
@@ -314,8 +318,12 @@ async fn collection_create_with_event_has_a_fixed_query_budget() {
         ),
     };
 
-    let (created, queries) =
-        capture_queries(command.save(&scope.pool, &EventContext::system())).await;
+    let (created, queries) = capture_queries(
+        services
+            .collections()
+            .create(command, &EventContext::system()),
+    )
+    .await;
     let created = created.expect("collection should save with an event");
 
     assert_eq!(queries.total_queries(), 7, "{:#?}", queries.query_counts());
@@ -341,15 +349,16 @@ async fn collection_create_with_event_has_a_fixed_query_budget() {
 #[actix_web::test]
 async fn collection_no_op_update_does_not_write_or_emit_an_event() {
     let scope = TestScope::new();
+    let services = Services::postgres(scope.pool.get_ref().clone());
     let fixture = scope.collection_fixture("query_budget_no_op_update").await;
     let update = UpdateCollection {
         name: Some(fixture.collection.name.clone()),
         description: Some(fixture.collection.description.clone()),
     };
 
-    let (updated, queries) = capture_queries(update.update(
-        &scope.pool,
+    let (updated, queries) = capture_queries(services.collections().update(
         CollectionID::new(fixture.collection.id).unwrap(),
+        update,
         &EventContext::system(),
     ))
     .await;
@@ -506,6 +515,7 @@ async fn effective_permission_query_count_is_constant_with_collection_depth() {
 #[actix_web::test]
 async fn changed_collection_update_writes_once_and_emits_one_event() {
     let scope = TestScope::new();
+    let services = Services::postgres(scope.pool.get_ref().clone());
     let fixture = scope
         .collection_fixture("query_budget_changed_update")
         .await;
@@ -514,9 +524,9 @@ async fn changed_collection_update_writes_once_and_emits_one_event() {
         description: Some("changed query budget description".to_string()),
     };
 
-    let (updated, queries) = capture_queries(update.update(
-        &scope.pool,
+    let (updated, queries) = capture_queries(services.collections().update(
         CollectionID::new(fixture.collection.id).unwrap(),
+        update,
         &EventContext::system(),
     ))
     .await;
