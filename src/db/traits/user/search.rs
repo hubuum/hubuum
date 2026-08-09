@@ -286,11 +286,12 @@ pub(crate) struct ExternalRelatedFilterAuthorization<'a> {
 
 impl<'a> ExternalRelatedFilterAuthorization<'a> {
     pub(crate) fn new(
-        pool: &'a DbPool,
+        pool: &'a impl crate::traits::BackendContext,
         permission_backend: &'a dyn PermissionBackend,
         principal: &'a PrincipalRef,
         scopes: Option<&'a TokenScope>,
     ) -> Self {
+        let pool = crate::traits::backend_pool(pool);
         Self {
             pool,
             permission_backend,
@@ -713,7 +714,7 @@ async fn externally_authorized_related_group_ids(
 
 pub(crate) async fn search_computed_objects_with_authorized_ids<U>(
     user: &U,
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     query_options: QueryOptions,
     snapshot: &ComputedQuerySnapshot,
     authorized_object_ids: &AuthorizedObjectIds,
@@ -721,6 +722,7 @@ pub(crate) async fn search_computed_objects_with_authorized_ids<U>(
 where
     U: UserSearchBackend + ?Sized,
 {
+    let pool = crate::traits::backend_pool(pool);
     let plan = ObjectQueryPlan::computed_for_authorized_objects(
         query_options,
         snapshot,
@@ -732,7 +734,7 @@ where
 
 pub(crate) async fn count_computed_objects_with_authorized_ids<U>(
     user: &U,
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     query_options: QueryOptions,
     snapshot: &ComputedQuerySnapshot,
     authorized_object_ids: &AuthorizedObjectIds,
@@ -740,6 +742,7 @@ pub(crate) async fn count_computed_objects_with_authorized_ids<U>(
 where
     U: UserSearchBackend + ?Sized,
 {
+    let pool = crate::traits::backend_pool(pool);
     let plan = ObjectQueryPlan::computed_for_authorized_objects(
         query_options,
         snapshot,
@@ -796,11 +799,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_collections_from_backend_with_admin_status(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         // Fail-closed: a scoped token must carry the resource read permission.
         if !scope_allows(scopes, &[Permissions::ReadCollection]) {
             return Ok(Vec::new());
@@ -1029,11 +1033,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_classes_from_backend_with_admin_status(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::hubuumclass::dsl::{
             collection_id as class_collection_id, created_at as class_created_at,
             description as class_description, hubuumclass, id as class_id, name as class_name,
@@ -1240,10 +1245,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_objects_from_backend(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let is_admin = self.is_admin(pool).await?;
         self.search_objects_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
@@ -1251,10 +1257,11 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn count_objects_from_backend(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let is_admin = self.is_admin(pool).await?;
         self.count_objects_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
             .await
@@ -1262,11 +1269,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_objects_from_backend_with_admin_status(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let plan = ObjectQueryPlan::ordinary(query_options)?;
         self.search_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
             .await
@@ -1274,11 +1282,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_objects_with_computed_query_from_backend(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
         snapshot: &ComputedQuerySnapshot,
     ) -> Result<Vec<HubuumObject>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let is_admin = self.is_admin(pool).await?;
         let plan = ObjectQueryPlan::computed(query_options, snapshot);
         self.search_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
@@ -1453,11 +1462,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn count_objects_with_computed_query_from_backend(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
         scopes: Option<&TokenScope>,
         snapshot: &ComputedQuerySnapshot,
     ) -> Result<i64, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let is_admin = self.is_admin(pool).await?;
         let plan = ObjectQueryPlan::computed(query_options, snapshot);
         self.count_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
@@ -1608,11 +1618,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_class_relations_from_backend_with_admin_status(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let (items, _) = self
             .class_relations_page_from_backend_with_admin_status(
                 pool,
@@ -1853,7 +1864,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn class_relations_touching_page_from_backend_with_admin_status<K>(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         class: K,
         query_options: QueryOptions,
         is_admin: bool,
@@ -1862,6 +1873,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
     where
         K: SelfAccessors<HubuumClass>,
     {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::hubuumclass::dsl::{
             collection_id as class_collection_id, hubuumclass, id as class_id,
         };
@@ -2315,11 +2327,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn search_object_relations_from_backend_with_admin_status(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let (items, _) = self
             .object_relations_page_from_backend_with_admin_status(
                 pool,
@@ -2495,7 +2508,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
 
     async fn object_relations_touching_page_from_backend_with_admin_status<O>(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         object: O,
         query_options: QueryOptions,
         is_admin: bool,
@@ -2504,6 +2517,7 @@ pub trait UserSearchBackend: UserCollectionAccessors {
     where
         O: SelfAccessors<HubuumObject>,
     {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::hubuumobject::dsl::{
             collection_id as object_collection_id, hubuumobject, id as object_id_column,
         };
@@ -4874,9 +4888,10 @@ impl<T: ?Sized> UserSearchBackend for T where T: UserCollectionAccessors {}
 impl User {
     pub async fn search_users(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
     ) -> Result<Vec<crate::models::UserWithName>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::identity_scopes;
         use crate::schema::principals;
         use crate::schema::users::dsl::{created_at, email, id, proper_name, updated_at, users};
@@ -4964,9 +4979,10 @@ impl User {
 
     pub async fn count_users(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::identity_scopes;
         use crate::schema::principals;
         use crate::schema::users::dsl::{created_at, email, id, proper_name, updated_at, users};
@@ -5020,9 +5036,10 @@ impl User {
 
     pub async fn search_groups(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
     ) -> Result<Vec<Group>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::groups::dsl::{
             created_at, description, groupname, groups, id, revision, updated_at,
         };
@@ -5081,9 +5098,10 @@ impl User {
 
     pub async fn count_groups(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         use crate::schema::groups::dsl::{
             created_at, description, groupname, groups, id, revision, updated_at,
         };

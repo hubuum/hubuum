@@ -2,13 +2,13 @@ use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::classes::{
     computed_personal_owner, object_read_page, scope_object_query_to_class,
 };
-use crate::db::traits::authz::scope_allows;
-use crate::db::traits::computed_field::{
+use crate::backend::capabilities::authz::scope_allows;
+use crate::backend::capabilities::computed_field::{
     ComputedQuerySnapshot, enrich_objects_with_computed_query_snapshot,
     resolve_computed_query_fields,
 };
-use crate::db::traits::user::UserSearchBackend;
-use crate::db::traits::user::search::{
+use crate::backend::capabilities::user::UserSearchBackend;
+use crate::backend::capabilities::user::search::{
     ExternalRelatedFilterAuthorization, count_computed_objects_with_authorized_ids,
     externally_authorized_related_object_ids, search_computed_objects_with_authorized_ids,
 };
@@ -25,7 +25,6 @@ use crate::pagination::{
 };
 use crate::permissions::visibility::{AuthorizedObjectIds, authorize_all_candidates};
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
-use crate::traits::BackendContext;
 
 enum ComputedListVisibility {
     SqlPushdown,
@@ -33,7 +32,7 @@ enum ComputedListVisibility {
 }
 
 struct ResolvedComputedObjectQuery<'a> {
-    pool: &'a AppContext,
+    context: &'a AppContext,
     requestor: &'a Authenticated,
     params: &'a QueryOptions,
     personal_owner: Option<i32>,
@@ -67,7 +66,7 @@ impl ResolvedComputedObjectQuery<'_> {
             self.requestor
                 .principal
                 .count_objects_with_computed_query_from_backend(
-                    self.pool.db_pool(),
+                    &self.context,
                     count_query_options(self.params),
                     self.requestor.scopes(),
                     self.snapshot,
@@ -80,7 +79,7 @@ impl ResolvedComputedObjectQuery<'_> {
             .requestor
             .principal
             .search_objects_with_computed_query_from_backend(
-                self.pool.db_pool(),
+                &self.context,
                 self.search_options()?,
                 self.requestor.scopes(),
                 self.snapshot,
@@ -96,7 +95,7 @@ impl ResolvedComputedObjectQuery<'_> {
         let total_count = if self.params.include_total {
             count_computed_objects_with_authorized_ids(
                 &self.requestor.principal,
-                self.pool.db_pool(),
+                &self.context,
                 count_query_options(self.params),
                 self.snapshot,
                 authorized_ids,
@@ -107,7 +106,7 @@ impl ResolvedComputedObjectQuery<'_> {
         };
         let objects = search_computed_objects_with_authorized_ids(
             &self.requestor.principal,
-            self.pool.db_pool(),
+            &self.context,
             self.search_options()?,
             self.snapshot,
             authorized_ids,
@@ -124,7 +123,7 @@ impl ResolvedComputedObjectQuery<'_> {
     ) -> Result<ApiResponse<Vec<HubuumObjectReadResponse>>, ApiError> {
         if include_computed {
             let enriched = enrich_objects_with_computed_query_snapshot(
-                self.pool.db_pool(),
+                &self.context,
                 objects,
                 self.personal_owner,
                 self.snapshot,
@@ -151,7 +150,7 @@ impl ResolvedComputedObjectQuery<'_> {
         let (objects, cursor_boundary) = page_items_and_cursor_boundary(objects, request.limit);
         let next_cursor = if let Some(boundary) = cursor_boundary {
             let mut enriched = enrich_objects_with_computed_query_snapshot(
-                self.pool.db_pool(),
+                &self.context,
                 vec![boundary],
                 self.personal_owner,
                 self.snapshot,
@@ -181,7 +180,7 @@ impl ResolvedComputedObjectQuery<'_> {
 }
 
 async fn can_list_objects_in_class(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     class: &HubuumClass,
 ) -> Result<bool, ApiError> {
@@ -196,8 +195,8 @@ async fn can_list_objects_in_class(
         .is_some_and(|ids| ids.has_collection_or_class_entries());
     if has_class_or_collection_scope || requestor.scopes().is_none() {
         return Ok(authorize_resources(
-            pool.permission_backend(),
-            pool.db_pool(),
+            context.permission_backend(),
+            &context,
             &requestor.principal,
             requestor.scopes(),
             vec![Permissions::ReadObject, Permissions::ReadCollection],
@@ -217,13 +216,13 @@ async fn can_list_objects_in_class(
     scope_object_query_to_class(&mut visibility_query, &HubuumClassID::new(class.id)?);
     let visible_objects = requestor
         .principal
-        .search_objects_from_backend(pool.db_pool(), visibility_query, requestor.scopes())
+        .search_objects_from_backend(&context, visibility_query, requestor.scopes())
         .await?;
     Ok(!visible_objects.is_empty())
 }
 
 async fn authorized_object_ids_in_class(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     class: &HubuumClassID,
 ) -> Result<AuthorizedObjectIds, ApiError> {
@@ -237,11 +236,11 @@ async fn authorized_object_ids_in_class(
     scope_object_query_to_class(&mut visibility_query, class);
     let candidates = requestor
         .principal
-        .search_objects_from_backend_with_admin_status(pool, visibility_query, true, None)
+        .search_objects_from_backend_with_admin_status(&context, visibility_query, true, None)
         .await?;
-    let principal = PrincipalRef::load(pool, &requestor.principal).await?;
+    let principal = PrincipalRef::load(&context, &requestor.principal).await?;
     let authorized = authorize_all_candidates(
-        pool.permission_backend(),
+        context.permission_backend(),
         &principal,
         candidates,
         requestor.scopes(),
@@ -253,26 +252,29 @@ async fn authorized_object_ids_in_class(
 }
 
 async fn computed_list_visibility(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     class: &HubuumClass,
     class_id: &HubuumClassID,
     params: &QueryOptions,
 ) -> Result<Option<ComputedListVisibility>, ApiError> {
-    if pool.permission_backend().supports_sql_visibility_pushdown() {
-        return can_list_objects_in_class(pool, requestor, class)
+    if context
+        .permission_backend()
+        .supports_sql_visibility_pushdown()
+    {
+        return can_list_objects_in_class(context, requestor, class)
             .await
             .map(|allowed| allowed.then_some(ComputedListVisibility::SqlPushdown));
     }
 
-    let authorized_ids = authorized_object_ids_in_class(pool, requestor, class_id).await?;
-    let principal = PrincipalRef::load(pool, &requestor.principal).await?;
+    let authorized_ids = authorized_object_ids_in_class(context, requestor, class_id).await?;
+    let principal = PrincipalRef::load(&context, &requestor.principal).await?;
     let related_ids = externally_authorized_related_object_ids(
         &requestor.principal,
         &params.filters,
         ExternalRelatedFilterAuthorization::new(
-            pool.db_pool(),
-            pool.permission_backend(),
+            &context,
+            context.permission_backend(),
             &principal,
             requestor.scopes(),
         ),
@@ -300,7 +302,7 @@ fn empty_computed_page(
 }
 
 pub(super) async fn list_objects(
-    pool: &AppContext,
+    context: &AppContext,
     requestor: &Authenticated,
     class: &HubuumClass,
     mut params: QueryOptions,
@@ -312,18 +314,18 @@ pub(super) async fn list_objects(
 
     let class_id = HubuumClassID::new(class.id)?;
     let Some(visibility) =
-        computed_list_visibility(pool, requestor, class, &class_id, &params).await?
+        computed_list_visibility(context, requestor, class, &class_id, &params).await?
     else {
         return empty_computed_page(&params);
     };
 
-    let personal_owner = computed_personal_owner(pool, requestor, class).await?;
+    let personal_owner = computed_personal_owner(context, requestor, class).await?;
     let computed_sorting = params
         .sort
         .iter()
         .any(|sort| sort.field.computed_query().is_some());
     let computed_query_snapshot = resolve_computed_query_fields(
-        pool.db_pool(),
+        &context,
         class.id,
         personal_owner,
         &mut params.filters,
@@ -332,7 +334,7 @@ pub(super) async fn list_objects(
     .await?;
 
     let query = ResolvedComputedObjectQuery {
-        pool,
+        context,
         requestor,
         params: &params,
         personal_owner,

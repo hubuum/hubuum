@@ -10,6 +10,7 @@
 
 mod administration;
 mod application;
+mod backend;
 
 pub use administration::run_admin_from_environment;
 pub use application::run_runtime_from_environment;
@@ -35,7 +36,7 @@ pub mod permissions;
 pub mod restores;
 pub mod schema;
 pub mod services;
-pub mod storage;
+mod storage;
 pub mod tasks;
 #[cfg(feature = "integration-test-support")]
 #[doc(hidden)]

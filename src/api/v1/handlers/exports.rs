@@ -3,7 +3,7 @@ use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, pos
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::traits::task::TaskBackend;
+use crate::backend::capabilities::task::TaskBackend;
 use crate::errors::ApiError;
 use crate::exports::{ExportTaskSubmission, submit_export_task};
 use crate::extractors::Authenticated;
@@ -61,7 +61,7 @@ fn render_export_task_output(output: ExportTaskOutputRecord) -> Result<HttpRespo
 )]
 #[post("")]
 pub async fn run_export(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     export: web::Json<ExportRequest>,
@@ -73,10 +73,10 @@ pub async fn run_export(
         requestor.scopes(),
     )
     .idempotency_key(idempotency_key_from_headers(req.headers())?);
-    let task = submit_export_task(&pool, &requestor.principal, submission).await?;
+    let task = submit_export_task(&context, &requestor.principal, submission).await?;
 
     let response = task.to_response()?;
-    kick_task_worker(pool.clone());
+    kick_task_worker(context.clone());
 
     Ok(ApiResponse::accepted_at(
         response,
@@ -100,16 +100,16 @@ pub async fn run_export(
 )]
 #[get("/{task_id}")]
 pub async fn get_export(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.clone());
+    ensure_task_worker_running(context.clone());
     let task = task_id
         .into_inner()
-        .load_authorized_export(&pool, &requestor.principal)
+        .load_authorized_export(&context, &requestor.principal)
         .await?;
-    let output = task.find_export_output_summary(&pool).await?;
+    let output = task.find_export_output_summary(&context).await?;
     Ok(ApiResponse::new(
         task.to_response_with_export_output(output.as_ref())?,
         StatusCode::OK,
@@ -142,16 +142,16 @@ pub async fn get_export(
 )]
 #[get("/{task_id}/output")]
 pub async fn get_export_output(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    ensure_task_worker_running(pool.clone());
+    ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
     task_id
-        .load_authorized_export(&pool, &requestor.principal)
+        .load_authorized_export(&context, &requestor.principal)
         .await?;
-    match task_id.find_export_output(&pool).await? {
+    match task_id.find_export_output(&context).await? {
         ExportOutputLookup::Available(output) => render_export_task_output(output),
         ExportOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
             "Export output expired at {expires_at} UTC"

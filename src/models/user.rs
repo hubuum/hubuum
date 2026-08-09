@@ -290,7 +290,11 @@ impl User {
     where
         C: BackendContext + ?Sized,
     {
-        Ok(load_principal_by_id(backend.db_pool(), self.id).await?.name)
+        Ok(
+            load_principal_by_id(crate::traits::backend_pool(backend), self.id)
+                .await?
+                .name,
+        )
     }
 
     /// Build a [`UserResponse`], resolving the name from the principal.
@@ -298,7 +302,11 @@ impl User {
     where
         C: BackendContext + ?Sized,
     {
-        crate::db::traits::principal::load_user_response(backend.db_pool(), self.id).await
+        crate::db::traits::principal::load_user_response(
+            crate::traits::backend_pool(backend),
+            self.id,
+        )
+        .await
     }
 
     /// Build the strongly tagged point representation in one database snapshot.
@@ -306,7 +314,11 @@ impl User {
     where
         C: BackendContext + ?Sized,
     {
-        crate::db::traits::principal::load_user_point_response(backend.db_pool(), self.id).await
+        crate::db::traits::principal::load_user_point_response(
+            crate::traits::backend_pool(backend),
+            self.id,
+        )
+        .await
     }
 
     /// Set a new local password and revoke every active bearer token for this
@@ -320,7 +332,7 @@ impl User {
             .await
             .map_err(|error| ApiError::HashError(format!("Failed to hash password: {error}")))?;
         let revoked_tokens = self
-            .set_password_record(backend.db_pool(), &password_hash)
+            .set_password_record(crate::traits::backend_pool(backend), &password_hash)
             .await?;
         debug!(
             message = "Password changed and active tokens revoked",
@@ -354,7 +366,7 @@ impl User {
     where
         C: BackendContext + ?Sized,
     {
-        self.load_owned_user_token_record(&token_param, backend.db_pool())
+        self.load_owned_user_token_record(&token_param, crate::traits::backend_pool(backend))
             .await
     }
 
@@ -362,7 +374,7 @@ impl User {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_owned_user_token_record(&token_param, backend.db_pool())
+        self.delete_owned_user_token_record(&token_param, crate::traits::backend_pool(backend))
             .await
     }
 
@@ -370,7 +382,8 @@ impl User {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_all_user_tokens_record(backend.db_pool()).await
+        self.delete_all_user_tokens_record(crate::traits::backend_pool(backend))
+            .await
     }
 
     /// Delete this user without emitting domain events.
@@ -382,7 +395,7 @@ impl User {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_user_record_without_events(backend.db_pool())
+        self.delete_user_record_without_events(crate::traits::backend_pool(backend))
             .await
     }
 
@@ -394,14 +407,16 @@ impl User {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_user_record(backend.db_pool(), context).await
+        self.delete_user_record(crate::traits::backend_pool(backend), context)
+            .await
     }
 
     pub async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.anonymize_user_record(backend.db_pool()).await
+        self.anonymize_user_record(crate::traits::backend_pool(backend))
+            .await
     }
 }
 
@@ -460,7 +475,7 @@ impl UpdateUser {
     {
         let hashed = self.hash_password().await?;
         hashed
-            .update_user_record_without_events(user_id.id(), backend.db_pool())
+            .update_user_record_without_events(user_id.id(), crate::traits::backend_pool(backend))
             .await
     }
 
@@ -475,7 +490,7 @@ impl UpdateUser {
     {
         let hashed = self.hash_password().await?;
         hashed
-            .update_user_record(user_id.id(), backend.db_pool(), context)
+            .update_user_record(user_id.id(), crate::traits::backend_pool(backend), context)
             .await
     }
 }
@@ -518,7 +533,7 @@ impl NewUser {
     {
         let hashed = self.hash_password().await?;
         hashed
-            .create_user_record_without_events(backend.db_pool())
+            .create_user_record_without_events(crate::traits::backend_pool(backend))
             .await
     }
 
@@ -531,7 +546,9 @@ impl NewUser {
         C: BackendContext + ?Sized,
     {
         let hashed = self.hash_password().await?;
-        hashed.create_user_record(backend.db_pool(), context).await
+        hashed
+            .create_user_record(crate::traits::backend_pool(backend), context)
+            .await
     }
 
     pub async fn hash_password(mut self) -> Result<Self, ApiError> {
@@ -554,7 +571,8 @@ impl UserID {
         C: BackendContext + ?Sized,
     {
         use crate::db::traits::user::LoadUserRecord;
-        self.load_user_record(backend.db_pool()).await
+        self.load_user_record(crate::traits::backend_pool(backend))
+            .await
     }
 
     pub async fn delete<C>(
@@ -565,14 +583,16 @@ impl UserID {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_user_record(backend.db_pool(), context).await
+        self.delete_user_record(crate::traits::backend_pool(backend), context)
+            .await
     }
 
     pub async fn anonymize<C>(&self, backend: &C) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.anonymize_user_record(backend.db_pool()).await
+        self.anonymize_user_record(crate::traits::backend_pool(backend))
+            .await
     }
 }
 
@@ -615,8 +635,12 @@ impl LoginUser {
             .identity_scope
             .as_deref()
             .unwrap_or(LOCAL_IDENTITY_SCOPE);
-        let user = match User::get_by_name_in_scope(backend.db_pool(), identity_scope, &self.name)
-            .await
+        let user = match User::get_by_name_in_scope(
+            crate::traits::backend_pool(backend),
+            identity_scope,
+            &self.name,
+        )
+        .await
         {
             Ok(user) => user,
             Err(_) => {

@@ -3,12 +3,12 @@ use actix_web::{HttpRequest, Responder, delete, get, patch, routes, web};
 use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::{ApiResponse, ResponseLocation};
-use crate::can;
-use crate::db::traits::UserPermissions;
-use crate::db::traits::event_subscription::{
+use crate::backend::capabilities::UserPermissions;
+use crate::backend::capabilities::event_subscription::{
     DeleteEventSubscriptionRecord, SaveEventSubscriptionRecord, UpdateEventSubscriptionRecord,
 };
-use crate::db::with_revision_precondition_scope;
+use crate::backend::with_revision_precondition_scope;
+use crate::can;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::parse_query_parameter;
@@ -39,7 +39,7 @@ use crate::permissions::AppContext;
 #[post("/{collection_id}/event-subscriptions")]
 #[post("/{collection_id}/event-subscriptions/")]
 pub async fn create_event_subscription(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     collection_id: web::Path<CollectionID>,
@@ -47,18 +47,18 @@ pub async fn create_event_subscription(
 ) -> Result<impl Responder, ApiError> {
     let collection_id = collection_id.into_inner();
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ManageEventSubscription],
         collection_id
     );
-    subscription.sink_id.instance(&pool).await?;
+    subscription.sink_id.instance(&context).await?;
     let event_context = requestor.event_context(&req);
     let created: EventSubscription = subscription
         .into_inner()
         .into_row(collection_id)?
-        .save_event_subscription_record(&pool, &event_context)
+        .save_event_subscription_record(&context, &event_context)
         .await?
         .try_into()?;
     let location = ResponseLocation::new(format!(
@@ -85,14 +85,14 @@ pub async fn create_event_subscription(
 #[get("/{collection_id}/event-subscriptions")]
 #[get("/{collection_id}/event-subscriptions/")]
 pub async fn get_event_subscriptions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     req: actix_web::HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let collection_id = collection_id.into_inner();
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ManageEventSubscription],
@@ -101,7 +101,8 @@ pub async fn get_event_subscriptions(
     let params = parse_query_parameter(req.query_string())?;
     let query_options = prepare_db_pagination::<EventSubscription>(&params)?;
     let (subscriptions, total_count) =
-        EventSubscription::list_with_total_count(&pool, collection_id.id(), &query_options).await?;
+        EventSubscription::list_with_total_count(&context, collection_id.id(), &query_options)
+            .await?;
     ApiResponse::paginated(subscriptions, total_count, &params)
 }
 
@@ -123,19 +124,19 @@ pub async fn get_event_subscriptions(
 )]
 #[get("/{collection_id}/event-subscriptions/{subscription_id}")]
 pub async fn get_event_subscription(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     path: web::Path<(CollectionID, EventSubscriptionID)>,
 ) -> Result<impl Responder, ApiError> {
     let (collection_id, subscription_id) = path.into_inner();
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ManageEventSubscription],
         collection_id
     );
-    let subscription = subscription_id.instance(&pool).await?;
+    let subscription = subscription_id.instance(&context).await?;
     ensure_subscription_collection(&subscription, collection_id)?;
     ApiResponse::ok_revisioned(subscription)
 }
@@ -161,7 +162,7 @@ pub async fn get_event_subscription(
 )]
 #[patch("/{collection_id}/event-subscriptions/{subscription_id}")]
 pub async fn patch_event_subscription(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     path: web::Path<(CollectionID, EventSubscriptionID)>,
@@ -169,7 +170,7 @@ pub async fn patch_event_subscription(
 ) -> Result<impl Responder, ApiError> {
     let (collection_id, subscription_id) = path.into_inner();
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ManageEventSubscription],
@@ -182,9 +183,9 @@ pub async fn patch_event_subscription(
         ));
     }
     if let Some(sink_id) = update.sink_id {
-        sink_id.instance(&pool).await?;
+        sink_id.instance(&context).await?;
     }
-    let existing = subscription_id.instance(&pool).await?;
+    let existing = subscription_id.instance(&context).await?;
     ensure_subscription_collection(&existing, collection_id)?;
     let precondition = revision_precondition(&req, &existing)?;
     let event_context = requestor.event_context(&req);
@@ -192,7 +193,7 @@ pub async fn patch_event_subscription(
         precondition,
         update
             .into_row(&existing)?
-            .update_event_subscription_record(&pool, existing.id, &event_context),
+            .update_event_subscription_record(&context, existing.id, &event_context),
     )
     .await?
     .try_into()?;
@@ -217,27 +218,27 @@ pub async fn patch_event_subscription(
 )]
 #[delete("/{collection_id}/event-subscriptions/{subscription_id}")]
 pub async fn delete_event_subscription(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
     path: web::Path<(CollectionID, EventSubscriptionID)>,
 ) -> Result<impl Responder, ApiError> {
     let (collection_id, subscription_id) = path.into_inner();
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ManageEventSubscription],
         collection_id
     );
-    let existing = subscription_id.instance(&pool).await?;
+    let existing = subscription_id.instance(&context).await?;
     ensure_subscription_collection(&existing, collection_id)?;
     let etag = existing.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(
         precondition,
-        subscription_id.delete_event_subscription_record(&pool, &event_context),
+        subscription_id.delete_event_subscription_record(&context, &event_context),
     )
     .await?;
     Ok(ApiResponse::no_content_with_etag(etag))

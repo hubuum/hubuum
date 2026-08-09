@@ -228,7 +228,10 @@ identity or behavior. In particular:
 
 The effective non-secret configuration is available through the existing
 running-configuration endpoint. Secret fields report only whether they are
-configured.
+configured. Its database section also reports the selected complete storage
+backend, storage contract version, required capability families, and effective
+pool settings. Every replica in one deployment must report the same backend and
+contract version.
 
 ## Shared Login Throttling
 

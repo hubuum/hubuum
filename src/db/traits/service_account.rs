@@ -90,10 +90,11 @@ where
                 .to_string(),
         ));
     }
-    let local_scope = identity_scope_by_name(backend.db_pool(), LOCAL_IDENTITY_SCOPE).await?;
+    let local_scope =
+        identity_scope_by_name(crate::traits::backend_pool(backend), LOCAL_IDENTITY_SCOPE).await?;
 
     with_transaction(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         async |conn| -> Result<ServiceAccount, ApiError> {
             let principal = NewPrincipal {
                 identity_scope_id: local_scope.id,
@@ -274,10 +275,11 @@ where
     C: BackendContext + ?Sized,
 {
     let sa_id = account_id.id();
-    let (disabled, cancelled_tasks) = with_transaction(backend.db_pool(), async |conn| {
-        disable_service_account_conn(conn, sa_id, event_context).await
-    })
-    .await?;
+    let (disabled, cancelled_tasks) =
+        with_transaction(crate::traits::backend_pool(backend), async |conn| {
+            disable_service_account_conn(conn, sa_id, event_context).await
+        })
+        .await?;
 
     record_cancelled_task_metrics(&cancelled_tasks);
     Ok(disabled)
@@ -419,10 +421,11 @@ fn service_account_snapshot(
 
 /// Is `principal_id` a **human** member of `owner_group_id`?
 pub async fn is_human_owner_group_member(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     principal_id: i32,
     owner_group_id: i32,
 ) -> Result<bool, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::group_memberships;
     use crate::schema::principals;
     use diesel::dsl::{exists, select};
@@ -443,7 +446,11 @@ pub async fn is_human_owner_group_member(
     .await
 }
 
-pub async fn principal_is_disabled(pool: &DbPool, principal: &Principal) -> Result<bool, ApiError> {
+pub async fn principal_is_disabled(
+    pool: &impl crate::traits::BackendContext,
+    principal: &Principal,
+) -> Result<bool, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     if !principal.is_service_account() {
         return Ok(false);
     }
@@ -526,9 +533,10 @@ pub async fn service_accounts_owned_by_group(
 }
 
 pub async fn load_service_account_by_id(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     service_account_id: i32,
 ) -> Result<ServiceAccount, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::service_accounts::dsl::{id, service_accounts as sa_table};
     with_connection(pool, async |conn| {
         sa_table
@@ -540,7 +548,7 @@ pub async fn load_service_account_by_id(
 }
 
 pub async fn search_manageable_service_accounts<S>(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     requestor: &S,
     is_admin: bool,
     query_options: QueryOptions,
@@ -548,6 +556,7 @@ pub async fn search_manageable_service_accounts<S>(
 where
     S: AuthzSubject + ?Sized,
 {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::identity_scopes;
     use crate::schema::principals;
     use crate::schema::service_accounts::dsl::{
@@ -616,7 +625,7 @@ where
 }
 
 pub async fn count_manageable_service_accounts<S>(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     requestor: &S,
     is_admin: bool,
     query_options: QueryOptions,
@@ -624,6 +633,7 @@ pub async fn count_manageable_service_accounts<S>(
 where
     S: AuthzSubject + ?Sized,
 {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::identity_scopes;
     use crate::schema::principals;
     use crate::schema::service_accounts::dsl::{

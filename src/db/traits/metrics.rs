@@ -106,11 +106,11 @@ where
     T: BackendContext + Sync + ?Sized,
 {
     async fn metrics_inventory_snapshot(&self) -> Result<InventoryMetricsSnapshot, ApiError> {
-        with_connection(self.db_pool(), load_inventory_counts).await
+        with_connection(crate::traits::backend_pool(self), load_inventory_counts).await
     }
 
     async fn metrics_task_snapshot(&self) -> Result<TaskMetricsSnapshot, ApiError> {
-        with_connection(self.db_pool(), async |conn| {
+        with_connection(crate::traits::backend_pool(self), async |conn| {
             let counts = load_task_count_rows(conn)
                 .await?
                 .into_iter()
@@ -146,7 +146,7 @@ where
     T: BackendContext + Sync + ?Sized,
 {
     async fn metrics_inventory_gauge_snapshot(&self) -> Result<InventoryGaugeSnapshot, ApiError> {
-        with_connection(self.db_pool(), async |conn| {
+        with_connection(crate::traits::backend_pool(self), async |conn| {
             let counts = load_inventory_counts(conn).await?;
             let export_templates = export_templates::table
                 .select((export_templates::id, export_templates::name))
@@ -171,7 +171,7 @@ where
     }
 
     async fn metrics_task_gauge_snapshot(&self) -> Result<TaskGaugeSnapshot, ApiError> {
-        with_connection(self.db_pool(), async |conn| {
+        with_connection(crate::traits::backend_pool(self), async |conn| {
             let counts = load_task_count_rows(conn)
                 .await?
                 .into_iter()

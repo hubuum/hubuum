@@ -209,7 +209,7 @@ where
     C: BackendContext + ?Sized,
 {
     let total_timer = metrics::import_phase_timer(metrics::ImportMetricPhase::Total);
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     let payload = task
         .request_payload
         .clone()

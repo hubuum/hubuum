@@ -1,11 +1,12 @@
 use super::*;
 
 pub async fn request_class_rebuild(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     target_class_id: i32,
     authorized_collection_id: i32,
     actor_id: Option<i32>,
 ) -> Result<ClassComputationState, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         acquire_computed_class_exclusive_lock(conn, target_class_id).await?;
         let _ = locked_class_record_in_collection(conn, target_class_id, authorized_collection_id)
@@ -115,9 +116,10 @@ async fn process_reindex_batch(
 }
 
 pub async fn execute_computed_reindex_task(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     task: &TaskRecord,
 ) -> Result<(), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let started = Instant::now();
     let payload: ComputedReindexPayload = serde_json::from_value(
         task.request_payload

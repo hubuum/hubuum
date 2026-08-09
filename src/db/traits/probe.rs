@@ -28,7 +28,7 @@ where
     T: BackendContext + Sync + ?Sized,
 {
     async fn readiness_snapshot(&self) -> Result<ReadinessSnapshot, ApiError> {
-        with_connection(self.db_pool(), async |conn| {
+        with_connection(crate::traits::backend_pool(self), async |conn| {
             use crate::schema::system_maintenance::dsl::{id, state, system_maintenance};
 
             let schema_ready = database_schema_is_ready(conn).await?;

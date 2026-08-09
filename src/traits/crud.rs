@@ -91,14 +91,16 @@ where
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_adapter_without_events(backend.db_pool()).await
+        self.delete_adapter_without_events(crate::traits::backend_pool(backend))
+            .await
     }
 
     async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<(), ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_adapter(backend.db_pool(), context).await
+        self.delete_adapter(crate::traits::backend_pool(backend), context)
+            .await
     }
 }
 
@@ -127,14 +129,16 @@ where
     where
         C: BackendContext + ?Sized,
     {
-        self.save_adapter_without_events(backend.db_pool()).await
+        self.save_adapter_without_events(crate::traits::backend_pool(backend))
+            .await
     }
 
     async fn save<C>(&self, backend: &C, context: &EventContext) -> Result<Self::Output, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.save_adapter(backend.db_pool(), context).await
+        self.save_adapter(crate::traits::backend_pool(backend), context)
+            .await
     }
 }
 
@@ -174,7 +178,7 @@ where
     where
         C: BackendContext + ?Sized,
     {
-        self.update_adapter_without_events(backend.db_pool(), entry_id)
+        self.update_adapter_without_events(crate::traits::backend_pool(backend), entry_id)
             .await
     }
 
@@ -187,7 +191,7 @@ where
     where
         C: BackendContext + ?Sized,
     {
-        self.update_adapter(backend.db_pool(), entry_id, context)
+        self.update_adapter(crate::traits::backend_pool(backend), entry_id, context)
             .await
     }
 }

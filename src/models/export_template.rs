@@ -483,10 +483,11 @@ impl ExportTemplate {
     /// List export templates (sorted/paginated per `query_options`) together with the total count
     /// matching the filters, scoped to the collections the caller may see.
     pub async fn list_with_total_count(
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         allowed_collection_ids: &[i32],
         query_options: &QueryOptions,
     ) -> Result<(Vec<ExportTemplate>, i64), ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         if allowed_collection_ids.is_empty() {
             return Ok((
                 Vec::new(),
@@ -510,9 +511,10 @@ impl ExportTemplate {
     /// External authorization backends use this before filtering the rows
     /// against their own policy decisions.
     pub async fn list_candidates(
-        pool: &DbPool,
+        pool: &impl crate::traits::BackendContext,
         query_options: &QueryOptions,
     ) -> Result<Vec<ExportTemplate>, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let (rows, _) = backend::list_all_rows_with_total_count(pool, query_options).await?;
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -538,7 +540,7 @@ pub trait CollectionExportTemplates: CollectionAccessors {
     {
         let collection_id = self.collection_id(backend).await?.id();
         let rows = crate::db::traits::export_template::load_rows_in_collection(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             collection_id,
             exclude_template_id,
         )
@@ -1339,7 +1341,10 @@ crate::impl_history_pagination!(ExportTemplateHistory, "export_templates_history
 
 #[async_trait]
 impl AuthzTarget for ExportTemplate {
-    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        _pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         Ok(ResourceRef {
             kind: ResourceKind::Template,
             id: self.id,
@@ -1354,7 +1359,10 @@ impl AuthzTarget for ExportTemplate {
 
 #[async_trait]
 impl AuthzTarget for ExportTemplateID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }

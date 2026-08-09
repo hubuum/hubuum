@@ -86,22 +86,21 @@ macro_rules! can {
         #[allow(unused_imports)]
         use $crate::permissions::AuthzTarget as _;
         #[allow(unused_imports)]
-        use $crate::traits::BackendContext as _;
-        #[allow(unused_imports)]
         use $crate::traits::CollectionAccessors as _;
 
+        let backend = &$pool;
         let resources = vec![
-            $($collection.to_resource_ref($pool.db_pool()).await?),+
+            $($collection.to_resource_ref(backend).await?),+
         ];
         if !$crate::db::traits::authz::scope_allows_resources($scopes, &resources) {
             return Err($crate::errors::ApiError::Forbidden("Permission denied".to_string()));
         }
 
-        match $crate::traits::BackendContext::permission_backend($pool) {
+        match $crate::traits::BackendContext::permission_backend(backend) {
             Some(permission_backend) if !permission_backend.uses_sql_permission_store() => {
                 $crate::permissions::authorize_resources(
                     permission_backend,
-                    $pool.db_pool(),
+                    backend,
                     $subject,
                     $scopes,
                     vec![$($perm),+],
@@ -110,10 +109,10 @@ macro_rules! can {
             }
             _ => {
                 $subject.can(
-                    $pool.db_pool(),
+                    backend,
                     vec![$($perm),+],
                     vec![
-                        $($collection.collection_id($pool.db_pool()).await?),+
+                        $($collection.collection_id(backend).await?),+
                     ],
                     $scopes,
                 ).await?

@@ -50,21 +50,23 @@ impl PrincipalGroup {
     where
         C: BackendContext + ?Sized,
     {
-        self.load_principal_group_principal(backend.db_pool()).await
+        self.load_principal_group_principal(crate::traits::backend_pool(backend))
+            .await
     }
 
     pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.load_principal_group_group(backend.db_pool()).await
+        self.load_principal_group_group(crate::traits::backend_pool(backend))
+            .await
     }
 
     pub async fn save<C>(&self, backend: &C) -> Result<PrincipalGroup, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.save_principal_group_record_without_events(backend.db_pool())
+        self.save_principal_group_record_without_events(crate::traits::backend_pool(backend))
             .await
     }
 
@@ -72,6 +74,7 @@ impl PrincipalGroup {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_principal_group_record(backend.db_pool()).await
+        self.delete_principal_group_record(crate::traits::backend_pool(backend))
+            .await
     }
 }

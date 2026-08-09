@@ -14,7 +14,7 @@ use super::StorageError;
 /// implementations can recheck ID- and name-based mutations atomically before
 /// writing.
 #[async_trait]
-pub trait ObjectStore: Send + Sync {
+pub(crate) trait ObjectStore: Send + Sync {
     async fn resolve_object(
         &self,
         selector: ObjectSelector,

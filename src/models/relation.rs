@@ -11,7 +11,6 @@ use utoipa::ToSchema;
 use utoipa::openapi::schema::{Schema, Type};
 use utoipa::openapi::{KnownFormat, ObjectBuilder, RefOr, SchemaFormat};
 
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::{
     HubuumClass, HubuumClassID, HubuumClassWithPath, HubuumObject, HubuumObjectID,
@@ -357,6 +356,30 @@ impl NewHubuumObjectRelation {
     }
 }
 
+/// One typed endpoint of an object relation route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObjectRelationEndpoint {
+    class_id: HubuumClassID,
+    object_id: HubuumObjectID,
+}
+
+impl ObjectRelationEndpoint {
+    pub fn new(class_id: HubuumClassID, object_id: HubuumObjectID) -> Self {
+        Self {
+            class_id,
+            object_id,
+        }
+    }
+
+    pub fn class_id(self) -> HubuumClassID {
+        self.class_id
+    }
+
+    pub fn object_id(self) -> HubuumObjectID {
+        self.object_id
+    }
+}
+
 /// Explicit address for a persisted object relation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObjectRelationSelector(ObjectRelationSelectorKind);
@@ -365,10 +388,8 @@ pub struct ObjectRelationSelector(ObjectRelationSelectorKind);
 pub(crate) enum ObjectRelationSelectorKind {
     ById(HubuumObjectRelationID),
     Between {
-        from_class_id: HubuumClassID,
-        from_object_id: HubuumObjectID,
-        to_class_id: HubuumClassID,
-        to_object_id: HubuumObjectID,
+        from: ObjectRelationEndpoint,
+        to: ObjectRelationEndpoint,
     },
 }
 
@@ -377,18 +398,8 @@ impl ObjectRelationSelector {
         Self(ObjectRelationSelectorKind::ById(id))
     }
 
-    pub fn between(
-        from_class_id: HubuumClassID,
-        from_object_id: HubuumObjectID,
-        to_class_id: HubuumClassID,
-        to_object_id: HubuumObjectID,
-    ) -> Self {
-        Self(ObjectRelationSelectorKind::Between {
-            from_class_id,
-            from_object_id,
-            to_class_id,
-            to_object_id,
-        })
+    pub fn between(from: ObjectRelationEndpoint, to: ObjectRelationEndpoint) -> Self {
+        Self(ObjectRelationSelectorKind::Between { from, to })
     }
 
     pub(crate) fn kind(&self) -> &ObjectRelationSelectorKind {
@@ -404,10 +415,8 @@ pub struct ObjectRelationCreateSelector(ObjectRelationCreateSelectorKind);
 pub(crate) enum ObjectRelationCreateSelectorKind {
     Explicit(NewHubuumObjectRelation),
     Between {
-        from_class_id: HubuumClassID,
-        from_object_id: HubuumObjectID,
-        to_class_id: HubuumClassID,
-        to_object_id: HubuumObjectID,
+        from: ObjectRelationEndpoint,
+        to: ObjectRelationEndpoint,
     },
 }
 
@@ -416,18 +425,8 @@ impl ObjectRelationCreateSelector {
         Self(ObjectRelationCreateSelectorKind::Explicit(command))
     }
 
-    pub fn between(
-        from_class_id: HubuumClassID,
-        from_object_id: HubuumObjectID,
-        to_class_id: HubuumClassID,
-        to_object_id: HubuumObjectID,
-    ) -> Self {
-        Self(ObjectRelationCreateSelectorKind::Between {
-            from_class_id,
-            from_object_id,
-            to_class_id,
-            to_object_id,
-        })
+    pub fn between(from: ObjectRelationEndpoint, to: ObjectRelationEndpoint) -> Self {
+        Self(ObjectRelationCreateSelectorKind::Between { from, to })
     }
 
     pub(crate) fn kind(&self) -> &ObjectRelationCreateSelectorKind {
@@ -861,7 +860,10 @@ fn new_hubuum_object_relation_example() -> NewHubuumObjectRelation {
 
 #[async_trait]
 impl AuthzTarget for HubuumClassRelation {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         let from_class = HubuumClassID::new(self.from_hubuum_class_id)?
             .instance(pool)
             .await?;
@@ -887,7 +889,10 @@ impl AuthzTarget for HubuumClassRelation {
 
 #[async_trait]
 impl AuthzTarget for NewHubuumClassRelation {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         let from_class = HubuumClassID::new(self.from_hubuum_class_id)?
             .instance(pool)
             .await?;
@@ -912,14 +917,20 @@ impl AuthzTarget for NewHubuumClassRelation {
 
 #[async_trait]
 impl AuthzTarget for HubuumClassRelationID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }
 
 #[async_trait]
 impl AuthzTarget for HubuumObjectRelation {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         let from_object = HubuumObjectID::new(self.from_hubuum_object_id)?
             .instance(pool)
             .await?;
@@ -948,7 +959,10 @@ impl AuthzTarget for HubuumObjectRelation {
 
 #[async_trait]
 impl AuthzTarget for NewHubuumObjectRelation {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         let from_object = HubuumObjectID::new(self.from_hubuum_object_id)?
             .instance(pool)
             .await?;
@@ -976,7 +990,10 @@ impl AuthzTarget for NewHubuumObjectRelation {
 
 #[async_trait]
 impl AuthzTarget for HubuumObjectRelationID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }

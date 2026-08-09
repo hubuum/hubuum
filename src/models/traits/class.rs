@@ -27,7 +27,7 @@ impl ResolveClassTarget for ClassSelector {
         C: crate::traits::BackendContext + ?Sized,
     {
         let class = self
-            .resolve_class_selector_record(backend.db_pool())
+            .resolve_class_selector_record(crate::traits::backend_pool(backend))
             .await?;
         Ok(ResolvedClassTarget::new(self.clone(), class))
     }
@@ -54,7 +54,7 @@ impl UpdateResolvedClass for UpdateHubuumClass {
     where
         C: crate::traits::BackendContext + ?Sized,
     {
-        self.update_resolved_class_record(backend.db_pool(), target, context)
+        self.update_resolved_class_record(crate::traits::backend_pool(backend), target, context)
             .await
     }
 }
@@ -78,7 +78,7 @@ impl DeleteResolvedClass for ResolvedClassTarget {
     where
         C: crate::traits::BackendContext + ?Sized,
     {
-        self.delete_resolved_class_record(backend.db_pool(), context)
+        self.delete_resolved_class_record(crate::traits::backend_pool(backend), context)
             .await
     }
 }

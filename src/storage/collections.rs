@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
 
 use crate::events::EventContext;
 use crate::models::{Collection, CollectionID, NewCollectionWithAssignee, UpdateCollection};
 
-use super::{ClassRelationStore, ClassStore, ObjectRelationStore, ObjectStore, StorageError};
+use super::StorageError;
 
 /// Persistence capability for the core collection lifecycle.
 ///
@@ -13,7 +11,7 @@ use super::{ClassRelationStore, ClassStore, ObjectRelationStore, ObjectStore, St
 /// over transactions, hierarchy maintenance, initial permission grants, and
 /// atomic event persistence.
 #[async_trait]
-pub trait CollectionStore: Send + Sync {
+pub(crate) trait CollectionStore: Send + Sync {
     async fn get_collection(&self, id: CollectionID) -> Result<Collection, StorageError>;
 
     async fn create_collection(
@@ -46,33 +44,4 @@ pub trait CollectionStore: Send + Sync {
         new_parent_id: CollectionID,
         context: &EventContext,
     ) -> Result<Collection, StorageError>;
-}
-
-/// Umbrella storage boundary. New aggregate capabilities can be added here as
-/// vertical slices migrate without exposing a database pool to services.
-pub trait Storage:
-    CollectionStore + ClassStore + ObjectStore + ClassRelationStore + ObjectRelationStore
-{
-}
-
-impl<T> Storage for T where
-    T: CollectionStore + ClassStore + ObjectStore + ClassRelationStore + ObjectRelationStore
-{
-}
-
-#[derive(Clone)]
-pub struct DynStorage {
-    inner: Arc<dyn Storage>,
-}
-
-impl DynStorage {
-    pub fn new(storage: impl Storage + 'static) -> Self {
-        Self {
-            inner: Arc::new(storage),
-        }
-    }
-
-    pub(crate) fn inner(&self) -> &dyn Storage {
-        self.inner.as_ref()
-    }
 }

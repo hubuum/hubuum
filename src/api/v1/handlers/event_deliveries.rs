@@ -2,12 +2,11 @@ use actix_web::{Responder, get, http::StatusCode, post, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::DbPool;
-use crate::db::traits::event_delivery::{
+use crate::backend::capabilities::event_delivery::{
     list_event_deliveries_with_total_count, load_event_delivery, mark_event_delivery_dead,
     release_event_delivery_for_retry,
 };
-use crate::db::traits::event_observability::load_event_delivery_health;
+use crate::backend::capabilities::event_observability::load_event_delivery_health;
 use crate::errors::ApiError;
 use crate::events::kick_event_delivery_worker;
 use crate::extractors::AdminAccess;
@@ -17,6 +16,7 @@ use crate::models::{
     EventDeliveryUpdateResponse,
 };
 use crate::pagination::prepare_db_pagination;
+use crate::permissions::AppContext;
 
 #[utoipa::path(
     get,
@@ -39,14 +39,14 @@ use crate::pagination::prepare_db_pagination;
 #[get("")]
 #[get("/")]
 pub async fn get_event_deliveries(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     _admin: AdminAccess,
     req: actix_web::HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let params = parse_query_parameter(req.query_string())?;
     let query_options = prepare_db_pagination::<EventDelivery>(&params)?;
     let (deliveries, total_count) =
-        list_event_deliveries_with_total_count(&pool, &query_options).await?;
+        list_event_deliveries_with_total_count(&context, &query_options).await?;
     ApiResponse::mapped_paginated(deliveries, total_count, &params, |deliveries| {
         deliveries
             .into_iter()
@@ -68,11 +68,11 @@ pub async fn get_event_deliveries(
 )]
 #[get("/health")]
 pub async fn get_event_delivery_health(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     _admin: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
     Ok(ApiResponse::new(
-        load_event_delivery_health(&pool).await?,
+        load_event_delivery_health(&context).await?,
         StatusCode::OK,
     ))
 }
@@ -92,12 +92,12 @@ pub async fn get_event_delivery_health(
 )]
 #[get("/{delivery_id}")]
 pub async fn get_event_delivery(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     _admin: AdminAccess,
     delivery_id: web::Path<EventDeliveryID>,
 ) -> Result<impl Responder, ApiError> {
     Ok(ApiResponse::new(
-        EventDeliveryResponse::from(load_event_delivery(&pool, delivery_id.into_inner()).await?),
+        EventDeliveryResponse::from(load_event_delivery(&context, delivery_id.into_inner()).await?),
         StatusCode::OK,
     ))
 }
@@ -118,12 +118,12 @@ pub async fn get_event_delivery(
 )]
 #[post("/{delivery_id}/retry")]
 pub async fn retry_event_delivery(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     _admin: AdminAccess,
     delivery_id: web::Path<EventDeliveryID>,
 ) -> Result<impl Responder, ApiError> {
-    let delivery = release_event_delivery_for_retry(&pool, delivery_id.into_inner()).await?;
-    kick_event_delivery_worker(pool.get_ref().clone());
+    let delivery = release_event_delivery_for_retry(&context, delivery_id.into_inner()).await?;
+    kick_event_delivery_worker(context.clone());
     Ok(ApiResponse::new(
         EventDeliveryUpdateResponse::from(delivery),
         StatusCode::OK,
@@ -145,11 +145,11 @@ pub async fn retry_event_delivery(
 )]
 #[post("/{delivery_id}/dead")]
 pub async fn dead_letter_event_delivery(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     _admin: AdminAccess,
     delivery_id: web::Path<EventDeliveryID>,
 ) -> Result<impl Responder, ApiError> {
-    let delivery = mark_event_delivery_dead(&pool, delivery_id.into_inner()).await?;
+    let delivery = mark_event_delivery_dead(&context, delivery_id.into_inner()).await?;
     Ok(ApiResponse::new(
         EventDeliveryUpdateResponse::from(delivery),
         StatusCode::OK,

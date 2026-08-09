@@ -4,7 +4,6 @@ use futures_util::StreamExt;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
 use crate::models::principal::load_principal_by_id;
@@ -12,6 +11,7 @@ use crate::models::{
     BackupDocument, RestoreConfirmRequest, RestoreInitiator, RestoreJobID, RestoreStageRequest,
     RestoreStageResponse,
 };
+use crate::permissions::AppContext;
 use crate::restores::{
     RestoreSettings, confirm_restore, identity_scope_name, restore_status, stage_restore,
 };
@@ -36,7 +36,7 @@ const RESTORE_CAPABILITY_HEADER: &str = "X-Hubuum-Restore-Capability";
 )]
 #[post("")]
 pub async fn create_restore_stage(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     settings: web::Data<RestoreSettings>,
     admin: AdminAccess,
     mut payload: web::Payload,
@@ -59,11 +59,11 @@ pub async fn create_restore_stage(
             "Restore upload must contain a backup document".to_string(),
         ));
     }
-    let principal = load_principal_by_id(&pool, admin.user.id).await?;
-    let scope_name = identity_scope_name(&pool, principal.identity_scope_id).await?;
+    let principal = load_principal_by_id(&context, admin.user.id).await?;
+    let scope_name = identity_scope_name(&context, principal.identity_scope_id).await?;
     let initiator = RestoreInitiator::principal(&principal, scope_name)?;
     let request = RestoreStageRequest::new(initiator, document.to_vec())?;
-    let staged = stage_restore(&pool, &settings, request).await?;
+    let staged = stage_restore(&context, &settings, request).await?;
     Ok(ApiResponse::new_no_store(staged, StatusCode::CREATED))
 }
 
@@ -87,12 +87,12 @@ pub async fn create_restore_stage(
 )]
 #[post("/{restore_id}/confirm")]
 pub async fn confirm_restore_stage(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     _admin: AdminAccess,
     restore_id: web::Path<RestoreJobID>,
     confirmation: web::Json<RestoreConfirmRequest>,
 ) -> Result<impl Responder, ApiError> {
-    let response = confirm_restore(&pool, restore_id.into_inner(), &confirmation).await?;
+    let response = confirm_restore(&context, restore_id.into_inner(), &confirmation).await?;
     Ok(ApiResponse::new_no_store(response, StatusCode::OK))
 }
 
@@ -112,7 +112,7 @@ pub async fn confirm_restore_stage(
 )]
 #[get("/{restore_id}/status")]
 pub async fn get_restore_status(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     restore_id: web::Path<RestoreJobID>,
     request: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
@@ -126,7 +126,7 @@ pub async fn get_restore_status(
                 "{RESTORE_CAPABILITY_HEADER} header is not valid text"
             ))
         })?;
-    let response = restore_status(&pool, restore_id.into_inner(), capability).await?;
+    let response = restore_status(&context, restore_id.into_inner(), capability).await?;
     Ok(HttpResponse::Ok()
         .insert_header(("Cache-Control", "no-store"))
         .json(response))

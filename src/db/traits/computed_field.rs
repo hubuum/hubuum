@@ -181,9 +181,10 @@ async fn ensure_computation_state(
 }
 
 pub async fn class_computation_state_for(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     target_class_id: i32,
 ) -> Result<ClassComputationState, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::class_computation_state::dsl::{class_computation_state, class_id};
 
     Ok(with_connection(pool, async |conn| {
@@ -199,9 +200,10 @@ pub async fn class_computation_state_for(
 }
 
 pub async fn list_shared_definitions(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     target_class_id: i32,
 ) -> Result<Vec<ComputedFieldDefinition>, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::computed_field_definitions::dsl::{
         class_id, computed_field_definitions, id, visibility,
     };
@@ -219,11 +221,12 @@ pub async fn list_shared_definitions(
 }
 
 pub async fn list_personal_definitions_page(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     owner_id: i32,
     class_filter: Option<i32>,
     query_options: &QueryOptions,
 ) -> Result<(Vec<ComputedFieldDefinition>, i64), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::computed_field_definitions::dsl::{
         class_id, computed_field_definitions, owner_user_id, visibility,
     };
@@ -262,9 +265,10 @@ pub async fn list_personal_definitions_page(
 }
 
 pub async fn get_computed_definition(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     definition_id: i32,
 ) -> Result<ComputedFieldDefinition, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     use crate::schema::computed_field_definitions::dsl::{computed_field_definitions, id};
     with_connection(pool, async |conn| {
         computed_field_definitions
@@ -424,13 +428,14 @@ pub(crate) async fn advance_revision_and_enqueue(
 }
 
 pub async fn create_shared_definition(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     target_class_id: i32,
     authorized_collection_id: i32,
     actor_id: i32,
     request: ComputedFieldDefinitionRequest,
     context: &EventContext,
 ) -> Result<ComputedFieldMutationResponse, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let input = request.into_new_shared(target_class_id, actor_id)?;
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         acquire_computed_class_exclusive_lock(conn, target_class_id).await?;
@@ -514,7 +519,7 @@ async fn apply_definition_patch(
 }
 
 pub async fn update_shared_definition(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     target_class_id: i32,
     authorized_collection_id: i32,
     definition_id: i32,
@@ -522,6 +527,7 @@ pub async fn update_shared_definition(
     patch: ComputedFieldDefinitionPatch,
     context: &EventContext,
 ) -> Result<ComputedFieldMutationResponse, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         acquire_computed_class_exclusive_lock(conn, target_class_id).await?;
         let class =
@@ -574,13 +580,14 @@ pub async fn update_shared_definition(
 }
 
 pub async fn delete_shared_definition(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     target_class_id: i32,
     authorized_collection_id: i32,
     definition_id: i32,
     actor_id: i32,
     context: &EventContext,
 ) -> Result<ClassComputationState, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         acquire_computed_class_exclusive_lock(conn, target_class_id).await?;
         let class =
@@ -612,11 +619,12 @@ pub async fn delete_shared_definition(
 }
 
 pub async fn create_personal_definition(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     target_class_id: i32,
     owner_id: i32,
     request: ComputedFieldDefinitionRequest,
 ) -> Result<ComputedFieldDefinition, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let input = request.into_new_personal(target_class_id, owner_id)?;
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         acquire_personal_definition_scope_lock(conn, target_class_id, owner_id).await?;
@@ -646,11 +654,12 @@ pub async fn create_personal_definition(
 }
 
 pub async fn update_personal_definition(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     owner_id: i32,
     definition_id: i32,
     patch: ComputedFieldDefinitionPatch,
 ) -> Result<ComputedFieldDefinition, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         let current = locked_definition(conn, definition_id).await?;
         crate::db::assert_locked_revision_precondition(
@@ -680,10 +689,11 @@ pub async fn update_personal_definition(
 }
 
 pub async fn delete_personal_definition(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     owner_id: i32,
     definition_id: i32,
 ) -> Result<(), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     with_transaction(pool, async |conn| -> Result<_, ApiError> {
         let current = locked_definition(conn, definition_id).await?;
         if !current.is_personal_for(owner_id) {

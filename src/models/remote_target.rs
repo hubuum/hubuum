@@ -925,7 +925,7 @@ pub async fn authorize_remote_invocation<C>(
 where
     C: crate::traits::BackendContext + ?Sized,
 {
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     let target_collection_id = CollectionID::new(target.collection_id)?;
     crate::can!(
         backend,

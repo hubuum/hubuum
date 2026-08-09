@@ -1,12 +1,13 @@
 use super::*;
 
 pub async fn resolve_computed_query_fields(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     target_class_id: i32,
     personal_owner_id: Option<i32>,
     filters: &mut [ParsedQueryParam],
     sorts: &mut [SortParam],
 ) -> Result<ComputedQuerySnapshot, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     validate_computed_filter_count(
         filters
             .iter()

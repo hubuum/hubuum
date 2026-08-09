@@ -150,7 +150,7 @@ impl PrincipalTokenCreateRequest {
     {
         let issuance_policy = configured_token_issuance_policy()?;
         let (token, persisted) = crate::db::traits::token::create_principal_token_request_db(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             self,
             issuance_policy,
             context,
@@ -259,7 +259,11 @@ impl PrincipalTokenMetadata {
     where
         C: BackendContext + ?Sized,
     {
-        crate::db::traits::token::principal_token_metadata_db(backend.db_pool(), tokens).await
+        crate::db::traits::token::principal_token_metadata_db(
+            crate::traits::backend_pool(backend),
+            tokens,
+        )
+        .await
     }
 
     /// Load one retained token by id, constrained to its owning principal.
@@ -276,7 +280,7 @@ impl PrincipalTokenMetadata {
         C: BackendContext + ?Sized,
     {
         crate::db::traits::token::principal_token_metadata_by_id_for_principal_db(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             token_id.id(),
             principal_id.id(),
         )
@@ -466,7 +470,8 @@ impl Token {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_token_record(backend.db_pool()).await
+        self.delete_token_record(crate::traits::backend_pool(backend))
+            .await
     }
 
     pub fn storage_hash(&self) -> String {
@@ -499,7 +504,7 @@ where
     C: BackendContext + ?Sized,
 {
     crate::db::traits::token::revoke_token_by_id_for_principal_without_events_db(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         token_id.id(),
         principal_id.id(),
     )
@@ -516,7 +521,7 @@ where
     C: BackendContext + ?Sized,
 {
     crate::db::traits::token::revoke_token_by_id_for_principal_db(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         token_id.id(),
         principal_id.id(),
         context,
@@ -541,7 +546,7 @@ where
 {
     let issuance_policy = configured_token_issuance_policy()?;
     let (token, persisted) = crate::db::traits::token::renew_principal_token_db(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         token_id.id(),
         principal_id.id(),
         expires_at,

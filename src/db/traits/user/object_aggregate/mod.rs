@@ -142,7 +142,7 @@ pub trait ObjectAggregateBackend: UserCollectionAccessors {
         );
 
         let execution = ObjectAggregateExecution {
-            pool: context.db_pool(),
+            pool: crate::traits::backend_pool(context),
             target: ObjectAggregateRouteTarget {
                 class_id: class_id.id(),
                 class_name,

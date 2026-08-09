@@ -2,20 +2,22 @@ use std::time::Instant;
 
 use opentelemetry::KeyValue;
 
-use crate::db::DbPool;
 use crate::db::traits::metrics::{InventoryGaugeSnapshot, MetricsRefreshBackend};
 
 use super::Metrics;
 use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 
-pub(super) async fn refresh_inventory_gauges(metrics: &Metrics, pool: &DbPool) {
+pub(super) async fn refresh_inventory_gauges(
+    metrics: &Metrics,
+    backend: &impl crate::traits::BackendContext,
+) {
     if let Some(row) = cached_inventory_snapshot(metrics) {
         record_inventory_snapshot(metrics, &row);
         return;
     }
 
     let refresh_started_at = Instant::now();
-    match pool.metrics_inventory_gauge_snapshot().await {
+    match backend.metrics_inventory_gauge_snapshot().await {
         Ok(row) => {
             record_refresh_attempt(
                 metrics,

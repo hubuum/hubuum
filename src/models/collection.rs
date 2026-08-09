@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
 use crate::db::traits::authz::AuthzSubject;
 use crate::db::traits::collection as collection_backend;
 use crate::errors::ApiError;
@@ -118,7 +117,8 @@ pub async fn total_collection_count<C>(backend: &C) -> Result<i64, ApiError>
 where
     C: BackendContext + ?Sized,
 {
-    collection_backend::total_collection_count_from_backend(backend.db_pool()).await
+    collection_backend::total_collection_count_from_backend(crate::traits::backend_pool(backend))
+        .await
 }
 
 /// Check what permissions a user has to a given collection
@@ -141,8 +141,12 @@ where
     S: AuthzSubject,
     T: CollectionAccessors,
 {
-    collection_backend::principal_on_from_backend(backend.db_pool(), principal, collection_ref)
-        .await
+    collection_backend::principal_on_from_backend(
+        crate::traits::backend_pool(backend),
+        principal,
+        collection_ref,
+    )
+    .await
 }
 
 /// All of a principal's direct permission rows across every collection, as
@@ -155,7 +159,11 @@ where
     C: BackendContext + ?Sized,
     S: AuthzSubject,
 {
-    collection_backend::principal_all_permissions_from_backend(backend.db_pool(), principal).await
+    collection_backend::principal_all_permissions_from_backend(
+        crate::traits::backend_pool(backend),
+        principal,
+    )
+    .await
 }
 
 pub async fn principal_on_paginated_with_total_count<C, S, T>(
@@ -170,7 +178,7 @@ where
     T: CollectionAccessors,
 {
     collection_backend::principal_on_paginated_with_total_count_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         principal,
         collection_ref,
         query_options,
@@ -189,7 +197,7 @@ where
     T: CollectionAccessors,
 {
     collection_backend::effective_principal_on_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         principal,
         collection_ref,
     )
@@ -218,7 +226,7 @@ where
     U: GroupAccessors + AuthzSubject,
 {
     collection_backend::user_can_on_any_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         user_id,
         permission_type,
         scopes,
@@ -248,7 +256,7 @@ where
     T: CollectionAccessors,
 {
     collection_backend::group_can_on_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         gid,
         collection_ref,
         permission_type,
@@ -265,7 +273,7 @@ where
     C: BackendContext + ?Sized,
 {
     collection_backend::effective_group_on_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         target_collection_id,
         gid,
     )
@@ -291,7 +299,7 @@ where
     C: BackendContext + ?Sized,
 {
     collection_backend::groups_can_on_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         target_collection_id,
         permission_type,
     )
@@ -308,7 +316,7 @@ where
     C: BackendContext + ?Sized,
 {
     collection_backend::groups_can_on_paginated_with_total_count_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         target_collection_id,
         permission_type,
         query_options,
@@ -336,7 +344,7 @@ where
     T: CollectionAccessors,
 {
     collection_backend::groups_on_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         collection_ref,
         permissions_filter,
         query_options,
@@ -355,7 +363,7 @@ where
     T: CollectionAccessors,
 {
     collection_backend::groups_on_paginated_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         collection_ref,
         permissions_filter,
         query_options,
@@ -374,7 +382,7 @@ where
     T: CollectionAccessors,
 {
     collection_backend::groups_on_paginated_with_total_count_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         collection_ref,
         permissions_filter,
         query_options,
@@ -393,7 +401,7 @@ where
     T: CollectionAccessors,
 {
     collection_backend::count_groups_on_paginated_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         collection_ref,
         permissions_filter,
         query_options,
@@ -410,7 +418,12 @@ pub async fn group_on<C>(
 where
     C: BackendContext + ?Sized,
 {
-    collection_backend::group_on_from_backend(backend.db_pool(), target_collection_id, gid).await
+    collection_backend::group_on_from_backend(
+        crate::traits::backend_pool(backend),
+        target_collection_id,
+        gid,
+    )
+    .await
 }
 
 pub async fn collection_children<C, T>(
@@ -421,7 +434,11 @@ where
     C: BackendContext + ?Sized,
     T: CollectionAccessors,
 {
-    collection_backend::collection_children_from_backend(backend.db_pool(), collection_ref).await
+    collection_backend::collection_children_from_backend(
+        crate::traits::backend_pool(backend),
+        collection_ref,
+    )
+    .await
 }
 
 pub async fn collection_ancestors<C, T>(
@@ -432,7 +449,11 @@ where
     C: BackendContext + ?Sized,
     T: CollectionAccessors,
 {
-    collection_backend::collection_ancestors_from_backend(backend.db_pool(), collection_ref).await
+    collection_backend::collection_ancestors_from_backend(
+        crate::traits::backend_pool(backend),
+        collection_ref,
+    )
+    .await
 }
 
 pub async fn move_collection<C>(
@@ -445,7 +466,7 @@ where
     C: BackendContext + ?Sized,
 {
     collection_backend::move_collection_record_from_backend(
-        backend.db_pool(),
+        crate::traits::backend_pool(backend),
         collection_id,
         new_parent_collection_id,
         context,
@@ -477,7 +498,10 @@ crate::impl_history_pagination!(CollectionHistory, "collections_history");
 
 #[async_trait]
 impl AuthzTarget for Collection {
-    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        _pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         Ok(ResourceRef {
             kind: ResourceKind::Collection,
             id: self.id,
@@ -492,7 +516,10 @@ impl AuthzTarget for Collection {
 
 #[async_trait]
 impl AuthzTarget for CollectionID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }

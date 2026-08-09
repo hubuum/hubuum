@@ -60,7 +60,7 @@ pub(super) async fn execute_remote_call_task<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     let payload = task
         .request_payload
         .clone()
@@ -138,7 +138,7 @@ async fn execute_remote_call<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     let target = request.target_id.instance(pool).await?;
     let resolved =
         authorize_remote_invocation(backend, user, scopes, &target, &request.subject).await?;

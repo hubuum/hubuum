@@ -138,7 +138,8 @@ pub trait AuthzSubject: PrincipalIdAccessor {
     /// Note: this is a pure group-membership fact. It does NOT make a service
     /// account a *human IAM* administrator — that separation is enforced by the
     /// `kind = 'human'` gate on the human/IAM extractors, not here.
-    async fn is_admin(&self, pool: &DbPool) -> Result<bool, ApiError> {
+    async fn is_admin(&self, pool: &impl crate::traits::BackendContext) -> Result<bool, ApiError> {
+        let pool = crate::traits::backend_pool(pool);
         let groupname = self.admin_groupname().await?;
         self.is_in_group_by_name(&groupname, pool).await
     }
@@ -450,9 +451,10 @@ pub(crate) async fn load_token_scopes_for_tokens_conn(
 /// flags are the source of truth, so a flagged dimension with no rows becomes a
 /// present-but-empty deny-all dimension.
 pub async fn load_token_scope(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     token: &PrincipalToken,
 ) -> Result<Option<TokenScope>, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     Ok(
         load_token_scopes_for_tokens(pool, std::slice::from_ref(token))
             .await?

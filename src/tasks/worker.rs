@@ -625,7 +625,10 @@ where
     }
 }
 
-async fn maybe_recover_expired_task_leases(pool: &DbPool) -> Result<(), ApiError> {
+async fn maybe_recover_expired_task_leases(
+    pool: &impl crate::traits::BackendContext,
+) -> Result<(), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let recovery_interval = task_worker_settings().recovery_interval();
     let previous_last_run = {
         let mut state = recovery_state().lock().map_err(|_| {
@@ -664,7 +667,10 @@ async fn maybe_recover_expired_task_leases(pool: &DbPool) -> Result<(), ApiError
     }
 }
 
-async fn maybe_cleanup_expired_task_outputs(pool: &DbPool) -> Result<(), ApiError> {
+async fn maybe_cleanup_expired_task_outputs(
+    pool: &impl crate::traits::BackendContext,
+) -> Result<(), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let cleanup_interval = task_worker_settings().export_output_cleanup_interval();
     let Some(reservation) = CleanupReservation::reserve(cleanup_state(), cleanup_interval)? else {
         return Ok(());
@@ -708,7 +714,7 @@ async fn process_claimed_task(
     task: &TaskRecord,
     backup_settings: &BackupSettings,
 ) -> Result<(), ApiError> {
-    let pool = &context.db_pool;
+    let pool = context;
     let task_kind = TaskKind::from_db(&task.kind)?;
     if task_kind == TaskKind::Reindex {
         return crate::db::traits::computed_field::execute_computed_reindex_task(pool, task).await;
@@ -765,10 +771,11 @@ async fn process_claimed_task(
 }
 
 pub(super) async fn mark_claimed_task_failed(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     task: &TaskRecord,
     err: &ApiError,
 ) -> Result<(), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let task_kind = TaskKind::from_db(&task.kind)?;
     let task = if task_kind == TaskKind::Reindex {
         task.find_record(pool).await?

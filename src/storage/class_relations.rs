@@ -13,7 +13,7 @@ use super::StorageError;
 /// Prepared and resolved aggregates include both endpoint classes so callers
 /// can authorize without depending on persistence-specific lookups.
 #[async_trait]
-pub trait ClassRelationStore: Send + Sync {
+pub(crate) trait ClassRelationStore: Send + Sync {
     async fn prepare_class_relation(
         &self,
         command: NewHubuumClassRelation,

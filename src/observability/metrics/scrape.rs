@@ -1,11 +1,12 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use actix_web::{HttpResponse, Responder, http::header, web};
+use actix_web::{HttpResponse, Responder, http::header};
 use opentelemetry::KeyValue;
 use prometheus::{Encoder, TextEncoder};
 
-use crate::db::{DbCallSite, DbPool, with_db_call_site};
+use crate::backend::{DbCallSite, with_db_call_site};
 use crate::errors::ApiError;
+use crate::permissions::AppContext;
 
 use super::Metrics;
 use super::{db, event, get, inventory, login, task};
@@ -39,7 +40,7 @@ impl RefreshSource {
     }
 }
 
-pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError> {
+pub async fn scrape(context: AppContext) -> Result<impl Responder, ApiError> {
     let metrics = get()?;
     let process_refresh_started_at = Instant::now();
     let process_refresh_outcome = if metrics.process_metrics.refresh() {
@@ -55,7 +56,7 @@ pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError>
     );
     with_db_call_site(
         DbCallSite::MetricsRefresh,
-        refresh_scrape_gauges(metrics, &pool),
+        refresh_scrape_gauges(metrics, &context),
     )
     .await;
 
@@ -73,13 +74,13 @@ pub async fn scrape(pool: web::Data<DbPool>) -> Result<impl Responder, ApiError>
         .body(body))
 }
 
-async fn refresh_scrape_gauges(metrics: &Metrics, pool: &DbPool) {
-    db::refresh_pool_gauges(metrics, pool);
+async fn refresh_scrape_gauges(metrics: &Metrics, backend: &impl crate::traits::BackendContext) {
+    db::refresh_pool_gauges(metrics, backend);
     login::refresh_login_limiter_gauges(metrics).await;
     if let Ok(_refresh_guard) = metrics.db_refresh_lock.try_lock() {
-        inventory::refresh_inventory_gauges(metrics, pool).await;
-        task::refresh_task_gauges(metrics, pool).await;
-        event::refresh_event_gauges(metrics, pool).await;
+        inventory::refresh_inventory_gauges(metrics, backend).await;
+        task::refresh_task_gauges(metrics, backend).await;
+        event::refresh_event_gauges(metrics, backend).await;
     } else {
         metrics.refresh_skipped.add(
             1,

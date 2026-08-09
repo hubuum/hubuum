@@ -26,7 +26,7 @@ use crate::traits::{
 use tracing::debug;
 
 pub async fn check_if_object_in_class<C, O>(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     class: &C,
     object: &O,
 ) -> Result<(), ApiError>
@@ -34,6 +34,7 @@ where
     C: crate::traits::SelfAccessors<HubuumClass>,
     O: crate::traits::SelfAccessors<HubuumObject> + ClassAccessors<HubuumClass>,
 {
+    let pool = crate::traits::backend_pool(pool);
     let object_class_id = object.class_id(pool).await?.id();
 
     if object_class_id != class.id() {
@@ -90,7 +91,8 @@ impl Validate for HubuumObject {
     where
         C: BackendContext + ?Sized,
     {
-        self.validate_object_record(backend.db_pool()).await
+        self.validate_object_record(crate::traits::backend_pool(backend))
+            .await
     }
 }
 
@@ -105,7 +107,8 @@ impl Validate for NewHubuumObject {
     where
         C: BackendContext + ?Sized,
     {
-        self.validate_object_record(backend.db_pool()).await
+        self.validate_object_record(crate::traits::backend_pool(backend))
+            .await
     }
 }
 
@@ -120,7 +123,8 @@ impl Validate for (&UpdateHubuumObject, i32) {
     where
         C: BackendContext + ?Sized,
     {
-        self.validate_object_record(backend.db_pool()).await
+        self.validate_object_record(crate::traits::backend_pool(backend))
+            .await
     }
 }
 
@@ -204,7 +208,7 @@ impl PatchObjectData for ObjectDataPatchDocument {
     where
         C: BackendContext + ?Sized,
     {
-        self.patch_object_data_record(backend.db_pool(), target, context)
+        self.patch_object_data_record(crate::traits::backend_pool(backend), target, context)
             .await
     }
 }
@@ -236,8 +240,12 @@ impl CreateObjectInResolvedClass for NewHubuumObject {
     where
         C: BackendContext + ?Sized,
     {
-        self.create_object_in_resolved_class_record(backend.db_pool(), target, context)
-            .await
+        self.create_object_in_resolved_class_record(
+            crate::traits::backend_pool(backend),
+            target,
+            context,
+        )
+        .await
     }
 }
 
@@ -247,7 +255,7 @@ impl ResolveObjectTarget for ObjectSelector {
         C: BackendContext + ?Sized,
     {
         let (class, object) = self
-            .resolve_object_selector_record(backend.db_pool())
+            .resolve_object_selector_record(crate::traits::backend_pool(backend))
             .await?;
         Ok(ResolvedObjectTarget::new(self.clone(), class, object))
     }
@@ -274,7 +282,7 @@ impl UpdateResolvedObject for UpdateHubuumObject {
     where
         C: BackendContext + ?Sized,
     {
-        self.update_resolved_object_record(backend.db_pool(), target, context)
+        self.update_resolved_object_record(crate::traits::backend_pool(backend), target, context)
             .await
     }
 }
@@ -298,7 +306,7 @@ impl DeleteResolvedObject for ResolvedObjectTarget {
     where
         C: BackendContext + ?Sized,
     {
-        self.delete_resolved_object_record(backend.db_pool(), context)
+        self.delete_resolved_object_record(crate::traits::backend_pool(backend), context)
             .await
     }
 }

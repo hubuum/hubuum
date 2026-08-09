@@ -4,7 +4,7 @@ use crate::api::etag::{
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::db::{DbPool, with_revision_precondition_scope};
+use crate::backend::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
@@ -13,6 +13,7 @@ use crate::models::{
     Group, GroupPointResponse, GroupResponse, Principal, PrincipalID, PrincipalMemberResponse,
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
+use crate::permissions::AppContext;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -38,7 +39,7 @@ struct GroupMember {
 #[get("")]
 #[get("/")]
 pub async fn get_groups(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -57,14 +58,14 @@ pub async fn get_groups(
     );
 
     let total_count = if params.include_total {
-        user.count_groups(&pool, count_query_options(&params))
+        user.count_groups(&context, count_query_options(&params))
             .await?
     } else {
         crate::pagination::SKIPPED_TOTAL_COUNT
     };
     let search_params = prepare_db_pagination::<Group>(&params)?;
-    let groups = user.search_groups(&pool, search_params).await?;
-    let result = GroupResponse::from_groups(&pool, groups).await?;
+    let groups = user.search_groups(&context, search_params).await?;
+    let result = GroupResponse::from_groups(&context, groups).await?;
 
     ApiResponse::paginated(result, total_count, &params)
 }
@@ -86,7 +87,7 @@ pub async fn get_groups(
 #[post("")]
 #[post("/")]
 pub async fn create_group(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     new_group: web::Json<NewGroup>,
     requestor: AdminAccess,
     req: HttpRequest,
@@ -98,10 +99,10 @@ pub async fn create_group(
     );
 
     let event_context = requestor.event_context(&req);
-    let group = new_group.save(&pool, Some(&event_context)).await?;
+    let group = new_group.save(&context, Some(&event_context)).await?;
 
     let location = api_locations::group(group.id)?;
-    ApiResponse::created_revisioned(group.to_point_response(&pool).await?, location)
+    ApiResponse::created_revisioned(group.to_point_response(&context).await?, location)
 }
 
 #[utoipa::path(
@@ -120,11 +121,11 @@ pub async fn create_group(
 )]
 #[get("/{group_id}")]
 pub async fn get_group(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     group_id: web::Path<GroupID>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
-    let group = group_id.group(&pool).await?;
+    let group = group_id.group(&context).await?;
 
     debug!(
         message = "Group get requested",
@@ -132,7 +133,7 @@ pub async fn get_group(
         requestor = requestor.user.id
     );
 
-    ApiResponse::ok_revisioned(group.to_point_response(&pool).await?)
+    ApiResponse::ok_revisioned(group.to_point_response(&context).await?)
 }
 
 #[utoipa::path(
@@ -154,7 +155,7 @@ pub async fn get_group(
 )]
 #[patch("/{group_id}")]
 pub async fn update_group(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     group_id: web::Path<GroupID>,
     updated_group: web::Json<UpdateGroup>,
     requestor: AdminAccess,
@@ -169,17 +170,17 @@ pub async fn update_group(
         requestor = requestor.user.id
     );
 
-    let current = group_id.group(&pool).await?;
+    let current = group_id.group(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
     let updated = with_revision_precondition_scope(
         precondition,
         updated_group
             .into_inner()
-            .save(group_id, &pool, Some(&event_context)),
+            .save(group_id, &context, Some(&event_context)),
     )
     .await?;
-    ApiResponse::ok_revisioned(updated.to_point_response(&pool).await?)
+    ApiResponse::ok_revisioned(updated.to_point_response(&context).await?)
 }
 
 #[utoipa::path(
@@ -200,7 +201,7 @@ pub async fn update_group(
 )]
 #[delete("/{group_id}")]
 pub async fn delete_group(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     group_id: web::Path<GroupID>,
     requestor: AdminAccess,
     req: HttpRequest,
@@ -211,12 +212,15 @@ pub async fn delete_group(
         requestor = requestor.user.id
     );
 
-    let group = group_id.group(&pool).await?;
+    let group = group_id.group(&context).await?;
     let etag = group.entity_tag()?;
     let precondition = revision_precondition_for_tag(&req, &etag)?;
     let event_context = requestor.event_context(&req);
-    with_revision_precondition_scope(precondition, group_id.delete(&pool, Some(&event_context)))
-        .await?;
+    with_revision_precondition_scope(
+        precondition,
+        group_id.delete(&context, Some(&event_context)),
+    )
+    .await?;
     Ok(ApiResponse::no_content_with_etag(etag))
 }
 
@@ -236,14 +240,14 @@ pub async fn delete_group(
 )]
 #[get("/{group_id}/members")]
 pub async fn get_group_members(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     group_id: web::Path<GroupID>,
     requestor: UserAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let params = parse_query_parameter(req.query_string())?;
 
-    let group = group_id.group(&pool).await?;
+    let group = group_id.group(&context).await?;
 
     debug!(
         message = "Group members requested",
@@ -253,14 +257,16 @@ pub async fn get_group_members(
 
     let total_count = if params.include_total {
         let count_params = count_query_options(&params);
-        group.count_members_paginated(&pool, &count_params).await?
+        group
+            .count_members_paginated(&context, &count_params)
+            .await?
     } else {
         crate::pagination::SKIPPED_TOTAL_COUNT
     };
     let search_params = prepare_db_pagination::<Principal>(&params)?;
-    let members = group.members_paginated(&pool, &search_params).await?;
+    let members = group.members_paginated(&context, &search_params).await?;
 
-    let response = PrincipalMemberResponse::from_memberships(&pool, members).await?;
+    let response = PrincipalMemberResponse::from_memberships(&context, members).await?;
     ApiResponse::paginated(response, total_count, &params)
 }
 
@@ -281,14 +287,18 @@ pub async fn get_group_members(
 )]
 #[get("/{group_id}/members/{principal_id}")]
 pub async fn get_group_member(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     user_group_ids: web::Path<GroupMember>,
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
-    let group = user_group_ids.group_id.group(&pool).await?;
-    let principal = user_group_ids.principal_id.principal(&pool).await?;
-    let membership =
-        crate::db::traits::group::principal_group_by_ids(&pool, principal.id, group.id).await?;
+    let group = user_group_ids.group_id.group(&context).await?;
+    let principal = user_group_ids.principal_id.principal(&context).await?;
+    let membership = crate::backend::capabilities::group::principal_group_by_ids(
+        &context,
+        principal.id,
+        group.id,
+    )
+    .await?;
 
     debug!(
         message = "Group membership requested",
@@ -318,14 +328,14 @@ pub async fn get_group_member(
 )]
 #[post("/{group_id}/members/{principal_id}")]
 pub async fn add_group_member(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     user_group_ids: web::Path<GroupMember>,
     requestor: AdminAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let group = user_group_ids.group_id.group(&pool).await?;
+    let group = user_group_ids.group_id.group(&context).await?;
     group.ensure_local_writes_allowed()?;
-    let principal = user_group_ids.principal_id.principal(&pool).await?;
+    let principal = user_group_ids.principal_id.principal(&context).await?;
 
     debug!(
         message = "Adding principal to group",
@@ -335,8 +345,12 @@ pub async fn add_group_member(
     );
 
     let condition = IfMatchCondition::from_request(&req)?;
-    let current =
-        crate::db::traits::group::principal_group_by_ids(&pool, principal.id, group.id).await;
+    let current = crate::backend::capabilities::group::principal_group_by_ids(
+        &context,
+        principal.id,
+        group.id,
+    )
+    .await;
     let precondition = match current {
         Ok(current) => condition.database_precondition(&current.entity_tag()?)?,
         Err(ApiError::NotFound(_)) if matches!(condition, IfMatchCondition::Missing) => None,
@@ -352,7 +366,7 @@ pub async fn add_group_member(
     let event_context = requestor.event_context(&req);
     let membership = with_revision_precondition_scope(
         precondition,
-        group.add_member(&pool, &principal, Some(&event_context)),
+        group.add_member(&context, &principal, Some(&event_context)),
     )
     .await?;
     let response = PrincipalMemberResponse::point(membership);
@@ -376,14 +390,14 @@ pub async fn add_group_member(
 )]
 #[delete("/{group_id}/members/{principal_id}")]
 pub async fn delete_group_member(
-    pool: web::Data<DbPool>,
+    context: AppContext,
     user_group_ids: web::Path<GroupMember>,
     requestor: AdminAccess,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let group = user_group_ids.group_id.group(&pool).await?;
+    let group = user_group_ids.group_id.group(&context).await?;
     group.ensure_local_writes_allowed()?;
-    let principal = user_group_ids.principal_id.principal(&pool).await?;
+    let principal = user_group_ids.principal_id.principal(&context).await?;
 
     debug!(
         message = "Deleting principal from group",
@@ -392,16 +406,26 @@ pub async fn delete_group_member(
         requestor = requestor.user.id
     );
 
-    let membership =
-        crate::db::traits::group::principal_group_by_ids(&pool, principal.id, group.id).await?;
+    let membership = crate::backend::capabilities::group::principal_group_by_ids(
+        &context,
+        principal.id,
+        group.id,
+    )
+    .await?;
     let precondition = revision_precondition(&req, &membership)?;
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(
         precondition,
-        group.remove_member(&principal, &pool, Some(&event_context)),
+        group.remove_member(&principal, &context, Some(&event_context)),
     )
     .await?;
-    match crate::db::traits::group::principal_group_by_ids(&pool, principal.id, group.id).await {
+    match crate::backend::capabilities::group::principal_group_by_ids(
+        &context,
+        principal.id,
+        group.id,
+    )
+    .await
+    {
         Ok(surviving) => Ok(ApiResponse::no_content_with_etag(surviving.entity_tag()?)),
         Err(ApiError::NotFound(_)) => Ok(ApiResponse::no_content()),
         Err(error) => Err(error),

@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- The redacted administrator configuration now reports the selected complete
+  storage backend, storage contract version, required capability families, and
+  effective non-secret pool settings. Startup logs and Prometheus metrics expose
+  the same backend identity, and lifecycle storage calls have uniform bounded
+  tracing plus duration and failure metrics.
 - Class object lists now accept up to four named `related.<alias>` filter
   groups. Each group selects one target class, normal target-object fields, and
   an optional bidirectional depth up to 10; groups are combined with `AND`, and

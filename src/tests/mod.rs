@@ -2,6 +2,7 @@
 pub mod acl;
 pub mod api_operations;
 pub use api_operations::app_context;
+pub mod application_boundary;
 pub mod asserts;
 #[cfg(test)]
 pub mod client_allowlist;
@@ -14,6 +15,8 @@ pub mod id_newtypes;
 pub mod permissions;
 #[cfg(test)]
 pub mod search;
+#[cfg(test)]
+pub(crate) mod storage_contract;
 #[cfg(test)]
 pub mod storage_performance;
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::db::{DbPool, with_connection};
+use crate::db::with_connection;
 use crate::errors::ApiError;
 use crate::models::Permissions;
 use crate::traits::PrincipalIdAccessor;
@@ -23,10 +23,14 @@ impl PrincipalRef {
         Self { user_id, group_ids }
     }
 
-    pub async fn load<S>(pool: &DbPool, subject: &S) -> Result<Self, ApiError>
+    pub async fn load<S>(
+        pool: &impl crate::traits::BackendContext,
+        subject: &S,
+    ) -> Result<Self, ApiError>
     where
         S: PrincipalIdAccessor + ?Sized,
     {
+        let pool = crate::traits::backend_pool(pool);
         use crate::db::prelude::*;
         use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
 
@@ -258,7 +262,10 @@ pub struct AuthorizationResult {
 /// HubuumObject, …).
 #[async_trait]
 pub trait AuthzTarget: Send + Sync {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError>;
+    async fn to_resource_ref(
+        &self,
+        backend: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError>;
 }
 
 #[async_trait]
@@ -266,7 +273,10 @@ impl<T> AuthzTarget for &T
 where
     T: AuthzTarget + ?Sized + Sync,
 {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         (*self).to_resource_ref(pool).await
     }
 }

@@ -10,7 +10,7 @@ use super::StorageError;
 
 /// Persistence capability for object-relation resolution and lifecycle writes.
 #[async_trait]
-pub trait ObjectRelationStore: Send + Sync {
+pub(crate) trait ObjectRelationStore: Send + Sync {
     async fn prepare_object_relation(
         &self,
         selector: ObjectRelationCreateSelector,

@@ -1006,7 +1006,10 @@ impl InstanceAdapter<TaskRecord> for TaskID {
 
 #[async_trait]
 impl AuthzTarget for TaskRecord {
-    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        _pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         Ok(ResourceRef {
             kind: ResourceKind::Task,
             id: self.id,
@@ -1020,7 +1023,10 @@ impl AuthzTarget for TaskRecord {
 
 #[async_trait]
 impl AuthzTarget for TaskID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }

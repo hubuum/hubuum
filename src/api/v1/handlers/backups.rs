@@ -4,8 +4,8 @@ use base64::Engine;
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
+use crate::backend::capabilities::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot};
 use crate::backups::{BackupSettings, authorize_backup_request};
-use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::{

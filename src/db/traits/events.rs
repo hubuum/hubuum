@@ -23,12 +23,13 @@ pub struct EventListFilters {
 }
 
 pub async fn list_events_with_total_count(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     accessible_collection_ids: &[i32],
     include_collection_less: bool,
     filters: &EventListFilters,
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventResponse>, i64), ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     crate::logger::log_operation_read(filters.entity_type, filters.action, filters.entity_id);
 
     let query = build_event_query(

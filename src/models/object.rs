@@ -4,7 +4,6 @@ use diesel::sql_types::{BigInt, Integer, Jsonb, Text, Timestamp};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
 use crate::db::traits::object::{
     objects_per_class_count_from_backend, total_object_count_from_backend,
 };
@@ -365,14 +364,14 @@ pub async fn total_object_count<C>(backend: &C) -> Result<i64, ApiError>
 where
     C: BackendContext + ?Sized,
 {
-    total_object_count_from_backend(backend.db_pool()).await
+    total_object_count_from_backend(crate::traits::backend_pool(backend)).await
 }
 
 pub async fn objects_per_class_count<C>(backend: &C) -> Result<Vec<ObjectsByClass>, ApiError>
 where
     C: BackendContext + ?Sized,
 {
-    objects_per_class_count_from_backend(backend.db_pool()).await
+    objects_per_class_count_from_backend(crate::traits::backend_pool(backend)).await
 }
 
 fn new_hubuum_object_example() -> NewHubuumObject {
@@ -421,14 +420,20 @@ crate::impl_history_pagination!(HubuumObjectHistory, "hubuumobject_history");
 
 #[async_trait]
 impl AuthzTarget for HubuumObject {
-    async fn to_resource_ref(&self, _pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        _pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         Ok(self.authorization_resource())
     }
 }
 
 #[async_trait]
 impl AuthzTarget for HubuumObjectID {
-    async fn to_resource_ref(&self, pool: &DbPool) -> Result<ResourceRef, ApiError> {
+    async fn to_resource_ref(
+        &self,
+        pool: &dyn crate::traits::BackendContext,
+    ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
 }

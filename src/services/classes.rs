@@ -3,16 +3,16 @@ use crate::events::EventContext;
 use crate::models::{
     ClassSelector, HubuumClass, NewHubuumClass, ResolvedClassTarget, UpdateHubuumClass,
 };
-use crate::storage::DynStorage;
+use crate::storage::DynLifecycleStorage;
 
 /// Application-facing class resolution and lifecycle use cases.
 #[derive(Clone)]
 pub struct ClassService {
-    storage: DynStorage,
+    storage: DynLifecycleStorage,
 }
 
 impl ClassService {
-    pub(crate) fn new(storage: DynStorage) -> Self {
+    pub(crate) fn new(storage: DynLifecycleStorage) -> Self {
         Self { storage }
     }
 
@@ -73,21 +73,16 @@ mod tests {
         ClassSelector, Collection, CollectionID, GroupID, HubuumClass, HubuumClassID,
         NewCollectionWithAssignee, NewGroup, NewHubuumClass, UpdateHubuumClass,
     };
-    use crate::services::{
-        CollectionService, Services, storage_contract_pool, storage_contract_postgres_permit,
-        storage_contract_prefix,
-    };
-    use crate::storage::{DynStorage, MemoryStorage, PostgresStorage};
+    use crate::services::{CollectionService, Services};
+    use crate::storage::{DynLifecycleStorage, MemoryStorageModel, PostgresStorage};
     use crate::tests::CollectionFixture;
+    use crate::tests::storage_contract::{
+        LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
+        postgres_permit as storage_contract_postgres_permit, prefix as storage_contract_prefix,
+    };
     use crate::traits::CanSave;
 
     use super::ClassService;
-
-    #[derive(Clone, Copy, Debug)]
-    enum ContractBackend {
-        Memory,
-        Postgres,
-    }
 
     #[derive(Clone, Copy, Debug)]
     enum ClassAddress {
@@ -106,10 +101,12 @@ mod tests {
     }
 
     impl ContractHarness {
-        async fn new(backend: ContractBackend, label: &str) -> Self {
+        async fn new(backend: ContractImplementation, label: &str) -> Self {
             match backend {
-                ContractBackend::Memory => {
-                    let services = Services::from_storage(DynStorage::new(MemoryStorage::new()));
+                ContractImplementation::MemoryModel => {
+                    let services = Services::from_lifecycle_storage(DynLifecycleStorage::new(
+                        MemoryStorageModel::new(),
+                    ));
                     Self {
                         service: services.classes().clone(),
                         collections: services.collections().clone(),
@@ -120,7 +117,7 @@ mod tests {
                         _postgres_permit: None,
                     }
                 }
-                ContractBackend::Postgres => {
+                ContractImplementation::PostgresAdapter => {
                     let permit = storage_contract_postgres_permit().await;
                     let pool = storage_contract_pool();
                     let prefix = storage_contract_prefix(label);
@@ -147,9 +144,9 @@ mod tests {
                         owner_group,
                         prefix: prefix.clone(),
                     };
-                    let services = Services::from_storage(DynStorage::new(PostgresStorage::new(
-                        pool.get_ref().clone(),
-                    )));
+                    let services = Services::from_lifecycle_storage(DynLifecycleStorage::new(
+                        PostgresStorage::new(pool.get_ref().clone()),
+                    ));
                     Self {
                         service: services.classes().clone(),
                         collections: services.collections().clone(),
@@ -226,13 +223,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres_id(ContractBackend::Postgres, ClassAddress::Id)]
-    #[case::postgres_name(ContractBackend::Postgres, ClassAddress::Name)]
-    #[case::memory_id(ContractBackend::Memory, ClassAddress::Id)]
-    #[case::memory_name(ContractBackend::Memory, ClassAddress::Name)]
+    #[case::postgres_id(ContractImplementation::PostgresAdapter, ClassAddress::Id)]
+    #[case::postgres_name(ContractImplementation::PostgresAdapter, ClassAddress::Name)]
+    #[case::memory_id(ContractImplementation::MemoryModel, ClassAddress::Id)]
+    #[case::memory_name(ContractImplementation::MemoryModel, ClassAddress::Name)]
     #[actix_web::test]
     async fn class_contract_resolves_explicit_addresses(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
         #[case] address: ClassAddress,
     ) {
         let harness = ContractHarness::new(backend, "resolve").await;
@@ -250,10 +247,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn class_contract_changed_update_advances_revision(#[case] backend: ContractBackend) {
+    async fn class_contract_changed_update_advances_revision(
+        #[case] backend: ContractImplementation,
+    ) {
         let harness = ContractHarness::new(backend, "changed_update").await;
         let class = harness.create("class").await;
         let target = harness
@@ -284,10 +283,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn class_contract_no_op_update_preserves_revision(#[case] backend: ContractBackend) {
+    async fn class_contract_no_op_update_preserves_revision(
+        #[case] backend: ContractImplementation,
+    ) {
         let harness = ContractHarness::new(backend, "no_op_update").await;
         let class = harness.create("class").await;
         let target = harness
@@ -318,11 +319,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
     async fn class_contract_update_moves_the_class_between_collections(
-        #[case] backend: ContractBackend,
+        #[case] backend: ContractImplementation,
     ) {
         let harness = ContractHarness::new(backend, "move_collection").await;
         let target_collection = harness.create_collection("target").await;
@@ -363,10 +364,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn class_contract_collection_delete_cascades_the_class(#[case] backend: ContractBackend) {
+    async fn class_contract_collection_delete_cascades_the_class(
+        #[case] backend: ContractImplementation,
+    ) {
         let harness = ContractHarness::new(backend, "collection_cascade").await;
         let collection = harness.create_collection("target").await;
         let class = harness
@@ -404,10 +407,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn class_contract_rejects_a_stale_name_target(#[case] backend: ContractBackend) {
+    async fn class_contract_rejects_a_stale_name_target(#[case] backend: ContractImplementation) {
         let harness = ContractHarness::new(backend, "stale_name").await;
         let class = harness.create("class").await;
         let name_target = harness
@@ -459,10 +462,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn class_contract_rejects_invalid_json_schema(#[case] backend: ContractBackend) {
+    async fn class_contract_rejects_invalid_json_schema(#[case] backend: ContractImplementation) {
         let harness = ContractHarness::new(backend, "invalid_schema").await;
 
         assert!(matches!(
@@ -486,10 +489,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::postgres(ContractBackend::Postgres)]
-    #[case::memory(ContractBackend::Memory)]
+    #[case::postgres(ContractImplementation::PostgresAdapter)]
+    #[case::memory(ContractImplementation::MemoryModel)]
     #[actix_web::test]
-    async fn class_contract_delete_removes_the_resolved_class(#[case] backend: ContractBackend) {
+    async fn class_contract_delete_removes_the_resolved_class(
+        #[case] backend: ContractImplementation,
+    ) {
         let harness = ContractHarness::new(backend, "delete").await;
         let class = harness.create("class").await;
         let target = harness
@@ -516,8 +521,8 @@ mod tests {
 
     #[actix_web::test]
     async fn memory_class_events_exclude_no_op_updates() {
-        let storage = MemoryStorage::new();
-        let service = Services::from_storage(DynStorage::new(storage.clone()))
+        let storage = MemoryStorageModel::new();
+        let service = Services::from_lifecycle_storage(DynLifecycleStorage::new(storage.clone()))
             .classes()
             .clone();
         let context = EventContext::system();

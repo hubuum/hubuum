@@ -480,11 +480,14 @@ where
         {
             ExportAuthorization::External {
                 backend: permission_backend,
-                principal: PrincipalRef::load(backend.db_pool(), subject).await?,
+                principal: PrincipalRef::load(crate::traits::backend_pool(backend), subject)
+                    .await?,
             }
         } else {
             ExportAuthorization::LocalSql {
-                is_admin: subject.is_admin(backend.db_pool()).await?,
+                is_admin: subject
+                    .is_admin(crate::traits::backend_pool(backend))
+                    .await?,
             }
         };
         Ok(Self {
@@ -496,7 +499,7 @@ where
     }
 
     fn pool(&self) -> &DbPool {
-        self.backend.db_pool()
+        crate::traits::backend_pool(self.backend)
     }
 
     fn external_backend(
@@ -974,10 +977,11 @@ impl ExportTaskSubmission {
 }
 
 pub(crate) async fn submit_export_task<S: AuthzSubject>(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     subject: &S,
     submission: ExportTaskSubmission,
 ) -> Result<TaskRecord, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     let ExportTaskSubmission {
         export,
         template,
@@ -1106,7 +1110,7 @@ pub(crate) async fn execute_export_task<C>(
 where
     C: BackendContext + ?Sized,
 {
-    let pool = backend.db_pool();
+    let pool = crate::traits::backend_pool(backend);
     let payload = task
         .request_payload
         .clone()

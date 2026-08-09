@@ -254,10 +254,11 @@ fn computed_value_matches_result_type(
 }
 
 pub async fn enrich_objects_with_computed(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     objects: Vec<HubuumObject>,
     personal_owner_id: Option<i32>,
 ) -> Result<Vec<HubuumObjectComputedResponse>, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     if objects.is_empty() {
         return Ok(Vec::new());
     }
@@ -322,11 +323,12 @@ pub async fn enrich_objects_with_computed(
 }
 
 pub async fn enrich_objects_with_computed_query_snapshot(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
     objects: Vec<HubuumObject>,
     personal_owner_id: Option<i32>,
     snapshot: &ComputedQuerySnapshot,
 ) -> Result<Vec<HubuumObjectComputedResponse>, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     if objects.is_empty() {
         return Ok(Vec::new());
     }

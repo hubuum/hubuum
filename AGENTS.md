@@ -31,17 +31,26 @@
   backend-neutral persistence capabilities in `src/storage/*`.
 - Keep Diesel/Postgres query construction and backend details in `src/db/traits/*`.
 - Model methods should stay thin and delegate persistence-heavy work to backend traits.
-- Route migrated high-level callers through services rather than adding new
-  direct `DbPool` dependencies. Use `BackendContext` as the compatibility
-  boundary for APIs that have not migrated and still need to accept either
-  `DbPool` or wrappers such as `web::Data<DbPool>`.
+- Route high-level callers through services or operation-shaped backend
+  capabilities. Application consumers may pass `AppContext` or the opaque
+  `BackendContext`, but must not acquire, name, or select a `DbPool`.
+  Backend implementations may recover their configured connection pool behind
+  that sealed boundary; direct `DbPool` compatibility is internal migration
+  machinery, not an application-layer escape hatch.
 - Keep storage capabilities aggregate- or query-shaped rather than table-shaped.
-  Shared memory/Postgres contract tests cover logical behavior; PostgreSQL-only
-  tests must retain transaction, locking, trigger, concurrency, and query-budget
-  coverage.
+  Every selectable backend must implement the complete storage contract; focused
+  in-memory models may exercise shared logical contracts but must not be exposed
+  as partially supported backends. PostgreSQL-only tests must retain transaction,
+  locking, trigger, concurrency, migration, recovery, and query-budget coverage.
+- Give each storage adapter an implementation-owned error type and convert it to
+  the backend-neutral `StorageError` at the adapter boundary. Only the application
+  error layer converts `StorageError` to `ApiError`.
+- Apply backend-neutral tracing and metrics outside individual adapters so a new
+  backend cannot silently omit common diagnostics. Report the selected backend
+  and non-secret effective settings through the administrator configuration.
 - Put multi-step database writes in `with_transaction`; use `with_connection` for single reads, single writes, and non-atomic database work.
 - Workspace crates should expose small, explicit interfaces with private fields. Prefer typed request/builder APIs over long positional argument lists when callers must provide several settings.
-- Keep workspace crate boundaries clean of app-specific errors, global config, Actix, Diesel, and task persistence unless the crate explicitly owns that layer.
+- Keep workspace crate boundaries clean of app-specific errors, global config, Actix, Diesel, and task persistence unless the crate explicitly owns that layer. A dedicated PostgreSQL storage crate may own Diesel, its generated schema, migrations, pool/TLS setup, transaction helpers, and adapter errors; those types must not leak through the backend-neutral storage contract.
 - Avoid leaking third-party implementation types from workspace crate APIs unless they are the intentional integration surface. Use crate-owned structs, builders, traits, and errors at boundaries where practical.
 - Use typestate builders when they prevent meaningful invalid call order or missing required data; otherwise prefer a simpler builder with validating terminal methods.
 

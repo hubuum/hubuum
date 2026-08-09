@@ -4,7 +4,7 @@ use tracing::warn;
 
 use crate::db::traits::Status;
 use crate::db::traits::active_tokens::{active_token_predicate, active_tokens_cutoff};
-use crate::db::{DbPool, with_connection_async};
+use crate::db::with_connection_async;
 use crate::errors::ApiError;
 use crate::models::{PrincipalToken, Token};
 
@@ -22,7 +22,11 @@ impl Status<PrincipalToken> for Token {
     /// `last_used_at` is advanced best-effort and only when stale (see
     /// [`LAST_USED_AT_THROTTLE_SECS`]); the telemetry write is intentionally
     /// decoupled from the validity check so the common case touches no rows.
-    async fn is_valid(&self, pool: &DbPool) -> Result<PrincipalToken, ApiError> {
+    async fn is_valid<C>(&self, backend: &C) -> Result<PrincipalToken, ApiError>
+    where
+        C: crate::traits::BackendContext + ?Sized,
+    {
+        let pool = crate::traits::backend_pool(backend);
         use crate::schema::service_accounts;
         use crate::schema::tokens::dsl::{
             id as token_id, last_used_at, principal_id, token, tokens,

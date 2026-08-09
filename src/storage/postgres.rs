@@ -1,3 +1,5 @@
+mod error;
+
 use async_trait::async_trait;
 
 use crate::db::DbPool;
@@ -32,18 +34,30 @@ use crate::models::{
 };
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore, StorageError,
+    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
+    StorageError, StorageIdentity,
 };
+use error::map_postgres_error;
 
 /// Canonical production storage adapter.
 #[derive(Clone)]
-pub struct PostgresStorage {
+pub(crate) struct PostgresStorage {
     pool: DbPool,
 }
 
 impl PostgresStorage {
-    pub fn new(pool: DbPool) -> Self {
+    pub(crate) fn new(pool: DbPool) -> Self {
         Self { pool }
+    }
+
+    pub(crate) fn pool(&self) -> &DbPool {
+        &self.pool
+    }
+}
+
+impl StorageIdentity for PostgresStorage {
+    fn storage_name(&self) -> &'static str {
+        "postgresql"
     }
 }
 
@@ -52,7 +66,7 @@ impl CollectionStore for PostgresStorage {
     async fn get_collection(&self, id: CollectionID) -> Result<Collection, StorageError> {
         id.collection_from_backend(&self.pool)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn create_collection(
@@ -63,7 +77,7 @@ impl CollectionStore for PostgresStorage {
         command
             .save_collection_with_assignee_record(&self.pool, Some(context))
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn update_collection(
@@ -75,7 +89,7 @@ impl CollectionStore for PostgresStorage {
         changes
             .update_collection_record(&self.pool, id.id(), Some(context))
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn delete_collection(
@@ -85,13 +99,13 @@ impl CollectionStore for PostgresStorage {
     ) -> Result<(), StorageError> {
         id.delete_collection_record(&self.pool, Some(context))
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn collection_children(&self, id: CollectionID) -> Result<Vec<Collection>, StorageError> {
         collection_children_from_backend(&self.pool, id)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn collection_ancestors(
@@ -100,7 +114,7 @@ impl CollectionStore for PostgresStorage {
     ) -> Result<Vec<Collection>, StorageError> {
         collection_ancestors_from_backend(&self.pool, id)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn move_collection(
@@ -111,7 +125,7 @@ impl CollectionStore for PostgresStorage {
     ) -> Result<Collection, StorageError> {
         move_collection_record_from_backend(&self.pool, id.id(), new_parent_id.id(), Some(context))
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 }
 
@@ -124,7 +138,7 @@ impl ClassStore for PostgresStorage {
         let class = selector
             .resolve_class_selector_record(&self.pool)
             .await
-            .map_err(StorageError::from)?;
+            .map_err(map_postgres_error)?;
         Ok(ResolvedClassTarget::new(selector, class))
     }
 
@@ -133,11 +147,11 @@ impl ClassStore for PostgresStorage {
         command: NewHubuumClass,
         context: &EventContext,
     ) -> Result<HubuumClass, StorageError> {
-        command.validate_schema().map_err(StorageError::from)?;
+        command.validate_schema().map_err(map_postgres_error)?;
         command
             .create_class_record(&self.pool, Some(context))
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn update_class(
@@ -149,7 +163,7 @@ impl ClassStore for PostgresStorage {
         changes
             .update_resolved_class_record(&self.pool, target, context)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn delete_class(
@@ -160,7 +174,7 @@ impl ClassStore for PostgresStorage {
         target
             .delete_resolved_class_record(&self.pool, context)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 }
 
@@ -173,7 +187,7 @@ impl ClassRelationStore for PostgresStorage {
         command
             .prepare_class_relation_record(&self.pool)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn resolve_class_relation(
@@ -182,7 +196,7 @@ impl ClassRelationStore for PostgresStorage {
     ) -> Result<ResolvedClassRelationTarget, StorageError> {
         id.resolve_class_relation_target_record(&self.pool)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn create_class_relation(
@@ -193,13 +207,13 @@ impl ClassRelationStore for PostgresStorage {
         let relation = prepared
             .create_prepared_class_relation_record(&self.pool, context)
             .await
-            .map_err(StorageError::from)?;
+            .map_err(map_postgres_error)?;
         ResolvedClassRelationTarget::new(
             relation,
             prepared.from_class().clone(),
             prepared.to_class().clone(),
         )
-        .map_err(StorageError::from)
+        .map_err(map_postgres_error)
     }
 
     async fn delete_class_relation(
@@ -210,7 +224,7 @@ impl ClassRelationStore for PostgresStorage {
         target
             .delete_resolved_class_relation_record(&self.pool, context)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 }
 
@@ -223,7 +237,7 @@ impl ObjectRelationStore for PostgresStorage {
         selector
             .prepare_object_relation_record(&self.pool)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn resolve_object_relation(
@@ -233,7 +247,7 @@ impl ObjectRelationStore for PostgresStorage {
         selector
             .resolve_object_relation_target_record(&self.pool)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn create_object_relation(
@@ -244,14 +258,14 @@ impl ObjectRelationStore for PostgresStorage {
         let relation = prepared
             .create_prepared_object_relation_record(&self.pool, context)
             .await
-            .map_err(StorageError::from)?;
+            .map_err(map_postgres_error)?;
         ResolvedObjectRelationTarget::new(
             relation,
             prepared.from_object().clone(),
             prepared.to_object().clone(),
             prepared.class_relation().clone(),
         )
-        .map_err(StorageError::from)
+        .map_err(map_postgres_error)
     }
 
     async fn delete_object_relation(
@@ -262,7 +276,7 @@ impl ObjectRelationStore for PostgresStorage {
         target
             .delete_resolved_object_relation_record(&self.pool, context)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 }
 
@@ -275,7 +289,7 @@ impl ObjectStore for PostgresStorage {
         let (class, object) = selector
             .resolve_object_selector_record(&self.pool)
             .await
-            .map_err(StorageError::from)?;
+            .map_err(map_postgres_error)?;
         Ok(ResolvedObjectTarget::new(selector, class, object))
     }
 
@@ -288,7 +302,7 @@ impl ObjectStore for PostgresStorage {
         command
             .create_object_in_resolved_class_record(&self.pool, class, context)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn update_object(
@@ -300,7 +314,7 @@ impl ObjectStore for PostgresStorage {
         changes
             .update_resolved_object_record(&self.pool, target, context)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn patch_object_data(
@@ -312,7 +326,7 @@ impl ObjectStore for PostgresStorage {
         patch
             .patch_object_data_record(&self.pool, target, context)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 
     async fn delete_object(
@@ -323,6 +337,6 @@ impl ObjectStore for PostgresStorage {
         target
             .delete_resolved_object_record(&self.pool, context)
             .await
-            .map_err(StorageError::from)
+            .map_err(map_postgres_error)
     }
 }

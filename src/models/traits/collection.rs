@@ -168,8 +168,11 @@ impl NewCollection {
     where
         C: BackendContext + ?Sized,
     {
-        self.save_collection_for_group_record_without_events(backend.db_pool(), assignee.id())
-            .await
+        self.save_collection_for_group_record_without_events(
+            crate::traits::backend_pool(backend),
+            assignee.id(),
+        )
+        .await
     }
 
     /// Persist the collection and apply permissions using the assignee embedded in the supplied
@@ -186,7 +189,7 @@ impl NewCollection {
         C: BackendContext + ?Sized,
     {
         self.save_collection_for_group_record_without_events(
-            backend.db_pool(),
+            crate::traits::backend_pool(backend),
             collection_with_assignee.group_id.id(),
         )
         .await

@@ -3,14 +3,14 @@ use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
-use crate::can;
-use crate::db::traits::UserPermissions;
-use crate::db::traits::authz::scope_allows;
-use crate::db::traits::history::{
+use crate::backend::capabilities::UserPermissions;
+use crate::backend::capabilities::authz::scope_allows;
+use crate::backend::capabilities::history::{
     HistoryCollectionFilter, collection_as_of, collection_history_paginated_with_total_count,
 };
-use crate::db::traits::user::UserSearchBackend;
-use crate::db::with_revision_precondition_scope;
+use crate::backend::capabilities::user::UserSearchBackend;
+use crate::backend::with_revision_precondition_scope;
+use crate::can;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, Authenticated};
 use crate::models::collection as collection_model;
@@ -29,14 +29,14 @@ use actix_web::{
 };
 use tracing::{debug, info};
 
-use crate::traits::{BackendContext, PermissionController, Search};
+use crate::traits::{PermissionController, Search};
 
 async fn sql_collection_permission_set(
-    pool: &AppContext,
+    context: &AppContext,
     collection: &Collection,
 ) -> Result<CollectionPermissionSet, ApiError> {
-    crate::db::traits::collection::collection_permission_set_from_backend(
-        pool.db_pool(),
+    crate::backend::capabilities::collection::collection_permission_set_from_backend(
+        &context,
         collection.id,
         None,
     )
@@ -65,7 +65,7 @@ fn collection_precondition(
 #[get("")]
 #[get("/")]
 pub async fn get_collections(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -79,16 +79,19 @@ pub async fn get_collections(
         Err(e) => return Err(e),
     };
 
-    let (result, total_count) = if pool.permission_backend().supports_sql_visibility_pushdown() {
+    let (result, total_count) = if context
+        .permission_backend()
+        .supports_sql_visibility_pushdown()
+    {
         let total_count = if params.include_total {
-            user.count_collections(&pool, count_query_options(&params), requestor.scopes())
+            user.count_collections(&context, count_query_options(&params), requestor.scopes())
                 .await?
         } else {
             SKIPPED_TOTAL_COUNT
         };
         let search_params = prepare_db_pagination::<Collection>(&params)?;
         let result = user
-            .search_collections(&pool, search_params, requestor.scopes())
+            .search_collections(&context, search_params, requestor.scopes())
             .await?;
         (result, total_count)
     } else {
@@ -97,16 +100,16 @@ pub async fn get_collections(
         }
         let candidates = user
             .search_collections_from_backend_with_admin_status(
-                &pool,
+                &context,
                 count_query_options(&params),
                 true,
                 None,
             )
             .await?;
-        let principal = PrincipalRef::load(&pool, user).await?;
+        let principal = PrincipalRef::load(&context, user).await?;
         let search_params = prepare_db_pagination::<Collection>(&params)?;
         let page = authorize_cursor_page(
-            pool.permission_backend(),
+            context.permission_backend(),
             &principal,
             candidates,
             requestor.scopes(),
@@ -137,7 +140,7 @@ pub async fn get_collections(
 #[post("")]
 #[post("/")]
 pub async fn create_collection(
-    pool: AppContext,
+    context: AppContext,
     new_collection_request: web::Json<NewCollectionWithAssignee>,
     requestor: AdminAccess,
     req: HttpRequest,
@@ -150,7 +153,7 @@ pub async fn create_collection(
     );
 
     let event_context = requestor.event_context(&req);
-    let created_collection = pool
+    let created_collection = context
         .collection_service()
         .create(new_collection_request, &event_context)
         .await?;
@@ -175,7 +178,7 @@ pub async fn create_collection(
 )]
 #[get("/{collection_id}")]
 pub async fn get_collection(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
 ) -> Result<impl Responder, ApiError> {
@@ -185,10 +188,10 @@ pub async fn get_collection(
         collection_id = collection_id.id()
     );
 
-    let collection = pool.collection_service().get(*collection_id).await?;
+    let collection = context.collection_service().get(*collection_id).await?;
 
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
@@ -216,7 +219,7 @@ pub async fn get_collection(
 )]
 #[patch("/{collection_id}")]
 pub async fn update_collection(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     update_data: web::Json<UpdateCollection>,
@@ -229,10 +232,10 @@ pub async fn update_collection(
         collection_id = collection_id.id()
     );
 
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
 
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::UpdateCollection],
@@ -243,8 +246,11 @@ pub async fn update_collection(
     let event_context = requestor.event_context(&req);
     let updated_collection = with_revision_precondition_scope(
         precondition,
-        pool.collection_service()
-            .update(collection_id, update_data.into_inner(), &event_context),
+        context.collection_service().update(
+            collection_id,
+            update_data.into_inner(),
+            &event_context,
+        ),
     )
     .await?;
     ApiResponse::accepted_revisioned(updated_collection)
@@ -266,7 +272,7 @@ pub async fn update_collection(
 )]
 #[delete("/{collection_id}")]
 pub async fn delete_collection(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     req: HttpRequest,
@@ -277,9 +283,9 @@ pub async fn delete_collection(
         collection_id = collection_id.id()
     );
 
-    let collection = pool.collection_service().get(*collection_id).await?;
+    let collection = context.collection_service().get(*collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DeleteCollection],
@@ -291,7 +297,8 @@ pub async fn delete_collection(
     let event_context = requestor.event_context(&req);
     with_revision_precondition_scope(
         precondition,
-        pool.collection_service()
+        context
+            .collection_service()
             .delete(*collection_id, &event_context),
     )
     .await?;
@@ -314,20 +321,23 @@ pub async fn delete_collection(
 )]
 #[get("/{collection_id}/children")]
 pub async fn get_collection_children(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
 ) -> Result<impl Responder, ApiError> {
-    let collection = pool.collection_service().get(*collection_id).await?;
+    let collection = context.collection_service().get(*collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
         collection.clone()
     );
 
-    let children = pool.collection_service().children(*collection_id).await?;
+    let children = context
+        .collection_service()
+        .children(*collection_id)
+        .await?;
     Ok(ApiResponse::new(children, StatusCode::OK))
 }
 
@@ -347,20 +357,23 @@ pub async fn get_collection_children(
 )]
 #[get("/{collection_id}/ancestors")]
 pub async fn get_collection_ancestors(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
 ) -> Result<impl Responder, ApiError> {
-    let collection = pool.collection_service().get(*collection_id).await?;
+    let collection = context.collection_service().get(*collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
         collection.clone()
     );
 
-    let ancestors = pool.collection_service().ancestors(*collection_id).await?;
+    let ancestors = context
+        .collection_service()
+        .ancestors(*collection_id)
+        .await?;
     Ok(ApiResponse::new(ancestors, StatusCode::OK))
 }
 
@@ -384,18 +397,18 @@ pub async fn get_collection_ancestors(
 )]
 #[put("/{collection_id}/parent")]
 pub async fn move_collection_parent(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     update_parent: web::Json<UpdateCollectionParent>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let collection = pool.collection_service().get(*collection_id).await?;
+    let collection = context.collection_service().get(*collection_id).await?;
     let new_parent_id = update_parent.into_inner().parent_collection_id;
-    let new_parent = pool.collection_service().get(new_parent_id).await?;
+    let new_parent = context.collection_service().get(new_parent_id).await?;
 
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::UpdateCollection],
@@ -403,12 +416,12 @@ pub async fn move_collection_parent(
     );
 
     if let Some(old_parent_id) = collection.parent_collection_id {
-        let old_parent = pool
+        let old_parent = context
             .collection_service()
             .get(CollectionID::new(old_parent_id)?)
             .await?;
         can!(
-            &pool,
+            &context,
             &requestor.principal,
             requestor.scopes(),
             [Permissions::DelegateCollection],
@@ -417,7 +430,7 @@ pub async fn move_collection_parent(
     }
 
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DelegateCollection],
@@ -428,7 +441,8 @@ pub async fn move_collection_parent(
     let event_context = requestor.event_context(&req);
     let updated = with_revision_precondition_scope(
         precondition,
-        pool.collection_service()
+        context
+            .collection_service()
             .move_to(*collection_id, new_parent_id, &event_context),
     )
     .await?;
@@ -453,7 +467,7 @@ pub async fn move_collection_parent(
 )]
 #[get("/{collection_id}/permissions")]
 pub async fn get_collection_permissions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     req: HttpRequest,
@@ -466,22 +480,22 @@ pub async fn get_collection_permissions(
 
     let params = parse_query_parameter(req.query_string())?;
 
-    let collection = pool.collection_service().get(*collection_id).await?;
+    let collection = context.collection_service().get(*collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
         collection
     );
 
-    if pool.permission_backend().uses_sql_permission_store() {
-        let permission_set = sql_collection_permission_set(&pool, &collection).await?;
+    if context.permission_backend().uses_sql_permission_store() {
+        let permission_set = sql_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::ok_revisioned(permission_set)?));
     }
 
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
-    let (permissions, total_count) = pool
+    let (permissions, total_count) = context
         .permission_backend()
         .groups_with_permissions_on(*collection_id, &[], &search_params)
         .await?;
@@ -510,7 +524,7 @@ pub async fn get_collection_permissions(
 )]
 #[get("/{collection_id}/permissions/group/{group_id}")]
 pub async fn get_collection_group_permissions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID)>,
 ) -> Result<impl Responder, ApiError> {
@@ -525,22 +539,23 @@ pub async fn get_collection_group_permissions(
         group_id = group_id.id()
     );
 
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
         collection
     );
 
-    if pool.permission_backend().uses_sql_permission_store() {
-        let permission_set = crate::db::traits::collection::collection_permission_set_from_backend(
-            pool.db_pool(),
-            collection.id,
-            Some(group_id.id()),
-        )
-        .await?;
+    if context.permission_backend().uses_sql_permission_store() {
+        let permission_set =
+            crate::backend::capabilities::collection::collection_permission_set_from_backend(
+                &context,
+                collection.id,
+                Some(group_id.id()),
+            )
+            .await?;
         if permission_set.permissions.is_empty() {
             return Err(ApiError::NotFound(
                 "Permission record not found".to_string(),
@@ -549,7 +564,7 @@ pub async fn get_collection_group_permissions(
         return Ok(Either::Left(ApiResponse::ok_revisioned(permission_set)?));
     }
 
-    let permission = pool
+    let permission = context
         .permission_backend()
         .group_permission_on(collection_id, group_id)
         .await?
@@ -574,19 +589,22 @@ pub async fn get_collection_group_permissions(
 )]
 #[get("/{collection_id}/permissions/effective/group/{group_id}")]
 pub async fn get_collection_effective_group_permissions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID)>,
 ) -> Result<impl Responder, ApiError> {
-    if !pool.permission_backend().supports_permission_provenance() {
+    if !context
+        .permission_backend()
+        .supports_permission_provenance()
+    {
         return Err(ApiError::NotImplemented(
             "effective permission provenance is unavailable for the treetop backend".to_string(),
         ));
     }
     let (collection_id, group_id) = params.into_inner();
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
@@ -594,7 +612,7 @@ pub async fn get_collection_effective_group_permissions(
     );
 
     let permissions =
-        collection_model::effective_group_on(&pool, collection_id.id(), group_id.id()).await?;
+        collection_model::effective_group_on(&context, collection_id.id(), group_id.id()).await?;
 
     Ok(ApiResponse::new(permissions, StatusCode::OK))
 }
@@ -628,7 +646,7 @@ pub async fn get_collection_effective_group_permissions(
 )]
 #[post("/{collection_id}/permissions/group/{group_id}")]
 pub async fn grant_collection_group_permissions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
@@ -645,32 +663,33 @@ pub async fn grant_collection_group_permissions(
         permissions = ?permissions
     );
 
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DelegateCollection],
         collection
     );
 
-    if pool.permission_backend().uses_sql_permission_store() {
-        let current = sql_collection_permission_set(&pool, &collection).await?;
+    if context.permission_backend().uses_sql_permission_store() {
+        let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
         with_revision_precondition_scope(
             precondition,
-            collection.grant(&pool, group_id, permissions, Some(&event_context)),
+            collection.grant(&context, group_id, permissions, Some(&event_context)),
         )
         .await?;
-        let updated = sql_collection_permission_set(&pool, &collection).await?;
+        let updated = sql_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::revisioned(
             updated,
             StatusCode::CREATED,
         )?));
     }
 
-    pool.permission_backend()
+    context
+        .permission_backend()
         .apply_permissions(collection_id, group_id, permissions, false)
         .await?;
     Ok(Either::Right(ApiResponse::created_empty()))
@@ -697,7 +716,7 @@ pub async fn grant_collection_group_permissions(
 )]
 #[put("/{collection_id}/permissions/group/{group_id}")]
 pub async fn replace_collection_group_permissions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID)>,
     permissions: web::Json<Vec<Permissions>>,
@@ -714,9 +733,9 @@ pub async fn replace_collection_group_permissions(
         permissions = ?permissions
     );
 
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DelegateCollection],
@@ -730,20 +749,21 @@ pub async fn replace_collection_group_permissions(
         ));
     }
 
-    if pool.permission_backend().uses_sql_permission_store() {
-        let current = sql_collection_permission_set(&pool, &collection).await?;
+    if context.permission_backend().uses_sql_permission_store() {
+        let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
         with_revision_precondition_scope(
             precondition,
-            collection.set_permissions(&pool, group_id, permissions, Some(&event_context)),
+            collection.set_permissions(&context, group_id, permissions, Some(&event_context)),
         )
         .await?;
-        let updated = sql_collection_permission_set(&pool, &collection).await?;
+        let updated = sql_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::ok_revisioned(updated)?));
     }
 
-    pool.permission_backend()
+    context
+        .permission_backend()
         .apply_permissions(collection_id, group_id, permissions, true)
         .await?;
     Ok(Either::Right(ApiResponse::ok_empty()))
@@ -767,7 +787,7 @@ pub async fn replace_collection_group_permissions(
 )]
 #[delete("/{collection_id}/permissions/group/{group_id}")]
 pub async fn revoke_collection_group_permissions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID)>,
     req: HttpRequest,
@@ -781,29 +801,30 @@ pub async fn revoke_collection_group_permissions(
         group_id = group_id.id()
     );
 
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DelegateCollection],
         collection
     );
 
-    if pool.permission_backend().uses_sql_permission_store() {
-        let current = sql_collection_permission_set(&pool, &collection).await?;
+    if context.permission_backend().uses_sql_permission_store() {
+        let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
         with_revision_precondition_scope(
             precondition,
-            collection.revoke_all(&pool, group_id, Some(&event_context)),
+            collection.revoke_all(&context, group_id, Some(&event_context)),
         )
         .await?;
-        let updated = sql_collection_permission_set(&pool, &collection).await?;
+        let updated = sql_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::ok_revisioned(updated)?));
     }
 
-    pool.permission_backend()
+    context
+        .permission_backend()
         .revoke_all(collection_id, group_id)
         .await?;
     Ok(Either::Right(ApiResponse::no_content()))
@@ -827,7 +848,7 @@ pub async fn revoke_collection_group_permissions(
 )]
 #[get("/{collection_id}/permissions/group/{group_id}/{permission}")]
 pub async fn get_collection_group_permission(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID, Permissions)>,
 ) -> Result<impl Responder, ApiError> {
@@ -843,19 +864,20 @@ pub async fn get_collection_group_permission(
         permission = ?permission
     );
 
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
         collection
     );
 
-    let allowed = if pool.permission_backend().uses_sql_permission_store() {
-        group_can_on(&pool, group_id.id(), collection, permission).await?
+    let allowed = if context.permission_backend().uses_sql_permission_store() {
+        group_can_on(&context, group_id.id(), collection, permission).await?
     } else {
-        pool.permission_backend()
+        context
+            .permission_backend()
             .group_permission_on(collection_id, group_id)
             .await?
             .is_some_and(|row| row.granted().contains(&permission))
@@ -886,7 +908,7 @@ pub async fn get_collection_group_permission(
 )]
 #[post("/{collection_id}/permissions/group/{group_id}/{permission}")]
 pub async fn grant_collection_group_permission(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID, Permissions)>,
     req: HttpRequest,
@@ -901,9 +923,9 @@ pub async fn grant_collection_group_permission(
         permission = ?permission
     );
 
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DelegateCollection],
@@ -911,23 +933,24 @@ pub async fn grant_collection_group_permission(
     );
 
     let permissions = PermissionsList::new([permission]);
-    if pool.permission_backend().uses_sql_permission_store() {
-        let current = sql_collection_permission_set(&pool, &collection).await?;
+    if context.permission_backend().uses_sql_permission_store() {
+        let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
         with_revision_precondition_scope(
             precondition,
-            collection.grant(&pool, group_id, permissions, Some(&event_context)),
+            collection.grant(&context, group_id, permissions, Some(&event_context)),
         )
         .await?;
-        let updated = sql_collection_permission_set(&pool, &collection).await?;
+        let updated = sql_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::revisioned(
             updated,
             StatusCode::CREATED,
         )?));
     }
 
-    pool.permission_backend()
+    context
+        .permission_backend()
         .apply_permissions(collection_id, group_id, permissions, false)
         .await?;
     Ok(Either::Right(ApiResponse::created_empty()))
@@ -952,7 +975,7 @@ pub async fn grant_collection_group_permission(
 )]
 #[delete("/{collection_id}/permissions/group/{group_id}/{permission}")]
 pub async fn revoke_collection_group_permission(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, GroupID, Permissions)>,
     req: HttpRequest,
@@ -967,9 +990,9 @@ pub async fn revoke_collection_group_permission(
         permission = ?permission
     );
 
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::DelegateCollection],
@@ -977,20 +1000,21 @@ pub async fn revoke_collection_group_permission(
     );
 
     let permissions = PermissionsList::new([permission]);
-    if pool.permission_backend().uses_sql_permission_store() {
-        let current = sql_collection_permission_set(&pool, &collection).await?;
+    if context.permission_backend().uses_sql_permission_store() {
+        let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
         with_revision_precondition_scope(
             precondition,
-            collection.revoke(&pool, group_id, permissions, Some(&event_context)),
+            collection.revoke(&context, group_id, permissions, Some(&event_context)),
         )
         .await?;
-        let updated = sql_collection_permission_set(&pool, &collection).await?;
+        let updated = sql_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::ok_revisioned(updated)?));
     }
 
-    pool.permission_backend()
+    context
+        .permission_backend()
         .revoke_permissions(collection_id, group_id, permissions)
         .await?;
     Ok(Either::Right(ApiResponse::no_content()))
@@ -1014,12 +1038,15 @@ pub async fn revoke_collection_group_permission(
 )]
 #[get("/{collection_id}/permissions/principal/{principal_id}")]
 pub async fn get_collection_principal_permissions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, PrincipalID)>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    if !pool.permission_backend().supports_permission_provenance() {
+    if !context
+        .permission_backend()
+        .supports_permission_provenance()
+    {
         return Err(ApiError::NotImplemented(
             "principal permission provenance is unavailable for the treetop backend".to_string(),
         ));
@@ -1034,9 +1061,9 @@ pub async fn get_collection_principal_permissions(
         principal_id = principal_id.id()
     );
 
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
@@ -1045,7 +1072,7 @@ pub async fn get_collection_principal_permissions(
 
     let search_params = prepare_db_pagination::<GroupPermission>(&query_options)?;
     let (permissions, total_count) = collection_model::principal_on_paginated_with_total_count(
-        &pool,
+        &context,
         principal_id,
         collection.clone(),
         &search_params,
@@ -1076,19 +1103,22 @@ pub async fn get_collection_principal_permissions(
 )]
 #[get("/{collection_id}/permissions/effective/principal/{principal_id}")]
 pub async fn get_collection_effective_principal_permissions(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, PrincipalID)>,
 ) -> Result<impl Responder, ApiError> {
-    if !pool.permission_backend().supports_permission_provenance() {
+    if !context
+        .permission_backend()
+        .supports_permission_provenance()
+    {
         return Err(ApiError::NotImplemented(
             "effective permission provenance is unavailable for the treetop backend".to_string(),
         ));
     }
     let (collection_id, principal_id) = params.into_inner();
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
@@ -1096,7 +1126,7 @@ pub async fn get_collection_effective_principal_permissions(
     );
 
     let permissions =
-        collection_model::effective_principal_on(&pool, principal_id, collection).await?;
+        collection_model::effective_principal_on(&context, principal_id, collection).await?;
 
     Ok(ApiResponse::new(permissions, StatusCode::OK))
 }
@@ -1119,7 +1149,7 @@ pub async fn get_collection_effective_principal_permissions(
 )]
 #[get("/{collection_id}/has_permissions/{permission}")]
 pub async fn get_collection_groups_with_permission(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     params: web::Path<(CollectionID, Permissions)>,
     req: HttpRequest,
@@ -1134,9 +1164,9 @@ pub async fn get_collection_groups_with_permission(
         permission = ?permission
     );
 
-    let collection = pool.collection_service().get(collection_id).await?;
+    let collection = context.collection_service().get(collection_id).await?;
     can!(
-        &pool,
+        &context,
         &requestor.principal,
         requestor.scopes(),
         [Permissions::ReadCollection],
@@ -1144,16 +1174,16 @@ pub async fn get_collection_groups_with_permission(
     );
 
     let search_params = prepare_db_pagination::<Group>(&query_options)?;
-    let (groups, total_count) = if pool.permission_backend().uses_sql_permission_store() {
+    let (groups, total_count) = if context.permission_backend().uses_sql_permission_store() {
         collection_model::groups_can_on_paginated_with_total_count(
-            &pool,
+            &context,
             collection.id,
             permission,
             &search_params,
         )
         .await?
     } else {
-        let (permissions, total_count) = pool
+        let (permissions, total_count) = context
             .permission_backend()
             .groups_with_permissions_on(collection_id, &[permission], &search_params)
             .await?;
@@ -1163,7 +1193,7 @@ pub async fn get_collection_groups_with_permission(
         )
     };
 
-    let response = GroupResponse::from_groups(&pool, groups).await?;
+    let response = GroupResponse::from_groups(&context, groups).await?;
 
     ApiResponse::paginated(response, total_count, &query_options)
 }
@@ -1183,7 +1213,7 @@ pub async fn get_collection_groups_with_permission(
 )]
 #[get("/{collection_id}/history")]
 pub async fn get_collection_history(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     req: HttpRequest,
@@ -1196,10 +1226,10 @@ pub async fn get_collection_history(
 
     let user = &requestor.principal;
     let collection_id = collection_id.into_inner();
-    let (entity_id, require_history) = match pool.collection_service().get(collection_id).await {
+    let (entity_id, require_history) = match context.collection_service().get(collection_id).await {
         Ok(instance) => {
             can!(
-                &pool,
+                &context,
                 user,
                 requestor.scopes(),
                 [Permissions::ReadCollection],
@@ -1209,7 +1239,7 @@ pub async fn get_collection_history(
         }
         Err(ApiError::NotFound(_))
             if can_read_deleted_history(
-                &pool,
+                &context,
                 &requestor.principal,
                 requestor.scopes().is_some(),
             )
@@ -1225,14 +1255,17 @@ pub async fn get_collection_history(
     let (rows, total_count) = if require_history {
         collection_history_paginated_with_total_count(
             entity_id,
-            &pool,
+            &context,
             &search_params,
             HistoryCollectionFilter::All,
         )
         .await?
-    } else if pool.permission_backend().supports_sql_visibility_pushdown() {
+    } else if context
+        .permission_backend()
+        .supports_sql_visibility_pushdown()
+    {
         let collection_ids = readable_history_collection_ids(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadCollection,
@@ -1240,7 +1273,7 @@ pub async fn get_collection_history(
         .await?;
         collection_history_paginated_with_total_count(
             entity_id,
-            &pool,
+            &context,
             &search_params,
             HistoryCollectionFilter::Visible(&collection_ids),
         )
@@ -1249,13 +1282,13 @@ pub async fn get_collection_history(
         let candidate_params = history_candidate_query_options(&params);
         let (candidates, _) = collection_history_paginated_with_total_count(
             entity_id,
-            &pool,
+            &context,
             &candidate_params,
             HistoryCollectionFilter::All,
         )
         .await?;
         authorize_history_page(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadCollection,
@@ -1271,7 +1304,7 @@ pub async fn get_collection_history(
         )));
     }
 
-    let principal_names = resolve_history_principal_names(&pool, &rows).await?;
+    let principal_names = resolve_history_principal_names(&context, &rows).await?;
 
     ApiResponse::mapped_paginated(rows, total_count, &params, move |rows| {
         rows.into_iter()
@@ -1299,7 +1332,7 @@ pub async fn get_collection_history(
 )]
 #[get("/{collection_id}/history/as-of")]
 pub async fn get_collection_as_of(
-    pool: AppContext,
+    context: AppContext,
     requestor: Authenticated,
     collection_id: web::Path<CollectionID>,
     req: HttpRequest,
@@ -1311,10 +1344,10 @@ pub async fn get_collection_as_of(
 
     let user = &requestor.principal;
     let collection_id = collection_id.into_inner();
-    let (entity_id, deleted) = match pool.collection_service().get(collection_id).await {
+    let (entity_id, deleted) = match context.collection_service().get(collection_id).await {
         Ok(instance) => {
             can!(
-                &pool,
+                &context,
                 user,
                 requestor.scopes(),
                 [Permissions::ReadCollection],
@@ -1324,7 +1357,7 @@ pub async fn get_collection_as_of(
         }
         Err(ApiError::NotFound(_))
             if can_read_deleted_history(
-                &pool,
+                &context,
                 &requestor.principal,
                 requestor.scopes().is_some(),
             )
@@ -1336,7 +1369,7 @@ pub async fn get_collection_as_of(
     };
 
     let at = parse_as_of(req.query_string())?;
-    let row = collection_as_of(entity_id, at, &pool)
+    let row = collection_as_of(entity_id, at, &context)
         .await?
         .ok_or_else(|| {
             ApiError::NotFound(format!("no version of collection {entity_id} at {at}"))
@@ -1344,7 +1377,7 @@ pub async fn get_collection_as_of(
 
     if !deleted {
         authorize_history_snapshot(
-            &pool,
+            &context,
             user,
             requestor.scopes(),
             Permissions::ReadCollection,
@@ -1354,7 +1387,7 @@ pub async fn get_collection_as_of(
     }
 
     let principal_names =
-        resolve_history_principal_names(&pool, std::slice::from_ref(&row)).await?;
+        resolve_history_principal_names(&context, std::slice::from_ref(&row)).await?;
     Ok(ApiResponse::new(
         HistoryResponse::new(row, &principal_names),
         StatusCode::OK,

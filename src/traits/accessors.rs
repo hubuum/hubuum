@@ -51,7 +51,8 @@ where
     where
         C: BackendContext + ?Sized,
     {
-        self.instance_adapter(backend.db_pool()).await
+        self.instance_adapter(crate::traits::backend_pool(backend))
+            .await
     }
 }
 
@@ -104,14 +105,16 @@ where
     where
         C: BackendContext + ?Sized,
     {
-        self.collection_adapter(backend.db_pool()).await
+        self.collection_adapter(crate::traits::backend_pool(backend))
+            .await
     }
 
     async fn collection_id<C>(&self, backend: &C) -> Result<I, ApiError>
     where
         C: BackendContext + ?Sized,
     {
-        self.collection_id_adapter(backend.db_pool()).await
+        self.collection_id_adapter(crate::traits::backend_pool(backend))
+            .await
     }
 }
 
@@ -158,14 +161,16 @@ where
     where
         B: BackendContext + ?Sized,
     {
-        self.class_adapter(backend.db_pool()).await
+        self.class_adapter(crate::traits::backend_pool(backend))
+            .await
     }
 
     async fn class_id<B>(&self, backend: &B) -> Result<I, ApiError>
     where
         B: BackendContext + ?Sized,
     {
-        self.class_id_adapter(backend.db_pool()).await
+        self.class_id_adapter(crate::traits::backend_pool(backend))
+            .await
     }
 }
 
@@ -212,14 +217,16 @@ where
     where
         B: BackendContext + ?Sized,
     {
-        self.object_adapter(backend.db_pool()).await
+        self.object_adapter(crate::traits::backend_pool(backend))
+            .await
     }
 
     async fn object_id<B>(&self, backend: &B) -> Result<I, ApiError>
     where
         B: BackendContext + ?Sized,
     {
-        self.object_id_adapter(backend.db_pool()).await
+        self.object_id_adapter(crate::traits::backend_pool(backend))
+            .await
     }
 }
 

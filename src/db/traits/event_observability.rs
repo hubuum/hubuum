@@ -8,7 +8,7 @@ use crate::config::{
     DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS, DEFAULT_EVENT_FANOUT_WORKERS, get_config,
 };
 use crate::db::traits::metrics::EventMetricsSnapshot;
-use crate::db::{DbPool, with_connection};
+use crate::db::with_connection;
 use crate::errors::ApiError;
 use crate::events::{event_delivery_wakeup_stats, event_fanout_wakeup_stats};
 use crate::models::{
@@ -121,8 +121,9 @@ struct SubscriptionHealthRow {
 }
 
 pub async fn load_event_delivery_health(
-    pool: &DbPool,
+    pool: &impl crate::traits::BackendContext,
 ) -> Result<EventDeliveryHealthResponse, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     with_connection(pool, async |conn| {
         let fanout = load_fanout_health(conn).await?;
         let delivery = load_delivery_queue_health(conn).await?;
@@ -139,7 +140,10 @@ pub async fn load_event_delivery_health(
     .await
 }
 
-pub async fn load_event_metrics_snapshot(pool: &DbPool) -> Result<EventMetricsSnapshot, ApiError> {
+pub async fn load_event_metrics_snapshot(
+    pool: &impl crate::traits::BackendContext,
+) -> Result<EventMetricsSnapshot, ApiError> {
+    let pool = crate::traits::backend_pool(pool);
     with_connection(pool, async |conn| {
         Ok::<EventMetricsSnapshot, ApiError>(EventMetricsSnapshot {
             fanout: load_fanout_health(conn).await?,
