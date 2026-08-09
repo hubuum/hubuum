@@ -67,8 +67,9 @@ async fn get_objects_in_class_by_name(
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     let class_id = HubuumClassID::new(target.class().id)?;
     let class = target.class().clone();
@@ -231,8 +232,9 @@ async fn create_object_in_class(
     object_data: web::Json<NewHubuumObjectRequest>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_id(class_id.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
     let object =
         create_object_in_resolved_class(&pool, &requestor, &req, target, object_data.into_inner())
@@ -267,8 +269,9 @@ async fn create_object_in_class_by_name(
     object_data: web::Json<NewHubuumObjectRequest>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     let object =
         create_object_in_resolved_class(&pool, &requestor, &req, target, object_data.into_inner())

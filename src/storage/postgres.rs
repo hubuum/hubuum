@@ -2,15 +2,22 @@ use async_trait::async_trait;
 
 use crate::db::DbPool;
 use crate::db::traits::GetCollection;
+use crate::db::traits::class::{
+    CreateClassRecord, DeleteResolvedClassRecord, ResolveClassSelectorRecord,
+    UpdateResolvedClassRecord,
+};
 use crate::db::traits::collection::{
     DeleteCollectionRecord, SaveCollectionWithAssigneeRecord, UpdateCollectionRecord,
     collection_ancestors_from_backend, collection_children_from_backend,
     move_collection_record_from_backend,
 };
 use crate::events::EventContext;
-use crate::models::{Collection, CollectionID, NewCollectionWithAssignee, UpdateCollection};
+use crate::models::{
+    ClassSelector, Collection, CollectionID, HubuumClass, NewCollectionWithAssignee,
+    NewHubuumClass, ResolvedClassTarget, UpdateCollection, UpdateHubuumClass,
+};
 
-use super::{CollectionStore, StorageError};
+use super::{ClassStore, CollectionStore, StorageError};
 
 /// Canonical production storage adapter.
 #[derive(Clone)]
@@ -87,6 +94,55 @@ impl CollectionStore for PostgresStorage {
         context: &EventContext,
     ) -> Result<Collection, StorageError> {
         move_collection_record_from_backend(&self.pool, id.id(), new_parent_id.id(), Some(context))
+            .await
+            .map_err(StorageError::from)
+    }
+}
+
+#[async_trait]
+impl ClassStore for PostgresStorage {
+    async fn resolve_class(
+        &self,
+        selector: ClassSelector,
+    ) -> Result<ResolvedClassTarget, StorageError> {
+        let class = selector
+            .resolve_class_selector_record(&self.pool)
+            .await
+            .map_err(StorageError::from)?;
+        Ok(ResolvedClassTarget::new(selector, class))
+    }
+
+    async fn create_class(
+        &self,
+        command: NewHubuumClass,
+        context: &EventContext,
+    ) -> Result<HubuumClass, StorageError> {
+        command.validate_schema().map_err(StorageError::from)?;
+        command
+            .create_class_record(&self.pool, Some(context))
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn update_class(
+        &self,
+        target: &ResolvedClassTarget,
+        changes: UpdateHubuumClass,
+        context: &EventContext,
+    ) -> Result<HubuumClass, StorageError> {
+        changes
+            .update_resolved_class_record(&self.pool, target, context)
+            .await
+            .map_err(StorageError::from)
+    }
+
+    async fn delete_class(
+        &self,
+        target: &ResolvedClassTarget,
+        context: &EventContext,
+    ) -> Result<(), StorageError> {
+        target
+            .delete_resolved_class_record(&self.pool, context)
             .await
             .map_err(StorageError::from)
     }

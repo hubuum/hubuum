@@ -83,17 +83,6 @@ impl DeleteResolvedClass for ResolvedClassTarget {
     }
 }
 
-fn validate_new_class_schema(class: &NewHubuumClass) -> Result<(), ApiError> {
-    let Some(schema) = class.json_schema.as_ref() else {
-        return Ok(());
-    };
-    crate::utilities::json_schema::validate_json_schema(schema)?;
-    if class.validate_schema.unwrap_or(false) {
-        crate::utilities::json_schema::compile_json_schema(schema)?;
-    }
-    Ok(())
-}
-
 impl SaveAdapter for HubuumClass {
     type Output = HubuumClass;
 
@@ -144,7 +133,7 @@ impl SaveAdapter for NewHubuumClass {
     type Output = HubuumClass;
 
     async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<HubuumClass, ApiError> {
-        validate_new_class_schema(self)?;
+        self.validate_schema()?;
         self.create_class_record_without_events(pool).await
     }
 
@@ -153,7 +142,7 @@ impl SaveAdapter for NewHubuumClass {
         pool: &DbPool,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        validate_new_class_schema(self)?;
+        self.validate_schema()?;
         self.create_class_record(pool, Some(context)).await
     }
 }

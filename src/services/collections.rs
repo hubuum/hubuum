@@ -101,9 +101,10 @@ mod tests {
         Collection, CollectionID, Group, GroupID, NewCollectionWithAssignee, NewGroup,
         UpdateCollection,
     };
-    use crate::services::Services;
+    use crate::services::{
+        Services, storage_contract_pool, storage_contract_postgres_permit, storage_contract_prefix,
+    };
     use crate::storage::{DynStorage, MemoryStorage, PostgresStorage};
-    use crate::tests::TestScope;
 
     use super::CollectionService;
 
@@ -118,6 +119,7 @@ mod tests {
         group_id: GroupID,
         prefix: String,
         postgres_cleanup: Option<(Data<DbPool>, Group)>,
+        _postgres_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     }
 
     impl ContractHarness {
@@ -130,26 +132,30 @@ mod tests {
                     group_id: GroupID::new(1).expect("valid memory group id"),
                     prefix: format!("memory_{label}"),
                     postgres_cleanup: None,
+                    _postgres_permit: None,
                 },
                 ContractBackend::Postgres => {
-                    let scope = TestScope::new();
+                    let permit = storage_contract_postgres_permit().await;
+                    let pool = storage_contract_pool();
+                    let prefix = storage_contract_prefix(label);
                     let owner_group = NewGroup {
                         identity_scope: None,
-                        groupname: scope.scoped_name(&format!("{label}_owner")),
+                        groupname: format!("{prefix}_owner"),
                         description: Some("collection storage contract owner".to_string()),
                     }
-                    .save_without_events(&scope.pool)
+                    .save_without_events(&pool)
                     .await
                     .expect("contract owner group should save");
                     Self {
                         service: Services::from_storage(DynStorage::new(PostgresStorage::new(
-                            scope.pool.get_ref().clone(),
+                            pool.get_ref().clone(),
                         )))
                         .collections()
                         .clone(),
                         group_id: GroupID::new(owner_group.id).expect("valid owner group id"),
-                        prefix: scope.scoped_name(label),
-                        postgres_cleanup: Some((scope.pool, owner_group)),
+                        prefix,
+                        postgres_cleanup: Some((pool, owner_group)),
+                        _postgres_permit: Some(permit),
                     }
                 }
             }

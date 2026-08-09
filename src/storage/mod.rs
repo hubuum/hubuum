@@ -1,9 +1,11 @@
+mod classes;
 mod collections;
 mod error;
 #[cfg(test)]
 mod memory;
 mod postgres;
 
+pub use classes::ClassStore;
 pub use collections::{CollectionStore, DynStorage, Storage};
 pub use error::StorageError;
 #[cfg(test)]

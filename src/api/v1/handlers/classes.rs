@@ -39,8 +39,8 @@ use crate::permissions::{
 };
 
 use crate::models::traits::{
-    CreateObjectInResolvedClass, DeleteResolvedClass, DeleteResolvedObject, PatchObjectData,
-    ResolveClassTarget, ResolveObjectTarget, UpdateResolvedClass, UpdateResolvedObject,
+    CreateObjectInResolvedClass, DeleteResolvedObject, PatchObjectData, ResolveObjectTarget,
+    UpdateResolvedObject,
 };
 use crate::models::{
     ClassGraphRow, ClassSelector, CollectionID, GroupPermission, HistoryAuthorizationSnapshot,
@@ -416,7 +416,10 @@ async fn create_class(
     );
 
     let event_context = requestor.event_context(&req);
-    let class = class_data.save(&pool, &event_context).await?;
+    let class = pool
+        .class_service()
+        .create(class_data, &event_context)
+        .await?;
     let expanded = class.expand_collection(&pool).await?;
 
     let location = api_locations::class(class.id)?;
@@ -468,8 +471,9 @@ async fn get_class(
         class_id = class_id.id()
     );
 
-    let target = ClassSelector::by_id(class_id)
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id))
         .await?;
     let class = read_resolved_class(&pool, &requestor, target).await?;
     if parse_collection_include(req.query_string())? {
@@ -500,8 +504,9 @@ async fn get_class_by_name(
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     let class = read_resolved_class(&pool, &requestor, target).await?;
     if parse_collection_include(req.query_string())? {
@@ -542,7 +547,7 @@ async fn apply_resolved_class_update(
     let event_context = requestor.event_context(req);
     with_revision_precondition_scope(
         precondition,
-        update.update_resolved_class(pool, &target, &event_context),
+        pool.class_service().update(&target, update, &event_context),
     )
     .await
 }
@@ -581,8 +586,9 @@ async fn update_class(
         class_id = class_id.id()
     );
 
-    let target = ClassSelector::by_id(class_id)
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id))
         .await?;
     let class = apply_resolved_class_update(&pool, &requestor, &req, target, class_data).await?;
     let expanded = class.expand_collection(&pool).await?;
@@ -614,8 +620,9 @@ async fn update_class_by_name(
     class_data: web::Json<UpdateHubuumClass>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     let class =
         apply_resolved_class_update(&pool, &requestor, &req, target, class_data.into_inner())
@@ -643,7 +650,7 @@ async fn delete_resolved_class(
     let event_context = requestor.event_context(req);
     with_revision_precondition_scope(
         precondition,
-        target.delete_resolved_class(pool, &event_context),
+        pool.class_service().delete(&target, &event_context),
     )
     .await?;
     Ok(etag)
@@ -679,8 +686,9 @@ async fn delete_class(
         class_id = class_id.id()
     );
 
-    let target = ClassSelector::by_id(class_id)
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id))
         .await?;
     let etag = delete_resolved_class(&pool, &requestor, &req, target).await?;
     Ok(ApiResponse::no_content_with_etag(etag))
@@ -708,8 +716,9 @@ async fn delete_class_by_name(
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     let etag = delete_resolved_class(&pool, &requestor, &req, target).await?;
     Ok(ApiResponse::no_content_with_etag(etag))
@@ -736,8 +745,9 @@ async fn get_class_permissions(
     class_id: web::Path<HubuumClassID>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_id(class_id.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_id(class_id.into_inner()))
         .await?;
     read_resolved_class_permissions(pool, requestor, target, req).await
 }
@@ -762,8 +772,9 @@ async fn get_class_permissions_by_name(
     class_name: web::Path<String>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let target = ClassSelector::by_name(class_name.into_inner())
-        .resolve_class_target(&pool)
+    let target = pool
+        .class_service()
+        .resolve(ClassSelector::by_name(class_name.into_inner()))
         .await?;
     read_resolved_class_permissions(pool, requestor, target, req).await
 }

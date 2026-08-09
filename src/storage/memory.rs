@@ -7,10 +7,12 @@ use tokio::sync::RwLock;
 
 use crate::events::{Action, EventContext};
 use crate::models::{
-    Collection, CollectionID, NewCollectionWithAssignee, ResourceRevision, UpdateCollection,
+    ClassSelector, ClassSelectorKind, Collection, CollectionID, HubuumClass,
+    NewCollectionWithAssignee, NewHubuumClass, ResolvedClassTarget, ResourceRevision,
+    UpdateCollection, UpdateHubuumClass,
 };
 
-use super::{CollectionStore, StorageError};
+use super::{ClassStore, CollectionStore, StorageError};
 
 const ROOT_COLLECTION_ID: i32 = 1;
 
@@ -21,10 +23,20 @@ pub(crate) struct MemoryCollectionEvent {
     pub(crate) context: EventContext,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MemoryClassEvent {
+    pub(crate) class_id: i32,
+    pub(crate) action: Action,
+    pub(crate) context: EventContext,
+}
+
 struct MemoryState {
     next_collection_id: i32,
+    next_class_id: i32,
     collections: BTreeMap<i32, Collection>,
+    classes: BTreeMap<i32, HubuumClass>,
     events: Vec<MemoryCollectionEvent>,
+    class_events: Vec<MemoryClassEvent>,
 }
 
 impl MemoryState {
@@ -41,8 +53,11 @@ impl MemoryState {
         };
         Self {
             next_collection_id: ROOT_COLLECTION_ID + 1,
+            next_class_id: 1,
             collections: BTreeMap::from([(root.id, root)]),
+            classes: BTreeMap::new(),
             events: Vec::new(),
+            class_events: Vec::new(),
         }
     }
 
@@ -58,9 +73,48 @@ impl MemoryState {
             .any(|collection| collection.name == name && Some(collection.id) != except_id)
     }
 
+    fn class_name_in_use(&self, name: &str, except_id: Option<i32>) -> bool {
+        self.classes
+            .values()
+            .any(|class| class.name == name && Some(class.id) != except_id)
+    }
+
+    fn class_for_selector(&self, selector: &ClassSelector) -> Result<&HubuumClass, StorageError> {
+        match selector.kind() {
+            ClassSelectorKind::ById(class_id) => self.classes.get(&class_id.id()),
+            ClassSelectorKind::ByName(class_name) => self
+                .classes
+                .values()
+                .find(|class| class.name == *class_name),
+        }
+        .ok_or_else(|| StorageError::not_found("Class was not found"))
+    }
+
+    fn class_target(&self, target: &ResolvedClassTarget) -> Result<&HubuumClass, StorageError> {
+        let current = self.class_for_selector(target.selector())?;
+        let resolved = target.class();
+        if current.id != resolved.id
+            || current.name != resolved.name
+            || current.collection_id != resolved.collection_id
+        {
+            return Err(StorageError::not_found(
+                "Class no longer matches the resolved route target",
+            ));
+        }
+        Ok(current)
+    }
+
     fn record_event(&mut self, collection_id: i32, action: Action, context: &EventContext) {
         self.events.push(MemoryCollectionEvent {
             collection_id,
+            action,
+            context: context.clone(),
+        });
+    }
+
+    fn record_class_event(&mut self, class_id: i32, action: Action, context: &EventContext) {
+        self.class_events.push(MemoryClassEvent {
+            class_id,
             action,
             context: context.clone(),
         });
@@ -82,6 +136,10 @@ impl MemoryStorage {
 
     pub(crate) async fn events(&self) -> Vec<MemoryCollectionEvent> {
         self.state.read().await.events.clone()
+    }
+
+    pub(crate) async fn class_events(&self) -> Vec<MemoryClassEvent> {
+        self.state.read().await.class_events.clone()
     }
 }
 
@@ -191,6 +249,9 @@ impl CollectionStore for MemoryStorage {
             ));
         }
         state.collections.remove(&id.id());
+        state
+            .classes
+            .retain(|_, class| class.collection_id != id.id());
         state.record_event(id.id(), Action::Deleted, context);
         Ok(())
     }
@@ -274,5 +335,126 @@ impl CollectionStore for MemoryStorage {
         let moved = collection.clone();
         state.record_event(id.id(), Action::Updated, context);
         Ok(moved)
+    }
+}
+
+#[async_trait]
+impl ClassStore for MemoryStorage {
+    async fn resolve_class(
+        &self,
+        selector: ClassSelector,
+    ) -> Result<ResolvedClassTarget, StorageError> {
+        let state = self.state.read().await;
+        let class = state.class_for_selector(&selector)?.clone();
+        Ok(ResolvedClassTarget::new(selector, class))
+    }
+
+    async fn create_class(
+        &self,
+        command: NewHubuumClass,
+        context: &EventContext,
+    ) -> Result<HubuumClass, StorageError> {
+        command.validate_schema().map_err(StorageError::from)?;
+        let mut state = self.state.write().await;
+        if state.class_name_in_use(&command.name, None) {
+            return Err(StorageError::conflict(format!(
+                "A class named '{}' already exists",
+                command.name
+            )));
+        }
+        if !state.collections.contains_key(&command.collection_id) {
+            return Err(StorageError::not_found(format!(
+                "Collection {} was not found",
+                command.collection_id
+            )));
+        }
+
+        let id = state.next_class_id;
+        state.next_class_id += 1;
+        let now = Utc::now().naive_utc();
+        let class = HubuumClass {
+            id,
+            name: command.name,
+            collection_id: command.collection_id,
+            json_schema: command.json_schema,
+            validate_schema: command.validate_schema.unwrap_or(false),
+            description: command.description,
+            created_at: now,
+            updated_at: now,
+            revision: ResourceRevision::INITIAL,
+        };
+        state.classes.insert(id, class.clone());
+        state.record_class_event(id, Action::Created, context);
+        Ok(class)
+    }
+
+    async fn update_class(
+        &self,
+        target: &ResolvedClassTarget,
+        changes: UpdateHubuumClass,
+        context: &EventContext,
+    ) -> Result<HubuumClass, StorageError> {
+        let mut state = self.state.write().await;
+        let current = state.class_target(target)?.clone();
+        changes
+            .validate_schema_update(&current)
+            .map_err(StorageError::from)?;
+        if !changes.has_changes(&current) {
+            return Ok(current);
+        }
+        if let Some(name) = changes.name.as_deref()
+            && state.class_name_in_use(name, Some(current.id))
+        {
+            return Err(StorageError::conflict(format!(
+                "A class named '{name}' already exists"
+            )));
+        }
+        if let Some(collection_id) = changes.collection_id
+            && !state.collections.contains_key(&collection_id)
+        {
+            return Err(StorageError::not_found(format!(
+                "Collection {collection_id} was not found"
+            )));
+        }
+
+        let class = state
+            .classes
+            .get_mut(&current.id)
+            .expect("class existence was checked");
+        if let Some(name) = changes.name {
+            class.name = name;
+        }
+        if let Some(collection_id) = changes.collection_id {
+            class.collection_id = collection_id;
+        }
+        if let Some(json_schema) = changes.json_schema {
+            class.json_schema = Some(json_schema);
+        }
+        if let Some(validate_schema) = changes.validate_schema {
+            class.validate_schema = validate_schema;
+        }
+        if let Some(description) = changes.description {
+            class.description = description;
+        }
+        class.updated_at = Utc::now().naive_utc();
+        class.revision = class
+            .revision
+            .checked_advance()
+            .map_err(StorageError::from)?;
+        let updated = class.clone();
+        state.record_class_event(updated.id, Action::Updated, context);
+        Ok(updated)
+    }
+
+    async fn delete_class(
+        &self,
+        target: &ResolvedClassTarget,
+        context: &EventContext,
+    ) -> Result<(), StorageError> {
+        let mut state = self.state.write().await;
+        let class = state.class_target(target)?.clone();
+        state.classes.remove(&class.id);
+        state.record_class_event(class.id, Action::Deleted, context);
+        Ok(())
     }
 }
