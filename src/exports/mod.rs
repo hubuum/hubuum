@@ -37,17 +37,17 @@ use crate::permissions::{
     ResourceRef,
 };
 use crate::storage::StorageContext;
-use crate::storage::postgres::operations::UserPermissions;
-use crate::storage::postgres::operations::authz::{scope_allows, scope_allows_resource};
-use crate::storage::postgres::operations::relations::{
+use crate::storage::capabilities::UserPermissions;
+use crate::storage::capabilities::authz::{scope_allows, scope_allows_resource};
+use crate::storage::capabilities::relations::{
     class_relation_authorization_resources, object_authorization_resources,
     object_relation_authorization_resources,
 };
-use crate::storage::postgres::operations::task::{
+use crate::storage::capabilities::task::{
     TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate,
 };
-use crate::storage::postgres::operations::user::UserSearchBackend;
-use crate::storage::postgres::with_statement_timeout_scope;
+use crate::storage::capabilities::user::workflow::UserSearchBackend;
+use crate::storage::capabilities::with_statement_timeout_scope;
 use crate::tasks::request_hash;
 use crate::traits::{AuthzSubject, SelfAccessors};
 use crate::utilities::exporting::render_template;

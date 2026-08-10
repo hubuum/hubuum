@@ -5,253 +5,157 @@ use diesel::dsl::{count_star, max, min};
 use diesel::sql_types::BigInt;
 
 use crate::errors::ApiError;
-use crate::models::{
-    EventDeliveryQueueHealth, EventFanoutHealth, ExportTemplateID, TaskKind, TaskStatus,
-};
+use crate::models::{ExportTemplateID, TaskKind, TaskStatus};
 use crate::schema::{export_templates, tasks};
-use crate::storage::StorageContext;
 use crate::storage::postgres::prelude::*;
-use crate::storage::postgres::{PostgresConnection, with_connection};
+use crate::storage::postgres::{PostgresConnection, PostgresPool, with_connection};
+use crate::storage::{
+    ExportTemplateMetricIdentity, InventoryGaugeSnapshot, InventoryMetricsSnapshot, TaskGaugeAge,
+    TaskGaugeCount, TaskGaugeLastTerminal, TaskGaugeSnapshot,
+};
 
 #[derive(Debug, Clone, Copy, QueryableByName)]
-pub struct InventoryMetricsSnapshot {
+struct InventoryMetricsRow {
     #[diesel(sql_type = BigInt)]
-    pub collections: i64,
+    collections: i64,
     #[diesel(sql_type = BigInt)]
-    pub classes: i64,
+    classes: i64,
     #[diesel(sql_type = BigInt)]
-    pub objects: i64,
+    objects: i64,
     #[diesel(sql_type = BigInt)]
-    pub users: i64,
+    users: i64,
     #[diesel(sql_type = BigInt)]
-    pub groups: i64,
+    groups: i64,
     #[diesel(sql_type = BigInt)]
-    pub service_accounts: i64,
+    service_accounts: i64,
     #[diesel(sql_type = BigInt)]
-    pub remote_targets: i64,
+    remote_targets: i64,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct ExportTemplateMetricIdentity {
-    pub(crate) id: ExportTemplateID,
-    pub(crate) name: String,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct InventoryGaugeSnapshot {
-    pub(crate) counts: InventoryMetricsSnapshot,
-    pub(crate) export_templates: Vec<ExportTemplateMetricIdentity>,
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskMetricsCount {
-    pub kind: String,
-    pub status: String,
-    pub count: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskMetricsSnapshot {
-    pub counts: Vec<TaskMetricsCount>,
-    pub oldest_queued_at: Option<NaiveDateTime>,
-    pub oldest_active_at: Option<NaiveDateTime>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TaskGaugeCount {
-    pub(crate) kind: TaskKind,
-    pub(crate) status: TaskStatus,
-    pub(crate) count: i64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TaskGaugeAge {
-    pub(crate) kind: TaskKind,
-    pub(crate) oldest_queued_at: Option<NaiveDateTime>,
-    pub(crate) oldest_active_at: Option<NaiveDateTime>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TaskGaugeLastTerminal {
-    pub(crate) kind: TaskKind,
-    pub(crate) status: TaskStatus,
-    pub(crate) finished_at: Option<NaiveDateTime>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TaskGaugeSnapshot {
-    pub(crate) counts: Vec<TaskGaugeCount>,
-    pub(crate) ages: Vec<TaskGaugeAge>,
-    pub(crate) last_terminal: Vec<TaskGaugeLastTerminal>,
-}
-
-#[derive(Debug, Clone)]
-pub struct EventMetricsSnapshot {
-    pub fanout: EventFanoutHealth,
-    pub delivery: EventDeliveryQueueHealth,
-}
-
-pub trait MetricsBackend {
-    async fn metrics_inventory_snapshot(&self) -> Result<InventoryMetricsSnapshot, ApiError>;
-    async fn metrics_task_snapshot(&self) -> Result<TaskMetricsSnapshot, ApiError>;
-}
-
-pub(crate) trait MetricsRefreshBackend {
-    async fn metrics_inventory_gauge_snapshot(&self) -> Result<InventoryGaugeSnapshot, ApiError>;
-    async fn metrics_task_gauge_snapshot(&self) -> Result<TaskGaugeSnapshot, ApiError>;
-}
-
-impl<T> MetricsBackend for T
-where
-    T: StorageContext + Sync + ?Sized,
-{
-    async fn metrics_inventory_snapshot(&self) -> Result<InventoryMetricsSnapshot, ApiError> {
-        with_connection(self, load_inventory_counts).await
+impl From<InventoryMetricsRow> for InventoryMetricsSnapshot {
+    fn from(row: InventoryMetricsRow) -> Self {
+        Self {
+            collections: row.collections,
+            classes: row.classes,
+            objects: row.objects,
+            users: row.users,
+            groups: row.groups,
+            service_accounts: row.service_accounts,
+            remote_targets: row.remote_targets,
+        }
     }
+}
 
-    async fn metrics_task_snapshot(&self) -> Result<TaskMetricsSnapshot, ApiError> {
-        with_connection(self, async |conn| {
-            let counts = load_task_count_rows(conn)
-                .await?
-                .into_iter()
-                .map(|(kind, status, count)| TaskMetricsCount {
-                    kind,
-                    status,
+pub(crate) async fn load_inventory_gauge_snapshot(
+    pool: &PostgresPool,
+) -> Result<InventoryGaugeSnapshot, ApiError> {
+    with_connection(pool, async |conn| {
+        let counts = load_inventory_counts(conn).await?;
+        let export_templates = export_templates::table
+            .select((export_templates::id, export_templates::name))
+            .order(export_templates::id)
+            .load::<(i32, String)>(conn)
+            .await?
+            .into_iter()
+            .map(|(id, name)| {
+                Ok(ExportTemplateMetricIdentity {
+                    id: ExportTemplateID::new(id)?,
+                    name,
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?;
+
+        Ok::<_, ApiError>(InventoryGaugeSnapshot {
+            counts,
+            export_templates,
+        })
+    })
+    .await
+}
+
+pub(crate) async fn load_task_gauge_snapshot(
+    pool: &PostgresPool,
+) -> Result<TaskGaugeSnapshot, ApiError> {
+    with_connection(pool, async |conn| {
+        let counts = load_task_count_rows(conn)
+            .await?
+            .into_iter()
+            .map(|(kind, status, count)| {
+                Ok(TaskGaugeCount {
+                    kind: TaskKind::from_db(&kind)?,
+                    status: TaskStatus::from_db(&status)?,
                     count,
                 })
-                .collect();
-            let oldest_queued_at = tasks::table
-                .filter(tasks::status.eq(TaskStatus::Queued.as_str()))
-                .select(min(tasks::created_at))
-                .get_result::<Option<NaiveDateTime>>(conn)
-                .await?;
-            let oldest_active_at = tasks::table
-                .filter(tasks::status.eq_any(TaskStatus::ACTIVE.map(TaskStatus::as_str)))
-                .select(min(tasks::started_at))
-                .get_result::<Option<NaiveDateTime>>(conn)
-                .await?;
-
-            Ok::<_, ApiError>(TaskMetricsSnapshot {
-                counts,
-                oldest_queued_at,
-                oldest_active_at,
             })
-        })
-        .await
-    }
-}
+            .collect::<Result<Vec<_>, ApiError>>()?;
 
-impl<T> MetricsRefreshBackend for T
-where
-    T: StorageContext + Sync + ?Sized,
-{
-    async fn metrics_inventory_gauge_snapshot(&self) -> Result<InventoryGaugeSnapshot, ApiError> {
-        with_connection(self, async |conn| {
-            let counts = load_inventory_counts(conn).await?;
-            let export_templates = export_templates::table
-                .select((export_templates::id, export_templates::name))
-                .order(export_templates::id)
-                .load::<(i32, String)>(conn)
-                .await?
-                .into_iter()
-                .map(|(id, name)| {
-                    Ok(ExportTemplateMetricIdentity {
-                        id: ExportTemplateID::new(id)?,
-                        name,
-                    })
+        let oldest_queued = tasks::table
+            .filter(tasks::status.eq(TaskStatus::Queued.as_str()))
+            .group_by(tasks::kind)
+            .select((tasks::kind, min(tasks::created_at)))
+            .load::<(String, Option<NaiveDateTime>)>(conn)
+            .await?;
+        let oldest_active = tasks::table
+            .filter(tasks::status.eq_any(TaskStatus::ACTIVE.map(TaskStatus::as_str)))
+            .group_by(tasks::kind)
+            .select((tasks::kind, min(tasks::started_at)))
+            .load::<(String, Option<NaiveDateTime>)>(conn)
+            .await?;
+        let last_terminal = tasks::table
+            .filter(tasks::status.eq_any(TaskStatus::TERMINAL.map(TaskStatus::as_str)))
+            .group_by((tasks::kind, tasks::status))
+            .select((tasks::kind, tasks::status, max(tasks::finished_at)))
+            .load::<(String, String, Option<NaiveDateTime>)>(conn)
+            .await?
+            .into_iter()
+            .map(|(kind, status, finished_at)| {
+                Ok(TaskGaugeLastTerminal {
+                    kind: TaskKind::from_db(&kind)?,
+                    status: TaskStatus::from_db(&status)?,
+                    finished_at,
                 })
-                .collect::<Result<Vec<_>, ApiError>>()?;
-
-            Ok::<_, ApiError>(InventoryGaugeSnapshot {
-                counts,
-                export_templates,
             })
-        })
-        .await
-    }
+            .collect::<Result<Vec<_>, ApiError>>()?;
 
-    async fn metrics_task_gauge_snapshot(&self) -> Result<TaskGaugeSnapshot, ApiError> {
-        with_connection(self, async |conn| {
-            let counts = load_task_count_rows(conn)
-                .await?
-                .into_iter()
-                .map(|(kind, status, count)| {
-                    Ok(TaskGaugeCount {
-                        kind: TaskKind::from_db(&kind)?,
-                        status: TaskStatus::from_db(&status)?,
-                        count,
-                    })
-                })
-                .collect::<Result<Vec<_>, ApiError>>()?;
-
-            let oldest_queued = tasks::table
-                .filter(tasks::status.eq(TaskStatus::Queued.as_str()))
-                .group_by(tasks::kind)
-                .select((tasks::kind, min(tasks::created_at)))
-                .load::<(String, Option<NaiveDateTime>)>(conn)
-                .await?;
-            let oldest_active = tasks::table
-                .filter(tasks::status.eq_any(TaskStatus::ACTIVE.map(TaskStatus::as_str)))
-                .group_by(tasks::kind)
-                .select((tasks::kind, min(tasks::started_at)))
-                .load::<(String, Option<NaiveDateTime>)>(conn)
-                .await?;
-            let last_terminal = tasks::table
-                .filter(tasks::status.eq_any(TaskStatus::TERMINAL.map(TaskStatus::as_str)))
-                .group_by((tasks::kind, tasks::status))
-                .select((tasks::kind, tasks::status, max(tasks::finished_at)))
-                .load::<(String, String, Option<NaiveDateTime>)>(conn)
-                .await?
-                .into_iter()
-                .map(|(kind, status, finished_at)| {
-                    Ok(TaskGaugeLastTerminal {
-                        kind: TaskKind::from_db(&kind)?,
-                        status: TaskStatus::from_db(&status)?,
-                        finished_at,
-                    })
-                })
-                .collect::<Result<Vec<_>, ApiError>>()?;
-
-            let mut ages_by_kind = HashMap::new();
-            for (kind, timestamp) in oldest_queued {
-                ages_by_kind
-                    .entry(TaskKind::from_db(&kind)?)
-                    .or_insert((None, None))
-                    .0 = timestamp;
-            }
-            for (kind, timestamp) in oldest_active {
-                ages_by_kind
-                    .entry(TaskKind::from_db(&kind)?)
-                    .or_insert((None, None))
-                    .1 = timestamp;
-            }
-            let ages = TaskKind::ALL
-                .into_iter()
-                .map(|kind| {
-                    let (oldest_queued_at, oldest_active_at) =
-                        ages_by_kind.remove(&kind).unwrap_or((None, None));
-                    TaskGaugeAge {
-                        kind,
-                        oldest_queued_at,
-                        oldest_active_at,
-                    }
-                })
-                .collect();
-
-            Ok::<_, ApiError>(TaskGaugeSnapshot {
-                counts,
-                ages,
-                last_terminal,
+        let mut ages_by_kind = HashMap::new();
+        for (kind, timestamp) in oldest_queued {
+            ages_by_kind
+                .entry(TaskKind::from_db(&kind)?)
+                .or_insert((None, None))
+                .0 = timestamp;
+        }
+        for (kind, timestamp) in oldest_active {
+            ages_by_kind
+                .entry(TaskKind::from_db(&kind)?)
+                .or_insert((None, None))
+                .1 = timestamp;
+        }
+        let ages = TaskKind::ALL
+            .into_iter()
+            .map(|kind| {
+                let (oldest_queued_at, oldest_active_at) =
+                    ages_by_kind.remove(&kind).unwrap_or((None, None));
+                TaskGaugeAge {
+                    kind,
+                    oldest_queued_at,
+                    oldest_active_at,
+                }
             })
+            .collect();
+
+        Ok::<_, ApiError>(TaskGaugeSnapshot {
+            counts,
+            ages,
+            last_terminal,
         })
-        .await
-    }
+    })
+    .await
 }
 
 async fn load_inventory_counts(
     conn: &mut PostgresConnection,
 ) -> Result<InventoryMetricsSnapshot, ApiError> {
-    Ok(diesel::sql_query(
+    let row = diesel::sql_query(
         r#"
         SELECT
             (SELECT COUNT(*) FROM collections) AS collections,
@@ -263,8 +167,9 @@ async fn load_inventory_counts(
             (SELECT COUNT(*) FROM remote_targets) AS remote_targets
         "#,
     )
-    .get_result::<InventoryMetricsSnapshot>(conn)
-    .await?)
+    .get_result::<InventoryMetricsRow>(conn)
+    .await?;
+    Ok(row.into())
 }
 
 async fn load_task_count_rows(

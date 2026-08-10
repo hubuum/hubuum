@@ -65,7 +65,7 @@ for package classifications, publishing policy, and promotion requirements.
   Behavioral interfaces used by handlers and models inside the application.
   `StorageContext` is a sealed, opaque persistence capability. Consumers pass
   it to operations but cannot extract or select the database implementation.
-- `src/backend.rs`:
+- `src/storage/capabilities.rs`:
   Application-facing capability facade for query, workflow, and operational
   contracts that do not yet have multiple storage implementations.
 - `src/storage/postgres/operations/*`:
@@ -87,8 +87,8 @@ When adding a feature:
    has migrated.
 2. Express persistence as an aggregate- or query-shaped capability in
    `src/storage`; avoid generic table repositories.
-3. Implement database details in `src/storage/postgres/operations` and adapt them through the
-   PostgreSQL storage implementation.
+3. Implement database details in `src/storage/postgres/operations` and adapt
+   them through the PostgreSQL storage implementation.
 4. Keep model methods thin while they remain in unmigrated paths.
 5. Add shared logical contract tests and retain PostgreSQL-specific query,
    transaction, migration, recovery, and concurrency tests.
@@ -110,11 +110,12 @@ capability facade instead of importing these modules directly.
 
 ### Collection hierarchy implementation
 
-Recursive collections are implemented in the database layer, not in a workspace
-crate. The implementation is coupled to Diesel schema modules, PostgreSQL
-closure-table SQL, temporal history, `ApiError`, and Hubuum's permission
-semantics. Keep hierarchy writes in `src/storage/postgres/operations/collection/records.rs` and
-permission reads in `src/storage/postgres/operations/collection/permissions.rs` or
+Recursive collections are implemented in the PostgreSQL adapter, not in a
+workspace crate. The implementation is coupled to Diesel schema modules,
+PostgreSQL closure-table SQL, temporal history, `ApiError`, and Hubuum's
+permission semantics. Keep hierarchy writes in
+`src/storage/postgres/operations/collection/records.rs` and permission reads in
+`src/storage/postgres/operations/collection/permissions.rs` or
 `src/storage/postgres/operations/user/*`.
 
 Normal collection and class lifecycle handlers enter this implementation

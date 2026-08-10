@@ -23,8 +23,8 @@ use crate::models::{
 };
 use crate::observability::metrics;
 use crate::storage::StorageContext;
-use crate::storage::postgres::operations::remote_target::insert_remote_call_result;
-use crate::storage::postgres::operations::task::{TaskBackend, TaskStateUpdate};
+use crate::storage::capabilities::remote_target::insert_remote_call_result;
+use crate::storage::capabilities::task::{TaskBackend, TaskStateUpdate};
 use crate::traits::AuthzSubject;
 
 #[cfg(feature = "integration-test-support")]

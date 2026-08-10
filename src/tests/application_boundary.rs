@@ -100,16 +100,35 @@ fn application_consumers_do_not_import_database_implementation_details() {
         "src/services",
         "src/extractors",
         "src/middlewares",
+        "src/observability/metrics",
     ] {
         paths.extend(rust_files(&root.join(directory)));
     }
-    paths.push(root.join("src/observability/metrics/scrape.rs"));
+    for file in [
+        "src/auth.rs",
+        "src/backups/mod.rs",
+        "src/events/delivery.rs",
+        "src/events/fanout.rs",
+        "src/events/retention.rs",
+        "src/exports/mod.rs",
+        "src/restores/mod.rs",
+        "src/tasks/helpers.rs",
+        "src/tasks/preload.rs",
+        "src/tasks/remote_call.rs",
+        "src/token_retention.rs",
+        "src/traits/mod.rs",
+        "src/traits/permissions.rs",
+    ] {
+        paths.push(root.join(file));
+    }
 
     let mut violations = Vec::new();
     for path in paths {
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
-        let source = if path.starts_with(root.join("src/services")) {
+        let source = if path.starts_with(root.join("src/services"))
+            || path == root.join("src/exports/mod.rs")
+        {
             source.split("#[cfg(test)]").next().unwrap_or(&source)
         } else {
             &source
@@ -202,6 +221,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         .expect("StorageBackend should have a readable aggregate trait declaration");
     for required in [
         "LifecycleStorage",
+        "MetricsStorage",
         "IdentityAndAuthorizationStorage",
         "QueryAndHistoryStorage",
         "WorkflowStorage",

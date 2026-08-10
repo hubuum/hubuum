@@ -13,7 +13,7 @@ use crate::models::{
     EventDeliveryHealthResponse, EventDeliveryQueueHealth, EventDeliveryStatusCounts,
     EventFanoutHealth, EventSinkDeliveryHealth, EventSubscriptionDeliveryHealth, EventWorkerHealth,
 };
-use crate::storage::postgres::operations::metrics::EventMetricsSnapshot;
+use crate::storage::EventMetricsSnapshot;
 use crate::storage::postgres::with_connection;
 
 #[derive(Debug, QueryableByName)]
@@ -139,7 +139,7 @@ pub async fn load_event_delivery_health(
     .await
 }
 
-pub async fn load_event_metrics_snapshot(
+pub(crate) async fn load_event_metrics_snapshot(
     pool: &impl crate::storage::StorageContext,
 ) -> Result<EventMetricsSnapshot, ApiError> {
     with_connection(pool, async |conn| {

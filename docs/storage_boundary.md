@@ -128,6 +128,14 @@ transactions, batching, locking, hierarchy maintenance, initial grants,
 cardinality enforcement, and atomic event persistence. The contract must not
 devolve into table repositories or expose query builders.
 
+Inputs and results crossing the boundary are storage-owned, backend-neutral
+DTOs. They may contain domain types, but they do not derive Diesel traits or
+expose SQL rows, query builders, connections, pools, or driver errors. Each
+adapter keeps its persistence rows private and explicitly converts them into
+the contract DTOs. Metrics use this pattern today: `MetricsStorage` returns
+neutral inventory, task, event, and pool snapshots while PostgreSQL keeps its
+queryable row structs inside the adapter.
+
 ## Error Direction
 
 Errors cross the boundary in one direction:
@@ -313,6 +321,7 @@ Architecture tests enforce that:
   implementation modules;
 - backend-neutral services and storage contracts do not import PostgreSQL or
   application API errors;
+- storage contract DTOs do not derive Diesel traits or expose adapter types;
 - only adapter modules translate implementation errors to `StorageError`;
 - the application error layer owns `StorageError` to `ApiError` conversion;
 - `AppContext` owns an opaque `StorageHandle` and composes services from a

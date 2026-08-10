@@ -23,13 +23,13 @@ use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
-use crate::storage::postgres::operations::event_delivery::{
+use crate::storage::capabilities::event_delivery::{
     ClaimedEventDelivery, claim_event_delivery_batch, mark_event_delivery_failed,
     mark_event_delivery_succeeded,
 };
-use crate::storage::postgres::operations::events::load_queued_task_initiators;
-use crate::storage::postgres::operations::history::resolve_principal_names;
-use crate::storage::postgres::{StorageCallSite, with_storage_call_site};
+use crate::storage::capabilities::events::load_queued_task_initiators;
+use crate::storage::capabilities::history::resolve_principal_names;
+use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 use crate::storage::{StorageHandle, storage_handle};
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();

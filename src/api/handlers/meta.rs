@@ -8,9 +8,8 @@ use crate::models::class::total_class_count;
 use crate::models::collection::total_collection_count;
 use crate::models::object::{objects_per_class_count, total_object_count};
 use crate::permissions::AppContext;
-use crate::storage::capabilities::meta::{
-    load_database_pool_state, load_database_state, load_task_queue_state,
-};
+use crate::storage::MetricsStorage;
+use crate::storage::capabilities::meta::{load_database_state, load_task_queue_state};
 use actix_web::{Responder, delete, get, http::StatusCode, web};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -100,7 +99,7 @@ pub async fn get_db_state(
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
     let row = load_database_state(&context).await?;
-    let state = load_database_pool_state(&context);
+    let state = context.backend().metrics_pool_state();
     debug!(
         message = "DB state requested",
         requestor = requestor.user.id

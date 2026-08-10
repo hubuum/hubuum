@@ -71,8 +71,8 @@ where
 /// can!(pool, subject, scopes, [Permissions::ReadCollection, Permissions::UpdateCollection], collection, class1, class2);
 /// ```
 ///
-/// [`UserPermissions::can`]: crate::storage::postgres::operations::UserPermissions::can
-/// [`UserPermissions`]: crate::storage::postgres::operations::UserPermissions
+/// [`UserPermissions::can`]: crate::storage::capabilities::UserPermissions::can
+/// [`UserPermissions`]: crate::storage::capabilities::UserPermissions
 /// [`CollectionAccessors`]: crate::traits::CollectionAccessors
 /// [`Permissions`]: crate::models::Permissions
 /// [`ApiError::Forbidden`]: crate::errors::ApiError::Forbidden
@@ -92,7 +92,7 @@ macro_rules! can {
         let resources = vec![
             $($collection.to_resource_ref(backend).await?),+
         ];
-        if !$crate::storage::postgres::operations::authz::scope_allows_resources($scopes, &resources) {
+        if !$crate::storage::capabilities::authz::scope_allows_resources($scopes, &resources) {
             return Err($crate::errors::ApiError::Forbidden("Permission denied".to_string()));
         }
 

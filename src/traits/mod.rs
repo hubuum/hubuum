@@ -1,5 +1,5 @@
 pub use crate::models::traits::{GroupAccessors, Search};
-pub use crate::storage::postgres::operations::authz::{AuthzSubject, PrincipalIdAccessor};
+pub use crate::storage::capabilities::authz::{AuthzSubject, PrincipalIdAccessor};
 pub mod accessors;
 pub mod crud;
 pub mod pagination;

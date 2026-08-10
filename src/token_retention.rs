@@ -8,8 +8,8 @@ use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::TokenRetentionSettings;
 use crate::restores::MaintenanceActivityGuard;
-use crate::storage::postgres::operations::token_retention::purge_expired_token_batch;
-use crate::storage::postgres::{StorageCallSite, with_storage_call_site};
+use crate::storage::capabilities::token_retention::purge_expired_token_batch;
+use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 use crate::storage::{StorageContext, StorageHandle, storage_handle};
 
 static TOKEN_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();

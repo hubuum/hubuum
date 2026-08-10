@@ -3,8 +3,7 @@ use std::time::{Duration, Instant};
 use opentelemetry::KeyValue;
 
 use crate::models::{EventDeliveryStatusCounts, EventWorkerHealth};
-use crate::storage::postgres::operations::event_observability::load_event_metrics_snapshot;
-use crate::storage::postgres::operations::metrics::EventMetricsSnapshot;
+use crate::storage::{EventMetricsSnapshot, MetricsStorage};
 
 use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use super::{Metrics, current};
@@ -20,7 +19,7 @@ pub fn event_worker_wakeup(worker: &'static str, kind: &'static str) {
 
 pub(super) async fn refresh_event_gauges(
     metrics: &Metrics,
-    backend: &impl crate::storage::StorageContext,
+    backend: &(impl MetricsStorage + ?Sized),
 ) {
     if let Some(snapshot) = cached_event_snapshot(metrics) {
         record_event_snapshot(metrics, &snapshot);
@@ -28,7 +27,7 @@ pub(super) async fn refresh_event_gauges(
     }
 
     let refresh_started_at = Instant::now();
-    match load_event_metrics_snapshot(backend).await {
+    match backend.metrics_event_snapshot().await {
         Ok(snapshot) => {
             record_refresh_attempt(
                 metrics,
