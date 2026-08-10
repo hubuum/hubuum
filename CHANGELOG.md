@@ -68,6 +68,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Unified search SSE responses now begin before database search work and emit
+  collection, class, and object batches as each completes instead of buffering
+  the entire event sequence before returning the response.
 - Removed the legacy root PostgreSQL storage implementation tree and direct SQL
   from the storage compatibility harness. PostgreSQL composition is now
   confined to the storage factory, adapter-native fixtures are typed and

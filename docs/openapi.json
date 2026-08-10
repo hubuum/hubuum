@@ -18781,6 +18781,9 @@
                 },
                 "description": "Effective page size used by the server after applying the configured default and maximum."
               }
+            },
+            "content": {
+              "text/event-stream": {}
             }
           },
           "400": {
