@@ -4,6 +4,7 @@ mod classes;
 mod collections;
 pub(crate) mod computed_objects;
 pub(crate) mod history;
+pub(crate) mod object_aggregates;
 mod object_relations;
 mod objects;
 pub(crate) mod related_filter_authorization;

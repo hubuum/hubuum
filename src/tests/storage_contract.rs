@@ -1,6 +1,7 @@
 use std::sync::{Arc, LazyLock};
 
 use actix_web::web::Data;
+use async_trait::async_trait;
 use diesel_async::RunQueryDsl;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -29,12 +30,16 @@ use crate::storage::{
     ComputedObjectStorage, ComputedObjectVisibility, EventArchive, EventDeliveryStorage,
     EventFanoutStorage, EventHealthStorage, EventRetentionStorage, HistoryAsOfQuery,
     HistoryCollectionScope, HistoryListQuery, HistoryStorage, MetricsStorage,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery,
-    OperationalStateStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RetainedEvent,
-    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageError, StorageObject,
-    StorageRelatedDirection, StorageRelatedSort, StorageVisibility, TokenRetentionStorage,
-    UnifiedSearchQuery, UnifiedSearchStorage,
+    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
+    RelationTouchingQuery, RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind,
+    StorageError, StorageObject, StorageObjectAggregateAuthorizationCandidate,
+    StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
+    StorageObjectAggregateSpec, StorageObjectAggregateTarget, StorageRelatedDirection,
+    StorageRelatedSort, StorageVisibility, TokenRetentionStorage, UnifiedSearchQuery,
+    UnifiedSearchStorage,
 };
 use crate::traits::CanSave;
 
@@ -42,6 +47,27 @@ use crate::traits::CanSave;
 pub(crate) enum LifecycleContractImplementation {
     MemoryModel,
     PostgresAdapter,
+}
+
+struct AllowAllObjectAggregateAuthorizer;
+
+#[async_trait]
+impl ObjectAggregateAuthorizer for AllowAllObjectAggregateAuthorizer {
+    async fn authorize_target(
+        &self,
+        _target: StorageObjectAggregateAuthorizationTarget,
+        _required_permissions: Vec<AuthorizationPermission>,
+    ) -> Result<bool, StorageError> {
+        Ok(true)
+    }
+
+    async fn authorize_objects(
+        &self,
+        candidates: Vec<StorageObjectAggregateAuthorizationCandidate>,
+        _required_permissions: Vec<AuthorizationPermission>,
+    ) -> Result<Vec<bool>, StorageError> {
+        Ok(vec![true; candidates.len()])
+    }
 }
 
 #[actix_web::test]
@@ -662,6 +688,110 @@ async fn every_available_storage_backend_supplies_computed_object_queries() {
         .cleanup()
         .await
         .expect("computed-object compatibility fixture should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_object_aggregates() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let needle = prefix("object_aggregate");
+    let collection = crate::tests::create_collection_fixture(pool.get_ref(), &needle).await;
+    let fixture = crate::tests::create_object_fixture(
+        pool.get_ref(),
+        collection,
+        NewHubuumClass {
+            name: format!("{needle}_class"),
+            collection_id: 0,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "object-aggregate compatibility class".to_string(),
+        },
+        vec![NewHubuumObject {
+            name: format!("{needle}_object"),
+            collection_id: 0,
+            hubuum_class_id: 0,
+            data: serde_json::json!({"compatibility": true}),
+            description: "object-aggregate compatibility object".to_string(),
+        }],
+    )
+    .await
+    .expect("object-aggregate compatibility fixture should be created");
+    let visibility =
+        || StorageVisibility::new(i32::MAX, true, None::<Vec<AuthorizationPermission>>, None);
+    let query = |mode| {
+        ObjectAggregateStorageQuery::builder(
+            StorageObjectAggregateTarget::new(
+                fixture.class.id,
+                fixture.class.name.clone(),
+                fixture.class.collection_id,
+            ),
+            QueryOptions {
+                filters: vec![
+                    ParsedQueryParam {
+                        field: FilterField::ClassId,
+                        operator: SearchOperator::Equals { is_negated: false },
+                        value: fixture.class.id.to_string(),
+                    },
+                    ParsedQueryParam {
+                        field: FilterField::CollectionId,
+                        operator: SearchOperator::Equals { is_negated: false },
+                        value: fixture.class.collection_id.to_string(),
+                    },
+                ],
+                sort: Vec::new(),
+                limit: Some(50),
+                cursor: None,
+                include_total: true,
+            },
+            StorageObjectAggregateSpec::new(
+                ["name".to_string()],
+                [],
+                StorageObjectAggregateSort::DimensionsAscending,
+            ),
+            visibility(),
+        )
+        .required_permissions([
+            AuthorizationPermission::ReadObject,
+            AuthorizationPermission::ReadCollection,
+        ])
+        .cursor_max_encoded_bytes(4_096)
+        .authorization_mode(mode)
+        .build()
+        .expect("compatibility aggregate query should be valid")
+    };
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let storage_page = backend
+                    .aggregate_objects(query(ObjectAggregateAuthorizationMode::Storage), None)
+                    .await
+                    .expect("certified backend should aggregate with storage authorization");
+                let (rows, total, next_cursor) = storage_page.into_parts();
+                assert_eq!(rows.len(), 1);
+                assert_eq!(total, Some(1));
+                assert!(next_cursor.is_none());
+
+                let delegated_page = backend
+                    .aggregate_objects(
+                        query(ObjectAggregateAuthorizationMode::Delegated),
+                        Some(&AllowAllObjectAggregateAuthorizer),
+                    )
+                    .await
+                    .expect("certified backend should aggregate with delegated authorization");
+                let (rows, total, next_cursor) = delegated_page.into_parts();
+                assert_eq!(rows.len(), 1);
+                assert_eq!(total, Some(1));
+                assert!(next_cursor.is_none());
+            }
+        }
+    }
+
+    fixture
+        .cleanup()
+        .await
+        .expect("object-aggregate compatibility fixture should be removed");
 }
 
 #[actix_web::test]

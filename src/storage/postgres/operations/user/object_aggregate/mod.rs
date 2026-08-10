@@ -6,32 +6,38 @@ mod computed;
 mod filters;
 mod sql;
 
+use std::str::FromStr;
+
 use super::{UserCollectionAccessors, UserPermissions};
 use crate::errors::ApiError;
 use crate::models::object::HubuumObject;
 use crate::models::object_aggregate::{
-    DecodedObjectAggregateCursor, ObjectAggregateAuthorizationParts, ObjectAggregateBackendParts,
-    ObjectAggregateBackendRequest, ObjectAggregateCursorBudget, ObjectAggregateDimension,
-    ObjectAggregatePage, ObjectAggregateSpec, ObjectAggregateTargetParts,
+    DecodedObjectAggregateCursor, ObjectAggregateCursorBudget, ObjectAggregateDimension,
+    ObjectAggregateMeasure, ObjectAggregateMeasureState, ObjectAggregatePage, ObjectAggregateRow,
+    ObjectAggregateSort, ObjectAggregateSpec,
 };
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{CollectionID, Permissions, TokenScope, UserID};
 use crate::pagination::{
     SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, prepare_db_pagination,
 };
-use crate::permissions::PrincipalRef;
-use crate::storage::StorageContext;
+use crate::storage::postgres::operations::authorization::permission_from_storage;
 use crate::storage::postgres::operations::authz::scope_allows;
 use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, resolve_computed_query_fields,
 };
 use crate::storage::postgres::{PostgresPool, with_connection, with_transaction};
+use crate::storage::{
+    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorageQuery,
+    StorageObjectAggregateMeasureState, StorageObjectAggregateMeasureValue,
+    StorageObjectAggregatePage, StorageObjectAggregateRow, StorageObjectAggregateSort,
+};
 
 use self::accumulator::{
     ExternalAggregateAccumulator, create_aggregate_accumulator, merge_aggregate_rows,
     page_accumulated_aggregates, page_external_aggregates,
 };
-use self::authorization::{ExternalObjectAggregateAuthorizer, ObjectAggregatePermissionResources};
+use self::authorization::DelegatedObjectAggregateAuthorization;
 use self::candidate::{
     ObjectAggregateCandidate, ObjectAggregateCandidateQuery, load_aggregate_candidate_batch,
 };
@@ -54,6 +60,7 @@ struct ObjectAggregateRouteTarget {
 
 struct ObjectAggregateExecution<'a> {
     pool: &'a PostgresPool,
+    is_admin: bool,
     target: ObjectAggregateRouteTarget,
     paging: ObjectAggregatePaging,
     personal_owner_id: Option<i32>,
@@ -101,84 +108,100 @@ impl ObjectAggregatePaging {
     }
 }
 
-pub trait ObjectAggregateBackend: UserCollectionAccessors {
-    async fn aggregate_objects_from_backend<C>(
-        &self,
-        context: &C,
-        request: ObjectAggregateBackendRequest,
-    ) -> Result<ObjectAggregatePage, ApiError>
-    where
-        C: StorageContext,
-    {
-        let ObjectAggregateBackendParts {
-            target,
-            query_options,
-            spec,
-            personal_owner_id,
-            authorization,
-            cursor_budget,
-        } = request.into_parts();
-        let ObjectAggregateTargetParts {
+pub(crate) async fn aggregate_objects(
+    pool: &PostgresPool,
+    query: ObjectAggregateStorageQuery,
+    authorizer: Option<&dyn ObjectAggregateAuthorizer>,
+) -> Result<StorageObjectAggregatePage, ApiError> {
+    let target = query.target();
+    let class_id = target.class_id();
+    let class_name = target.class_name().to_string();
+    let collection_id = target.collection_id();
+    let dimensions = query
+        .spec()
+        .dimensions()
+        .iter()
+        .map(|dimension| ObjectAggregateDimension::from_str(dimension))
+        .collect::<Result<Vec<_>, _>>()?;
+    let measures = query
+        .spec()
+        .measures()
+        .iter()
+        .map(|measure| ObjectAggregateMeasure::from_str(measure))
+        .collect::<Result<Vec<_>, _>>()?;
+    let spec = ObjectAggregateSpec::with_measures(
+        dimensions,
+        measures,
+        sort_from_storage(query.spec().sort()),
+    )?;
+    let query_options = query.options().clone();
+    let cursor_budget =
+        ObjectAggregateCursorBudget::from_max_encoded_bytes(query.cursor_max_encoded_bytes());
+    let effective_limit = effective_page_limit(&query_options)?;
+    let decoded_cursor = query_options
+        .cursor
+        .as_deref()
+        .map(|cursor| spec.decode_cursor(cursor, cursor_budget))
+        .transpose()?;
+    let required_permissions = query
+        .required_permissions()
+        .iter()
+        .copied()
+        .map(permission_from_storage)
+        .collect::<Vec<_>>();
+    let token_scopes =
+        crate::storage::postgres::operations::visibility::token_scope(query.visibility())?;
+    let principal = UserID::new(query.visibility().principal_id())?;
+    tracing::debug!(
+        message = "Grouping visible filtered objects",
+        user_id = principal.id(),
+        dimensions = ?spec
+            .dimensions()
+            .iter()
+            .map(ObjectAggregateDimension::canonical)
+            .collect::<Vec<_>>()
+    );
+    let execution = ObjectAggregateExecution {
+        pool,
+        is_admin: query.visibility().is_admin(),
+        target: ObjectAggregateRouteTarget {
             class_id,
             class_name,
             collection_id,
-        } = target.into_parts();
-        let ObjectAggregateAuthorizationParts {
-            required_permissions,
-            token_scopes,
-        } = authorization.into_parts();
-        let effective_limit = effective_page_limit(&query_options)?;
-        let decoded_cursor = query_options
-            .cursor
-            .as_deref()
-            .map(|cursor| spec.decode_cursor(cursor, cursor_budget))
-            .transpose()?;
-        tracing::debug!(
-            message = "Grouping visible filtered objects",
-            user_id = self.principal_id(),
-            dimensions = ?spec
-                .dimensions()
-                .iter()
-                .map(ObjectAggregateDimension::canonical)
-                .collect::<Vec<_>>()
-        );
+        },
+        paging: ObjectAggregatePaging {
+            query_options,
+            spec,
+            decoded_cursor,
+            effective_limit,
+            cursor_budget,
+            computed_filter_snapshot: None,
+        },
+        personal_owner_id: query.personal_owner_id(),
+        required_permissions,
+        token_scopes: token_scopes.as_ref(),
+    };
 
-        let execution = ObjectAggregateExecution {
-            pool: crate::storage::context::postgres_pool(context),
-            target: ObjectAggregateRouteTarget {
-                class_id: class_id.id(),
-                class_name,
-                collection_id: collection_id.id(),
-            },
-            paging: ObjectAggregatePaging {
-                query_options,
-                spec,
-                decoded_cursor,
-                effective_limit,
-                cursor_budget,
-                computed_filter_snapshot: None,
-            },
-            personal_owner_id: personal_owner_id.map(UserID::id),
-            required_permissions,
-            token_scopes: token_scopes.as_ref(),
-        };
-
-        let permission_backend = context.permission_backend();
-        let sql_visibility_pushdown = permission_backend
-            .is_none_or(|backend| backend.supports_storage_visibility_filtering());
-        if sql_visibility_pushdown {
-            return aggregate_objects_with_local_authorization(self, execution).await;
+    let page = match query.authorization_mode() {
+        ObjectAggregateAuthorizationMode::Storage => {
+            if authorizer.is_some() {
+                return Err(ApiError::InternalServerError(
+                    "Storage-authorized aggregation received a delegated authorizer".to_string(),
+                ));
+            }
+            aggregate_objects_with_local_authorization(&principal, execution).await?
         }
-        let backend = permission_backend.ok_or_else(|| {
-            ApiError::InternalServerError(
-                "External object aggregation requires a permission backend".to_string(),
-            )
-        })?;
-        aggregate_visible_filtered_objects_with_external_batches(self, backend, execution).await
-    }
+        ObjectAggregateAuthorizationMode::Delegated => {
+            let authorizer = authorizer.ok_or_else(|| {
+                ApiError::InternalServerError(
+                    "Delegated object aggregation requires an authorizer".to_string(),
+                )
+            })?;
+            aggregate_visible_filtered_objects_with_external_batches(authorizer, execution).await?
+        }
+    };
+    Ok(page_to_storage(page))
 }
-
-impl<T> ObjectAggregateBackend for T where T: UserCollectionAccessors + ?Sized {}
 
 async fn aggregate_objects_with_local_authorization<U>(
     user: &U,
@@ -190,21 +213,31 @@ where
     if !scope_allows(execution.token_scopes, &execution.required_permissions) {
         return empty_aggregate_page(&execution.paging.query_options);
     }
-    let collection = CollectionID::new(execution.target.collection_id)?;
-    match user
-        .can(
-            execution.pool,
-            execution.required_permissions.iter().copied(),
-            [collection],
-            execution.token_scopes,
-        )
-        .await
-    {
-        Ok(()) => {}
-        Err(ApiError::Forbidden(_)) => {
-            return empty_aggregate_page(&execution.paging.query_options);
+    if execution.is_admin {
+        crate::logger::log_authorization_grant(
+            user.principal_id(),
+            &execution.required_permissions,
+            Some(1),
+            Some(execution.target.collection_id),
+            "admin",
+        );
+    } else {
+        let collection = CollectionID::new(execution.target.collection_id)?;
+        match user
+            .can(
+                execution.pool,
+                execution.required_permissions.iter().copied(),
+                [collection],
+                execution.token_scopes,
+            )
+            .await
+        {
+            Ok(()) => {}
+            Err(ApiError::Forbidden(_)) => {
+                return empty_aggregate_page(&execution.paging.query_options);
+            }
+            Err(error) => return Err(error),
         }
-        Err(error) => return Err(error),
     }
 
     if execution.paging.has_computed_filter()
@@ -317,48 +350,38 @@ async fn aggregate_visible_filtered_objects_with_local_batches(
     .await
 }
 
-async fn aggregate_visible_filtered_objects_with_external_batches<U>(
-    user: &U,
-    backend: &dyn crate::permissions::PermissionBackend,
+async fn aggregate_visible_filtered_objects_with_external_batches(
+    authorizer: &dyn ObjectAggregateAuthorizer,
     execution: ObjectAggregateExecution<'_>,
-) -> Result<ObjectAggregatePage, ApiError>
-where
-    U: UserCollectionAccessors + ?Sized,
-{
+) -> Result<ObjectAggregatePage, ApiError> {
     if !scope_allows(execution.token_scopes, &execution.required_permissions) {
         return empty_aggregate_page(&execution.paging.query_options);
     }
 
-    let principal = PrincipalRef::load(execution.pool, user).await?;
-    let resources = with_connection(execution.pool, async |connection| {
-        ObjectAggregatePermissionResources::load(connection, &execution.target).await
+    let required_permissions = execution
+        .required_permissions
+        .iter()
+        .copied()
+        .map(crate::permissions::permission_to_storage)
+        .collect::<Vec<_>>();
+    let authorizer = DelegatedObjectAggregateAuthorization::new(authorizer, required_permissions);
+    let target_is_authorized = with_connection(execution.pool, async |connection| {
+        authorizer
+            .authorize_target(connection, &execution.target)
+            .await
     })
     .await?;
-    {
-        let authorizer = ExternalObjectAggregateAuthorizer::new(
-            backend,
-            &principal,
-            &execution.required_permissions,
-            &resources,
-        )?;
-        if !authorizer.authorize_invariants().await? {
-            return empty_aggregate_page(&execution.paging.query_options);
-        }
+    if !target_is_authorized {
+        return empty_aggregate_page(&execution.paging.query_options);
     }
     let ObjectAggregateExecution {
         pool,
         target,
         mut paging,
         personal_owner_id,
-        required_permissions,
         token_scopes,
+        ..
     } = execution;
-    let authorizer = ExternalObjectAggregateAuthorizer::new(
-        backend,
-        &principal,
-        &required_permissions,
-        &resources,
-    )?;
     let mut computed_definitions =
         (!paging.spec.has_computed_field()).then(ComputedAggregateDefinitions::default);
     let mut accumulator = ExternalAggregateAccumulator::default();
@@ -386,7 +409,7 @@ where
         .await?;
         let candidate_page = candidates.into_page(&chunk_options)?;
         validate_candidate_target(&candidate_page.items, &target)?;
-        let authorized = authorizer.authorize(candidate_page.items).await?;
+        let authorized = authorizer.authorize_objects(candidate_page.items).await?;
 
         if !authorized.is_empty()
             && filters_computed_values
@@ -482,4 +505,45 @@ fn validate_candidate_target(
         ));
     }
     Ok(())
+}
+
+fn sort_from_storage(sort: StorageObjectAggregateSort) -> ObjectAggregateSort {
+    match sort {
+        StorageObjectAggregateSort::DimensionsAscending => ObjectAggregateSort::DimensionsAscending,
+        StorageObjectAggregateSort::DimensionsDescending => {
+            ObjectAggregateSort::DimensionsDescending
+        }
+        StorageObjectAggregateSort::ObjectCountAscending => {
+            ObjectAggregateSort::ObjectCountAscending
+        }
+        StorageObjectAggregateSort::ObjectCountDescending => {
+            ObjectAggregateSort::ObjectCountDescending
+        }
+    }
+}
+
+fn page_to_storage(page: ObjectAggregatePage) -> StorageObjectAggregatePage {
+    let (rows, total_count, next_cursor) = page.into_parts();
+    let rows = rows.into_iter().map(row_to_storage).collect();
+    let total = (total_count != SKIPPED_TOTAL_COUNT).then_some(total_count);
+    StorageObjectAggregatePage::new(rows, total, next_cursor)
+}
+
+fn row_to_storage(row: ObjectAggregateRow) -> StorageObjectAggregateRow {
+    let measures = row
+        .measures()
+        .iter()
+        .map(|measure| {
+            StorageObjectAggregateMeasureValue::new(
+                match measure.state() {
+                    ObjectAggregateMeasureState::Value => StorageObjectAggregateMeasureState::Value,
+                    ObjectAggregateMeasureState::Empty => StorageObjectAggregateMeasureState::Empty,
+                },
+                measure.value_count(),
+                measure.skipped_count(),
+                measure.value().cloned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    StorageObjectAggregateRow::new(measures, row.object_count(), row.sort_key().clone())
 }

@@ -30,7 +30,7 @@ mod unified_search;
 
 pub use auth::*;
 pub use membership::*;
-pub use object_aggregate::*;
+pub(crate) use object_aggregate::aggregate_objects;
 pub use permissions::*;
 pub use search::*;
 pub use unified_search::*;

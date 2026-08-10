@@ -19,15 +19,17 @@ use crate::storage::{
     EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot,
     EventRetentionStorage, EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery,
     HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot,
-    MetricsStorage, ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord,
+    MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord,
     ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage, ReadinessSnapshot,
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
     RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
     StorageBackend, StorageBackendDescriptor, StorageClass, StorageClassGraphRow,
     StorageClassRelation, StorageCollection, StorageComputedObject, StorageError, StorageObject,
-    StorageObjectGraphRow, StorageObjectRelation, StoragePoolState, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass,
-    UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation, StoragePoolState,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, TaskGaugeSnapshot,
+    TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
+    UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
@@ -598,6 +600,29 @@ impl ComputedObjectStorage for StorageHandle {
                 }
             }
         })
+        .await
+    }
+}
+
+#[async_trait]
+impl ObjectAggregateStorage for StorageHandle {
+    async fn aggregate_objects(
+        &self,
+        query: ObjectAggregateStorageQuery,
+        authorizer: Option<&dyn ObjectAggregateAuthorizer>,
+    ) -> Result<StorageObjectAggregatePage, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "object_aggregates",
+            "aggregate",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.aggregate_objects(query, authorizer).await
+                    }
+                }
+            },
+        )
         .await
     }
 }
