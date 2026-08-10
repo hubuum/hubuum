@@ -22,6 +22,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Unified search SSE responses now begin before database search work and emit
+  collection, class, and object batches as each completes instead of buffering
+  the entire event sequence before returning the response.
 - **Breaking (Rust API support policy):** the root `hubuum` library and every
   current workspace crate are explicitly internal and non-publishable. Their
   Rust `pub` items are workspace construction details rather than supported
