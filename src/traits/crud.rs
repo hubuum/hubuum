@@ -1,8 +1,7 @@
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 
-use super::context::BackendContext;
+use crate::storage::StorageContext;
 
 /// Delete the value represented by `self`.
 ///
@@ -16,11 +15,11 @@ pub trait CanDelete {
     /// use [`CanDelete::delete`] so event subscribers observe the change.
     async fn delete_without_events<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 
     async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 /// Persist `self` and return the saved representation.
@@ -36,11 +35,11 @@ pub trait CanSave {
     /// code should use [`CanSave::save`] so event subscribers observe the change.
     async fn save_without_events<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 
     async fn save<C>(&self, backend: &C, context: &EventContext) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 /// Update an existing persisted value and return the updated representation.
@@ -62,7 +61,7 @@ pub trait CanUpdate {
         entry_id: Self::Identifier,
     ) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 
     async fn update<C>(
         &self,
@@ -71,14 +70,21 @@ pub trait CanUpdate {
         context: &EventContext,
     ) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 #[doc(hidden)]
 pub trait DeleteAdapter {
-    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError>;
+    async fn delete_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<(), ApiError>;
 
-    async fn delete_adapter(&self, pool: &DbPool, _context: &EventContext) -> Result<(), ApiError> {
+    async fn delete_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+        _context: &EventContext,
+    ) -> Result<(), ApiError> {
         self.delete_adapter_without_events(pool).await
     }
 }
@@ -89,18 +95,16 @@ where
 {
     async fn delete_without_events<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_adapter_without_events(crate::traits::backend_pool(backend))
-            .await
+        self.delete_adapter_without_events(backend).await
     }
 
     async fn delete<C>(&self, backend: &C, context: &EventContext) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_adapter(crate::traits::backend_pool(backend), context)
-            .await
+        self.delete_adapter(backend, context).await
     }
 }
 
@@ -108,11 +112,14 @@ where
 pub trait SaveAdapter {
     type Output;
 
-    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Self::Output, ApiError>;
+    async fn save_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Self::Output, ApiError>;
 
     async fn save_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         _context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
         self.save_adapter_without_events(pool).await
@@ -127,18 +134,16 @@ where
 
     async fn save_without_events<C>(&self, backend: &C) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.save_adapter_without_events(crate::traits::backend_pool(backend))
-            .await
+        self.save_adapter_without_events(backend).await
     }
 
     async fn save<C>(&self, backend: &C, context: &EventContext) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.save_adapter(crate::traits::backend_pool(backend), context)
-            .await
+        self.save_adapter(backend, context).await
     }
 }
 
@@ -149,13 +154,13 @@ pub trait UpdateAdapter {
 
     async fn update_adapter_without_events(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         entry_id: Self::Identifier,
     ) -> Result<Self::Output, ApiError>;
 
     async fn update_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         entry_id: Self::Identifier,
         _context: &EventContext,
     ) -> Result<Self::Output, ApiError> {
@@ -176,10 +181,9 @@ where
         entry_id: Self::Identifier,
     ) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.update_adapter_without_events(crate::traits::backend_pool(backend), entry_id)
-            .await
+        self.update_adapter_without_events(backend, entry_id).await
     }
 
     async fn update<C>(
@@ -189,10 +193,9 @@ where
         context: &EventContext,
     ) -> Result<Self::Output, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.update_adapter(crate::traits::backend_pool(backend), entry_id, context)
-            .await
+        self.update_adapter(backend, entry_id, context).await
     }
 }
 
@@ -203,7 +206,7 @@ where
 pub trait Validate {
     async fn validate<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 /// Validate a value against a supplied schema without loading backend state.

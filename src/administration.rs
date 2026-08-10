@@ -16,10 +16,6 @@ use crate::config::{
     DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT, DEFAULT_RESTORE_MAX_UPLOAD_BYTES,
     DEFAULT_RESTORE_STAGE_RETENTION_MINUTES,
 };
-use crate::db::prelude::*;
-use crate::db::{
-    DbPool, ensure_database_schema_ready, init_pool_with_statement_timeout, with_connection,
-};
 #[cfg(feature = "embedded-migrations")]
 use crate::errors::EXIT_CODE_DATABASE_ERROR;
 use crate::errors::{ApiError, EXIT_CODE_CONFIG_ERROR, fatal_error};
@@ -30,6 +26,11 @@ use crate::models::{
 };
 use crate::restores::{RestoreSettings, confirm_restore, stage_restore};
 use crate::schema::export_task_outputs::dsl::export_task_outputs;
+use crate::storage::postgres::prelude::*;
+use crate::storage::postgres::{
+    PostgresPool, ensure_postgres_schema_ready, init_postgres_pool_with_statement_timeout,
+    with_connection,
+};
 use crate::utilities::auth::generate_random_password;
 use crate::utilities::exporting::validate_template_with_limits;
 use crate::utilities::is_valid_log_level;
@@ -146,8 +147,11 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     }
 
     // Initialize database connection
-    let pool =
-        init_pool_with_statement_timeout(&database_url, 1, admin_cli.db_statement_timeout_ms);
+    let pool = init_postgres_pool_with_statement_timeout(
+        &database_url,
+        1,
+        admin_cli.db_statement_timeout_ms,
+    );
 
     if let Some(path) = admin_cli.backup {
         backup_database(pool, &path, !admin_cli.backup_without_history).await?;
@@ -173,7 +177,11 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn backup_database(pool: DbPool, path: &Path, include_history: bool) -> Result<(), ApiError> {
+async fn backup_database(
+    pool: PostgresPool,
+    path: &Path,
+    include_history: bool,
+) -> Result<(), ApiError> {
     let document = create_backup_document(&pool, &BackupRequest { include_history }).await?;
     let bytes = serde_json::to_vec_pretty(&document)?;
     write_backup_file(path, &bytes).map_err(|error| {
@@ -388,7 +396,7 @@ Set-Acl -LiteralPath $path -AclObject $acl
 }
 
 async fn restore_database(
-    pool: DbPool,
+    pool: PostgresPool,
     path: &Path,
     confirmation: Option<&str>,
 ) -> Result<(), ApiError> {
@@ -457,13 +465,13 @@ fn run_migrations(database_url: &str) {
     println!("Applied {} database migration(s).", applied.len());
 }
 
-async fn database_ready(pool: DbPool) -> Result<(), ApiError> {
-    ensure_database_schema_ready(&pool).await?;
+async fn database_ready(pool: PostgresPool) -> Result<(), ApiError> {
+    ensure_postgres_schema_ready(&pool).await?;
     println!("Database is ready and all required migrations are applied.");
     Ok(())
 }
 
-async fn reset_password(pool: DbPool, username: &str) -> Result<(), ApiError> {
+async fn reset_password(pool: PostgresPool, username: &str) -> Result<(), ApiError> {
     let user = User::get_by_name(&pool, username).await?;
     let new_password = generate_random_password(32);
     user.set_password(&pool, &new_password).await?;
@@ -472,7 +480,7 @@ async fn reset_password(pool: DbPool, username: &str) -> Result<(), ApiError> {
 }
 
 async fn audit_templates(
-    pool: DbPool,
+    pool: PostgresPool,
     export_template_recursion_limit: usize,
     export_template_fuel: u64,
 ) -> Result<(), ApiError> {
@@ -518,7 +526,7 @@ struct TemplateHealthRow {
     total_duration_max: i32,
 }
 
-async fn export_template_health(pool: DbPool) -> Result<(), ApiError> {
+async fn export_template_health(pool: PostgresPool) -> Result<(), ApiError> {
     let outputs = with_connection(&pool, async |conn| {
         export_task_outputs
             .load::<ExportTaskOutputRecord>(conn)

@@ -1,12 +1,14 @@
 use std::time::Duration;
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use futures_util::StreamExt;
 use tracing::{debug, error, info};
 
 use crate::config::get_config;
-use crate::db::{DatabasePoolSettings, DbPool, init_pool_with_settings};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
+use crate::storage::postgres::{
+    PostgresPool, PostgresPoolSettings, init_postgres_pool_with_settings,
+};
 
 const NOTIFICATION_LISTENER_POOL_SIZE: u32 = 1;
 
@@ -31,13 +33,13 @@ pub(crate) const TASK_QUEUE_CHANNEL: NotificationChannel =
     NotificationChannel::new("hubuum_task_queue");
 
 pub(crate) async fn notify_event_delivery(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
 ) -> QueryResult<usize> {
     notify_channel(conn, EVENT_DELIVERY_CHANNEL, "").await
 }
 
 pub(crate) async fn notify_task_queue(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     task_id: i32,
 ) -> QueryResult<usize> {
     let payload = task_id.to_string();
@@ -45,7 +47,7 @@ pub(crate) async fn notify_task_queue(
 }
 
 async fn notify_channel(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     channel: NotificationChannel,
     payload: &str,
 ) -> QueryResult<usize> {
@@ -68,20 +70,20 @@ pub(crate) fn spawn_postgres_notification_listener(
     });
 }
 
-fn new_postgres_notification_listener_pool() -> DbPool {
+fn new_postgres_notification_listener_pool() -> PostgresPool {
     let config =
         get_config().expect("Postgres notification listeners require database configuration");
-    let settings = DatabasePoolSettings::builder(config.database_url.clone())
+    let settings = PostgresPoolSettings::builder(config.database_url.clone())
         .max_size(NOTIFICATION_LISTENER_POOL_SIZE)
         .statement_timeout_ms(config.db_statement_timeout_ms)
         .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
         .build()
         .expect("Postgres notification listener pool settings must be valid");
-    init_pool_with_settings(&settings)
+    init_postgres_pool_with_settings(&settings)
 }
 
 async fn listen_loop(
-    pool: DbPool,
+    pool: PostgresPool,
     channel: NotificationChannel,
     on_notification: fn(),
     on_listening: fn(),
@@ -155,7 +157,7 @@ async fn wait_for_retry_or_shutdown(shutdown: &ShutdownSignal) -> bool {
 }
 
 async fn poll_notifications(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     channel: NotificationChannel,
     on_notification: fn(),
     shutdown: &ShutdownSignal,
@@ -203,9 +205,9 @@ mod tests {
     use rstest::rstest;
 
     use crate::config::get_config;
-    use crate::db::{init_pool, with_transaction};
     use crate::errors::ApiError;
     use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
+    use crate::storage::postgres::{init_postgres_pool, with_transaction};
     use crate::tests::test_scope;
 
     use super::*;
@@ -327,7 +329,7 @@ mod tests {
     async fn shutdown_releases_postgres_notification_listener() {
         LISTENER_READY.store(0, Ordering::Relaxed);
         let config = get_config().expect("test requires database configuration");
-        let listener_pool = init_pool(&config.database_url, 1);
+        let listener_pool = init_postgres_pool(&config.database_url, 1);
         let shutdown = ShutdownSignal::new();
         let listener = actix_rt::spawn(listen_loop(
             listener_pool.clone(),
@@ -378,7 +380,7 @@ mod tests {
         let _listener_connection = listener_pool.get().await.unwrap();
 
         let config = get_config().expect("test requires database configuration");
-        let execution_pool = init_pool(&config.database_url, 1);
+        let execution_pool = init_postgres_pool(&config.database_url, 1);
 
         tokio::time::timeout(Duration::from_secs(5), execution_pool.get())
             .await

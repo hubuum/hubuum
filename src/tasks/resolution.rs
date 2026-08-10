@@ -2,18 +2,17 @@ use super::helpers::{class_to_resolution, collection_to_resolution, object_to_re
 use super::types::{
     ClassResolution, CollectionResolution, ObjectResolution, PlanningState, RuntimeState,
 };
-use crate::db::DbPool;
-use crate::db::traits::task_import::{
+use crate::errors::ApiError;
+use crate::models::{
+    ClassKey, Collection, CollectionKey, HubuumClass, HubuumObject, ImportCollectionInput,
+    ObjectKey,
+};
+use crate::storage::postgres::operations::task_import::{
     lookup_class_by_collection_and_name, lookup_class_by_collection_and_name_db,
     lookup_collection_by_id, lookup_collection_by_key, lookup_collection_by_key_db,
     lookup_collection_child_by_name_db, lookup_collections_by_name,
     lookup_object_by_class_and_name, lookup_object_by_class_and_name_db, lookup_root_collection,
     lookup_root_collection_db,
-};
-use crate::errors::ApiError;
-use crate::models::{
-    ClassKey, Collection, CollectionKey, HubuumClass, HubuumObject, ImportCollectionInput,
-    ObjectKey,
 };
 
 fn validate_collection_key_path(key: &CollectionKey) -> Result<(), String> {
@@ -42,7 +41,7 @@ fn collection_key_label(key: &CollectionKey) -> String {
 }
 
 async fn find_collection_by_key_planning(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     key: &CollectionKey,
 ) -> Result<Option<CollectionResolution>, String> {
@@ -97,7 +96,7 @@ async fn find_collection_by_key_planning(
 }
 
 async fn resolve_root_collection_planning(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
 ) -> Result<CollectionResolution, String> {
     if let Some(collection) = state
@@ -117,7 +116,7 @@ async fn resolve_root_collection_planning(
 }
 
 pub(super) async fn resolve_collection_planning(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     reference: Option<&str>,
     key: Option<&CollectionKey>,
@@ -136,7 +135,7 @@ pub(super) async fn resolve_collection_planning(
 }
 
 pub(super) async fn resolve_collection_parent_planning(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     input: &ImportCollectionInput,
 ) -> Result<CollectionResolution, String> {
@@ -159,7 +158,7 @@ pub(super) async fn resolve_collection_parent_planning(
 }
 
 pub(super) async fn resolve_collection_by_id_planning(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     collection_id: i32,
 ) -> Result<CollectionResolution, String> {
@@ -177,7 +176,7 @@ pub(super) async fn resolve_collection_by_id_planning(
 }
 
 pub(super) async fn resolve_class_planning(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     reference: Option<&str>,
     key: Option<&ClassKey>,
@@ -227,7 +226,7 @@ pub(super) async fn resolve_class_planning(
 }
 
 pub(super) async fn resolve_object_planning(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     reference: Option<&str>,
     key: Option<&ObjectKey>,
@@ -274,7 +273,7 @@ pub(super) async fn resolve_object_planning(
 }
 
 pub(super) async fn resolve_collection_runtime(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     reference: Option<&str>,
     key: Option<&CollectionKey>,
@@ -300,7 +299,7 @@ pub(super) async fn resolve_collection_runtime(
 }
 
 pub(super) async fn resolve_collection_parent_runtime(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     input: &ImportCollectionInput,
 ) -> Result<Collection, ApiError> {
@@ -330,7 +329,7 @@ pub(super) async fn resolve_collection_parent_runtime(
 }
 
 pub(super) async fn lookup_existing_collection_for_import_db(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     parent_collection_id: i32,
     name: &str,
 ) -> Result<Option<Collection>, ApiError> {
@@ -338,7 +337,7 @@ pub(super) async fn lookup_existing_collection_for_import_db(
 }
 
 pub(super) async fn resolve_class_runtime(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     reference: Option<&str>,
     key: Option<&ClassKey>,
@@ -373,7 +372,7 @@ pub(super) async fn resolve_class_runtime(
 }
 
 pub(super) async fn resolve_object_runtime(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     reference: Option<&str>,
     key: Option<&ObjectKey>,

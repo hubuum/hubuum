@@ -1,6 +1,6 @@
 use gungraun::{library_benchmark, library_benchmark_group, main};
-use hubuum::db::traits::search::JsonPredicateExt;
 use hubuum::models::search::{ParsedQueryParam, SearchOperator};
+use hubuum::storage::postgres::operations::search::JsonPredicateExt;
 use std::hint::black_box;
 
 fn json_filter_fixtures() -> [ParsedQueryParam; 4] {

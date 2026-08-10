@@ -2,17 +2,17 @@
 mod tests {
     use std::time::Duration;
 
-    use crate::db::prelude::*;
+    use crate::storage::postgres::prelude::*;
     use diesel::sql_types::{Bool, Integer, Text};
     use rstest::rstest;
 
-    use crate::db::{DbPool, with_connection, with_transaction};
     use crate::events::EventContext;
     use crate::models::traits::{CreateObjectInResolvedClass, ResolveClassTarget};
     use crate::models::{
         ClassSelector, HubuumClassID, HubuumObject, HubuumObjectID, NewHubuumClass,
         NewHubuumObject, UpdateHubuumObject,
     };
+    use crate::storage::postgres::{PostgresPool, with_connection, with_transaction};
     use crate::traits::{CanDelete, CanSave};
     use actix_web::{http::StatusCode, test};
 
@@ -35,7 +35,7 @@ mod tests {
         waiting: bool,
     }
 
-    async fn wait_for_computed_lock_waiter(pool: &DbPool, class_id: i32) {
+    async fn wait_for_computed_lock_waiter(pool: &PostgresPool, class_id: i32) {
         for _ in 0..100 {
             let waiting = with_connection(pool, async |conn| {
                 diesel::sql_query(

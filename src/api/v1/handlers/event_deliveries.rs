@@ -2,11 +2,6 @@ use actix_web::{Responder, get, http::StatusCode, post, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::event_delivery::{
-    list_event_deliveries_with_total_count, load_event_delivery, mark_event_delivery_dead,
-    release_event_delivery_for_retry,
-};
-use crate::backend::capabilities::event_observability::load_event_delivery_health;
 use crate::errors::ApiError;
 use crate::events::kick_event_delivery_worker;
 use crate::extractors::AdminAccess;
@@ -17,6 +12,11 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
+use crate::storage::capabilities::event_delivery::{
+    list_event_deliveries_with_total_count, load_event_delivery, mark_event_delivery_dead,
+    release_event_delivery_for_retry,
+};
+use crate::storage::capabilities::event_observability::load_event_delivery_health;
 
 #[utoipa::path(
     get,

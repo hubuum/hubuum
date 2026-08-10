@@ -11,18 +11,6 @@ use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
-use crate::backend::capabilities::UserPermissions;
-use crate::backend::capabilities::authz::scope_allows;
-use crate::backend::capabilities::computed_field::enrich_objects_with_computed;
-use crate::backend::capabilities::history::{
-    HistoryCollectionFilter, class_as_of, class_history_paginated_with_total_count, object_as_of,
-    object_history_paginated_with_total_count,
-};
-use crate::backend::capabilities::relations::{
-    class_relation_authorization_resources, object_relation_authorization_resources,
-};
-use crate::backend::capabilities::user::UserSearchBackend;
-use crate::backend::with_revision_precondition_scope;
 use crate::can;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated, ObjectDataPatchPayload};
@@ -37,6 +25,18 @@ use crate::permissions::{
     AppContext, AuthzTarget, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
     authorize_resources,
 };
+use crate::storage::capabilities::UserPermissions;
+use crate::storage::capabilities::authz::scope_allows;
+use crate::storage::capabilities::computed_field::enrich_objects_with_computed;
+use crate::storage::capabilities::history::{
+    HistoryCollectionFilter, class_as_of, class_history_paginated_with_total_count, object_as_of,
+    object_history_paginated_with_total_count,
+};
+use crate::storage::capabilities::relations::{
+    class_relation_authorization_resources, object_relation_authorization_resources,
+};
+use crate::storage::capabilities::user::UserSearchBackend;
+use crate::storage::capabilities::with_revision_precondition_scope;
 
 use crate::models::{
     ClassGraphRow, ClassSelector, CollectionID, GroupPermission, HistoryAuthorizationSnapshot,

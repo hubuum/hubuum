@@ -4,14 +4,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::{Duration, Utc};
 use diesel::insert_into;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
-use hubuum::db::prelude::*;
-use hubuum::db::traits::identity::ensure_identity_scope;
-use hubuum::db::{DbPool, init_pool_with_statement_timeout, with_connection, with_transaction};
 use hubuum::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
 use hubuum::models::{
     NewExportTaskOutputRecord, NewTaskRecord, NewUser, TaskKind, TaskStatus, User,
 };
 use hubuum::schema::{collections, export_task_outputs, export_templates, tasks};
+use hubuum::storage::postgres::operations::identity::ensure_identity_scope;
+use hubuum::storage::postgres::prelude::*;
+use hubuum::storage::postgres::{
+    PostgresPool, init_postgres_pool_with_statement_timeout, with_connection, with_transaction,
+};
 use hubuum::utilities::auth::verify_password;
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -25,8 +27,8 @@ fn database_url() -> String {
         .expect("HUBUUM_DATABASE_URL must point to the migrated test database")
 }
 
-fn database_pool(database_url: &str) -> DbPool {
-    init_pool_with_statement_timeout(database_url, 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS)
+fn database_pool(database_url: &str) -> PostgresPool {
+    init_postgres_pool_with_statement_timeout(database_url, 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS)
 }
 
 fn admin_command(database_url: &str) -> Command {

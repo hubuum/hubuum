@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use async_trait::async_trait;
 use reqwest::Certificate;
 use treetop_client::{
@@ -10,7 +10,6 @@ use treetop_client::{
 };
 
 use crate::config::AppConfig;
-use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
 use crate::models::{
@@ -19,6 +18,8 @@ use crate::models::{
 };
 use crate::pagination::{known_count_or_skipped, paginate_in_memory};
 use crate::schema::collections;
+use crate::storage::StorageHandle;
+use crate::storage::postgres::with_connection;
 use crate::utilities::bounded_file::{MAX_CERTIFICATE_BUNDLE_BYTES, read_bounded_regular_file};
 
 use super::backend::PermissionBackend;
@@ -45,7 +46,7 @@ pub use mapping::{cedar_action, cedar_resource, cedar_user};
 ///   `ApiError::NotImplemented` — permissions are managed out-of-band.
 pub struct TreetopPermissionBackend {
     client: Client,
-    pool: DbPool,
+    storage: StorageHandle,
 }
 
 impl TreetopPermissionBackend {
@@ -53,7 +54,11 @@ impl TreetopPermissionBackend {
     ///
     /// Returns a fatal `ApiError` if the server is unreachable or unhealthy —
     /// per the spec, we fail-closed-fatal on startup health failures.
-    pub async fn connect(url: &str, cfg: &AppConfig, pool: DbPool) -> Result<Self, ApiError> {
+    pub(crate) async fn connect(
+        url: &str,
+        cfg: &AppConfig,
+        storage: StorageHandle,
+    ) -> Result<Self, ApiError> {
         let mut builder = Client::builder(url)
             .connect_timeout(Duration::from_millis(cfg.treetop_connect_timeout_ms))
             .request_timeout(Duration::from_millis(cfg.treetop_request_timeout_ms));
@@ -73,7 +78,17 @@ impl TreetopPermissionBackend {
         // Startup health check — fail-closed-fatal per Q9 of the spec.
         client.health().await.map_err(treetop_to_api_error)?;
 
-        Ok(Self { client, pool })
+        Ok(Self { client, storage })
+    }
+
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "integration-test-support"))]
+    pub async fn connect_postgres(
+        url: &str,
+        cfg: &AppConfig,
+        pool: crate::storage::postgres::PostgresPool,
+    ) -> Result<Self, ApiError> {
+        Self::connect(url, cfg, StorageHandle::postgres(pool)).await
     }
 
     async fn authorize_cedar_requests(
@@ -361,7 +376,7 @@ impl PermissionBackend for TreetopPermissionBackend {
         // We load all collections without any permission filtering, then
         // use paginate_authorized to filter via Treetop batch authorization.
         let start = Instant::now();
-        let all_collections = with_connection(&self.pool, async |conn| {
+        let all_collections = with_connection(&self.storage, async |conn| {
             collections::table.load::<Collection>(conn).await
         })
         .await?;
@@ -450,7 +465,7 @@ impl PermissionBackend for TreetopPermissionBackend {
                 }
             }
         }
-        let all_groups: Vec<Group> = with_connection(&self.pool, async |conn| {
+        let all_groups: Vec<Group> = with_connection(&self.storage, async |conn| {
             group_query.load::<Group>(conn).await
         })
         .await?;

@@ -1,11 +1,13 @@
 // To run during init:
 // If we have no users and no groups, create a default admin user and a default admin group.
 
-use crate::db::DbPool;
+use crate::storage::postgres::PostgresPool;
 
-use crate::db::traits::bootstrap::{bootstrap_default_admin, default_admin_bootstrap_required};
-use crate::db::traits::identity::ensure_identity_scope;
 use crate::models::identity::{LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND};
+use crate::storage::postgres::operations::bootstrap::{
+    bootstrap_default_admin, default_admin_bootstrap_required,
+};
+use crate::storage::postgres::operations::identity::ensure_identity_scope;
 use crate::utilities::auth::{generate_random_password, hash_password_async};
 
 use tracing::{error, warn};
@@ -28,7 +30,7 @@ impl InitializationSettings {
     }
 }
 
-pub async fn init(pool: DbPool, settings: &InitializationSettings) -> InitResult {
+pub async fn init(pool: PostgresPool, settings: &InitializationSettings) -> InitResult {
     if let Err(e) = ensure_identity_scope(&pool, LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND).await {
         let err_msg = format!("Failed to ensure local identity scope: {}", e);
         error!(message = &err_msg);
@@ -59,7 +61,7 @@ pub async fn init(pool: DbPool, settings: &InitializationSettings) -> InitResult
 }
 
 async fn bootstrap_default_admin_if_required<F, Fut>(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     settings: &InitializationSettings,
     hash_default_password: F,
 ) -> Result<bool, InitError>

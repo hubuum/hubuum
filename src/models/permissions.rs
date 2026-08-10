@@ -1,4 +1,4 @@
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use std::{fmt, fmt::Display, slice};
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -560,7 +560,7 @@ pub struct UpdatePermission {
 
 #[cfg(test)]
 mod tests {
-    use crate::db::prelude::*;
+    use crate::storage::postgres::prelude::*;
 
     use super::{PermissionFilter, Permissions, PermissionsList};
     use crate::schema::permissions::dsl::permissions;

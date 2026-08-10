@@ -4,12 +4,12 @@ use actix_web::middleware::Next;
 use actix_web::web::Data;
 use actix_web::{Error, ResponseError};
 
-use crate::backend::{DbCallSite, with_db_call_site};
 use crate::config::DEFAULT_METRICS_PATH;
 use crate::config::running::RunningConfig;
 use crate::errors::ApiError;
 use crate::permissions::AppContext;
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
+use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 
 fn allowed_during_maintenance(path: &str, metrics_path: Option<&str>) -> bool {
     matches!(path, "/healthz" | "/readyz")
@@ -26,7 +26,7 @@ pub async fn reject_during_maintenance(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
 ) -> Result<ServiceResponse<BoxBody>, Error> {
-    with_db_call_site(DbCallSite::HttpRequest, async move {
+    with_storage_call_site(StorageCallSite::HttpRequest, async move {
         let metrics_path = req
             .app_data::<Data<RunningConfig>>()
             .map(|config| config.server.metrics_path.as_str());
@@ -39,8 +39,8 @@ pub async fn reject_during_maintenance(
             // advisory lock serialize concurrent confirmations.
             let _activity = (!initiates_restore(req.path())).then(MaintenanceActivityGuard::begin);
             let backend = AppContext::from_http_request(req.request())?;
-            let state = with_db_call_site(
-                DbCallSite::RequestMaintenance,
+            let state = with_storage_call_site(
+                StorageCallSite::RequestMaintenance,
                 current_maintenance_state(&backend),
             )
             .await?;

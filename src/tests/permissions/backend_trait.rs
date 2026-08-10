@@ -32,7 +32,7 @@ fn unique_label(prefix: &str) -> String {
 #[actix_test]
 async fn local_backend_grants_then_authorizes_collection_read() {
     let (pool, _) = get_pool_and_config().await;
-    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
+    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::postgres(
         pool.clone(),
         "admin".to_string(),
     ));
@@ -109,7 +109,7 @@ async fn local_backend_grants_then_authorizes_collection_read() {
 #[actix_test]
 async fn local_backend_authorize_many_returns_per_request_decisions() {
     let (pool, _) = get_pool_and_config().await;
-    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
+    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::postgres(
         pool.clone(),
         "admin".to_string(),
     ));

@@ -1,17 +1,18 @@
 use std::time::Instant;
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use async_trait::async_trait;
 use tokio::sync::OnceCell;
 
-use crate::db::traits::collection as collection_backend;
-use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{
     Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
     PrincipalID,
 };
+use crate::storage::StorageHandle;
+use crate::storage::postgres::operations::collection as collection_backend;
+use crate::storage::postgres::with_connection;
 use crate::traits::{AuthzSubject, PermissionController};
 
 use super::backend::PermissionBackend;
@@ -26,18 +27,24 @@ const BACKEND_KIND: &str = "local";
 /// permission traits and query helpers. That keeps local semantics aligned with
 /// the canonical API surface instead of carrying a forked copy of the SQL code.
 pub struct LocalPermissionBackend {
-    pool: DbPool,
+    storage: StorageHandle,
     admin_groupname: String,
     admin_group_id: OnceCell<Option<i32>>,
 }
 
 impl LocalPermissionBackend {
-    pub fn new(pool: DbPool, admin_groupname: String) -> Self {
+    pub(crate) fn new(storage: StorageHandle, admin_groupname: String) -> Self {
         Self {
-            pool,
+            storage,
             admin_groupname,
             admin_group_id: OnceCell::new(),
         }
+    }
+
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "integration-test-support"))]
+    pub fn postgres(pool: crate::storage::postgres::PostgresPool, admin_groupname: String) -> Self {
+        Self::new(StorageHandle::postgres(pool), admin_groupname)
     }
 
     async fn admin_group_id(&self) -> Result<Option<i32>, ApiError> {
@@ -45,7 +52,7 @@ impl LocalPermissionBackend {
             .get_or_try_init(|| async {
                 use crate::schema::groups::dsl::{groupname, groups, id};
 
-                with_connection(&self.pool, async |conn| {
+                with_connection(&self.storage, async |conn| {
                     groups
                         .filter(groupname.eq(&self.admin_groupname))
                         .select(id)
@@ -68,7 +75,7 @@ impl LocalPermissionBackend {
         let collection = CollectionID::new(collection_id)?;
         let principal_id = PrincipalID::new(principal.user_id)?;
         collection
-            .user_can_all(&self.pool, principal_id, permissions, None)
+            .user_can_all(&self.storage, principal_id, permissions, None)
             .await
     }
 }
@@ -165,7 +172,7 @@ impl PermissionBackend for LocalPermissionBackend {
 
         if permissions.is_empty() {
             let group_ids_subquery = AuthzSubject::group_ids_subquery(&principal_id);
-            let collection_ids = with_connection(&self.pool, async |conn| {
+            let collection_ids = with_connection(&self.storage, async |conn| {
                 permissions_table
                     .filter(group_id.eq_any(group_ids_subquery))
                     .select(collection_id)
@@ -174,7 +181,7 @@ impl PermissionBackend for LocalPermissionBackend {
                     .await
             })
             .await?;
-            let rows = with_connection(&self.pool, async |conn| {
+            let rows = with_connection(&self.storage, async |conn| {
                 collections::table
                     .filter(collections::id.eq_any(collection_ids))
                     .load::<Collection>(conn)
@@ -194,7 +201,7 @@ impl PermissionBackend for LocalPermissionBackend {
         let mut collection_ids: Option<Vec<i32>> = None;
         for permission in permissions {
             let rows = collection_backend::user_can_on_any_from_backend(
-                &self.pool,
+                &self.storage,
                 principal_id,
                 *permission,
                 None,
@@ -219,7 +226,7 @@ impl PermissionBackend for LocalPermissionBackend {
         let rows = if collection_ids.is_empty() {
             Vec::new()
         } else {
-            with_connection(&self.pool, async |conn| {
+            with_connection(&self.storage, async |conn| {
                 collections::table
                     .filter(collections::id.eq_any(collection_ids))
                     .load::<Collection>(conn)
@@ -245,7 +252,7 @@ impl PermissionBackend for LocalPermissionBackend {
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
         let start = Instant::now();
         let (rows, total) = collection_backend::groups_on_paginated_with_total_count_from_backend(
-            &self.pool,
+            &self.storage,
             collection_id,
             permissions_filter.to_vec(),
             page,
@@ -268,7 +275,7 @@ impl PermissionBackend for LocalPermissionBackend {
     ) -> Result<Option<Permission>, ApiError> {
         let start = Instant::now();
         let result = match collection_backend::group_on_from_backend(
-            &self.pool,
+            &self.storage,
             collection_id.id(),
             group_id.id(),
         )
@@ -300,7 +307,7 @@ impl PermissionBackend for LocalPermissionBackend {
         replace_existing: bool,
     ) -> Result<Permission, ApiError> {
         collection_id
-            .apply_permissions(&self.pool, group_id, list, replace_existing, None)
+            .apply_permissions(&self.storage, group_id, list, replace_existing, None)
             .await
     }
 
@@ -310,7 +317,9 @@ impl PermissionBackend for LocalPermissionBackend {
         group_id: GroupID,
         list: PermissionsList,
     ) -> Result<Permission, ApiError> {
-        collection_id.revoke(&self.pool, group_id, list, None).await
+        collection_id
+            .revoke(&self.storage, group_id, list, None)
+            .await
     }
 
     async fn revoke_all(
@@ -318,7 +327,9 @@ impl PermissionBackend for LocalPermissionBackend {
         collection_id: CollectionID,
         group_id: GroupID,
     ) -> Result<(), ApiError> {
-        collection_id.revoke_all(&self.pool, group_id, None).await
+        collection_id
+            .revoke_all(&self.storage, group_id, None)
+            .await
     }
 
     fn supports_mutation(&self) -> bool {

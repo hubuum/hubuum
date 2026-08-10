@@ -2,7 +2,7 @@ use actix_web::{App, http::StatusCode, test};
 use serde_json::Value;
 
 use crate::api as prod_api;
-use crate::db::capture_queries;
+use crate::storage::postgres::capture_queries;
 use crate::tests::get_test_pool;
 
 #[actix_web::test]

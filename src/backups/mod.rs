@@ -4,8 +4,6 @@ use std::collections::BTreeMap;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
-use crate::db::traits::backup::snapshot_backup_db;
-use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::models::retention::FutureRetention;
 use crate::models::{
@@ -14,6 +12,8 @@ use crate::models::{
     TaskResultCounts, TaskStatus,
 };
 use crate::permissions::{AppContext, PrincipalRef};
+use crate::storage::postgres::operations::backup::snapshot_backup_db;
+use crate::storage::postgres::operations::task::{TaskBackend, TaskStateUpdate};
 use crate::traits::AuthzSubject;
 
 #[derive(Clone, Debug)]
@@ -93,10 +93,9 @@ fn build_manifest(state: &BackupState, history: Option<&BackupHistory>) -> Backu
 }
 
 pub async fn create_backup_document(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
     request: &BackupRequest,
 ) -> Result<BackupDocument, ApiError> {
-    let pool = crate::traits::backend_pool(pool);
     let include_history = request.include_history;
     let (state, history) = snapshot_backup_db(pool, include_history).await?;
     let manifest = build_manifest(&state, history.as_ref());
@@ -205,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn configured_backend_can_deny_a_sql_administrator_backup() {
         let test = TestContext::new().await;
-        let context = AppContext::new(
+        let context = AppContext::postgres(
             test.pool.get_ref().clone(),
             Arc::new(MockTreetopBackend::new()),
         );
@@ -225,7 +224,7 @@ mod tests {
             .unwrap();
         let backend = MockTreetopBackend::new();
         backend.add_admin_rule(policy_group.id);
-        let context = AppContext::new(test.pool.get_ref().clone(), Arc::new(backend));
+        let context = AppContext::postgres(test.pool.get_ref().clone(), Arc::new(backend));
 
         authorize_backup_request(&context, &test.normal_user, None)
             .await

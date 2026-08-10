@@ -20,13 +20,6 @@ use super::types::{
     PlannedExecution, PlannedItem, PlannedTaskResult, PlanningFailure, PlanningOutcome,
     PlanningState,
 };
-use crate::db::prelude::AsyncConnection;
-use crate::db::traits::UserPermissions;
-use crate::db::traits::task_import::{
-    lookup_class_by_collection_and_name, lookup_direct_class_relation, lookup_group_by_name,
-    lookup_object_by_class_and_name, lookup_object_relation,
-};
-use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{
     CONDITIONAL_IMPORT_TARGET_MISSING, Collection, CollectionID, ImportAtomicity, ImportClassInput,
@@ -35,6 +28,13 @@ use crate::models::{
     ImportPermissionPolicy, ImportPrincipalSubtype, ImportRequest, ImportWriteCondition,
     Permissions, RestoreTimestamps,
 };
+use crate::storage::postgres::operations::UserPermissions;
+use crate::storage::postgres::operations::task_import::{
+    lookup_class_by_collection_and_name, lookup_direct_class_relation, lookup_group_by_name,
+    lookup_object_by_class_and_name, lookup_object_relation,
+};
+use crate::storage::postgres::prelude::AsyncConnection;
+use crate::storage::postgres::with_connection;
 
 fn import_item_allows_overwrite(
     condition: Option<ImportWriteCondition>,
@@ -54,7 +54,7 @@ fn import_item_requires_existing(condition: Option<ImportWriteCondition>) -> boo
     condition.is_some_and(ImportWriteCondition::requires_existing)
 }
 use crate::permissions::PrincipalRef;
-use crate::traits::BackendContext;
+use crate::storage::StorageContext;
 
 fn extended_graph_items(request: &ImportRequest) -> usize {
     request.graph.identity_scopes.len()
@@ -171,7 +171,7 @@ fn preflight_failure_kind(error: &ApiError) -> FailureKind {
 }
 
 async fn preflight_dry_run(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     mode: &ImportMode,
     planned_items: Vec<PlannedItem>,
 ) -> Result<PlanningOutcome, ApiError> {
@@ -269,17 +269,16 @@ async fn preflight_dry_run(
 
 async fn is_import_admin<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     state: &mut PlanningState,
 ) -> Result<bool, String>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
     if let Some(is_admin) = state.admin_status.known() {
         return Ok(is_admin);
     }
-
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     let is_admin = match backend.permission_backend() {
         Some(permission_backend) if !permission_backend.uses_sql_permission_store() => {
             let principal = PrincipalRef::load(pool, user)
@@ -298,14 +297,14 @@ where
 
 async fn ensure_collection_permission_cached<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     state: &mut PlanningState,
     collection_id: i32,
     collection_exists_in_db: bool,
     permission: Permissions,
 ) -> Result<(), String>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
     if state.scopes.is_none() && is_import_admin(backend, user, state).await? {
         return Ok(());
@@ -335,7 +334,7 @@ where
 }
 
 async fn class_relation_exists_cached(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     left: i32,
     right: i32,
@@ -357,7 +356,7 @@ async fn class_relation_exists_cached(
 }
 
 async fn object_relation_exists_cached(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     left: i32,
     right: i32,
@@ -418,14 +417,14 @@ impl RelationPlanDecision {
 
 async fn ensure_relation_permissions<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     state: &mut PlanningState,
     collections: [&CollectionResolution; 2],
     permission: Permissions,
     failure_item: PlannedTaskResult,
 ) -> Result<(), PlanningFailure>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
     for collection in collections {
         ensure_collection_permission_cached(
@@ -448,12 +447,12 @@ where
 
 pub(super) async fn plan_import<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     scopes: Option<&TokenScope>,
     request: &ImportRequest,
 ) -> PlanningOutcome
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
     plan_import_with_admin_status(backend, user, scopes, request, ImportAdminStatus::Unknown).await
 }
@@ -461,11 +460,11 @@ where
 #[cfg(test)]
 pub(super) async fn plan_runtime_admin_import<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     request: &ImportRequest,
 ) -> PlanningOutcome
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
     plan_import_with_admin_status(backend, user, None, request, ImportAdminStatus::Known(true))
         .await
@@ -473,15 +472,15 @@ where
 
 async fn plan_import_with_admin_status<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     scopes: Option<&TokenScope>,
     request: &ImportRequest,
     admin_status: ImportAdminStatus,
 ) -> PlanningOutcome
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     let mode = request.mode();
     let mut state = PlanningState::new();
     state.scopes = scopes.cloned();
@@ -938,15 +937,15 @@ where
 
 pub(super) async fn plan_collection<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportCollectionInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     if let Some(reference) = &input.ref_
         && state.collections_by_ref.contains_key(reference)
     {
@@ -1155,15 +1154,15 @@ fn validate_planned_class_schema(class: &ClassResolution) -> Result<(), ApiError
 
 pub(super) async fn plan_class<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportClassInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     if let Some(schema) = input.json_schema.as_ref() {
         crate::utilities::json_schema::validate_json_schema(schema).map_err(|error| {
             PlanningFailure {
@@ -1379,15 +1378,15 @@ where
 
 pub(super) async fn plan_object<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportObjectInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     if let Some(reference) = &input.ref_
         && state.objects_by_ref.contains_key(reference)
     {
@@ -1593,15 +1592,15 @@ where
 
 pub(super) async fn plan_class_relation<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportClassRelationInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     let from_class = resolve_class_planning(
         pool,
         state,
@@ -1739,15 +1738,15 @@ where
 
 pub(super) async fn plan_object_relation<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportObjectRelationInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     let from_object = resolve_object_planning(
         pool,
         state,
@@ -1909,15 +1908,15 @@ where
 
 pub(super) async fn plan_collection_permission<C>(
     backend: &C,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportCollectionPermissionInput,
 ) -> Result<PlannedItem, PlanningFailure>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     let collection = resolve_collection_planning(
         pool,
         state,

@@ -6,12 +6,11 @@ use super::resolution::{
     resolve_collection_planning,
 };
 use super::types::{CollectionResolution, PlanningState};
-use crate::db::DbPool;
-use crate::db::traits::task_import::{
+use crate::models::{ClassKey, ImportRequest, ObjectKey};
+use crate::storage::postgres::operations::task_import::{
     lookup_classes_by_collection_and_names, lookup_collections_by_name,
     lookup_objects_by_class_and_names,
 };
-use crate::models::{ClassKey, ImportRequest, ObjectKey};
 
 fn collect_request_class_keys(request: &ImportRequest) -> Vec<ClassKey> {
     let mut keys = Vec::new();
@@ -73,7 +72,7 @@ fn collect_request_object_keys(request: &ImportRequest) -> Vec<ObjectKey> {
 }
 
 async fn preload_collections_for_class_keys(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     class_keys: &[ClassKey],
 ) -> Result<(), String> {
@@ -120,7 +119,7 @@ async fn preload_collections_for_class_keys(
 }
 
 pub(super) async fn preload_existing_classes(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     request: &ImportRequest,
 ) -> Result<(), String> {
@@ -177,7 +176,7 @@ pub(super) async fn preload_existing_classes(
 }
 
 async fn resolve_class_collection_for_preload(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     key: &ClassKey,
 ) -> Result<Option<CollectionResolution>, String> {
@@ -195,7 +194,7 @@ async fn resolve_class_collection_for_preload(
 }
 
 pub(super) async fn preload_existing_objects(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
     request: &ImportRequest,
 ) -> Result<(), String> {

@@ -1,9 +1,8 @@
-use crate::db::DbPool;
-use crate::db::traits::relations::{
-    DeleteClassRelationRecord, LoadClassRelationRecord, SaveClassRelationRecord,
-};
 use crate::errors::ApiError;
 use crate::events::EventContext;
+use crate::storage::postgres::operations::relations::{
+    DeleteClassRelationRecord, LoadClassRelationRecord, SaveClassRelationRecord,
+};
 
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
@@ -31,7 +30,10 @@ impl IdAccessor for HubuumClassRelationID {
 }
 
 impl InstanceAdapter<HubuumClassRelation> for HubuumClassRelationID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<HubuumClassRelation, ApiError> {
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<HubuumClassRelation, ApiError> {
         self.load_class_relation_record(pool).await
     }
 }
@@ -42,17 +44,27 @@ impl IdAccessor for HubuumClassRelation {
 }
 
 impl InstanceAdapter<HubuumClassRelation> for HubuumClassRelation {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<HubuumClassRelation, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<HubuumClassRelation, ApiError> {
         Ok(self.clone())
     }
 }
 
 impl DeleteAdapter for HubuumClassRelation {
-    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<(), ApiError> {
         self.delete_class_relation_record_without_events(pool).await
     }
 
-    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+    async fn delete_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+        context: &EventContext,
+    ) -> Result<(), ApiError> {
         self.delete_class_relation_record(pool, Some(context)).await
     }
 }
@@ -62,14 +74,14 @@ impl SaveAdapter for NewHubuumClassRelation {
 
     async fn save_adapter_without_events(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<HubuumClassRelation, ApiError> {
         self.save_class_relation_record_without_events(pool).await
     }
 
     async fn save_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<HubuumClassRelation, ApiError> {
         self.save_class_relation_record(pool, Some(context)).await
@@ -77,11 +89,18 @@ impl SaveAdapter for NewHubuumClassRelation {
 }
 
 impl DeleteAdapter for HubuumClassRelationID {
-    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<(), ApiError> {
         self.delete_class_relation_record_without_events(pool).await
     }
 
-    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+    async fn delete_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+        context: &EventContext,
+    ) -> Result<(), ApiError> {
         self.delete_class_relation_record(pool, Some(context)).await
     }
 }
@@ -91,15 +110,15 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
 {
     async fn collection_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(Collection, Collection), ApiError> {
-        use crate::db::traits::GetCollection;
+        use crate::storage::postgres::operations::GetCollection;
         self.collection_from_backend(pool).await
     }
 
     async fn collection_id_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(CollectionID, CollectionID), ApiError> {
         let (collection_one, collection_two) = self.collection(pool).await?;
         Ok((
@@ -114,15 +133,15 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
 {
     async fn collection_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(Collection, Collection), ApiError> {
-        use crate::db::traits::GetCollection;
+        use crate::storage::postgres::operations::GetCollection;
         self.collection_from_backend(pool).await
     }
 
     async fn collection_id_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(CollectionID, CollectionID), ApiError> {
         let (collection_one, collection_two) = self.collection(pool).await?;
         Ok((
@@ -137,14 +156,14 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
 {
     async fn collection_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(Collection, Collection), ApiError> {
         self.instance(pool).await?.collection(pool).await
     }
 
     async fn collection_id_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(CollectionID, CollectionID), ApiError> {
         self.instance(pool).await?.collection_id(pool).await
     }
@@ -155,15 +174,15 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
 {
     async fn collection_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(Collection, Collection), ApiError> {
-        use crate::db::traits::GetCollection;
+        use crate::storage::postgres::operations::GetCollection;
         self.collection_from_backend(pool).await
     }
 
     async fn collection_id_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(CollectionID, CollectionID), ApiError> {
         let (collection_one, collection_two) = self.collection(pool).await?;
         Ok((
@@ -178,15 +197,15 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
 {
     async fn collection_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(Collection, Collection), ApiError> {
-        use crate::db::traits::GetCollection;
+        use crate::storage::postgres::operations::GetCollection;
         self.collection_from_backend(pool).await
     }
 
     async fn collection_id_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(CollectionID, CollectionID), ApiError> {
         let (collection_one, collection_two) = self.collection(pool).await?;
         Ok((
@@ -199,14 +218,17 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
 impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
     for HubuumClassRelation
 {
-    async fn class_adapter(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
-        use crate::db::traits::GetClass;
+    async fn class_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<(HubuumClass, HubuumClass), ApiError> {
+        use crate::storage::postgres::operations::GetClass;
         self.class_from_backend(pool).await
     }
 
     async fn class_id_adapter(
         &self,
-        _pool: &DbPool,
+        _pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumClassID, HubuumClassID), ApiError> {
         Ok((
             HubuumClassID::new(self.from_hubuum_class_id)?,
@@ -220,14 +242,14 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
 {
     async fn collection_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(Collection, Collection), ApiError> {
         self.instance(pool).await?.collection(pool).await
     }
 
     async fn collection_id_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(CollectionID, CollectionID), ApiError> {
         self.instance(pool).await?.collection_id(pool).await
     }
@@ -236,14 +258,17 @@ impl CollectionAdapter<(Collection, Collection), (CollectionID, CollectionID)>
 impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
     for HubuumClassRelationID
 {
-    async fn class_adapter(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
-        use crate::db::traits::GetClass;
+    async fn class_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<(HubuumClass, HubuumClass), ApiError> {
+        use crate::storage::postgres::operations::GetClass;
         self.class_from_backend(pool).await
     }
 
     async fn class_id_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumClassID, HubuumClassID), ApiError> {
         self.instance(pool).await?.class_id(pool).await
     }
@@ -252,14 +277,17 @@ impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
 impl ClassAdapter<(HubuumClass, HubuumClass), (HubuumClassID, HubuumClassID)>
     for NewHubuumClassRelation
 {
-    async fn class_adapter(&self, pool: &DbPool) -> Result<(HubuumClass, HubuumClass), ApiError> {
-        use crate::db::traits::GetClass;
+    async fn class_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<(HubuumClass, HubuumClass), ApiError> {
+        use crate::storage::postgres::operations::GetClass;
         self.class_from_backend(pool).await
     }
 
     async fn class_id_adapter(
         &self,
-        _pool: &DbPool,
+        _pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumClassID, HubuumClassID), ApiError> {
         Ok((
             HubuumClassID::new(self.from_hubuum_class_id)?,
@@ -273,15 +301,15 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID
 {
     async fn object_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
-        use crate::db::traits::GetObject;
+        use crate::storage::postgres::operations::GetObject;
         self.object_from_backend(pool).await
     }
 
     async fn object_id_adapter(
         &self,
-        _pool: &DbPool,
+        _pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumObjectID, HubuumObjectID), ApiError> {
         Ok((
             HubuumObjectID::new(self.from_hubuum_object_id)?,
@@ -295,15 +323,15 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID
 {
     async fn object_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
-        use crate::db::traits::GetObject;
+        use crate::storage::postgres::operations::GetObject;
         self.object_from_backend(pool).await
     }
 
     async fn object_id_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumObjectID, HubuumObjectID), ApiError> {
         self.instance(pool).await?.object_id(pool).await
     }
@@ -314,15 +342,15 @@ impl ObjectAdapter<(HubuumObject, HubuumObject), (HubuumObjectID, HubuumObjectID
 {
     async fn object_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumObject, HubuumObject), ApiError> {
-        use crate::db::traits::GetObject;
+        use crate::storage::postgres::operations::GetObject;
         self.object_from_backend(pool).await
     }
 
     async fn object_id_adapter(
         &self,
-        _pool: &DbPool,
+        _pool: &impl crate::storage::StorageContext,
     ) -> Result<(HubuumObjectID, HubuumObjectID), ApiError> {
         Ok((
             HubuumObjectID::new(self.from_hubuum_object_id)?,

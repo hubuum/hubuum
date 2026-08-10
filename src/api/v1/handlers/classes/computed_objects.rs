@@ -2,16 +2,6 @@ use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::classes::{
     computed_personal_owner, object_read_page, scope_object_query_to_class,
 };
-use crate::backend::capabilities::authz::scope_allows;
-use crate::backend::capabilities::computed_field::{
-    ComputedQuerySnapshot, enrich_objects_with_computed_query_snapshot,
-    resolve_computed_query_fields,
-};
-use crate::backend::capabilities::user::UserSearchBackend;
-use crate::backend::capabilities::user::search::{
-    ExternalRelatedFilterAuthorization, count_computed_objects_with_authorized_ids,
-    externally_authorized_related_object_ids, search_computed_objects_with_authorized_ids,
-};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::QueryOptions;
@@ -25,6 +15,16 @@ use crate::pagination::{
 };
 use crate::permissions::visibility::{AuthorizedObjectIds, authorize_all_candidates};
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
+use crate::storage::capabilities::authz::scope_allows;
+use crate::storage::capabilities::computed_field::{
+    ComputedQuerySnapshot, enrich_objects_with_computed_query_snapshot,
+    resolve_computed_query_fields,
+};
+use crate::storage::capabilities::user::UserSearchBackend;
+use crate::storage::capabilities::user::search::{
+    ExternalRelatedFilterAuthorization, count_computed_objects_with_authorized_ids,
+    externally_authorized_related_object_ids, search_computed_objects_with_authorized_ids,
+};
 
 enum ComputedListVisibility {
     SqlPushdown,

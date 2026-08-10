@@ -1,8 +1,5 @@
 use crate::api::openapi::{ApiErrorResponse, CountsResponse};
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::meta::{
-    load_database_pool_state, load_database_state, load_task_queue_state,
-};
 use crate::config::{get_config, login_rate_limit_config};
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;
@@ -11,6 +8,9 @@ use crate::models::class::total_class_count;
 use crate::models::collection::total_collection_count;
 use crate::models::object::{objects_per_class_count, total_object_count};
 use crate::permissions::AppContext;
+use crate::storage::capabilities::meta::{
+    load_database_pool_state, load_database_state, load_task_queue_state,
+};
 use actix_web::{Responder, delete, get, http::StatusCode, web};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;

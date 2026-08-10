@@ -3,9 +3,9 @@
 use rstest::rstest;
 use serde_json::Value;
 
-use crate::db::traits::object::{ValidateObjectRecord, ValidateObjectSchema};
 use crate::errors::ApiError;
 use crate::models::{NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
+use crate::storage::postgres::operations::object::{ValidateObjectRecord, ValidateObjectSchema};
 use crate::tests::constants::{SchemaType, get_schema};
 use crate::tests::{CollectionFixture, TestScope};
 use crate::traits::CanSave;

@@ -271,7 +271,7 @@ impl PermissionBackend for ForceSlowPath {
 #[actix_test]
 async fn paginate_authorized_filters_pages_correctly_under_slow_path() {
     let (pool, _) = get_pool_and_config().await;
-    let local = Arc::new(LocalPermissionBackend::new(
+    let local = Arc::new(LocalPermissionBackend::postgres(
         pool.clone(),
         "admin".to_string(),
     ));

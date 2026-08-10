@@ -1,0 +1,133 @@
+use super::*;
+use crate::models::token_scope::TokenScope;
+use crate::storage::postgres::operations::authz::{AuthzSubject, scope_allows};
+use diesel_async::RunQueryDsl;
+pub trait UserPermissions: AuthzSubject {
+    /// ## Check if a subject has a set of permissions in a set of collections
+    ///
+    /// All permissions must be present in all collections for the function to return true.
+    ///
+    /// ### Parameters
+    ///
+    /// * `pool` - A database connection pool
+    /// * `permissions` - An iterable of permissions to check for
+    /// * `collections` - An iterable of collections to check against
+    /// * `scopes` - The token scope set (`None` = unscoped/full authority)
+    ///
+    /// ### Returns
+    ///
+    /// * Nothing if the subject has the required permissions, or an ApiError::Forbidden if they do not.
+    async fn can<C, P, N, I>(
+        &self,
+        backend: &C,
+        permissions: P,
+        collections: I,
+        scopes: Option<&TokenScope>,
+    ) -> Result<(), ApiError>
+    where
+        C: crate::storage::StorageContext,
+        P: IntoIterator<Item = Permissions>,
+        I: IntoIterator<Item = N>,
+        N: CollectionAccessors,
+    {
+        use diesel::{AggregateExpressionMethods, dsl::count};
+        use futures::stream::{self, StreamExt, TryStreamExt};
+        use std::collections::HashSet;
+
+        let requested: Vec<Permissions> = permissions.into_iter().collect();
+        let principal_id = self.principal_id();
+        let pool = backend;
+
+        // Fail-closed scope pre-filter, before the admin bypass.
+        if !scope_allows(scopes, &requested) {
+            crate::logger::log_authorization_denial(
+                principal_id,
+                &requested,
+                None,
+                None,
+                "token_scope",
+            );
+            return Err(ApiError::Forbidden(
+                "Token scope does not permit the requested action".to_string(),
+            ));
+        }
+
+        if AuthzSubject::is_admin(self, pool).await? {
+            crate::logger::log_authorization_grant(principal_id, &requested, None, None, "admin");
+            return Ok(());
+        }
+
+        let lookup_table = crate::schema::permissions::dsl::permissions;
+        let group_id_field = crate::schema::permissions::dsl::group_id;
+        let collection_id_field = crate::schema::permissions::dsl::collection_id;
+        let closure_table = crate::schema::collection_closure::dsl::collection_closure;
+        let ancestor_collection_id = crate::schema::collection_closure::dsl::ancestor_collection_id;
+        let descendant_collection_id =
+            crate::schema::collection_closure::dsl::descendant_collection_id;
+
+        let group_id_subquery = self.group_ids_subquery();
+
+        let collection_ids: HashSet<i32> = stream::iter(collections)
+            .map(|collection_fixture| async move {
+                collection_fixture
+                    .collection_id(pool)
+                    .await
+                    .map(|collection_id| collection_id.id())
+            })
+            // Batch the futures into groups of 5, to avoid overwhelming the database
+            .buffered(5)
+            .try_collect()
+            .await?;
+        let collection_count = collection_ids.len();
+        let collection_id = (collection_count == 1)
+            .then(|| collection_ids.iter().next().copied())
+            .flatten();
+
+        let mut base_query = lookup_table
+            .inner_join(closure_table.on(collection_id_field.eq(ancestor_collection_id)))
+            .into_boxed()
+            .filter(descendant_collection_id.eq_any(&collection_ids))
+            .filter(group_id_field.eq_any(group_id_subquery));
+
+        // Apply all permission filters
+        for perm in &requested {
+            crate::apply_permission_filter!(base_query, *perm, true);
+        }
+
+        // Count the number of distinct collections that match all criteria
+        let matching_collections_count = with_connection(pool, async |conn| {
+            base_query
+                .select(count(descendant_collection_id).aggregate_distinct())
+                .first::<i64>(conn)
+                .await
+        })
+        .await?;
+
+        // Check if the count of matching collections equals the number of input collections
+        if matching_collections_count as usize == collection_count {
+            crate::logger::log_authorization_grant(
+                principal_id,
+                &requested,
+                Some(collection_count),
+                collection_id,
+                "permissions",
+            );
+            Ok(())
+        } else {
+            crate::logger::log_authorization_denial(
+                principal_id,
+                &requested,
+                Some(collection_count),
+                collection_id,
+                "permissions",
+            );
+            Err(ApiError::Forbidden(
+                "User does not have the required permissions".to_string(),
+            ))
+        }
+    }
+}
+
+// `.can(...)` is available to every authorization subject — humans, service
+// accounts, and bare principals alike — via the identity-only contract.
+impl<T: AuthzSubject + ?Sized> UserPermissions for T {}

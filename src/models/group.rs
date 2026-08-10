@@ -1,9 +1,5 @@
 // src/models/group.rs
 
-use crate::db::traits::group::{
-    DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord,
-    SavePrincipalGroupRecord, UpdateGroupRecord, group_identity_scope_name,
-};
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::principal::Principal;
@@ -11,18 +7,21 @@ use crate::models::principal_group::NewPrincipalGroup;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{LOCAL_PROVIDER_KIND, ResourceRevision};
 use crate::schema::groups;
+use crate::storage::postgres::operations::group::{
+    DeleteGroupRecord, GroupMembersBackend, LoadGroupRecord, SaveGroupRecord,
+    SavePrincipalGroupRecord, UpdateGroupRecord, group_identity_scope_name,
+};
 
-use crate::db::prelude::*;
+use crate::storage::StorageContext;
+use crate::storage::postgres::prelude::*;
 use crate::traits::PrincipalIdAccessor;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
-    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
-
-use crate::db::DbPool;
 
 crate::int_id_newtype! {
     /// Identifier wrapper for a [`Group`].
@@ -37,7 +36,10 @@ impl IdAccessor for GroupID {
 }
 
 impl InstanceAdapter<Group> for GroupID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<Group, ApiError> {
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Group, ApiError> {
         self.group(pool).await
     }
 }
@@ -45,10 +47,9 @@ impl InstanceAdapter<Group> for GroupID {
 impl GroupID {
     pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.load_group_record(crate::traits::backend_pool(backend))
-            .await
+        self.load_group_record(backend).await
     }
 
     /// Delete this group without emitting domain events.
@@ -58,10 +59,9 @@ impl GroupID {
     /// use [`GroupID::delete`] so event subscribers observe the change.
     pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_group_record_without_events(crate::traits::backend_pool(backend))
-            .await
+        self.delete_group_record_without_events(backend).await
     }
 
     pub async fn delete<C>(
@@ -70,10 +70,9 @@ impl GroupID {
         context: Option<&EventContext>,
     ) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_group_record(crate::traits::backend_pool(backend), context)
-            .await
+        self.delete_group_record(backend, context).await
     }
 }
 
@@ -173,17 +172,17 @@ impl GroupResponse {
 
     pub async fn from_groups<C>(backend: &C, groups: Vec<Group>) -> Result<Vec<Self>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         let scope_ids = groups
             .iter()
             .map(|group| group.identity_scope_id)
             .collect::<Vec<_>>();
-        let scope_names = crate::db::traits::identity::identity_scope_names_by_ids(
-            crate::traits::backend_pool(backend),
-            &scope_ids,
-        )
-        .await?;
+        let scope_names =
+            crate::storage::postgres::operations::identity::identity_scope_names_by_ids(
+                backend, &scope_ids,
+            )
+            .await?;
 
         groups
             .into_iter()
@@ -243,7 +242,10 @@ impl IdAccessor for Group {
 }
 
 impl InstanceAdapter<Group> for Group {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<Group, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<Group, ApiError> {
         Ok(self.clone())
     }
 }
@@ -251,26 +253,24 @@ impl InstanceAdapter<Group> for Group {
 impl Group {
     pub async fn to_response<C>(&self, backend: &C) -> Result<GroupResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        let identity_scope =
-            group_identity_scope_name(crate::traits::backend_pool(backend), self.id).await?;
+        let identity_scope = group_identity_scope_name(backend, self.id).await?;
         Ok(GroupResponse::from_parts(self, identity_scope))
     }
 
     pub async fn to_point_response<C>(&self, backend: &C) -> Result<GroupPointResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         Ok(self.to_response(backend).await?.into())
     }
 
     pub async fn members<C>(&self, backend: &C) -> Result<Vec<Principal>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.load_group_members(crate::traits::backend_pool(backend))
-            .await
+        self.load_group_members(backend).await
     }
 
     pub async fn members_paginated<C>(
@@ -279,9 +279,9 @@ impl Group {
         query_options: &QueryOptions,
     ) -> Result<Vec<(crate::models::PrincipalGroup, Principal)>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.load_group_members_paginated(crate::traits::backend_pool(backend), query_options)
+        self.load_group_members_paginated(backend, query_options)
             .await
     }
 
@@ -291,9 +291,9 @@ impl Group {
         query_options: &QueryOptions,
     ) -> Result<i64, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.count_group_members_paginated(crate::traits::backend_pool(backend), query_options)
+        self.count_group_members_paginated(backend, query_options)
             .await
     }
 
@@ -319,14 +319,14 @@ impl Group {
         member: &P,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         P: PrincipalIdAccessor,
     {
         NewPrincipalGroup {
             principal_id: member.principal_id(),
             group_id: self.id,
         }
-        .save_principal_group_record_without_events(crate::traits::backend_pool(backend))
+        .save_principal_group_record_without_events(backend)
         .await?;
 
         Ok(())
@@ -339,14 +339,14 @@ impl Group {
         context: Option<&EventContext>,
     ) -> Result<crate::models::PrincipalGroup, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         P: PrincipalIdAccessor,
     {
         NewPrincipalGroup {
             principal_id: member.principal_id(),
             group_id: self.id,
         }
-        .save_principal_group_record(crate::traits::backend_pool(backend), context)
+        .save_principal_group_record(backend, context)
         .await
     }
 
@@ -361,14 +361,11 @@ impl Group {
         backend: &C,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         P: PrincipalIdAccessor,
     {
-        self.remove_group_member_from_backend_without_events(
-            member.principal_id(),
-            crate::traits::backend_pool(backend),
-        )
-        .await
+        self.remove_group_member_from_backend_without_events(member.principal_id(), backend)
+            .await
     }
 
     pub async fn remove_member<C, P>(
@@ -378,15 +375,11 @@ impl Group {
         context: Option<&EventContext>,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         P: PrincipalIdAccessor,
     {
-        self.remove_group_member_from_backend(
-            member.principal_id(),
-            crate::traits::backend_pool(backend),
-            context,
-        )
-        .await
+        self.remove_group_member_from_backend(member.principal_id(), backend, context)
+            .await
     }
 
     /// Delete this group without emitting domain events.
@@ -396,10 +389,9 @@ impl Group {
     /// use the event-aware delete path so event subscribers observe the change.
     pub async fn delete_without_events<C>(&self, backend: &C) -> Result<usize, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_group_record_without_events(crate::traits::backend_pool(backend))
-            .await
+        self.delete_group_record_without_events(backend).await
     }
 }
 
@@ -419,10 +411,9 @@ impl NewGroup {
     /// code should use [`NewGroup::save`] so event subscribers observe the change.
     pub async fn save_without_events<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.save_group_record_without_events(crate::traits::backend_pool(backend))
-            .await
+        self.save_group_record_without_events(backend).await
     }
 
     pub async fn save<C>(
@@ -431,10 +422,9 @@ impl NewGroup {
         context: Option<&EventContext>,
     ) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.save_group_record(crate::traits::backend_pool(backend), context)
-            .await
+        self.save_group_record(backend, context).await
     }
 }
 
@@ -466,9 +456,9 @@ impl UpdateGroup {
         backend: &C,
     ) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.update_group_record_without_events(group_id.id(), crate::traits::backend_pool(backend))
+        self.update_group_record_without_events(group_id.id(), backend)
             .await
     }
 
@@ -479,9 +469,9 @@ impl UpdateGroup {
         context: Option<&EventContext>,
     ) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.update_group_record(group_id.id(), crate::traits::backend_pool(backend), context)
+        self.update_group_record(group_id.id(), backend, context)
             .await
     }
 }

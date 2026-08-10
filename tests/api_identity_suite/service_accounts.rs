@@ -14,7 +14,7 @@
 mod tests {
     use std::time::Duration;
 
-    use crate::db::prelude::*;
+    use crate::storage::postgres::prelude::*;
     use actix_web::{App, http::StatusCode, test, web};
     use chrono::SubsecRound;
     use diesel::sql_types::{Bool, Integer};
@@ -22,13 +22,6 @@ mod tests {
 
     use crate::api;
     use crate::api::v1::handlers::me::MeResponse;
-    use crate::db::traits::Status;
-    use crate::db::traits::authz::scope_allows;
-    use crate::db::traits::service_account::{
-        DisableServiceAccount, SaveServiceAccount, cancel_pending_tasks_for_principal,
-    };
-    use crate::db::traits::task::scope_snapshot_json;
-    use crate::db::{DbPool, with_connection, with_transaction};
     use crate::errors::ApiError;
     use crate::events::{Action, EntityType};
     use crate::models::Collection;
@@ -46,6 +39,13 @@ mod tests {
         TaskStatus, TokenResourceScope, TokenScope,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
+    use crate::storage::postgres::operations::Status;
+    use crate::storage::postgres::operations::authz::scope_allows;
+    use crate::storage::postgres::operations::service_account::{
+        DisableServiceAccount, SaveServiceAccount, cancel_pending_tasks_for_principal,
+    };
+    use crate::storage::postgres::operations::task::scope_snapshot_json;
+    use crate::storage::postgres::{PostgresPool, with_connection, with_transaction};
     use crate::test_support::{
         LOGIN_RATE_LIMIT_TEST_LOCK, integration_test_config,
         reset_login_rate_limit as reset_login_rate_limit_for_tests,
@@ -195,7 +195,7 @@ mod tests {
         waiting: bool,
     }
 
-    async fn wait_for_transaction_blocked_by(pool: &DbPool, blocker_pid: i32) {
+    async fn wait_for_transaction_blocked_by(pool: &PostgresPool, blocker_pid: i32) {
         for _ in 0..100 {
             let waiting = with_connection(pool, async |conn| {
                 diesel::sql_query(
@@ -2437,7 +2437,7 @@ mod tests {
     /// Persist a synthetic task owned by `submitted_by`. `scopes = Some(..)` marks
     /// the task as submitted by a scoped token and stores the scope snapshot.
     async fn synthetic_task(
-        pool: &crate::db::DbPool,
+        pool: &crate::storage::postgres::PostgresPool,
         submitted_by: i32,
         status: TaskStatus,
         idempotency_key: Option<String>,
@@ -2455,7 +2455,7 @@ mod tests {
     }
 
     async fn synthetic_task_of_kind(
-        pool: &crate::db::DbPool,
+        pool: &crate::storage::postgres::PostgresPool,
         kind: TaskKind,
         submitted_by: i32,
         status: TaskStatus,

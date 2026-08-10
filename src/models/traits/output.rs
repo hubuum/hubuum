@@ -7,9 +7,9 @@ use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     Collection, CollectionID, GroupPermission, HubuumClass, HubuumClassExpanded, Permission,
 };
+use crate::storage::StorageContext;
 use crate::traits::{
-    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
-    SelfAccessors,
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue, SelfAccessors,
 };
 
 /// Convert a `(Group, T)` tuple into a richer output type.
@@ -24,13 +24,13 @@ pub trait FromTuple<T> {
 pub trait ExpandCollection<T> {
     async fn expand_collection<C>(&self, backend: &C) -> Result<T, ApiError>
     where
-        C: BackendContext + ?Sized;
+        C: StorageContext;
 }
 
 impl ExpandCollection<HubuumClassExpanded> for HubuumClass {
     async fn expand_collection<C>(&self, backend: &C) -> Result<HubuumClassExpanded, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         let collection = CollectionID::new(self.collection_id)?
             .instance(backend)

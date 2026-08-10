@@ -29,13 +29,15 @@
 - Keep public domain behavior in `src/models/*` and `src/traits/*`.
 - Put migrated application use-case orchestration in `src/services/*` and
   backend-neutral persistence capabilities in `src/storage/*`.
-- Keep Diesel/Postgres query construction and backend details in `src/db/traits/*`.
-- Model methods should stay thin and delegate persistence-heavy work to backend traits.
+- Keep Diesel/Postgres query construction and backend details in
+  `src/storage/postgres/*` and `crates/hubuum-storage-postgres`.
+- Model methods should stay thin and delegate persistence-heavy work to storage capabilities.
 - Route high-level callers through services or operation-shaped backend
-  capabilities. Application consumers may pass `AppContext` or the opaque
-  `BackendContext`, but must not acquire, name, or select a `DbPool`.
+  capabilities. Application consumers may pass `AppContext`, `StorageHandle`,
+  or a `StorageContext`, but must not acquire, name, or select a
+  `PostgresPool`.
   Backend implementations may recover their configured connection pool behind
-  that sealed boundary; direct `DbPool` compatibility is internal migration
+  that sealed boundary; direct `PostgresPool` compatibility is internal migration
   machinery, not an application-layer escape hatch.
 - Keep storage capabilities aggregate- or query-shaped rather than table-shaped.
   Every selectable backend must implement the complete storage contract; focused

@@ -6,11 +6,6 @@ use utoipa::ToSchema;
 use crate::api::etag::{RevisionedResource, revision_precondition};
 use crate::api::openapi::{ApiErrorResponse, LoginResponse};
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
-use crate::backend::capabilities::service_account::{
-    is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
-};
-use crate::backend::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{
     AccessEventContext, Authenticated, ManagementAccess, PrincipalSettingsPatchPayload,
@@ -30,7 +25,12 @@ use crate::models::{
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::permissions::AppContext;
-use crate::traits::BackendContext;
+use crate::storage::StorageContext;
+use crate::storage::capabilities::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
+use crate::storage::capabilities::service_account::{
+    is_human_owner_group_member, load_service_account_by_id, principal_is_disabled,
+};
+use crate::storage::capabilities::with_revision_precondition_scope;
 use crate::traits::{AuthzSubject, GroupAccessors};
 use std::collections::BTreeMap;
 
@@ -49,7 +49,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 }
 
 async fn ensure_can_manage_principal_settings(
-    context: &impl BackendContext,
+    context: &impl StorageContext,
     requestor: &Authenticated,
     target_principal_id: i32,
 ) -> Result<(), ApiError> {
@@ -134,7 +134,7 @@ pub(crate) fn parse_token_list_query(
 /// * human principal — self or admin;
 /// * service account — admin or a **human** member of its owner group.
 async fn ensure_can_manage_principal(
-    context: &impl BackendContext,
+    context: &impl StorageContext,
     requestor: &ManagementAccess,
     principal: &Principal,
 ) -> Result<(), ApiError> {
@@ -157,7 +157,7 @@ async fn ensure_can_manage_principal(
 }
 
 pub(crate) async fn principal_permissions_response(
-    context: &impl BackendContext,
+    context: &impl StorageContext,
     principal: &impl AuthzSubject,
 ) -> Result<Vec<PrincipalCollectionPermissions>, ApiError> {
     let rows = principal_all_permissions(context, principal).await?;

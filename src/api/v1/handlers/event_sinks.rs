@@ -3,16 +3,16 @@ use actix_web::{HttpRequest, Responder, delete, get, patch, routes, web};
 use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::{ApiResponse, ResponseLocation};
-use crate::backend::capabilities::event_subscription::{
-    DeleteEventSinkRecord, SaveEventSinkRecord, UpdateEventSinkRecord,
-};
-use crate::backend::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess};
 use crate::models::search::parse_query_parameter;
 use crate::models::{EventSink, EventSinkID, NewEventSink, UpdateEventSink};
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
+use crate::storage::capabilities::event_subscription::{
+    DeleteEventSinkRecord, SaveEventSinkRecord, UpdateEventSinkRecord,
+};
+use crate::storage::capabilities::with_revision_precondition_scope;
 
 #[utoipa::path(
     post,

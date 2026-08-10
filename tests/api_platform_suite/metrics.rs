@@ -11,11 +11,11 @@ use rstest::rstest;
 use tokio::sync::Mutex;
 
 use crate::config::RuntimeRole;
-use crate::db::{DbConnection, DbPool, with_connection};
 use crate::middlewares::TracingMiddleware;
 use crate::models::{ExportTemplateID, NewTaskRecord, TaskKind, TaskStatus};
 use crate::observability::metrics;
 use crate::schema::tasks;
+use crate::storage::postgres::{PostgresConnection, PostgresPool, with_connection};
 use crate::test_support::clear_metrics_scrape_cache;
 use crate::tests::{TestContext, test_context};
 
@@ -422,8 +422,8 @@ fn terminal_task_record(
     }
 }
 
-fn unreachable_pool() -> DbPool {
-    let manager = AsyncDieselConnectionManager::<DbConnection>::new(
+fn unreachable_pool() -> PostgresPool {
+    let manager = AsyncDieselConnectionManager::<PostgresConnection>::new(
         "postgres://hubuum:hubuum@127.0.0.1:1/hubuum_metrics_unreachable",
     );
     Pool::builder()

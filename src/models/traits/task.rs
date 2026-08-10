@@ -5,21 +5,21 @@
 //! mismatch) returns a `404` rather than a `403` so the existence of another user's task is not
 //! revealed. These methods replace the per-handler free functions that previously took a bare id.
 
-use crate::db::DbPool;
-use crate::db::traits::service_account::{is_human_owner_group_member, load_service_account_by_id};
-use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
 use crate::models::{TaskID, TaskKind, TaskRecord};
+use crate::storage::postgres::operations::service_account::{
+    is_human_owner_group_member, load_service_account_by_id,
+};
+use crate::storage::postgres::operations::task::TaskBackend;
 use crate::traits::AuthzSubject;
 
 impl TaskID {
     /// Load this task for `requestor`, enforcing principal-centric authorization.
     pub async fn load_authorized(
         &self,
-        pool: &impl crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
         requestor: &impl AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
-        let pool = crate::traits::backend_pool(pool);
         self.load_authorized_of_kind(pool, requestor, None, "Task")
             .await
     }
@@ -27,20 +27,18 @@ impl TaskID {
     /// Load this task, additionally requiring it to be an export task.
     pub async fn load_authorized_export(
         &self,
-        pool: &impl crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
         requestor: &impl AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
-        let pool = crate::traits::backend_pool(pool);
         self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Export), "Export task")
             .await
     }
 
     pub async fn load_authorized_backup(
         &self,
-        pool: &impl crate::traits::BackendContext,
-        requestor: &impl crate::db::traits::authz::AuthzSubject,
+        pool: &impl crate::storage::StorageContext,
+        requestor: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
-        let pool = crate::traits::backend_pool(pool);
         self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Backup), "Backup task")
             .await
     }
@@ -48,10 +46,9 @@ impl TaskID {
     /// Load this task, additionally requiring it to be an import task.
     pub async fn load_authorized_import(
         &self,
-        pool: &impl crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
         requestor: &impl AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
-        let pool = crate::traits::backend_pool(pool);
         self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Import), "Import task")
             .await
     }
@@ -62,7 +59,7 @@ impl TaskID {
     /// owner group**.
     async fn load_authorized_of_kind(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         requestor: &impl AuthzSubject,
         kind: Option<TaskKind>,
         label: &str,

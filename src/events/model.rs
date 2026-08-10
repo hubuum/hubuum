@@ -7,7 +7,7 @@
 //! catalog enums at the Diesel boundary while exposing typed builders; the
 //! [`Event`] read model converts back to the typed enums on demand.
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

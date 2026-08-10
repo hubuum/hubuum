@@ -1,17 +1,17 @@
 #[cfg(test)]
 mod tests {
-    use crate::db::prelude::*;
+    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
     use chrono::NaiveDateTime;
     use rstest::rstest;
 
-    use crate::db::{DbPool, with_connection};
     use crate::errors::ApiError;
     use crate::events::{Action, EntityType, Event};
     use crate::models::{
         MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, MAX_PRINCIPAL_SETTINGS_PATCH_OPERATIONS, Permissions,
         PrincipalID, PrincipalSettingsResponse, ResourceRevision,
     };
+    use crate::storage::postgres::{PostgresPool, with_connection};
     use crate::tests::api_operations::{
         get_request, patch_request_with_content_type, patch_request_with_raw_body, put_request,
     };
@@ -68,7 +68,7 @@ mod tests {
         event_count: i64,
     }
 
-    async fn mutation_state(pool: &DbPool, principal_id: i32) -> MutationState {
+    async fn mutation_state(pool: &PostgresPool, principal_id: i32) -> MutationState {
         use crate::schema::{events, principals};
 
         let (revision, updated_at, event_count) = with_connection(pool, async |conn| {

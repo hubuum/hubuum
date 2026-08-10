@@ -7,10 +7,12 @@ use std::time::{Duration, Instant};
 use clap::{Args, Parser, Subcommand};
 use diesel::QueryableByName;
 use diesel_async::RunQueryDsl;
-use hubuum::db::{DbPool, init_pool, with_connection, with_transaction};
 use hubuum::observability::runtime_behavior::{
     MetricSnapshot, ProcessIdleReport, ReadinessReport, RuntimeBehaviorAssessment,
     RuntimeBehaviorBudgets, RuntimeBehaviorReport, TaskNotificationReport,
+};
+use hubuum::storage::postgres::{
+    PostgresPool, init_postgres_pool, with_connection, with_transaction,
 };
 use reqwest::{Client, StatusCode};
 use tokio::time::sleep;
@@ -383,7 +385,7 @@ async fn measure_task_notification(
     notification_timeout: Duration,
     claim_timeout: Duration,
 ) -> Result<TaskNotificationReport> {
-    let pool = init_pool(database_url, 2);
+    let pool = init_postgres_pool(database_url, 2);
     warm_database_pool(&pool).await?;
 
     let idle_before = initial_snapshot.value(TASK_IDLE_COUNTER, &[("outcome", "idle")]);
@@ -457,7 +459,7 @@ struct SyntheticTaskStatus {
     status: String,
 }
 
-async fn warm_database_pool(pool: &DbPool) -> Result<()> {
+async fn warm_database_pool(pool: &PostgresPool) -> Result<()> {
     with_connection(
         pool,
         async |conn| -> std::result::Result<_, diesel::result::Error> {
@@ -470,7 +472,7 @@ async fn warm_database_pool(pool: &DbPool) -> Result<()> {
     Ok(())
 }
 
-async fn notify_task_worker(pool: &DbPool, payload: &str) -> Result<()> {
+async fn notify_task_worker(pool: &PostgresPool, payload: &str) -> Result<()> {
     let payload = payload.to_string();
     with_connection(
         pool,
@@ -488,7 +490,7 @@ async fn notify_task_worker(pool: &DbPool, payload: &str) -> Result<()> {
     Ok(())
 }
 
-async fn insert_synthetic_task(pool: &DbPool) -> Result<i32> {
+async fn insert_synthetic_task(pool: &PostgresPool) -> Result<i32> {
     let task_id = with_transaction(
         pool,
         async |conn| -> std::result::Result<_, diesel::result::Error> {
@@ -511,7 +513,11 @@ async fn insert_synthetic_task(pool: &DbPool) -> Result<i32> {
     Ok(task_id)
 }
 
-async fn wait_for_terminal_task(pool: &DbPool, task_id: i32, timeout: Duration) -> Result<String> {
+async fn wait_for_terminal_task(
+    pool: &PostgresPool,
+    task_id: i32,
+    timeout: Duration,
+) -> Result<String> {
     let deadline = Instant::now() + timeout;
     loop {
         let status = with_connection(

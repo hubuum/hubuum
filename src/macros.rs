@@ -71,8 +71,8 @@ where
 /// can!(pool, subject, scopes, [Permissions::ReadCollection, Permissions::UpdateCollection], collection, class1, class2);
 /// ```
 ///
-/// [`UserPermissions::can`]: crate::db::traits::UserPermissions::can
-/// [`UserPermissions`]: crate::db::traits::UserPermissions
+/// [`UserPermissions::can`]: crate::storage::postgres::operations::UserPermissions::can
+/// [`UserPermissions`]: crate::storage::postgres::operations::UserPermissions
 /// [`CollectionAccessors`]: crate::traits::CollectionAccessors
 /// [`Permissions`]: crate::models::Permissions
 /// [`ApiError::Forbidden`]: crate::errors::ApiError::Forbidden
@@ -92,11 +92,11 @@ macro_rules! can {
         let resources = vec![
             $($collection.to_resource_ref(backend).await?),+
         ];
-        if !$crate::db::traits::authz::scope_allows_resources($scopes, &resources) {
+        if !$crate::storage::postgres::operations::authz::scope_allows_resources($scopes, &resources) {
             return Err($crate::errors::ApiError::Forbidden("Permission denied".to_string()));
         }
 
-        match $crate::traits::BackendContext::permission_backend(backend) {
+        match $crate::storage::StorageContext::permission_backend(backend) {
             Some(permission_backend) if !permission_backend.uses_sql_permission_store() => {
                 $crate::permissions::authorize_resources(
                     permission_backend,
@@ -126,9 +126,9 @@ macro_rules! can {
 /// `permissions` table.
 macro_rules! apply_permission_filter {
     ($base_query:ident, $permission:expr, $target:expr) => {{
-        use $crate::db::prelude::*;
         use $crate::models::Permissions;
         use $crate::schema::permissions;
+        use $crate::storage::postgres::prelude::*;
 
         $base_query = match $permission {
             Permissions::ReadCollection => {
@@ -426,9 +426,9 @@ macro_rules! revision_search {
 macro_rules! date_search {
     ($base_query:expr, $parsed_query_param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
-        use $crate::db::prelude::*;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator, ParsedQueryParamExt as _};
+        use $crate::storage::postgres::prelude::*;
 
         let (op_pre, _) = $operator.op_and_neg();
         if op_pre == Operator::IsNull {
@@ -527,9 +527,9 @@ macro_rules! date_search {
 macro_rules! array_search {
     ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
-        use $crate::db::prelude::*;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator, ParsedQueryParamExt as _};
+        use $crate::storage::postgres::prelude::*;
 
         let (op_pre, _) = $operator.op_and_neg();
         if op_pre == Operator::IsNull {
@@ -583,9 +583,9 @@ macro_rules! array_search {
 macro_rules! string_search {
     ($base_query:expr, $param:expr, $operator:expr, $diesel_field:expr) => {{
         use diesel::dsl::not;
-        use $crate::db::prelude::*;
         use $crate::errors::ApiError;
         use $crate::models::search::{DataType, Operator};
+        use $crate::storage::postgres::prelude::*;
 
         let (op_pre, _) = $operator.op_and_neg();
         if op_pre == Operator::IsNull {

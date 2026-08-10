@@ -66,7 +66,7 @@ fn live_config(url: &str) -> AppConfig {
 
 async fn backend_with_config(config: &AppConfig) -> Result<TreetopPermissionBackend, ApiError> {
     let pool = get_test_pool().get_ref().clone();
-    TreetopPermissionBackend::connect(
+    TreetopPermissionBackend::connect_postgres(
         config
             .treetop_url
             .as_deref()
@@ -450,10 +450,10 @@ async fn live_in_flight_termination_fails_closed_and_service_recovers() {
 }
 
 async fn seed_collection_if_missing(collection_id: i32) {
-    use crate::db::prelude::*;
-    use crate::db::with_connection;
     use crate::schema::collections::dsl::{collections, id, parent_collection_id};
     use crate::schema::collections::{description, name};
+    use crate::storage::postgres::prelude::*;
+    use crate::storage::postgres::with_connection;
     use diesel::dsl::exists;
     use diesel::result::Error as DieselError;
     use diesel::{insert_into, select};

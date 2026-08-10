@@ -4,7 +4,6 @@ use crate::api::etag::{
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};
@@ -14,6 +13,7 @@ use crate::models::{
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::AppContext;
+use crate::storage::capabilities::with_revision_precondition_scope;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, routes, web};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -293,7 +293,7 @@ pub async fn get_group_member(
 ) -> Result<impl Responder, ApiError> {
     let group = user_group_ids.group_id.group(&context).await?;
     let principal = user_group_ids.principal_id.principal(&context).await?;
-    let membership = crate::backend::capabilities::group::principal_group_by_ids(
+    let membership = crate::storage::capabilities::group::principal_group_by_ids(
         &context,
         principal.id,
         group.id,
@@ -345,7 +345,7 @@ pub async fn add_group_member(
     );
 
     let condition = IfMatchCondition::from_request(&req)?;
-    let current = crate::backend::capabilities::group::principal_group_by_ids(
+    let current = crate::storage::capabilities::group::principal_group_by_ids(
         &context,
         principal.id,
         group.id,
@@ -406,7 +406,7 @@ pub async fn delete_group_member(
         requestor = requestor.user.id
     );
 
-    let membership = crate::backend::capabilities::group::principal_group_by_ids(
+    let membership = crate::storage::capabilities::group::principal_group_by_ids(
         &context,
         principal.id,
         group.id,
@@ -419,7 +419,7 @@ pub async fn delete_group_member(
         group.remove_member(&principal, &context, Some(&event_context)),
     )
     .await?;
-    match crate::backend::capabilities::group::principal_group_by_ids(
+    match crate::storage::capabilities::group::principal_group_by_ids(
         &context,
         principal.id,
         group.id,

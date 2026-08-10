@@ -1,6 +1,6 @@
-use crate::db::prelude::*;
-use crate::db::with_connection;
 use crate::models::{HubuumClassID, NewHubuumClass, UpdateHubuumClass};
+use crate::storage::postgres::prelude::*;
+use crate::storage::postgres::with_connection;
 use crate::tests::TestScope;
 use crate::traits::{CanSave, CanUpdate};
 use chrono::{DateTime, Utc};
@@ -378,7 +378,7 @@ async fn cascade_delete_records_history() {
     );
 }
 
-use crate::db::with_actor_scope;
+use crate::storage::postgres::with_actor_scope;
 
 #[actix_rt::test]
 async fn actor_scope_sets_actor_and_default_is_null() {
@@ -449,9 +449,9 @@ async fn actor_scope_sets_actor_and_default_is_null() {
 
 #[actix_rt::test]
 async fn worker_mutation_scope_records_root_task_provenance() {
-    use crate::db::{with_connection, with_mutation_provenance_scope};
     use crate::events::{EventContext, MutationProvenance};
     use crate::models::NewHubuumClass;
+    use crate::storage::postgres::{with_connection, with_mutation_provenance_scope};
     use crate::traits::CanSave;
 
     let scope = TestScope::new();
@@ -513,9 +513,9 @@ async fn worker_mutation_scope_records_root_task_provenance() {
 
 #[actix_rt::test]
 async fn anonymize_scrubs_pii_but_keeps_history_actor() {
-    use crate::db::prelude::*;
-    use crate::db::{with_actor_scope, with_connection};
     use crate::models::{NewHubuumClass, NewUser, UserID};
+    use crate::storage::postgres::prelude::*;
+    use crate::storage::postgres::{with_actor_scope, with_connection};
     use crate::traits::CanSave;
 
     let scope = TestScope::new();

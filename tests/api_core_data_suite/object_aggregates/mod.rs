@@ -4,10 +4,6 @@ use std::time::Duration;
 use actix_web::{App, http::StatusCode, test, web::Data};
 use base64::Engine;
 
-use crate::db::traits::computed_field::{
-    class_computation_state_for, create_personal_definition, create_shared_definition,
-    execute_computed_reindex_task, update_shared_definition,
-};
 use crate::events::EventContext;
 use crate::models::{
     ComputedFieldDefinitionPatch, ComputedFieldDefinitionRequest, GroupID, HubuumObject,
@@ -17,6 +13,10 @@ use crate::models::{
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
 use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::{AppContext, PermissionBackend, ResourceAttrs, ResourceKind};
+use crate::storage::postgres::operations::computed_field::{
+    class_computation_state_for, create_personal_definition, create_shared_definition,
+    execute_computed_reindex_task, update_shared_definition,
+};
 use crate::tests::api_operations::get_request;
 use crate::tests::asserts::{assert_response_status, header_value};
 use crate::tests::{

@@ -5,85 +5,9 @@ use super::{
     PostgresStorage, observed::ObservedLifecycleStorage,
 };
 
-/// Version of the complete application storage contract.
-///
-/// Increment this when a selectable backend must implement a new capability
-/// family or when an existing family's externally observable semantics change.
-pub(crate) const STORAGE_CONTRACT_VERSION: u16 = 1;
-
-/// Stable identity of a selectable storage backend.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StorageBackendKind {
-    Postgresql,
-}
-
-impl StorageBackendKind {
-    #[cfg(test)]
-    pub(crate) const ALL: [Self; 1] = [Self::Postgresql];
-
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Postgresql => "postgresql",
-        }
-    }
-}
-
-/// Stable, bounded capability families required of every selectable backend.
-///
-/// This is deliberately not a feature bitmap. A backend either satisfies the
-/// complete [`StorageBackend`] trait or cannot be selected by `AppContext`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StorageCapability {
-    DomainLifecycle,
-    IdentityAndAuthorizationData,
-    QueriesAndHistory,
-    Workflows,
-    Operations,
-}
-
-impl StorageCapability {
-    pub(crate) const ALL: [Self; 5] = [
-        Self::DomainLifecycle,
-        Self::IdentityAndAuthorizationData,
-        Self::QueriesAndHistory,
-        Self::Workflows,
-        Self::Operations,
-    ];
-
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::DomainLifecycle => "domain_lifecycle",
-            Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
-            Self::QueriesAndHistory => "queries_and_history",
-            Self::Workflows => "workflows",
-            Self::Operations => "operations",
-        }
-    }
-}
-
-/// Non-secret metadata for the backend selected at application composition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct StorageBackendDescriptor {
-    kind: StorageBackendKind,
-}
-
-impl StorageBackendDescriptor {
-    pub(crate) const fn new(kind: StorageBackendKind) -> Self {
-        Self { kind }
-    }
-
-    pub(crate) const fn kind(self) -> StorageBackendKind {
-        self.kind
-    }
-
-    pub(crate) const fn contract_version(self) -> u16 {
-        STORAGE_CONTRACT_VERSION
-    }
-
-    pub(crate) fn capabilities(self) -> impl Iterator<Item = StorageCapability> {
-        StorageCapability::ALL.into_iter()
-    }
-}
+#[cfg(test)]
+pub(crate) use hubuum_storage_core::{STORAGE_CONTRACT_VERSION, StorageCapability};
+pub(crate) use hubuum_storage_core::{StorageBackendDescriptor, StorageBackendKind};
 
 /// Identifies a lifecycle implementation for diagnostics and contract tests.
 ///

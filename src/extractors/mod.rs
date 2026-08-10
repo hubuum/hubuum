@@ -1,6 +1,3 @@
-use crate::backend::capabilities::Status;
-use crate::backend::capabilities::authz::load_token_scope;
-use crate::backend::capabilities::principal::load_principal_with_user;
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
 use crate::models::principal::{Principal, load_principal_by_id};
@@ -11,7 +8,10 @@ use crate::models::{
     PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenScope,
 };
 use crate::permissions::{AppContext, PrincipalRef};
-use crate::traits::BackendContext;
+use crate::storage::StorageContext;
+use crate::storage::capabilities::Status;
+use crate::storage::capabilities::authz::load_token_scope;
+use crate::storage::capabilities::principal::load_principal_with_user;
 
 use actix_web::{
     FromRequest, HttpMessage, HttpRequest, dev::Payload, error::JsonPayloadError, web::JsonBody,
@@ -285,7 +285,7 @@ async fn selected_backend_is_admin(context: &AppContext, user: &User) -> Result<
 
 /// Build the full authenticated context (accepts scoped tokens).
 async fn build_authenticated(
-    backend: &impl BackendContext,
+    backend: &impl StorageContext,
     token: Token,
 ) -> Result<Authenticated, ApiError> {
     let token_meta = token.is_valid(backend).await?;
@@ -293,7 +293,7 @@ async fn build_authenticated(
 }
 
 async fn build_authenticated_from_meta(
-    backend: &impl BackendContext,
+    backend: &impl StorageContext,
     token: Token,
     token_meta: PrincipalToken,
 ) -> Result<Authenticated, ApiError> {
@@ -325,7 +325,7 @@ fn resolved_auth(req: &HttpRequest, token: &Token) -> Option<PrincipalToken> {
 /// decision, so a service account (even one in the admin group, even with an
 /// unscoped token) can never act through a human/IAM extractor.
 async fn human_unscoped_user_from_meta(
-    backend: &impl BackendContext,
+    backend: &impl StorageContext,
     token_meta: PrincipalToken,
 ) -> Result<User, ApiError> {
     if token_meta.is_scoped() {
@@ -349,7 +349,7 @@ async fn human_unscoped_user_from_meta(
 }
 
 async fn human_unscoped_user(
-    backend: &impl BackendContext,
+    backend: &impl StorageContext,
     token: &Token,
 ) -> Result<User, ApiError> {
     let token_meta = token.is_valid(backend).await?;

@@ -4,9 +4,9 @@ use actix_web::{HttpResponse, Responder, http::header};
 use opentelemetry::KeyValue;
 use prometheus::{Encoder, TextEncoder};
 
-use crate::backend::{DbCallSite, with_db_call_site};
 use crate::errors::ApiError;
 use crate::permissions::AppContext;
+use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 
 use super::Metrics;
 use super::{db, event, get, inventory, login, task};
@@ -54,8 +54,8 @@ pub async fn scrape(context: AppContext) -> Result<impl Responder, ApiError> {
         process_refresh_started_at,
         process_refresh_outcome,
     );
-    with_db_call_site(
-        DbCallSite::MetricsRefresh,
+    with_storage_call_site(
+        StorageCallSite::MetricsRefresh,
         refresh_scrape_gauges(metrics, &context),
     )
     .await;
@@ -74,7 +74,7 @@ pub async fn scrape(context: AppContext) -> Result<impl Responder, ApiError> {
         .body(body))
 }
 
-async fn refresh_scrape_gauges(metrics: &Metrics, backend: &impl crate::traits::BackendContext) {
+async fn refresh_scrape_gauges(metrics: &Metrics, backend: &impl crate::storage::StorageContext) {
     db::refresh_pool_gauges(metrics, backend);
     login::refresh_login_limiter_gauges(metrics).await;
     if let Ok(_refresh_guard) = metrics.db_refresh_lock.try_lock() {

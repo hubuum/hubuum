@@ -63,12 +63,12 @@ for package classifications, publishing policy, and promotion requirements.
   These should not contain Diesel query construction for non-trivial backend logic.
 - `src/traits/*`:
   Behavioral interfaces used by handlers and models inside the application.
-  `BackendContext` is a sealed, opaque persistence capability. Consumers pass
+  `StorageContext` is a sealed, opaque persistence capability. Consumers pass
   it to operations but cannot extract or select the database implementation.
 - `src/backend.rs`:
   Application-facing capability facade for query, workflow, and operational
   contracts that do not yet have multiple storage implementations.
-- `src/db/traits/*`:
+- `src/storage/postgres/operations/*`:
   Diesel/Postgres-backed implementations behind model and storage adapters.
   This is where query details, joins, filters, and transactions belong.
 
@@ -87,7 +87,7 @@ When adding a feature:
    has migrated.
 2. Express persistence as an aggregate- or query-shaped capability in
    `src/storage`; avoid generic table repositories.
-3. Implement database details in `src/db/traits` and adapt them through the
+3. Implement database details in `src/storage/postgres/operations` and adapt them through the
    PostgreSQL storage implementation.
 4. Keep model methods thin while they remain in unmigrated paths.
 5. Add shared logical contract tests and retain PostgreSQL-specific query,
@@ -97,23 +97,25 @@ When adding a feature:
 
 ### Module layout notes
 
-To keep backend code navigable, large trait backends are split into focused modules:
+To keep PostgreSQL adapter code navigable, its operations are split into focused modules:
 
-- `src/db/traits/user/`:
+- `src/storage/postgres/operations/user/`:
   `auth.rs`, `membership.rs`, `permissions.rs`, `search.rs`
-- `src/db/traits/collection/`:
+- `src/storage/postgres/operations/collection/`:
   `relations.rs`, `records.rs`, `permissions.rs`
 
-The `mod.rs` files in these folders re-export the public backend traits so existing imports (`crate::db::traits::user::*`, `crate::db::traits::collection::*`) keep working.
+The `mod.rs` files in these folders organize PostgreSQL operations and their
+adapter-local extension traits. Application code must use the explicit storage
+capability facade instead of importing these modules directly.
 
 ### Collection hierarchy implementation
 
 Recursive collections are implemented in the database layer, not in a workspace
 crate. The implementation is coupled to Diesel schema modules, PostgreSQL
 closure-table SQL, temporal history, `ApiError`, and Hubuum's permission
-semantics. Keep hierarchy writes in `src/db/traits/collection/records.rs` and
-permission reads in `src/db/traits/collection/permissions.rs` or
-`src/db/traits/user/*`.
+semantics. Keep hierarchy writes in `src/storage/postgres/operations/collection/records.rs` and
+permission reads in `src/storage/postgres/operations/collection/permissions.rs` or
+`src/storage/postgres/operations/user/*`.
 
 Normal collection and class lifecycle handlers enter this implementation
 through their service and storage capabilities. Do not bypass those services

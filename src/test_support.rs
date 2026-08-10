@@ -10,11 +10,15 @@ use tracing::Dispatch;
 use tracing_subscriber::layer::SubscriberExt;
 
 use crate::auth::ConfiguredLdapScope;
-use crate::db::DbPool;
-use crate::db::traits::event_subscription::{SaveEventSinkRecord, SaveEventSubscriptionRecord};
 use crate::errors::ApiError;
 use crate::models::user::User;
 use crate::models::{CollectionID, NewEventSink, NewEventSubscription, TaskKind};
+use crate::services::Services;
+use crate::storage::postgres::PostgresPool;
+use crate::storage::postgres::operations::event_subscription::{
+    SaveEventSinkRecord, SaveEventSubscriptionRecord,
+};
+use crate::storage::{DynLifecycleStorage, PostgresStorage};
 
 pub use crate::logger::test_support::JsonLogWriter;
 pub use crate::middlewares::rate_limit::LOGIN_RATE_LIMIT_TEST_LOCK;
@@ -95,7 +99,14 @@ pub fn executable_task_kind_values() -> [&'static str; 4] {
     ]
 }
 
-pub async fn save_event_sink(pool: &DbPool, sink: NewEventSink) -> Result<i32, ApiError> {
+/// Build lifecycle services around the PostgreSQL adapter for integration tests.
+pub fn services_for_postgres(pool: PostgresPool) -> Services {
+    Services::from_lifecycle_storage(DynLifecycleStorage::from_backend(PostgresStorage::new(
+        pool,
+    )))
+}
+
+pub async fn save_event_sink(pool: &PostgresPool, sink: NewEventSink) -> Result<i32, ApiError> {
     let sink = sink
         .into_row()?
         .save_event_sink_record_without_events(pool)
@@ -104,7 +115,7 @@ pub async fn save_event_sink(pool: &DbPool, sink: NewEventSink) -> Result<i32, A
 }
 
 pub async fn save_event_subscription(
-    pool: &DbPool,
+    pool: &PostgresPool,
     subscription: NewEventSubscription,
     collection_id: CollectionID,
 ) -> Result<i32, ApiError> {
@@ -116,7 +127,7 @@ pub async fn save_event_subscription(
 }
 
 pub async fn sync_external_user(
-    pool: &DbPool,
+    pool: &PostgresPool,
     configured: &ConfiguredLdapScope,
     authenticated: AuthenticatedExternalUser,
 ) -> Result<User, ApiError> {

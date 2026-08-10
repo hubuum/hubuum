@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;

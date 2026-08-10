@@ -9,10 +9,10 @@ use serde_json::{Number, Value};
 use utoipa::openapi::{RefOr, schema::Schema};
 use utoipa::{PartialSchema, ToSchema};
 
-use crate::db::json::{
+use crate::errors::ApiError;
+use hubuum_storage_postgres::jsonb::{
     MAX_POSTGRES_JSONB_NESTING_DEPTH, PostgresJsonbValidationError, validate_postgres_jsonb_value,
 };
-use crate::errors::ApiError;
 
 pub(crate) const MAX_JSON_PATCH_OPERATIONS: usize = 1_000;
 pub(crate) const MAX_JSON_PATCH_POINTER_DEPTH: usize = 128;

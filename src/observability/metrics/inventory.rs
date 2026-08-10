@@ -2,14 +2,16 @@ use std::time::Instant;
 
 use opentelemetry::KeyValue;
 
-use crate::db::traits::metrics::{InventoryGaugeSnapshot, MetricsRefreshBackend};
+use crate::storage::postgres::operations::metrics::{
+    InventoryGaugeSnapshot, MetricsRefreshBackend,
+};
 
 use super::Metrics;
 use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 
 pub(super) async fn refresh_inventory_gauges(
     metrics: &Metrics,
-    backend: &impl crate::traits::BackendContext,
+    backend: &impl crate::storage::StorageContext,
 ) {
     if let Some(row) = cached_inventory_snapshot(metrics) {
         record_inventory_snapshot(metrics, &row);

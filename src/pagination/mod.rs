@@ -728,15 +728,15 @@ where
 }
 
 fn validate_postgres_jsonb_cursor_value(value: &serde_json::Value) -> Result<(), ApiError> {
-    match crate::db::json::validate_postgres_jsonb_value(value) {
+    match hubuum_storage_postgres::jsonb::validate_postgres_jsonb_value(value) {
         Ok(()) => Ok(()),
-        Err(crate::db::json::PostgresJsonbValidationError::UnsupportedValue) => {
+        Err(hubuum_storage_postgres::jsonb::PostgresJsonbValidationError::UnsupportedValue) => {
             Err(invalid_postgres_jsonb_cursor())
         }
-        Err(crate::db::json::PostgresJsonbValidationError::NestingTooDeep) => {
+        Err(hubuum_storage_postgres::jsonb::PostgresJsonbValidationError::NestingTooDeep) => {
             Err(ApiError::BadRequest(format!(
                 "cursor JSON exceeds the maximum nesting depth of {}",
-                crate::db::json::MAX_POSTGRES_JSONB_NESTING_DEPTH
+                hubuum_storage_postgres::jsonb::MAX_POSTGRES_JSONB_NESTING_DEPTH
             )))
         }
     }
@@ -747,7 +747,8 @@ fn invalid_postgres_jsonb_cursor() -> ApiError {
 }
 
 #[cfg(test)]
-const MAX_JSON_CURSOR_NESTING_DEPTH: usize = crate::db::json::MAX_POSTGRES_JSONB_NESTING_DEPTH;
+const MAX_JSON_CURSOR_NESTING_DEPTH: usize =
+    hubuum_storage_postgres::jsonb::MAX_POSTGRES_JSONB_NESTING_DEPTH;
 
 #[macro_export]
 macro_rules! apply_cursor_ordering_fields {

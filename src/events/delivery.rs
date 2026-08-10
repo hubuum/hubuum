@@ -13,13 +13,6 @@ use crate::config::{
     DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_BASE_MS, DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS,
     DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_WORKERS, get_config,
 };
-use crate::db::traits::event_delivery::{
-    ClaimedEventDelivery, claim_event_delivery_batch, mark_event_delivery_failed,
-    mark_event_delivery_succeeded,
-};
-use crate::db::traits::events::load_queued_task_initiators;
-use crate::db::traits::history::resolve_principal_names;
-use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::events::sink::{
     DefaultSinkResolver, EventEnvelope, SinkError, SinkResolver, event_envelope_with_names,
@@ -29,7 +22,15 @@ use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
-use crate::traits::{BackendContext, backend_pool};
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::event_delivery::{
+    ClaimedEventDelivery, claim_event_delivery_batch, mark_event_delivery_failed,
+    mark_event_delivery_succeeded,
+};
+use crate::storage::postgres::operations::events::load_queued_task_initiators;
+use crate::storage::postgres::operations::history::resolve_principal_names;
+use crate::storage::postgres::{StorageCallSite, with_storage_call_site};
+use crate::storage::{StorageHandle, storage_handle};
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();
 static EVENT_DELIVERY_LISTENER: Once = Once::new();
@@ -89,7 +90,7 @@ fn configured_event_delivery_settings() -> Result<EventDeliverySettings, ApiErro
 }
 
 async fn process_event_delivery_batch_with_schedule(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,
 ) -> Result<EventDeliveryBatchOutcome, ApiError> {
@@ -150,7 +151,7 @@ async fn process_event_delivery_batch_with_schedule(
 
 #[cfg(test)]
 pub(crate) async fn process_claimed_event_delivery(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,
     mut claimed: ClaimedEventDelivery,
@@ -178,7 +179,7 @@ pub(crate) async fn process_claimed_event_delivery(
 }
 
 async fn process_claimed_event_delivery_with_names(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,
     claimed: ClaimedEventDelivery,
@@ -285,7 +286,7 @@ async fn wait_for_event_delivery_wakeup(
 }
 
 async fn event_delivery_worker_loop(
-    pool: DbPool,
+    pool: StorageHandle,
     settings: EventDeliverySettings,
     poll_interval: Duration,
     resolver: &'static dyn SinkResolver,
@@ -295,8 +296,8 @@ async fn event_delivery_worker_loop(
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = with_db_call_site(
-                DbCallSite::EventDelivery,
+            result = with_storage_call_site(
+                StorageCallSite::EventDelivery,
                 process_event_delivery_batch_with_schedule(&pool, settings, resolver),
             ) => result,
         };
@@ -314,7 +315,7 @@ async fn event_delivery_worker_loop(
 }
 
 fn spawn_event_delivery_worker_loop(
-    pool: DbPool,
+    pool: StorageHandle,
     settings: EventDeliverySettings,
     poll_interval: Duration,
     worker_index: usize,
@@ -347,9 +348,9 @@ fn spawn_event_delivery_worker_loop(
 
 pub fn ensure_event_delivery_worker_running<C>(backend: C)
 where
-    C: BackendContext,
+    C: StorageContext,
 {
-    let pool = backend_pool(&backend).clone();
+    let pool = storage_handle(&backend);
     let worker_count = configured_event_delivery_worker_count();
     if worker_count == 0 {
         return;
@@ -394,7 +395,7 @@ where
 
 pub fn kick_event_delivery_worker<C>(backend: C)
 where
-    C: BackendContext,
+    C: StorageContext,
 {
     ensure_event_delivery_worker_running(backend);
     EVENT_DELIVERY_NOTIFICATIONS_SENT.fetch_add(1, Ordering::Relaxed);

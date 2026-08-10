@@ -1,7 +1,7 @@
 //! Transaction-aware event writer (#71).
 //!
 //! [`emit_event`] is the narrow producer API: it accepts the caller's
-//! `&mut crate::db::DbConnection` (the same connection used inside `with_transaction`)
+//! `&mut crate::storage::postgres::PostgresConnection` (the same connection used inside `with_transaction`)
 //! and appends exactly one row to `events`. It deliberately exposes nothing
 //! about fan-out or delivery — mutation code depends only on this writer and
 //! the [`NewEvent`](super::NewEvent) builder.
@@ -10,7 +10,7 @@
 //! commits or rolls back together with the domain mutation, giving the
 //! "recorded iff committed" guarantee.
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use diesel::result::Error as DieselError;
 
 use crate::schema::events::dsl::events;
@@ -22,7 +22,7 @@ use super::{Event, NewEvent};
 /// Call this inside a `with_transaction(pool, |conn| { ...; emit_event(conn,
 /// &event) })` block so the event and the mutation commit atomically.
 pub async fn emit_event(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     new_event: &NewEvent,
 ) -> Result<Event, DieselError> {
     let event = diesel::insert_into(events)
@@ -48,7 +48,7 @@ pub async fn emit_event(
 /// same transaction as each bounded deletion batch without issuing one insert
 /// statement per row.
 pub(crate) async fn emit_events(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     new_events: &[NewEvent],
 ) -> Result<Vec<Event>, DieselError> {
     if new_events.is_empty() {

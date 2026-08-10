@@ -502,8 +502,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_api_error_from_pool_error() {
-        let pool = crate::db::init_pool("postgres://invalid:5432/nonexistent", 1);
-        let result = crate::db::with_connection(&pool, async |_conn| Ok::<(), ApiError>(())).await;
+        let pool =
+            crate::storage::postgres::init_postgres_pool("postgres://invalid:5432/nonexistent", 1);
+        let result =
+            crate::storage::postgres::with_connection(&pool, async |_conn| Ok::<(), ApiError>(()))
+                .await;
         match result {
             Err(ApiError::DbConnectionError(_)) => {}
             Err(other) => panic!("Expected DbConnectionError from pool error, got: {other:?}"),

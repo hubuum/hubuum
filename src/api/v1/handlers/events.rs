@@ -2,8 +2,6 @@ use actix_web::{HttpRequest, Responder, get, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::authz::scope_allows;
-use crate::backend::capabilities::events::{list_events_with_total_count, parse_event_filters};
 use crate::errors::ApiError;
 use crate::events::{EntityType, EventResponse};
 use crate::extractors::Authenticated;
@@ -16,6 +14,8 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, PrincipalRef};
+use crate::storage::capabilities::authz::scope_allows;
+use crate::storage::capabilities::events::{list_events_with_total_count, parse_event_filters};
 use crate::traits::AuthzSubject;
 
 #[utoipa::path(

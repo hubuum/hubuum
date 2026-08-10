@@ -2,14 +2,13 @@ use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use utoipa::ToSchema;
 
 use crate::config::{get_config, token_hash_key_bytes};
-use crate::db::traits::user::DeleteTokenRecord;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
@@ -18,8 +17,10 @@ use crate::models::{
     TokenScope, TokenScopeDetails,
 };
 use crate::schema::tokens;
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::user::DeleteTokenRecord;
 use crate::traits::{
-    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 
 /// A persisted bearer token, keyed to a principal, with a full lifecycle. The
@@ -129,7 +130,7 @@ impl PrincipalTokenCreateRequest {
         context: Option<&EventContext>,
     ) -> Result<Token, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         Ok(self.create_issued(backend, context).await?.into_token())
     }
@@ -146,16 +147,17 @@ impl PrincipalTokenCreateRequest {
         context: Option<&EventContext>,
     ) -> Result<IssuedToken, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         let issuance_policy = configured_token_issuance_policy()?;
-        let (token, persisted) = crate::db::traits::token::create_principal_token_request_db(
-            crate::traits::backend_pool(backend),
-            self,
-            issuance_policy,
-            context,
-        )
-        .await?;
+        let (token, persisted) =
+            crate::storage::postgres::operations::token::create_principal_token_request_db(
+                backend,
+                self,
+                issuance_policy,
+                context,
+            )
+            .await?;
         let expires_at = persisted.expires_at.ok_or_else(|| {
             ApiError::InternalServerError(
                 "newly issued token is missing its persisted expiry".to_string(),
@@ -257,13 +259,10 @@ impl PrincipalTokenMetadata {
         tokens: &[PrincipalToken],
     ) -> Result<Vec<Self>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        crate::db::traits::token::principal_token_metadata_db(
-            crate::traits::backend_pool(backend),
-            tokens,
-        )
-        .await
+        crate::storage::postgres::operations::token::principal_token_metadata_db(backend, tokens)
+            .await
     }
 
     /// Load one retained token by id, constrained to its owning principal.
@@ -277,10 +276,10 @@ impl PrincipalTokenMetadata {
         token_id: TokenID,
     ) -> Result<Self, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        crate::db::traits::token::principal_token_metadata_by_id_for_principal_db(
-            crate::traits::backend_pool(backend),
+        crate::storage::postgres::operations::token::principal_token_metadata_by_id_for_principal_db(
+            backend,
             token_id.id(),
             principal_id.id(),
         )
@@ -468,10 +467,9 @@ impl Token {
 
     pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_token_record(crate::traits::backend_pool(backend))
-            .await
+        self.delete_token_record(backend).await
     }
 
     pub fn storage_hash(&self) -> String {
@@ -501,10 +499,10 @@ pub async fn revoke_token_by_id_for_principal_without_events<C>(
     principal_id: PrincipalID,
 ) -> Result<usize, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    crate::db::traits::token::revoke_token_by_id_for_principal_without_events_db(
-        crate::traits::backend_pool(backend),
+    crate::storage::postgres::operations::token::revoke_token_by_id_for_principal_without_events_db(
+        backend,
         token_id.id(),
         principal_id.id(),
     )
@@ -518,10 +516,10 @@ pub async fn revoke_token_by_id_for_principal<C>(
     context: Option<&EventContext>,
 ) -> Result<usize, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    crate::db::traits::token::revoke_token_by_id_for_principal_db(
-        crate::traits::backend_pool(backend),
+    crate::storage::postgres::operations::token::revoke_token_by_id_for_principal_db(
+        backend,
         token_id.id(),
         principal_id.id(),
         context,
@@ -542,11 +540,11 @@ pub async fn renew_token_by_id_for_principal<C>(
     context: Option<&EventContext>,
 ) -> Result<IssuedToken, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
     let issuance_policy = configured_token_issuance_policy()?;
-    let (token, persisted) = crate::db::traits::token::renew_principal_token_db(
-        crate::traits::backend_pool(backend),
+    let (token, persisted) = crate::storage::postgres::operations::token::renew_principal_token_db(
+        backend,
         token_id.id(),
         principal_id.id(),
         expires_at,

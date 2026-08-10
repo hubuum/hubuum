@@ -1,0 +1,32 @@
+[package]
+name = "hubuum-storage-postgres"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[package.metadata.hubuum]
+rust-api = "workspace-internal"
+
+[dependencies]
+diesel = { version = "2", features = [
+    "postgres",
+    "serde_json",
+    "chrono",
+    "64-column-tables",
+    "uuid",
+] }
+diesel-async = { version = "0.9.2", features = ["postgres", "bb8"] }
+futures-util = "0.3"
+rustls = { version = "0.23", features = ["aws-lc-rs", "ring"] }
+rustls-platform-verifier = "0.7"
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+tokio = { version = "1", features = ["sync"] }
+tokio-postgres = "0.7"
+tokio-postgres-rustls = "0.14"
+urlparse = "0.7"
+
+[features]
+query-capture = []
+
+[dev-dependencies]
+rstest = "0.26"

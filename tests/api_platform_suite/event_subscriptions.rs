@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use crate::db::prelude::*;
+    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
     use serde_json::json;
 
-    use crate::db::with_connection;
     use crate::events::{Action, EntityType};
     use crate::models::{
         EventSink, EventSinkKind, EventSubscription, NewEventSink, NewEventSubscription,
     };
+    use crate::storage::postgres::with_connection;
     use crate::tests::TestContext;
     use crate::tests::api_operations::{delete_request, get_request, patch_request, post_request};
     use crate::tests::asserts::assert_response_status;

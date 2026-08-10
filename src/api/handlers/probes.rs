@@ -4,10 +4,10 @@ use utoipa::ToSchema;
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::probe::ProbeBackend;
-use crate::backend::{DbCallSite, with_db_call_site};
 use crate::errors::ApiError;
 use crate::permissions::AppContext;
+use crate::storage::capabilities::probe::ProbeBackend;
+use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 
 #[derive(Serialize, ToSchema)]
 pub struct ProbeResponse {
@@ -46,7 +46,7 @@ pub async fn healthz() -> impl Responder {
 )]
 #[get("/readyz")]
 pub async fn readyz(context: AppContext) -> Result<impl Responder, ApiError> {
-    let snapshot = with_db_call_site(DbCallSite::Readiness, context.readiness_snapshot())
+    let snapshot = with_storage_call_site(StorageCallSite::Readiness, context.readiness_snapshot())
         .await
         .map_err(|_| ApiError::ServiceUnavailable("Database is not ready".to_string()))?;
     if !snapshot.schema_is_ready() {

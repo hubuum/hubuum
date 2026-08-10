@@ -1,15 +1,10 @@
 use std::str::FromStr;
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
-use crate::db::traits::export_template::{
-    self as backend, DeleteExportTemplateRecord, ExportTemplateCollectionLookup,
-    LoadExportTemplateRecord, SaveExportTemplateRecord, UpdateExportTemplateRecord,
-};
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::search::{FilterField, QueryOptions, SortParam, parse_query_parameter};
@@ -23,7 +18,11 @@ use crate::pagination::{
 };
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::export_templates;
-use crate::traits::BackendContext;
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::export_template::{
+    self as backend, DeleteExportTemplateRecord, ExportTemplateCollectionLookup,
+    LoadExportTemplateRecord, SaveExportTemplateRecord, UpdateExportTemplateRecord,
+};
 use crate::traits::accessors::{
     CollectionAccessors, CollectionAdapter, IdAccessor, InstanceAdapter, SelfAccessors,
 };
@@ -468,13 +467,15 @@ impl ExportTemplate {
     /// The other export templates sharing this template's collection (this template excluded).
     pub async fn collection_siblings(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<Vec<ExportTemplate>, ApiError> {
         self.export_templates(pool, Some(self.id)).await
     }
 
     /// Every export template across all collections.
-    pub async fn list_all(pool: &DbPool) -> Result<Vec<ExportTemplate>, ApiError> {
+    pub async fn list_all(
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Vec<ExportTemplate>, ApiError> {
         let rows = backend::load_all_rows(pool).await?;
 
         rows.into_iter().map(TryInto::try_into).collect()
@@ -483,11 +484,10 @@ impl ExportTemplate {
     /// List export templates (sorted/paginated per `query_options`) together with the total count
     /// matching the filters, scoped to the collections the caller may see.
     pub async fn list_with_total_count(
-        pool: &impl crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
         allowed_collection_ids: &[i32],
         query_options: &QueryOptions,
     ) -> Result<(Vec<ExportTemplate>, i64), ApiError> {
-        let pool = crate::traits::backend_pool(pool);
         if allowed_collection_ids.is_empty() {
             return Ok((
                 Vec::new(),
@@ -511,10 +511,9 @@ impl ExportTemplate {
     /// External authorization backends use this before filtering the rows
     /// against their own policy decisions.
     pub async fn list_candidates(
-        pool: &impl crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
         query_options: &QueryOptions,
     ) -> Result<Vec<ExportTemplate>, ApiError> {
-        let pool = crate::traits::backend_pool(pool);
         let (rows, _) = backend::list_all_rows_with_total_count(pool, query_options).await?;
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -536,11 +535,11 @@ pub trait CollectionExportTemplates: CollectionAccessors {
         exclude_template_id: Option<i32>,
     ) -> Result<Vec<ExportTemplate>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         let collection_id = self.collection_id(backend).await?.id();
-        let rows = crate::db::traits::export_template::load_rows_in_collection(
-            crate::traits::backend_pool(backend),
+        let rows = crate::storage::postgres::operations::export_template::load_rows_in_collection(
+            backend,
             collection_id,
             exclude_template_id,
         )
@@ -555,13 +554,16 @@ impl<T: CollectionAccessors> CollectionExportTemplates for T {}
 impl SaveAdapter for NewExportTemplate {
     type Output = ExportTemplate;
 
-    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<ExportTemplate, ApiError> {
+    async fn save_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ExportTemplate, ApiError> {
         self.save_export_template(pool, None).await
     }
 
     async fn save_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<ExportTemplate, ApiError> {
         self.save_export_template(pool, Some(context)).await
@@ -571,7 +573,7 @@ impl SaveAdapter for NewExportTemplate {
 impl NewExportTemplate {
     async fn save_export_template(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         context: Option<&EventContext>,
     ) -> Result<ExportTemplate, ApiError> {
         let new_row = self.clone().into_row()?;
@@ -613,7 +615,7 @@ impl UpdateAdapter for UpdateExportTemplate {
 
     async fn update_adapter_without_events(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         entry_id: ExportTemplateID,
     ) -> Result<ExportTemplate, ApiError> {
         apply_export_template_update(pool, entry_id.id(), self.clone(), None).await
@@ -621,7 +623,7 @@ impl UpdateAdapter for UpdateExportTemplate {
 
     async fn update_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         entry_id: ExportTemplateID,
         context: &EventContext,
     ) -> Result<ExportTemplate, ApiError> {
@@ -630,7 +632,7 @@ impl UpdateAdapter for UpdateExportTemplate {
 }
 
 async fn apply_export_template_update(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     template_id: i32,
     update: UpdateExportTemplate,
     context: Option<&EventContext>,
@@ -803,12 +805,19 @@ fn resolve_export_profile(
 }
 
 impl DeleteAdapter for ExportTemplateID {
-    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<(), ApiError> {
         self.delete_export_template_record_without_events(pool)
             .await
     }
 
-    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+    async fn delete_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+        context: &EventContext,
+    ) -> Result<(), ApiError> {
         self.delete_export_template_record(pool, Some(context))
             .await
     }
@@ -883,7 +892,7 @@ pub(crate) fn validate_import_export_template_composition(
 }
 
 async fn validate_export_profile(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     target_collection_id: i32,
     profile: ExportProfileRef<'_>,
 ) -> Result<(), ApiError> {
@@ -1007,7 +1016,7 @@ fn validate_common_profile_fields(profile: &ExportProfileRef<'_>) -> Result<(), 
 }
 
 async fn ensure_template_class_in_collection(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     target_collection_id: i32,
     target_class_id: i32,
 ) -> Result<(), ApiError> {
@@ -1075,7 +1084,7 @@ where
 }
 
 async fn ensure_template_name_is_available(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     target_collection_id: i32,
     target_name: &str,
     exclude_template_id: Option<i32>,
@@ -1101,7 +1110,10 @@ impl IdAccessor for ExportTemplate {
 }
 
 impl InstanceAdapter<ExportTemplate> for ExportTemplate {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<ExportTemplate, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<ExportTemplate, ApiError> {
         Ok(self.clone())
     }
 }
@@ -1113,32 +1125,47 @@ impl IdAccessor for ExportTemplateID {
 }
 
 impl InstanceAdapter<ExportTemplate> for ExportTemplateID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<ExportTemplate, ApiError> {
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<ExportTemplate, ApiError> {
         self.load_export_template_record(pool).await?.try_into()
     }
 }
 
 impl CollectionAdapter for ExportTemplate {
-    async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+    async fn collection_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Collection, ApiError> {
         CollectionID::new(self.collection_id)?
             .collection_adapter(pool)
             .await
     }
 
-    async fn collection_id_adapter(&self, _pool: &DbPool) -> Result<CollectionID, ApiError> {
+    async fn collection_id_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<CollectionID, ApiError> {
         CollectionID::new(self.collection_id)
     }
 }
 
 impl CollectionAdapter for ExportTemplateID {
-    async fn collection_adapter(&self, pool: &DbPool) -> Result<Collection, ApiError> {
+    async fn collection_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Collection, ApiError> {
         self.collection_id_adapter(pool)
             .await?
             .collection_adapter(pool)
             .await
     }
 
-    async fn collection_id_adapter(&self, pool: &DbPool) -> Result<CollectionID, ApiError> {
+    async fn collection_id_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<CollectionID, ApiError> {
         self.lookup_export_template_collection_id(pool).await
     }
 }
@@ -1343,7 +1370,7 @@ crate::impl_history_pagination!(ExportTemplateHistory, "export_templates_history
 impl AuthzTarget for ExportTemplate {
     async fn to_resource_ref(
         &self,
-        _pool: &dyn crate::traits::BackendContext,
+        _pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         Ok(ResourceRef {
             kind: ResourceKind::Template,
@@ -1361,7 +1388,7 @@ impl AuthzTarget for ExportTemplate {
 impl AuthzTarget for ExportTemplateID {
     async fn to_resource_ref(
         &self,
-        pool: &dyn crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }

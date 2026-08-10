@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests {
     use crate::api::etag::{IfMatchCondition, RevisionedResource};
-    use crate::db::with_revision_precondition_scope;
     use crate::models::{
         Collection, CollectionID, CollectionPermissionSet, GroupID, GroupPermission, GroupResponse,
         NewCollectionWithAssignee, NewGroup, Permission, Permissions, UpdateCollection,
         UpdateGroup,
     };
+    use crate::storage::postgres::with_revision_precondition_scope;
 
     use crate::pagination::{
         NEXT_CURSOR_HEADER, PAGE_LIMIT_HEADER, TOTAL_COUNT_HEADER, page_limits,

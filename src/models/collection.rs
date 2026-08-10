@@ -1,12 +1,10 @@
-use crate::db::prelude::*;
 use crate::models::token_scope::TokenScope;
+use crate::storage::postgres::prelude::*;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::traits::authz::AuthzSubject;
-use crate::db::traits::collection as collection_backend;
 use crate::errors::ApiError;
 use crate::models::group::{Group, GroupID};
 use crate::models::output::{EffectiveGroupPermission, GroupPermission};
@@ -15,7 +13,10 @@ use crate::models::traits::GroupAccessors;
 use crate::models::{Permission, Permissions, ResourceRevision};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::collections;
-use crate::traits::{BackendContext, CollectionAccessors, SelfAccessors};
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::authz::AuthzSubject;
+use crate::storage::postgres::operations::collection as collection_backend;
+use crate::traits::{CollectionAccessors, SelfAccessors};
 
 #[derive(
     Serialize,
@@ -115,10 +116,9 @@ fn new_collection_with_assignee_example() -> NewCollectionWithAssignee {
 
 pub async fn total_collection_count<C>(backend: &C) -> Result<i64, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    collection_backend::total_collection_count_from_backend(crate::traits::backend_pool(backend))
-        .await
+    collection_backend::total_collection_count_from_backend(backend).await
 }
 
 /// Check what permissions a user has to a given collection
@@ -137,16 +137,11 @@ pub async fn principal_on<C, S, T>(
     collection_ref: T,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: AuthzSubject,
     T: CollectionAccessors,
 {
-    collection_backend::principal_on_from_backend(
-        crate::traits::backend_pool(backend),
-        principal,
-        collection_ref,
-    )
-    .await
+    collection_backend::principal_on_from_backend(backend, principal, collection_ref).await
 }
 
 /// All of a principal's direct permission rows across every collection, as
@@ -156,14 +151,10 @@ pub async fn principal_all_permissions<C, S>(
     principal: S,
 ) -> Result<Vec<(Collection, Group, Permission)>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: AuthzSubject,
 {
-    collection_backend::principal_all_permissions_from_backend(
-        crate::traits::backend_pool(backend),
-        principal,
-    )
-    .await
+    collection_backend::principal_all_permissions_from_backend(backend, principal).await
 }
 
 pub async fn principal_on_paginated_with_total_count<C, S, T>(
@@ -173,12 +164,12 @@ pub async fn principal_on_paginated_with_total_count<C, S, T>(
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError>
 where
-    C: BackendContext + ?Sized,
-    S: crate::db::traits::authz::AuthzSubject,
+    C: StorageContext,
+    S: crate::storage::postgres::operations::authz::AuthzSubject,
     T: CollectionAccessors,
 {
     collection_backend::principal_on_paginated_with_total_count_from_backend(
-        crate::traits::backend_pool(backend),
+        backend,
         principal,
         collection_ref,
         query_options,
@@ -192,16 +183,12 @@ pub async fn effective_principal_on<C, S, T>(
     collection_ref: T,
 ) -> Result<Vec<EffectiveGroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
-    S: crate::db::traits::authz::AuthzSubject,
+    C: StorageContext,
+    S: crate::storage::postgres::operations::authz::AuthzSubject,
     T: CollectionAccessors,
 {
-    collection_backend::effective_principal_on_from_backend(
-        crate::traits::backend_pool(backend),
-        principal,
-        collection_ref,
-    )
-    .await
+    collection_backend::effective_principal_on_from_backend(backend, principal, collection_ref)
+        .await
 }
 
 /// Check if a user has a specific permission to any collection
@@ -222,16 +209,11 @@ pub async fn user_can_on_any<C, U>(
     scopes: Option<&TokenScope>,
 ) -> Result<Vec<Collection>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     U: GroupAccessors + AuthzSubject,
 {
-    collection_backend::user_can_on_any_from_backend(
-        crate::traits::backend_pool(backend),
-        user_id,
-        permission_type,
-        scopes,
-    )
-    .await
+    collection_backend::user_can_on_any_from_backend(backend, user_id, permission_type, scopes)
+        .await
 }
 
 /// Check if a group has a specific permission to a given collection ID
@@ -252,16 +234,11 @@ pub async fn group_can_on<C, T>(
     permission_type: Permissions,
 ) -> Result<bool, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::group_can_on_from_backend(
-        crate::traits::backend_pool(backend),
-        gid,
-        collection_ref,
-        permission_type,
-    )
-    .await
+    collection_backend::group_can_on_from_backend(backend, gid, collection_ref, permission_type)
+        .await
 }
 
 pub async fn effective_group_on<C>(
@@ -270,14 +247,9 @@ pub async fn effective_group_on<C>(
     gid: i32,
 ) -> Result<Vec<EffectiveGroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    collection_backend::effective_group_on_from_backend(
-        crate::traits::backend_pool(backend),
-        target_collection_id,
-        gid,
-    )
-    .await
+    collection_backend::effective_group_on_from_backend(backend, target_collection_id, gid).await
 }
 
 /// Check what groups have a specific permission to a given collection ID
@@ -296,14 +268,10 @@ pub async fn groups_can_on<C>(
     permission_type: Permissions,
 ) -> Result<Vec<Group>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    collection_backend::groups_can_on_from_backend(
-        crate::traits::backend_pool(backend),
-        target_collection_id,
-        permission_type,
-    )
-    .await
+    collection_backend::groups_can_on_from_backend(backend, target_collection_id, permission_type)
+        .await
 }
 
 pub async fn groups_can_on_paginated_with_total_count<C>(
@@ -313,10 +281,10 @@ pub async fn groups_can_on_paginated_with_total_count<C>(
     query_options: &QueryOptions,
 ) -> Result<(Vec<Group>, i64), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
     collection_backend::groups_can_on_paginated_with_total_count_from_backend(
-        crate::traits::backend_pool(backend),
+        backend,
         target_collection_id,
         permission_type,
         query_options,
@@ -340,11 +308,11 @@ pub async fn groups_on<C, T>(
     query_options: QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
     collection_backend::groups_on_from_backend(
-        crate::traits::backend_pool(backend),
+        backend,
         collection_ref,
         permissions_filter,
         query_options,
@@ -359,11 +327,11 @@ pub async fn groups_on_paginated<C, T>(
     query_options: &QueryOptions,
 ) -> Result<Vec<GroupPermission>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
     collection_backend::groups_on_paginated_from_backend(
-        crate::traits::backend_pool(backend),
+        backend,
         collection_ref,
         permissions_filter,
         query_options,
@@ -378,11 +346,11 @@ pub async fn groups_on_paginated_with_total_count<C, T>(
     query_options: &QueryOptions,
 ) -> Result<(Vec<GroupPermission>, i64), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
     collection_backend::groups_on_paginated_with_total_count_from_backend(
-        crate::traits::backend_pool(backend),
+        backend,
         collection_ref,
         permissions_filter,
         query_options,
@@ -397,11 +365,11 @@ pub async fn count_groups_on_paginated<C, T>(
     query_options: &QueryOptions,
 ) -> Result<i64, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
     collection_backend::count_groups_on_paginated_from_backend(
-        crate::traits::backend_pool(backend),
+        backend,
         collection_ref,
         permissions_filter,
         query_options,
@@ -416,14 +384,9 @@ pub async fn group_on<C>(
     gid: i32,
 ) -> Result<Permission, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    collection_backend::group_on_from_backend(
-        crate::traits::backend_pool(backend),
-        target_collection_id,
-        gid,
-    )
-    .await
+    collection_backend::group_on_from_backend(backend, target_collection_id, gid).await
 }
 
 pub async fn collection_children<C, T>(
@@ -431,14 +394,10 @@ pub async fn collection_children<C, T>(
     collection_ref: T,
 ) -> Result<Vec<Collection>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::collection_children_from_backend(
-        crate::traits::backend_pool(backend),
-        collection_ref,
-    )
-    .await
+    collection_backend::collection_children_from_backend(backend, collection_ref).await
 }
 
 pub async fn collection_ancestors<C, T>(
@@ -446,14 +405,10 @@ pub async fn collection_ancestors<C, T>(
     collection_ref: T,
 ) -> Result<Vec<Collection>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     T: CollectionAccessors,
 {
-    collection_backend::collection_ancestors_from_backend(
-        crate::traits::backend_pool(backend),
-        collection_ref,
-    )
-    .await
+    collection_backend::collection_ancestors_from_backend(backend, collection_ref).await
 }
 
 pub async fn move_collection<C>(
@@ -463,10 +418,10 @@ pub async fn move_collection<C>(
     context: Option<&crate::events::EventContext>,
 ) -> Result<Collection, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
     collection_backend::move_collection_record_from_backend(
-        crate::traits::backend_pool(backend),
+        backend,
         collection_id,
         new_parent_collection_id,
         context,
@@ -500,7 +455,7 @@ crate::impl_history_pagination!(CollectionHistory, "collections_history");
 impl AuthzTarget for Collection {
     async fn to_resource_ref(
         &self,
-        _pool: &dyn crate::traits::BackendContext,
+        _pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         Ok(ResourceRef {
             kind: ResourceKind::Collection,
@@ -518,7 +473,7 @@ impl AuthzTarget for Collection {
 impl AuthzTarget for CollectionID {
     async fn to_resource_ref(
         &self,
-        pool: &dyn crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
@@ -531,15 +486,15 @@ mod tests {
     use diesel::sql_query;
 
     use super::*;
-    use crate::db::DbPool;
-    use crate::db::traits::UserPermissions;
+
     use crate::models::group::{GroupID, NewGroup};
     use crate::models::permissions::PermissionsList;
+    use crate::storage::postgres::operations::UserPermissions;
     use crate::tests::{TestScope, create_test_user, generate_all_subsets};
     use crate::traits::{CanDelete, CanSave, PermissionController};
 
     async fn assign_to_groups(
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         collection: &Collection,
         groups: &[Group],
         permissions: PermissionsList,
@@ -569,7 +524,7 @@ mod tests {
     }
 
     async fn groups_can_on_count(
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         target_collection_id: i32,
         permission_type: Permissions,
         expected_count: i32,
@@ -770,7 +725,7 @@ mod tests {
         let parent = scope.collection_fixture("protect_root").await;
         let root_id = parent.collection.parent_collection_id.unwrap();
 
-        let delete_result = crate::db::with_connection(&pool, async |conn| {
+        let delete_result = crate::storage::postgres::with_connection(&pool, async |conn| {
             sql_query("DELETE FROM collections WHERE id = $1")
                 .bind::<diesel::sql_types::Integer, _>(root_id)
                 .execute(conn)
@@ -779,7 +734,7 @@ mod tests {
         .await;
         assert!(delete_result.is_err());
 
-        let reparent_result = crate::db::with_connection(&pool, async |conn| {
+        let reparent_result = crate::storage::postgres::with_connection(&pool, async |conn| {
             sql_query("UPDATE collections SET parent_collection_id = $1 WHERE id = $2")
                 .bind::<diesel::sql_types::Integer, _>(parent.collection.id)
                 .bind::<diesel::sql_types::Integer, _>(root_id)

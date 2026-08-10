@@ -9,14 +9,14 @@ use crate::models::{
     RelatedObjectIncludeRow, UnifiedSearchSpec, User, UserID,
 };
 
-use crate::db::DbPool;
-use crate::db::traits::user::{
+use crate::errors::ApiError;
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::user::{
     LoadPermittedCollections, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
     ObjectAggregateBackend, UnifiedSearchBackend, UserSearchBackend,
 };
-use crate::errors::ApiError;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
-use crate::traits::{AuthzSubject, BackendContext, ClassAccessors, SelfAccessors};
+use crate::traits::{AuthzSubject, ClassAccessors, SelfAccessors};
 
 /// Search resources that are visible to a user.
 ///
@@ -29,7 +29,7 @@ pub trait Search: UserCollectionAccessors {
         request: ObjectAggregateBackendRequest,
     ) -> Result<ObjectAggregatePage, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.aggregate_objects_from_backend(backend, request).await
     }
@@ -41,14 +41,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_collections_from_backend(
-            crate::traits::backend_pool(backend),
-            query_options,
-            scopes,
-        )
-        .await
+        self.search_collections_from_backend(backend, query_options, scopes)
+            .await
     }
 
     async fn count_collections<C>(
@@ -58,14 +54,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.count_collections_from_backend(
-            crate::traits::backend_pool(backend),
-            query_options,
-            scopes,
-        )
-        .await
+        self.count_collections_from_backend(backend, query_options, scopes)
+            .await
     }
 
     async fn search_classes<C>(
@@ -75,14 +67,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_classes_from_backend(
-            crate::traits::backend_pool(backend),
-            query_options,
-            scopes,
-        )
-        .await
+        self.search_classes_from_backend(backend, query_options, scopes)
+            .await
     }
 
     async fn count_classes<C>(
@@ -92,9 +80,9 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.count_classes_from_backend(crate::traits::backend_pool(backend), query_options, scopes)
+        self.count_classes_from_backend(backend, query_options, scopes)
             .await
     }
 
@@ -105,14 +93,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_objects_from_backend(
-            crate::traits::backend_pool(backend),
-            query_options,
-            scopes,
-        )
-        .await
+        self.search_objects_from_backend(backend, query_options, scopes)
+            .await
     }
 
     async fn count_objects<C>(
@@ -122,9 +106,9 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.count_objects_from_backend(crate::traits::backend_pool(backend), query_options, scopes)
+        self.count_objects_from_backend(backend, query_options, scopes)
             .await
     }
 
@@ -135,14 +119,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_class_relations_from_backend(
-            crate::traits::backend_pool(backend),
-            query_options,
-            scopes,
-        )
-        .await
+        self.search_class_relations_from_backend(backend, query_options, scopes)
+            .await
     }
 
     async fn class_relations_page<C>(
@@ -152,14 +132,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.class_relations_page_from_backend(
-            crate::traits::backend_pool(backend),
-            query_options,
-            scopes,
-        )
-        .await
+        self.class_relations_page_from_backend(backend, query_options, scopes)
+            .await
     }
 
     async fn search_classes_related_to<C, K>(
@@ -170,16 +146,11 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<ClassGraphRow>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         K: SelfAccessors<HubuumClass>,
     {
-        self.search_classes_related_to_from_backend(
-            crate::traits::backend_pool(backend),
-            class,
-            query_options,
-            scopes,
-        )
-        .await
+        self.search_classes_related_to_from_backend(backend, class, query_options, scopes)
+            .await
     }
 
     async fn classes_related_to_page<C, K>(
@@ -190,16 +161,11 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<ClassGraphRow>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         K: SelfAccessors<HubuumClass>,
     {
-        self.classes_related_to_page_from_backend(
-            crate::traits::backend_pool(backend),
-            class,
-            query_options,
-            scopes,
-        )
-        .await
+        self.classes_related_to_page_from_backend(backend, class, query_options, scopes)
+            .await
     }
 
     async fn class_relations_touching_page<C, K>(
@@ -210,16 +176,11 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         K: SelfAccessors<HubuumClass>,
     {
-        self.class_relations_touching_page_from_backend(
-            crate::traits::backend_pool(backend),
-            class,
-            query_options,
-            scopes,
-        )
-        .await
+        self.class_relations_touching_page_from_backend(backend, class, query_options, scopes)
+            .await
     }
 
     async fn search_class_relations_between_ids<C>(
@@ -229,14 +190,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_class_relations_between_ids_from_backend(
-            crate::traits::backend_pool(backend),
-            class_ids,
-            scopes,
-        )
-        .await
+        self.search_class_relations_between_ids_from_backend(backend, class_ids, scopes)
+            .await
     }
 
     async fn search_object_relations<C>(
@@ -246,14 +203,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_object_relations_from_backend(
-            crate::traits::backend_pool(backend),
-            query_options,
-            scopes,
-        )
-        .await
+        self.search_object_relations_from_backend(backend, query_options, scopes)
+            .await
     }
 
     async fn object_relations_page<C>(
@@ -263,14 +216,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.object_relations_page_from_backend(
-            crate::traits::backend_pool(backend),
-            query_options,
-            scopes,
-        )
-        .await
+        self.object_relations_page_from_backend(backend, query_options, scopes)
+            .await
     }
 
     async fn search_objects_related_to<C, O>(
@@ -281,16 +230,11 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        self.search_objects_related_to_from_backend(
-            crate::traits::backend_pool(backend),
-            object,
-            query_options,
-            scopes,
-        )
-        .await
+        self.search_objects_related_to_from_backend(backend, object, query_options, scopes)
+            .await
     }
 
     async fn objects_related_to_page<C, O>(
@@ -301,16 +245,11 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<RelatedObjectGraphRow>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        self.objects_related_to_page_from_backend(
-            crate::traits::backend_pool(backend),
-            object,
-            query_options,
-            scopes,
-        )
-        .await
+        self.objects_related_to_page_from_backend(backend, object, query_options, scopes)
+            .await
     }
 
     async fn related_objects_for_roots<C>(
@@ -321,15 +260,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.related_objects_for_roots_from_backend(
-            crate::traits::backend_pool(backend),
-            root_object_ids,
-            include,
-            scopes,
-        )
-        .await
+        self.related_objects_for_roots_from_backend(backend, root_object_ids, include, scopes)
+            .await
     }
 
     async fn bidirectionally_related_objects_for_roots<C>(
@@ -341,10 +275,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.bidirectionally_related_objects_for_roots_from_backend(
-            crate::traits::backend_pool(backend),
+            backend,
             root_object_ids,
             max_depth,
             per_root_cap,
@@ -361,16 +295,11 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         O: SelfAccessors<HubuumObject>,
     {
-        self.object_relations_touching_page_from_backend(
-            crate::traits::backend_pool(backend),
-            object,
-            query_options,
-            scopes,
-        )
-        .await
+        self.object_relations_touching_page_from_backend(backend, object, query_options, scopes)
+            .await
     }
 
     async fn search_object_relations_between_ids<C>(
@@ -380,14 +309,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_object_relations_between_ids_from_backend(
-            crate::traits::backend_pool(backend),
-            object_ids,
-            scopes,
-        )
-        .await
+        self.search_object_relations_between_ids_from_backend(backend, object_ids, scopes)
+            .await
     }
 
     async fn search_unified_collections<C>(
@@ -397,14 +322,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_unified_collections_from_backend(
-            crate::traits::backend_pool(backend),
-            query,
-            scopes,
-        )
-        .await
+        self.search_unified_collections_from_backend(backend, query, scopes)
+            .await
     }
 
     async fn search_unified_classes<C>(
@@ -414,14 +335,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_unified_classes_from_backend(
-            crate::traits::backend_pool(backend),
-            query,
-            scopes,
-        )
-        .await
+        self.search_unified_classes_from_backend(backend, query, scopes)
+            .await
     }
 
     async fn search_unified_objects<C>(
@@ -431,14 +348,10 @@ pub trait Search: UserCollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.search_unified_objects_from_backend(
-            crate::traits::backend_pool(backend),
-            query,
-            scopes,
-        )
-        .await
+        self.search_unified_objects_from_backend(backend, query, scopes)
+            .await
     }
 }
 
@@ -448,10 +361,9 @@ pub trait GroupAccessors: AuthzSubject {
     #[allow(async_fn_in_trait, dead_code)]
     async fn groups<C>(&self, backend: &C) -> Result<Vec<Group>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.load_user_groups(crate::traits::backend_pool(backend))
-            .await
+        self.load_user_groups(backend).await
     }
 
     #[allow(async_fn_in_trait)]
@@ -461,13 +373,10 @@ pub trait GroupAccessors: AuthzSubject {
         query_options: &QueryOptions,
     ) -> Result<(Vec<Group>, i64), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.load_user_groups_paginated_with_total_count(
-            crate::traits::backend_pool(backend),
-            query_options,
-        )
-        .await
+        self.load_user_groups_paginated_with_total_count(backend, query_options)
+            .await
     }
 }
 
@@ -476,7 +385,7 @@ pub trait UserCollectionAccessors: GroupAccessors + AuthzSubject {
     /// Return all collections that the user has CollectionPermissions::ReadCollection on.
     async fn collections_read<C>(&self, backend: &C) -> Result<Vec<Collection>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.collections(backend, &[Permissions::ReadCollection])
             .await
@@ -489,19 +398,15 @@ pub trait UserCollectionAccessors: GroupAccessors + AuthzSubject {
         permissions_list: &'a I,
     ) -> Result<Vec<Collection>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
         // NOTE: scopes are passed as `None` here (unscoped). Live token-scope
         // threading through the collection/search visibility helpers is wired in
         // the handler/search-scope pass; the admin fast path stays correct for
         // the `None` case.
-        self.load_collections_with_permissions(
-            crate::traits::backend_pool(backend),
-            permissions_list,
-            None,
-        )
-        .await
+        self.load_collections_with_permissions(backend, permissions_list, None)
+            .await
     }
 }
 
@@ -523,7 +428,10 @@ impl IdAccessor for User {
 }
 
 impl InstanceAdapter<User> for User {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<User, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<User, ApiError> {
         Ok(self.clone())
     }
 }
@@ -538,7 +446,10 @@ impl IdAccessor for UserID {
 }
 
 impl InstanceAdapter<User> for UserID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<User, ApiError> {
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<User, ApiError> {
         self.load_user_record(pool).await
     }
 }
