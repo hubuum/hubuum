@@ -9,6 +9,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added a read-only, versioned `POST /api/v1/search` DSL for collections,
+  classes, objects, audit events, users, groups, and service accounts. It
+  supports typed `and`/`or`/`not`, target-specific fields, stable
+  fingerprint-bound cursors, optional exact totals, audit redaction, and
+  equivalent permission-aware behavior for SQL and external policy backends.
+  Object searches additionally support an optional exact class selector and
+  bounded existential related-object predicates.
 - `hubuum-domain`, `hubuum-events-core`, `hubuum-query`,
   `hubuum-task-core`, and `hubuum-storage-core` now have explicit compatibility,
   MSRV, error, runtime, cancellation, and security policies in preparation for

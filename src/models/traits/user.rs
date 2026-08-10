@@ -3,7 +3,7 @@ use crate::models::token_scope::TokenScope;
 use crate::models::{
     ClassGraphRow, Collection, ExportIncludeRelatedQuery, Group, HubuumClass, HubuumClassExpanded,
     HubuumClassRelation, HubuumObject, HubuumObjectRelation, RelatedObjectForRootRow,
-    RelatedObjectGraphRow, RelatedObjectIncludeRow, User, UserID,
+    RelatedObjectGraphRow, RelatedObjectIncludeRow, StructuredSearchExpression, User, UserID,
 };
 
 use crate::errors::ApiError;
@@ -60,6 +60,44 @@ pub trait Search: UserCollectionAccessors {
         .ok_or_else(|| ApiError::InternalServerError("catalog count was not returned".to_string()))
     }
 
+    async fn search_structured_collections<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<Collection>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_structured_collections_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
+    }
+
+    async fn count_structured_collections<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<i64, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.count_structured_collections_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
+    }
+
     async fn search_classes<C>(
         &self,
         backend: &C,
@@ -104,6 +142,44 @@ pub trait Search: UserCollectionAccessors {
         .ok_or_else(|| ApiError::InternalServerError("catalog count was not returned".to_string()))
     }
 
+    async fn search_structured_classes<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_structured_classes_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
+    }
+
+    async fn count_structured_classes<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<i64, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.count_structured_classes_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
+    }
+
     async fn search_objects<C>(
         &self,
         backend: &C,
@@ -146,6 +222,44 @@ pub trait Search: UserCollectionAccessors {
         .await?
         .1
         .ok_or_else(|| ApiError::InternalServerError("catalog count was not returned".to_string()))
+    }
+
+    async fn search_structured_objects<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<HubuumObject>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_structured_objects_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
+    }
+
+    async fn count_structured_objects<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<i64, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.count_structured_objects_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
     }
 
     async fn search_class_relations<C>(
