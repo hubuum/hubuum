@@ -241,15 +241,13 @@ async fn read_related_object_relations(
         }
         let mut candidate_options = count_query_options(&params);
         candidate_options.include_total = false;
-        let (candidates, _) = user
-            .object_relations_touching_page_from_backend_with_admin_status(
-                &context,
-                object.clone(),
-                candidate_options,
-                true,
-                None,
-            )
-            .await?;
+        let (candidates, _) = relation_queries::list_object_relations_touching(
+            &context,
+            relation_queries::RelationAccess::new(user.id(), true, None),
+            object.id,
+            candidate_options,
+        )
+        .await?;
         let resources = object_relation_authorization_resources(&context, &candidates)
             .await?
             .into_iter()

@@ -14,11 +14,11 @@ use crate::models::{
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
+use crate::services::relation_queries;
 use crate::storage::capabilities::authz::scope_allows;
 use crate::storage::capabilities::relations::{
     class_relation_authorization_resources, object_relation_authorization_resources,
 };
-use crate::storage::capabilities::user::UserSearchBackend;
 use crate::storage::capabilities::with_revision_precondition_scope;
 use actix_web::delete;
 use tracing::debug;
@@ -73,14 +73,12 @@ async fn get_class_relations(
 
         let mut candidate_options = count_query_options(&params);
         candidate_options.include_total = false;
-        let candidates = user
-            .search_class_relations_from_backend_with_admin_status(
-                &context,
-                candidate_options,
-                true,
-                None,
-            )
-            .await?;
+        let (candidates, _) = relation_queries::list_class_relations(
+            &context,
+            relation_queries::RelationAccess::new(user.id(), true, None),
+            candidate_options,
+        )
+        .await?;
         let resources = class_relation_authorization_resources(&context, &candidates).await?;
         let resources = resources
             .into_iter()
@@ -317,14 +315,12 @@ async fn get_object_relations(
 
         let mut candidate_options = count_query_options(&params);
         candidate_options.include_total = false;
-        let candidates = user
-            .search_object_relations_from_backend_with_admin_status(
-                &context,
-                candidate_options,
-                true,
-                None,
-            )
-            .await?;
+        let (candidates, _) = relation_queries::list_object_relations(
+            &context,
+            relation_queries::RelationAccess::new(user.id(), true, None),
+            candidate_options,
+        )
+        .await?;
         let resources = object_relation_authorization_resources(&context, &candidates).await?;
         let resources = resources
             .into_iter()

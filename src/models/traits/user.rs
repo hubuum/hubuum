@@ -13,7 +13,7 @@ use crate::errors::ApiError;
 use crate::storage::StorageContext;
 use crate::storage::postgres::operations::user::{
     LoadPermittedCollections, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
-    ObjectAggregateBackend, UserSearchBackend,
+    ObjectAggregateBackend,
 };
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{AuthzSubject, ClassAccessors, SelfAccessors};
@@ -175,8 +175,18 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        self.search_class_relations_from_backend(backend, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::list_class_relations(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn class_relations_page<C>(
@@ -188,8 +198,21 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        self.class_relations_page_from_backend(backend, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::list_class_relations(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            query_options,
+        )
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     async fn search_classes_related_to<C, K>(
@@ -203,8 +226,19 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
         K: SelfAccessors<HubuumClass>,
     {
-        self.search_classes_related_to_from_backend(backend, class, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::related_classes(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            class.id(),
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn classes_related_to_page<C, K>(
@@ -218,8 +252,22 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
         K: SelfAccessors<HubuumClass>,
     {
-        self.classes_related_to_page_from_backend(backend, class, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::related_classes(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            class.id(),
+            query_options,
+        )
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     async fn class_relations_touching_page<C, K>(
@@ -233,8 +281,22 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
         K: SelfAccessors<HubuumClass>,
     {
-        self.class_relations_touching_page_from_backend(backend, class, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::list_class_relations_touching(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            class.id(),
+            query_options,
+        )
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     async fn search_class_relations_between_ids<C>(
@@ -246,8 +308,17 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        self.search_class_relations_between_ids_from_backend(backend, class_ids, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::class_relations_between_ids(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            class_ids,
+        )
+        .await
     }
 
     async fn search_object_relations<C>(
@@ -259,8 +330,18 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        self.search_object_relations_from_backend(backend, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::list_object_relations(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn object_relations_page<C>(
@@ -272,8 +353,21 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        self.object_relations_page_from_backend(backend, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::list_object_relations(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            query_options,
+        )
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     async fn search_objects_related_to<C, O>(
@@ -287,8 +381,19 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        self.search_objects_related_to_from_backend(backend, object, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::related_objects(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            object.id(),
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn objects_related_to_page<C, O>(
@@ -302,8 +407,22 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
         O: SelfAccessors<HubuumObject> + ClassAccessors,
     {
-        self.objects_related_to_page_from_backend(backend, object, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::related_objects(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            object.id(),
+            query_options,
+        )
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     async fn related_objects_for_roots<C>(
@@ -316,8 +435,19 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        self.related_objects_for_roots_from_backend(backend, root_object_ids, include, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::related_objects_for_roots(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            root_object_ids,
+            include,
+            false,
+        )
+        .await
     }
 
     async fn bidirectionally_related_objects_for_roots<C>(
@@ -331,12 +461,18 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        self.bidirectionally_related_objects_for_roots_from_backend(
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::bidirectionally_related_objects_for_roots(
             backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
             root_object_ids,
             max_depth,
             per_root_cap,
-            scopes,
+            false,
         )
         .await
     }
@@ -352,8 +488,22 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
         O: SelfAccessors<HubuumObject>,
     {
-        self.object_relations_touching_page_from_backend(backend, object, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        let (rows, total) = crate::services::relation_queries::list_object_relations_touching(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            object.id(),
+            query_options,
+        )
+        .await?;
+        Ok((
+            rows,
+            total.unwrap_or(crate::pagination::SKIPPED_TOTAL_COUNT),
+        ))
     }
 
     async fn search_object_relations_between_ids<C>(
@@ -365,8 +515,17 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        self.search_object_relations_between_ids_from_backend(backend, object_ids, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::relation_queries::object_relations_between_ids(
+            backend,
+            crate::services::relation_queries::RelationAccess::new(
+                self.principal_id(),
+                is_admin,
+                scopes,
+            ),
+            object_ids,
+        )
+        .await
     }
 }
 

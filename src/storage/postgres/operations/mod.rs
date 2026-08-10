@@ -28,6 +28,8 @@ pub mod permissions;
 pub mod principal;
 pub(crate) mod probe;
 pub(crate) mod ranked_search;
+pub(crate) mod relation_query;
+mod relation_rows;
 pub mod relations;
 pub mod remote_target;
 mod resource_rows;

@@ -229,6 +229,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "AuthenticationStorage",
         "AuthorizationStorage",
         "CatalogStorage",
+        "RelationQueryStorage",
         "EventDeliveryStorage",
         "EventFanoutStorage",
         "EventHealthStorage",
@@ -263,6 +264,25 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         assert!(
             context_source.contains(&format!("\"catalog\", \"{operation}\"")),
             "catalog operation {operation} must use the common storage observer"
+        );
+    }
+    let compact_context = context_source.split_whitespace().collect::<String>();
+    for operation in [
+        "list_classes",
+        "list_objects",
+        "classes_touching",
+        "objects_touching",
+        "classes_touching_ids",
+        "classes_between_ids",
+        "objects_between_ids",
+        "related_classes",
+        "related_objects",
+        "related_objects_for_roots",
+        "bidirectional_objects_for_roots",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"relations\",\"{operation}\"")),
+            "relation operation {operation} must use the common storage observer"
         );
     }
 }

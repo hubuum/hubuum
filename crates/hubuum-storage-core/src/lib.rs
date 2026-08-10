@@ -10,6 +10,7 @@ mod events;
 mod history;
 mod identity;
 mod operational;
+mod relation_query;
 mod unified_search;
 
 pub use authorization::{
@@ -43,6 +44,14 @@ pub use operational::{
     EventSubscriptionHealthSnapshot, OperationalStateStorage, ReadinessSnapshot,
     TokenRetentionStorage,
 };
+pub use relation_query::{
+    BidirectionalRelatedObjectsQuery, RelatedObjectsForRootsQuery, RelationGraphQuery,
+    RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
+    StorageClassGraphRow, StorageClassRelation, StorageGraphClass, StorageGraphObject,
+    StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation, StorageRecordMetadata,
+    StorageRelatedDirection, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageRelatedSort,
+};
 pub use unified_search::{
     UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor, UnifiedSearchObject,
     UnifiedSearchQuery, UnifiedSearchResourceScope, UnifiedSearchStorage, UnifiedSearchVisibility,
@@ -61,7 +70,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 4;
+pub const STORAGE_CONTRACT_VERSION: u16 = 5;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +95,7 @@ impl StorageBackendKind {
 pub enum StorageCapability {
     DomainLifecycle,
     CatalogQueries,
+    RelationQueries,
     IdentityAndAuthorizationData,
     TemporalHistory,
     UnifiedSearch,
@@ -94,9 +104,10 @@ pub enum StorageCapability {
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
+        Self::RelationQueries,
         Self::IdentityAndAuthorizationData,
         Self::TemporalHistory,
         Self::UnifiedSearch,
@@ -109,6 +120,7 @@ impl StorageCapability {
         match self {
             Self::DomainLifecycle => "domain_lifecycle",
             Self::CatalogQueries => "catalog_queries",
+            Self::RelationQueries => "relation_queries",
             Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
             Self::TemporalHistory => "temporal_history",
             Self::UnifiedSearch => "unified_search",
@@ -263,6 +275,7 @@ mod tests {
             [
                 "domain_lifecycle",
                 "catalog_queries",
+                "relation_queries",
                 "identity_and_authorization_data",
                 "temporal_history",
                 "unified_search",

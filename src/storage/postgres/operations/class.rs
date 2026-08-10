@@ -618,28 +618,4 @@ impl ClassIdSet {
         })
         .await
     }
-
-    /// Load every class relation that touches a class in this set as either endpoint.
-    pub(crate) async fn load_relations_touching(
-        &self,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<Vec<HubuumClassRelation>, ApiError> {
-        use crate::schema::hubuumclass_relation::dsl::{
-            from_hubuum_class_id, hubuumclass_relation, to_hubuum_class_id,
-        };
-
-        if self.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let ids = self.as_slice().to_vec();
-        with_connection(pool, async |conn| {
-            hubuumclass_relation
-                .filter(from_hubuum_class_id.eq_any(&ids))
-                .or_filter(to_hubuum_class_id.eq_any(&ids))
-                .load::<HubuumClassRelation>(conn)
-                .await
-        })
-        .await
-    }
 }

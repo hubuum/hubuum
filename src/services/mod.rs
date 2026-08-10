@@ -5,6 +5,7 @@ mod collections;
 pub(crate) mod history;
 mod object_relations;
 mod objects;
+pub(crate) mod relation_queries;
 mod storage_boundary;
 pub(crate) mod unified_search;
 
