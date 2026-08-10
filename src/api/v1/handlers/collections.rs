@@ -17,19 +17,19 @@ use crate::models::{
 use crate::pagination::{SKIPPED_TOTAL_COUNT, count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, ResourceRef};
+use crate::services::catalog as catalog_service;
 use crate::services::history::{
     HistoryCollectionFilter, collection_as_of, collection_history_paginated_with_total_count,
 };
 use crate::storage::capabilities::UserPermissions;
 use crate::storage::capabilities::authz::scope_allows;
-use crate::storage::capabilities::user::UserSearchBackend;
 use crate::storage::capabilities::with_revision_precondition_scope;
 use actix_web::{
     Either, HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, routes, web,
 };
 use tracing::{debug, info};
 
-use crate::traits::{PermissionController, Search};
+use crate::traits::PermissionController;
 
 async fn sql_collection_permission_set(
     context: &AppContext,
@@ -86,29 +86,27 @@ pub async fn get_collections(
         .permission_backend()
         .supports_storage_visibility_filtering()
     {
-        let total_count = if params.include_total {
-            user.count_collections(&context, count_query_options(&params), requestor.scopes())
-                .await?
-        } else {
-            SKIPPED_TOTAL_COUNT
-        };
+        let is_admin = crate::traits::AuthzSubject::is_admin(user, &context).await?;
         let search_params = prepare_db_pagination::<Collection>(&params)?;
-        let result = user
-            .search_collections(&context, search_params, requestor.scopes())
-            .await?;
+        let (result, total_count) = catalog_service::list_collections(
+            &context,
+            user.id(),
+            is_admin,
+            requestor.scopes(),
+            search_params,
+        )
+        .await?;
+        let total_count = total_count.unwrap_or(SKIPPED_TOTAL_COUNT);
         (result, total_count)
     } else {
         if !scope_allows(requestor.scopes(), &[Permissions::ReadCollection]) {
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
-        let candidates = user
-            .search_collections_from_backend_with_admin_status(
-                &context,
-                count_query_options(&params),
-                true,
-                None,
-            )
-            .await?;
+        let mut candidate_options = count_query_options(&params);
+        candidate_options.include_total = false;
+        let (candidates, _) =
+            catalog_service::list_collections(&context, user.id(), true, None, candidate_options)
+                .await?;
         let principal = PrincipalRef::load(&context, user).await?;
         let search_params = prepare_db_pagination::<Collection>(&params)?;
         let page = authorize_cursor_page(

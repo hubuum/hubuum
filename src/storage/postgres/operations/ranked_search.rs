@@ -1,11 +1,11 @@
 use crate::errors::ApiError;
-use crate::models::{
-    Collection, CollectionID, HubuumClassExpanded, HubuumClassID, HubuumObject, HubuumObjectID,
-    TokenResourceScope, TokenScope, UnifiedSearchCursorToken, UnifiedSearchSpec, UserID,
-};
+use crate::models::{UnifiedSearchCursorToken, UnifiedSearchSpec};
 use crate::storage::postgres::PostgresPool;
-use crate::storage::postgres::operations::authorization::permission_from_storage;
+use crate::storage::postgres::operations::resource_rows::{
+    class_to_storage, collection_to_storage, object_to_storage,
+};
 use crate::storage::postgres::operations::user::UnifiedSearchBackend;
+use crate::storage::postgres::operations::visibility::{principal, token_scope};
 use crate::storage::{
     UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
 };
@@ -15,46 +15,6 @@ enum SearchKind {
     Collection,
     Class,
     Object,
-}
-
-fn collection_to_storage(collection: Collection) -> UnifiedSearchCollection {
-    UnifiedSearchCollection::new(
-        collection.id,
-        collection.name,
-        collection.description,
-        collection.created_at,
-        collection.updated_at,
-        collection.parent_collection_id,
-        collection.revision.get(),
-    )
-}
-
-fn class_to_storage(class: HubuumClassExpanded) -> UnifiedSearchClass {
-    UnifiedSearchClass::new(
-        class.id,
-        class.name,
-        collection_to_storage(class.collection),
-        class.json_schema,
-        class.validate_schema,
-        class.description,
-        class.created_at,
-        class.updated_at,
-        class.revision.get(),
-    )
-}
-
-fn object_to_storage(object: HubuumObject) -> UnifiedSearchObject {
-    UnifiedSearchObject::new(
-        object.id,
-        object.name,
-        object.collection_id,
-        object.hubuum_class_id,
-        object.data,
-        object.description,
-        object.created_at,
-        object.updated_at,
-        object.revision.get(),
-    )
 }
 
 fn cursor(query: &UnifiedSearchQuery) -> Option<UnifiedSearchCursorToken> {
@@ -88,52 +48,6 @@ fn spec(query: &UnifiedSearchQuery, kind: SearchKind) -> UnifiedSearchSpec {
     }
 }
 
-fn token_scope(query: &UnifiedSearchQuery) -> Result<Option<TokenScope>, ApiError> {
-    let visibility = query.visibility();
-    let permissions = visibility.permissions().map(|permissions| {
-        permissions
-            .iter()
-            .copied()
-            .map(permission_from_storage)
-            .collect::<Vec<_>>()
-    });
-    let resources = visibility
-        .resources()
-        .map(|scope| {
-            scope
-                .collection_ids()
-                .iter()
-                .copied()
-                .map(|id| CollectionID::new(id).map(TokenResourceScope::Collection))
-                .chain(
-                    scope
-                        .class_ids()
-                        .iter()
-                        .copied()
-                        .map(|id| HubuumClassID::new(id).map(TokenResourceScope::Class)),
-                )
-                .chain(
-                    scope
-                        .object_ids()
-                        .iter()
-                        .copied()
-                        .map(|id| HubuumObjectID::new(id).map(TokenResourceScope::Object)),
-                )
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .transpose()?;
-
-    if permissions.is_none() && resources.is_none() {
-        Ok(None)
-    } else {
-        TokenScope::from_stored_parts(permissions, resources).map(Some)
-    }
-}
-
-fn principal(query: &UnifiedSearchQuery) -> Result<UserID, ApiError> {
-    UserID::new(query.visibility().principal_id())
-}
-
 pub(crate) async fn search_collections(
     pool: &PostgresPool,
     query: UnifiedSearchQuery,
@@ -144,8 +58,8 @@ pub(crate) async fn search_collections(
     {
         return Ok(Vec::new());
     }
-    let principal = principal(&query)?;
-    let scope = token_scope(&query)?;
+    let principal = principal(query.visibility())?;
+    let scope = token_scope(query.visibility())?;
     let spec = spec(&query, SearchKind::Collection);
     principal
         .search_unified_collections_from_backend_with_admin_status(
@@ -168,8 +82,8 @@ pub(crate) async fn search_classes(
     ]) {
         return Ok(Vec::new());
     }
-    let principal = principal(&query)?;
-    let scope = token_scope(&query)?;
+    let principal = principal(query.visibility())?;
+    let scope = token_scope(query.visibility())?;
     let spec = spec(&query, SearchKind::Class);
     principal
         .search_unified_classes_from_backend_with_admin_status(
@@ -192,8 +106,8 @@ pub(crate) async fn search_objects(
     ]) {
         return Ok(Vec::new());
     }
-    let principal = principal(&query)?;
-    let scope = token_scope(&query)?;
+    let principal = principal(query.visibility())?;
+    let scope = token_scope(query.visibility())?;
     let spec = spec(&query, SearchKind::Object);
     principal
         .search_unified_objects_from_backend_with_admin_status(

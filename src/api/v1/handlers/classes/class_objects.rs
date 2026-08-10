@@ -159,19 +159,16 @@ async fn load_raw_object_page(
         .permission_backend()
         .supports_storage_visibility_filtering()
     {
-        let total_count = if params.include_total {
-            user.count_objects(context, count_query_options(params), requestor.scopes())
-                .await?
-        } else {
-            SKIPPED_TOTAL_COUNT
-        };
-        let objects = user
-            .search_objects(
-                context,
-                prepare_db_pagination::<HubuumObject>(params)?,
-                requestor.scopes(),
-            )
-            .await?;
+        let is_admin = crate::traits::AuthzSubject::is_admin(user, context).await?;
+        let (objects, total_count) = catalog_service::list_objects(
+            context,
+            user.id(),
+            is_admin,
+            requestor.scopes(),
+            prepare_db_pagination::<HubuumObject>(params)?,
+        )
+        .await?;
+        let total_count = total_count.unwrap_or(SKIPPED_TOTAL_COUNT);
         (objects, total_count)
     } else if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
         (Vec::new(), 0)
@@ -192,16 +189,13 @@ async fn load_raw_object_page(
         candidate_options
             .filters
             .retain(|filter| filter.field.related_query().is_none());
+        candidate_options.include_total = false;
         let mut candidates = if related_ids.as_ref().is_some_and(|ids| ids.is_empty()) {
             Vec::new()
         } else {
-            user.search_objects_from_backend_with_admin_status(
-                &context,
-                candidate_options,
-                true,
-                None,
-            )
-            .await?
+            catalog_service::list_objects(&context, user.id(), true, None, candidate_options)
+                .await?
+                .0
         };
         if let Some(related_ids) = &related_ids {
             candidates.retain(|object| related_ids.contains(object.id));

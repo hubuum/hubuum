@@ -15,6 +15,7 @@ use crate::pagination::{
 };
 use crate::permissions::visibility::{AuthorizedObjectIds, authorize_all_candidates};
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
+use crate::services::catalog as catalog_service;
 use crate::storage::capabilities::authz::scope_allows;
 use crate::storage::capabilities::computed_field::{
     ComputedQuerySnapshot, enrich_objects_with_computed_query_snapshot,
@@ -214,10 +215,15 @@ async fn can_list_objects_in_class(
         include_total: false,
     };
     scope_object_query_to_class(&mut visibility_query, &HubuumClassID::new(class.id)?);
-    let visible_objects = requestor
-        .principal
-        .search_objects_from_backend(&context, visibility_query, requestor.scopes())
-        .await?;
+    let is_admin = crate::traits::AuthzSubject::is_admin(&requestor.principal, context).await?;
+    let (visible_objects, _) = catalog_service::list_objects(
+        context,
+        requestor.principal.id(),
+        is_admin,
+        requestor.scopes(),
+        visibility_query,
+    )
+    .await?;
     Ok(!visible_objects.is_empty())
 }
 
@@ -234,10 +240,14 @@ async fn authorized_object_ids_in_class(
         include_total: false,
     };
     scope_object_query_to_class(&mut visibility_query, class);
-    let candidates = requestor
-        .principal
-        .search_objects_from_backend_with_admin_status(&context, visibility_query, true, None)
-        .await?;
+    let (candidates, _) = catalog_service::list_objects(
+        context,
+        requestor.principal.id(),
+        true,
+        None,
+        visibility_query,
+    )
+    .await?;
     let principal = PrincipalRef::load(&context, &requestor.principal).await?;
     let authorized = authorize_all_candidates(
         context.permission_backend(),

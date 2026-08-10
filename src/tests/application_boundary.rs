@@ -228,6 +228,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "LifecycleStorage",
         "AuthenticationStorage",
         "AuthorizationStorage",
+        "CatalogStorage",
         "EventDeliveryStorage",
         "EventFanoutStorage",
         "EventHealthStorage",
@@ -258,6 +259,12 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         context_source.contains("assert_complete_storage_backend(&backend)"),
         "application composition must enforce the complete storage contract"
     );
+    for operation in ["collections", "classes", "objects"] {
+        assert!(
+            context_source.contains(&format!("\"catalog\", \"{operation}\"")),
+            "catalog operation {operation} must use the common storage observer"
+        );
+    }
 }
 
 #[test]

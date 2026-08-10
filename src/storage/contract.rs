@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use super::{
-    AuthenticationStorage, AuthorizationStorage, ClassRelationStore, ClassStore, CollectionStore,
-    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
-    HistoryStorage, MetricsStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage,
-    PostgresStorage, TokenRetentionStorage, UnifiedSearchStorage,
+    AuthenticationStorage, AuthorizationStorage, CatalogStorage, ClassRelationStore, ClassStore,
+    CollectionStore, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
+    EventRetentionStorage, HistoryStorage, MetricsStorage, ObjectRelationStore, ObjectStore,
+    OperationalStateStorage, PostgresStorage, TokenRetentionStorage, UnifiedSearchStorage,
     observed::ObservedLifecycleStorage,
 };
 
@@ -63,6 +63,7 @@ pub(crate) trait StorageBackend:
     LifecycleStorage
     + AuthenticationStorage
     + AuthorizationStorage
+    + CatalogStorage
     + EventDeliveryStorage
     + EventFanoutStorage
     + EventHealthStorage
@@ -133,6 +134,7 @@ mod tests {
             StorageCapability::ALL.map(StorageCapability::as_str),
             [
                 "domain_lifecycle",
+                "catalog_queries",
                 "identity_and_authorization_data",
                 "temporal_history",
                 "unified_search",

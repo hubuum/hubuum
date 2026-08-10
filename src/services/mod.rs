@@ -1,9 +1,11 @@
+pub(crate) mod catalog;
 mod class_relations;
 mod classes;
 mod collections;
 pub(crate) mod history;
 mod object_relations;
 mod objects;
+mod storage_boundary;
 pub(crate) mod unified_search;
 
 pub use class_relations::ClassRelationService;

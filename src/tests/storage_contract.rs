@@ -6,7 +6,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use crate::events::{EventFanoutSettings, EventRetentionSettings};
 use crate::models::TokenRetentionSettings;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
-use crate::models::search::QueryOptions;
+use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SearchOperator};
 use crate::models::{
     CollectionHistory, CollectionID, ExportTemplateHistory, HubuumClassHistory,
     HubuumObjectHistory, NewHubuumClass, NewHubuumObject, RemoteTargetHistory,
@@ -19,12 +19,12 @@ use crate::storage::{
     AuthenticationStorage, AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrantKey,
     AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
-    AuthorizationStorage, EventArchive, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionStorage, HistoryAsOfQuery, HistoryCollectionScope,
-    HistoryListQuery, HistoryStorage, MetricsStorage, ObjectHistoryAsOfQuery,
-    ObjectHistoryListQuery, OperationalStateStorage, RetainedEvent, STORAGE_CONTRACT_VERSION,
-    StorageBackendKind, StorageError, TokenRetentionStorage, UnifiedSearchQuery,
-    UnifiedSearchStorage, UnifiedSearchVisibility,
+    AuthorizationStorage, CatalogListQuery, CatalogStorage, EventArchive, EventDeliveryStorage,
+    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, HistoryAsOfQuery,
+    HistoryCollectionScope, HistoryListQuery, HistoryStorage, MetricsStorage,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, OperationalStateStorage, RetainedEvent,
+    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageError, StorageVisibility,
+    TokenRetentionStorage, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -447,6 +447,101 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
 }
 
 #[actix_web::test]
+async fn every_available_storage_backend_supplies_catalog_queries() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let needle = prefix("catalog_query");
+    let collection = crate::tests::create_collection_fixture(pool.get_ref(), &needle).await;
+    let fixture = crate::tests::create_object_fixture(
+        pool.get_ref(),
+        collection,
+        NewHubuumClass {
+            name: format!("{needle}_class"),
+            collection_id: 0,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "catalog compatibility class".to_string(),
+        },
+        vec![NewHubuumObject {
+            name: format!("{needle}_object"),
+            collection_id: 0,
+            hubuum_class_id: 0,
+            data: serde_json::json!({"needle": needle}),
+            description: "catalog compatibility object".to_string(),
+        }],
+    )
+    .await
+    .expect("catalog compatibility fixture should be created");
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let request = || {
+                    CatalogListQuery::new(
+                        QueryOptions {
+                            filters: vec![ParsedQueryParam {
+                                field: FilterField::Name,
+                                operator: SearchOperator::Contains { is_negated: false },
+                                value: needle.clone(),
+                            }],
+                            sort: Vec::new(),
+                            limit: Some(10),
+                            cursor: None,
+                            include_total: true,
+                        },
+                        StorageVisibility::new(
+                            i32::MAX,
+                            true,
+                            None::<Vec<AuthorizationPermission>>,
+                            None,
+                        ),
+                    )
+                };
+
+                let (collections, collection_total) = backend
+                    .list_collections(request())
+                    .await
+                    .expect("certified backend should list collections")
+                    .into_parts();
+                assert_eq!(collection_total, Some(1));
+                assert!(collections.into_iter().any(|row| {
+                    let (id, ..) = row.into_parts();
+                    id == fixture.collection.collection.id
+                }));
+
+                let (classes, class_total) = backend
+                    .list_classes(request())
+                    .await
+                    .expect("certified backend should list classes")
+                    .into_parts();
+                assert_eq!(class_total, Some(1));
+                assert!(classes.into_iter().any(|row| {
+                    let (id, ..) = row.into_parts();
+                    id == fixture.class.id
+                }));
+
+                let (objects, object_total) = backend
+                    .list_objects(request())
+                    .await
+                    .expect("certified backend should list objects")
+                    .into_parts();
+                assert_eq!(object_total, Some(1));
+                assert!(objects.into_iter().any(|row| {
+                    let (id, ..) = row.into_parts();
+                    id == fixture.objects[0].id
+                }));
+            }
+        }
+    }
+
+    fixture
+        .cleanup()
+        .await
+        .expect("catalog compatibility fixture should be removed");
+}
+
+#[actix_web::test]
 async fn every_available_storage_backend_supplies_ranked_unified_search() {
     let _permit = postgres_permit().await;
     let pool = pool();
@@ -481,7 +576,7 @@ async fn every_available_storage_backend_supplies_ranked_unified_search() {
                     UnifiedSearchQuery::new(
                         needle.clone(),
                         10,
-                        UnifiedSearchVisibility::new(
+                        StorageVisibility::new(
                             i32::MAX,
                             true,
                             None::<Vec<AuthorizationPermission>>,

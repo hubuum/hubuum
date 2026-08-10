@@ -62,6 +62,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Required family | Contract responsibility |
 | --- | --- |
 | Domain lifecycle | Collection, class, object, class-relation, and object-relation resolution and lifecycle behavior |
+| Catalog queries | Permission- and resource-scoped collection, class, and object filtering, cursor paging, and optional exact counts |
 | Identity and authorization data | Principals, credentials, memberships, grants, and data needed by configured authorization providers |
 | Temporal history | Revision-filtered pages, stable cursors, point-in-time reads, visibility pushdown, and provenance-name resolution |
 | Unified search | Ranked collection, class, and object search with stable per-kind cursors and token visibility pushdown |
@@ -76,10 +77,10 @@ During extraction, the workflow and remaining operational
 families retain temporary central migration gates. Those gates prevent another
 backend from becoming selectable, but they are not behavioral proof and must
 be replaced by mandatory operation-shaped traits and shared tests. The former
-identity, history, and unified-search gates have now been replaced by the real
+identity, catalog-query, history, and unified-search gates have now been replaced by the real
 `AuthenticationStorage`, `AuthorizationStorage`, and `HistoryStorage`
-contracts plus `UnifiedSearchStorage`; no family is considered complete merely
-because a marker exists.
+contracts plus `CatalogStorage` and `UnifiedSearchStorage`; no family is
+considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Separating their persistence rows from
@@ -208,6 +209,18 @@ is observed with a bounded `unified_search/{collections,classes,objects}` label,
 and the available-backend compatibility test exercises every operation with
 real matching rows.
 
+`CatalogStorage` owns the ordinary collection, class, and object query surface.
+Each operation applies backend-neutral filters, stable cursor state, local
+permission visibility, token permission/resource dimensions, page selection,
+and an optional exact total. The application prepares public cursor semantics
+and converts the private-field storage projections into domain/API models. For
+external policy backends it requests an unpaged candidate set through the same
+contract, performs policy authorization in the application, and only then
+paginates. HTTP handlers, computed-list visibility checks, and export hydration
+therefore share one boundary instead of calling PostgreSQL query traits. The
+opaque handle observes the three operations with bounded
+`catalog/{collections,classes,objects}` labels.
+
 ## Error Direction
 
 Errors cross the boundary in one direction:
@@ -322,7 +335,7 @@ The first workspace boundaries are now in place:
 - `hubuum-storage-core` owns backend-neutral descriptors, the contract version,
   capability identities, `StorageError`, authentication and authorization
   DTOs, operational snapshot DTOs, and the extracted authentication,
-  authorization, temporal-history, unified-search, operational state,
+  authorization, catalog-query, temporal-history, unified-search, operational state,
   event-health, event-fan-out,
   event-retention, and token-retention traits without application, transport,
   or driver dependencies.

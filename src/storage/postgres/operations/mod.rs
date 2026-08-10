@@ -4,6 +4,7 @@ pub(crate) mod authorization;
 pub mod authz;
 pub mod backup;
 pub mod bootstrap;
+pub(crate) mod catalog;
 pub mod class;
 pub mod collection;
 pub mod computed_field;
@@ -29,6 +30,7 @@ pub(crate) mod probe;
 pub(crate) mod ranked_search;
 pub mod relations;
 pub mod remote_target;
+mod resource_rows;
 pub(crate) mod resource_scope;
 pub mod restore;
 pub mod search;
@@ -38,6 +40,7 @@ pub mod task_import;
 pub mod token;
 pub mod token_retention;
 pub mod user;
+mod visibility;
 
 pub use user::UserPermissions;
 
