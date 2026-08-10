@@ -2,6 +2,9 @@
 name = "hubuum-storage-postgres"
 version = "0.1.0"
 edition = "2024"
+description = "PostgreSQL storage adapter primitives for Hubuum."
+license = "MIT"
+repository = "https://github.com/hubuum/hubuum"
 publish = false
 
 [package.metadata.hubuum]
