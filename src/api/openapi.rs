@@ -54,8 +54,9 @@ use crate::models::{
     RemoteTargetID, RemoteTargetInvokeRequest, RemoteTargetSubjectType, ResourceRevision,
     RestoreConfirmRequest, RestoreJobStatus, RestoreStageResponse, RestoreTimestamps,
     RestoreValidationSummary, ServiceAccountPointResponse, ServiceAccountResponse,
-    SharedComputedScopeResponse, TaskDetails, TaskEventResponse, TaskKind, TaskLinks, TaskProgress,
-    TaskResponse, TaskStatus, TokenListState, TokenResourceScope, TokenScopeDetails,
+    SharedComputedScopeResponse, StructuredSearchDoneEvent, StructuredSearchErrorEvent,
+    StructuredSearchStartedEvent, TaskDetails, TaskEventResponse, TaskKind, TaskLinks,
+    TaskProgress, TaskResponse, TaskStatus, TokenListState, TokenResourceScope, TokenScopeDetails,
     UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
     UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateCollection, UpdateEventSink,
     UpdateEventSubscription, UpdateExportTemplate, UpdateGroup, UpdateHubuumClass,
@@ -183,6 +184,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         relations::delete_object_relation,
         search::get_search,
         search::post_search,
+        search::post_stream_search,
         search::stream_search,
         exports::run_export,
         exports::get_export,
@@ -506,6 +508,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
             UnifiedSearchStartedEvent,
             UnifiedSearchDoneEvent,
             UnifiedSearchErrorEvent,
+            StructuredSearchStartedEvent,
+            StructuredSearchDoneEvent,
+            StructuredSearchErrorEvent,
             ExportTemplateID,
             ExportTemplateKind,
             ExportTemplate,
@@ -1896,6 +1901,42 @@ mod tests {
                 .iter()
                 .all(|expression| expression["maxProperties"] == 2),
             "expression schemas must reject unknown properties"
+        );
+
+        let stream = json
+            .pointer("/paths/~1api~1v1~1search~1stream/post")
+            .expect("structured search stream operation");
+        assert_eq!(
+            stream
+                .pointer("/requestBody/content/application~1json/schema/$ref")
+                .and_then(Value::as_str),
+            Some("#/components/schemas/StructuredSearchRequest")
+        );
+        for status in ["200", "400", "401", "413", "415"] {
+            assert!(
+                stream["responses"].get(status).is_some(),
+                "missing documented structured-search stream response {status}"
+            );
+        }
+        assert!(
+            stream
+                .pointer("/responses/200/content/text~1event-stream")
+                .is_some()
+        );
+        for schema in [
+            "StructuredSearchStartedEvent",
+            "StructuredSearchDoneEvent",
+            "StructuredSearchErrorEvent",
+        ] {
+            assert!(
+                json["components"]["schemas"].get(schema).is_some(),
+                "missing structured-search stream schema {schema}"
+            );
+        }
+        assert_eq!(
+            json["components"]["schemas"]["StructuredSearchDoneEvent"]["properties"]["page_limit"]
+                ["type"],
+            "integer"
         );
     }
 

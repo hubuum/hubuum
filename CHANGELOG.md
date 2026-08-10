@@ -16,6 +16,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   equivalent permission-aware behavior for SQL and external policy backends.
   Object searches additionally support an optional exact class selector and
   bounded existential related-object predicates.
+- Added `POST /api/v1/search/stream`, which accepts the same structured-search
+  DSL and emits `started`, ordered tagged `result`, and terminal `done` or
+  `error` server-sent events without holding a database connection under client
+  backpressure.
 - Class object lists now accept up to four named `related.<alias>` filter
   groups. Each group selects one target class, normal target-object fields, and
   an optional bidirectional depth up to 10; groups are combined with `AND`, and
