@@ -7,7 +7,7 @@ use super::resolution::{
 };
 use super::types::{CollectionResolution, PlanningState};
 use crate::models::{ClassKey, ImportRequest, ObjectKey};
-use crate::storage::postgres::operations::task_import::{
+use crate::storage::capabilities::task_import::{
     lookup_classes_by_collection_and_names, lookup_collections_by_name,
     lookup_objects_by_class_and_names,
 };

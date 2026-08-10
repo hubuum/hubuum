@@ -38,8 +38,9 @@ use crate::storage::postgres::operations::relations::{
 };
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, ObjectRelationStore, ObjectStore,
-    StorageError, StorageIdentity,
+    ClassRelationStore, ClassStore, CollectionStore, EventMetricsSnapshot, InventoryGaugeSnapshot,
+    MetricsStorage, ObjectRelationStore, ObjectStore, StorageError, StorageIdentity,
+    StoragePoolState, TaskGaugeSnapshot,
 };
 use error::map_postgres_error;
 
@@ -62,6 +63,52 @@ impl PostgresStorage {
 impl StorageIdentity for PostgresStorage {
     fn storage_name(&self) -> &'static str {
         "postgresql"
+    }
+}
+
+#[async_trait]
+impl MetricsStorage for PostgresStorage {
+    fn metrics_pool_state(&self) -> StoragePoolState {
+        let state = self.pool.state();
+        let max_connections = self.pool.config().max_size;
+        let in_use_connections = state.connections.saturating_sub(state.idle_connections);
+        StoragePoolState {
+            max_connections,
+            total_connections: state.connections,
+            available_connections: max_connections.saturating_sub(in_use_connections),
+            idle_connections: state.idle_connections,
+            in_use_connections,
+            pending_acquisitions: state.statistics.pending_gets(),
+            acquisitions_started: state.statistics.get_started,
+            acquisitions_direct: state.statistics.get_direct,
+            acquisitions_waited: state.statistics.get_waited,
+            acquisitions_timed_out: state.statistics.get_timed_out,
+            acquisition_wait_time_ms: u64::try_from(state.statistics.get_wait_time.as_millis())
+                .unwrap_or(u64::MAX),
+            connections_created: state.statistics.connections_created,
+            connections_closed_broken: state.statistics.connections_closed_broken,
+            connections_closed_invalid: state.statistics.connections_closed_invalid,
+            connections_closed_max_lifetime: state.statistics.connections_closed_max_lifetime,
+            connections_closed_idle_timeout: state.statistics.connections_closed_idle_timeout,
+        }
+    }
+
+    async fn metrics_inventory_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
+        operations::metrics::load_inventory_gauge_snapshot(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn metrics_task_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
+        operations::metrics::load_task_gauge_snapshot(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn metrics_event_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
+        operations::event_observability::load_event_metrics_snapshot(&self.pool)
+            .await
+            .map_err(map_postgres_error)
     }
 }
 

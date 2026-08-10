@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use opentelemetry::KeyValue;
 
-use crate::storage::postgres::operations::meta::load_database_pool_state;
+use crate::storage::MetricsStorage;
 
 use super::{Metrics, current};
 
@@ -62,11 +62,8 @@ pub(crate) fn db_operation_finished(
     }
 }
 
-pub(super) fn refresh_pool_gauges(
-    metrics: &Metrics,
-    backend: &impl crate::storage::StorageContext,
-) {
-    let state = load_database_pool_state(backend);
+pub(super) fn refresh_pool_gauges(metrics: &Metrics, backend: &(impl MetricsStorage + ?Sized)) {
+    let state = backend.metrics_pool_state();
     metrics.db_pool_connections.record(
         u64::from(state.max_connections),
         &[KeyValue::new("state", "configured")],

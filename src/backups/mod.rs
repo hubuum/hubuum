@@ -12,8 +12,8 @@ use crate::models::{
     TaskResultCounts, TaskStatus,
 };
 use crate::permissions::{AppContext, PrincipalRef};
-use crate::storage::postgres::operations::backup::snapshot_backup_db;
-use crate::storage::postgres::operations::task::{TaskBackend, TaskStateUpdate};
+use crate::storage::capabilities::backup::snapshot_backup_db;
+use crate::storage::capabilities::task::{TaskBackend, TaskStateUpdate};
 use crate::traits::AuthzSubject;
 
 #[derive(Clone, Debug)]

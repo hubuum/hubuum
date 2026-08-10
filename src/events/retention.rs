@@ -20,13 +20,10 @@ use crate::events::{Event, EventRetentionSettings};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
-use crate::storage::postgres::operations::event_retention::{
-    EventRetentionPurgeSummary, purge_event_retention_batch_conn,
-    select_events_for_retention_purge_conn, try_acquire_event_retention_lock,
+use crate::storage::capabilities::event_retention::{
+    EventRetentionPurgeSummary, process_event_retention_batch_from_storage,
 };
-use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
-use crate::storage::postgres::with_transaction;
-use crate::storage::postgres::{StorageCallSite, with_storage_call_site};
+use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 use crate::storage::{StorageHandle, storage_handle};
 
 static EVENT_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
@@ -86,23 +83,13 @@ pub async fn process_event_retention_batch(
     archive_path: Option<&Path>,
 ) -> Result<EventRetentionPurgeSummary, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
-    with_transaction(pool, async |conn| -> Result<_, ApiError> {
-        if !maintenance_state_conn(conn).await?.is_normal() {
-            return Ok(EventRetentionPurgeSummary::default());
-        }
-        if !try_acquire_event_retention_lock(conn).await? {
-            return Ok(EventRetentionPurgeSummary::default());
-        }
-
-        let events = select_events_for_retention_purge_conn(conn, settings).await?;
+    process_event_retention_batch_from_storage(pool, settings, |events| {
         if let Some(path) = archive_path
             && !events.is_empty()
         {
-            append_event_archive(path, &events)?;
+            append_event_archive(path, events)?;
         }
-
-        let event_ids = events.iter().map(|event| event.id).collect::<Vec<_>>();
-        purge_event_retention_batch_conn(conn, settings, &event_ids).await
+        Ok(())
     })
     .await
 }

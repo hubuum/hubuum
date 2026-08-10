@@ -16,7 +16,14 @@ pub(crate) mod active_tokens {
 }
 
 pub(crate) mod authz {
-    pub(crate) use crate::storage::postgres::operations::authz::{load_token_scope, scope_allows};
+    pub use crate::storage::postgres::operations::authz::{
+        AuthzSubject, PrincipalIdAccessor, load_token_scope, scope_allows, scope_allows_resource,
+        scope_allows_resources,
+    };
+}
+
+pub(crate) mod backup {
+    pub(crate) use crate::storage::postgres::operations::backup::snapshot_backup_db;
 }
 
 pub(crate) mod collection {
@@ -36,8 +43,19 @@ pub(crate) mod computed_field {
 
 pub(crate) mod event_delivery {
     pub(crate) use crate::storage::postgres::operations::event_delivery::{
-        list_event_deliveries_with_total_count, load_event_delivery, mark_event_delivery_dead,
-        release_event_delivery_for_retry,
+        ClaimedEventDelivery, claim_event_delivery_batch, list_event_deliveries_with_total_count,
+        load_event_delivery, mark_event_delivery_dead, mark_event_delivery_failed,
+        mark_event_delivery_succeeded, release_event_delivery_for_retry,
+    };
+}
+
+pub(crate) mod event_fanout {
+    pub(crate) use crate::storage::postgres::operations::event_fanout::process_event_fanout_batch;
+}
+
+pub(crate) mod event_retention {
+    pub(crate) use crate::storage::postgres::operations::event_retention::{
+        EventRetentionPurgeSummary, process_event_retention_batch_from_storage,
     };
 }
 
@@ -55,7 +73,14 @@ pub(crate) mod event_subscription {
 
 pub(crate) mod events {
     pub(crate) use crate::storage::postgres::operations::events::{
-        list_events_with_total_count, parse_event_filters,
+        list_events_with_total_count, load_queued_task_initiators, parse_event_filters,
+    };
+}
+
+pub(crate) mod external_identity {
+    pub(crate) use crate::storage::postgres::operations::external_identity::{
+        ExternalPrincipalState, external_principal_state, mark_external_sync_attempted,
+        sync_external_user,
     };
 }
 
@@ -73,14 +98,28 @@ pub(crate) mod history {
     };
 }
 
+pub(crate) mod identity {
+    pub(crate) use crate::storage::postgres::operations::identity::{
+        ensure_identity_scope, identity_scope_name_by_id,
+    };
+}
+
+pub(crate) mod maintenance {
+    pub(crate) use crate::storage::postgres::operations::maintenance::maintenance_state_db;
+}
+
 pub(crate) mod meta {
     pub(crate) use crate::storage::postgres::operations::meta::{
-        load_database_pool_state, load_database_state, load_task_queue_state,
+        load_database_state, load_task_queue_state,
     };
 }
 
 pub(crate) mod principal {
     pub(crate) use crate::storage::postgres::operations::principal::load_principal_with_user;
+}
+
+pub(crate) mod permissions {
+    pub(crate) use crate::storage::postgres::operations::permissions::PermissionControllerBackend;
 }
 
 pub(crate) mod probe {
@@ -89,14 +128,25 @@ pub(crate) mod probe {
 
 pub(crate) mod relations {
     pub(crate) use crate::storage::postgres::operations::relations::{
-        class_relation_authorization_resources, object_relation_authorization_resources,
+        class_relation_authorization_resources, object_authorization_resources,
+        object_relation_authorization_resources,
     };
 }
 
 pub(crate) mod remote_target {
     pub(crate) use crate::storage::postgres::operations::remote_target::{
         DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
-        emit_remote_target_invoked_event,
+        emit_remote_target_invoked_event, insert_remote_call_result,
+    };
+}
+
+pub(crate) mod restore {
+    pub(crate) use crate::storage::postgres::operations::restore::{
+        RestoreCompletion, RestoreCoordinatorSnapshot, apply_restore_db, delete_server_instance_db,
+        expire_restore_stage_db, fail_restore_and_resume_db, insert_restore_job_db,
+        load_restore_coordinator_snapshot_db, load_restore_job_db, load_restore_status_job_db,
+        maintenance_generation_and_instances_db, restore_coordinator_tick_db,
+        resume_maintenance_without_job_db, resume_terminal_restore_db, start_restore_draining_db,
     };
 }
 
@@ -110,9 +160,21 @@ pub(crate) mod service_account {
 
 pub(crate) mod task {
     pub(crate) use crate::storage::postgres::operations::task::{
-        TaskBackend, TaskCreateRequest, TaskScopeSnapshot, list_backup_task_output_summaries,
-        list_export_task_output_summaries, list_tasks_with_total_count, task_event_responses,
+        TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate, insert_import_results,
+        list_backup_task_output_summaries, list_export_task_output_summaries,
+        list_tasks_with_total_count, task_event_responses,
     };
+}
+
+pub(crate) mod task_import {
+    pub(crate) use crate::storage::postgres::operations::task_import::{
+        lookup_classes_by_collection_and_names, lookup_collections_by_name,
+        lookup_objects_by_class_and_names,
+    };
+}
+
+pub(crate) mod token_retention {
+    pub(crate) use crate::storage::postgres::operations::token_retention::purge_expired_token_batch;
 }
 
 pub(crate) mod user {
@@ -414,8 +476,12 @@ pub(crate) mod user {
             externally_authorized_related_object_ids, search_computed_objects_with_authorized_ids,
         };
     }
+
+    pub(crate) mod workflow {
+        pub(crate) use crate::storage::postgres::operations::user::UserSearchBackend;
+    }
 }
 pub(crate) use crate::storage::postgres::{
     StorageCallSite, with_mutation_provenance_scope, with_revision_precondition_scope,
-    with_storage_call_site,
+    with_statement_timeout_scope, with_storage_call_site,
 };

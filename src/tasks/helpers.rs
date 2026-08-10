@@ -8,7 +8,7 @@ use crate::models::{
     Collection, HubuumClass, HubuumObject, ImportAtomicity, ImportCollisionPolicy, ImportMode,
     ImportPermissionPolicy,
 };
-use crate::storage::postgres::operations::task::insert_import_results;
+use crate::storage::capabilities::task::insert_import_results;
 
 use super::types::{
     ClassResolution, CollectionResolution, ExecutionAccumulator, FailureKind,

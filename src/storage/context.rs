@@ -3,8 +3,11 @@ use actix_web::web::Data;
 use crate::permissions::{AppContext, PermissionBackend};
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
-    DynLifecycleStorage, PostgresStorage, StorageBackend, StorageBackendDescriptor,
+    DynLifecycleStorage, EventMetricsSnapshot, InventoryGaugeSnapshot, MetricsStorage,
+    PostgresStorage, StorageBackend, StorageBackendDescriptor, StorageError, StoragePoolState,
+    TaskGaugeSnapshot,
 };
+use async_trait::async_trait;
 
 mod private {
     use crate::storage::postgres::PostgresPool;
@@ -54,6 +57,35 @@ impl StorageHandle {
     fn postgres_pool(&self) -> &PostgresPool {
         match &self.implementation {
             BackendImplementation::Postgresql(backend) => backend.pool(),
+        }
+    }
+}
+
+#[async_trait]
+impl MetricsStorage for StorageHandle {
+    fn metrics_pool_state(&self) -> StoragePoolState {
+        match &self.implementation {
+            BackendImplementation::Postgresql(backend) => backend.metrics_pool_state(),
+        }
+    }
+
+    async fn metrics_inventory_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
+        match &self.implementation {
+            BackendImplementation::Postgresql(backend) => {
+                backend.metrics_inventory_snapshot().await
+            }
+        }
+    }
+
+    async fn metrics_task_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
+        match &self.implementation {
+            BackendImplementation::Postgresql(backend) => backend.metrics_task_snapshot().await,
+        }
+    }
+
+    async fn metrics_event_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
+        match &self.implementation {
+            BackendImplementation::Postgresql(backend) => backend.metrics_event_snapshot().await,
         }
     }
 }

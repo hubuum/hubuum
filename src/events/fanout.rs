@@ -17,8 +17,8 @@ use crate::models::EventWorkerWakeupStats;
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
-use crate::storage::postgres::operations::event_fanout::process_event_fanout_batch;
-use crate::storage::postgres::{StorageCallSite, with_storage_call_site};
+use crate::storage::capabilities::event_fanout::process_event_fanout_batch;
+use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 use crate::storage::{StorageHandle, storage_handle};
 
 static EVENT_FANOUT_WORKER: Once = Once::new();

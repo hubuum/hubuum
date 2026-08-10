@@ -24,16 +24,16 @@ use crate::models::{
     RestoreJobStatus, RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
 };
 use crate::storage::StorageContext;
-use crate::storage::postgres::operations::identity::identity_scope_name_by_id;
-use crate::storage::postgres::operations::maintenance::maintenance_state_db;
-use crate::storage::postgres::operations::restore::{
+use crate::storage::capabilities::identity::identity_scope_name_by_id;
+use crate::storage::capabilities::maintenance::maintenance_state_db;
+use crate::storage::capabilities::restore::{
     RestoreCompletion, RestoreCoordinatorSnapshot, apply_restore_db, delete_server_instance_db,
     expire_restore_stage_db, fail_restore_and_resume_db, insert_restore_job_db,
     load_restore_coordinator_snapshot_db, load_restore_job_db, load_restore_status_job_db,
     maintenance_generation_and_instances_db, restore_coordinator_tick_db,
     resume_maintenance_without_job_db, resume_terminal_restore_db, start_restore_draining_db,
 };
-use crate::storage::postgres::{StorageCallSite, with_storage_call_site};
+use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 use crate::storage::storage_handle;
 
 static RESTORE_COORDINATOR: Once = Once::new();

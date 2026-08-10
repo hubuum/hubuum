@@ -5,7 +5,7 @@ use diesel::sql_types::{Array, BigInt, Bool, Timestamp};
 use crate::errors::ApiError;
 use crate::events::{Event, EventRetentionSettings};
 use crate::storage::postgres::PostgresConnection;
-#[cfg(test)]
+use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
 use crate::storage::postgres::with_transaction;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -94,20 +94,41 @@ pub(crate) async fn purge_event_retention_batch_conn(
     })
 }
 
+/// Select, optionally archive, and purge one retention batch atomically.
+///
+/// The adapter owns the transaction, coordinator lock, and maintenance check.
+/// The callback lets the application persist an external archive before rows
+/// are deleted without exposing the PostgreSQL connection or transaction.
+pub(crate) async fn process_event_retention_batch_from_storage<F>(
+    backend: &impl crate::storage::StorageContext,
+    settings: EventRetentionSettings,
+    archive: F,
+) -> Result<EventRetentionPurgeSummary, ApiError>
+where
+    F: FnOnce(&[Event]) -> Result<(), ApiError> + Send,
+{
+    with_transaction(backend, async |conn| -> Result<_, ApiError> {
+        if !maintenance_state_conn(conn).await?.is_normal() {
+            return Ok(EventRetentionPurgeSummary::default());
+        }
+        if !try_acquire_event_retention_lock(conn).await? {
+            return Ok(EventRetentionPurgeSummary::default());
+        }
+
+        let events = select_events_for_retention_purge_conn(conn, settings).await?;
+        archive(&events)?;
+        let event_ids = events.iter().map(|event| event.id).collect::<Vec<_>>();
+        purge_event_retention_batch_conn(conn, settings, &event_ids).await
+    })
+    .await
+}
+
 #[cfg(test)]
 pub(crate) async fn purge_event_retention_without_archive(
     pool: &impl crate::storage::StorageContext,
     settings: EventRetentionSettings,
 ) -> Result<EventRetentionPurgeSummary, ApiError> {
-    with_transaction(pool, async |conn| -> Result<_, ApiError> {
-        if !try_acquire_event_retention_lock(conn).await? {
-            return Ok(EventRetentionPurgeSummary::default());
-        }
-        let events = select_events_for_retention_purge_conn(conn, settings).await?;
-        let event_ids = events.iter().map(|event| event.id).collect::<Vec<_>>();
-        purge_event_retention_batch_conn(conn, settings, &event_ids).await
-    })
-    .await
+    process_event_retention_batch_from_storage(pool, settings, |_| Ok(())).await
 }
 
 async fn select_event_ids_for_retention_purge(

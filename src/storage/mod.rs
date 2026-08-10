@@ -6,6 +6,7 @@ mod context;
 mod contract;
 #[cfg(test)]
 mod memory;
+mod metrics;
 mod object_relations;
 mod objects;
 mod observed;
@@ -25,6 +26,11 @@ pub(crate) use contract::{
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
 #[cfg(test)]
 pub(crate) use memory::MemoryStorageModel;
+pub(crate) use metrics::{
+    EventMetricsSnapshot, ExportTemplateMetricIdentity, InventoryGaugeSnapshot,
+    InventoryMetricsSnapshot, MetricsStorage, StoragePoolState, TaskGaugeAge, TaskGaugeCount,
+    TaskGaugeLastTerminal, TaskGaugeSnapshot,
+};
 pub(crate) use object_relations::ObjectRelationStore;
 pub(crate) use objects::ObjectStore;
 pub(crate) use postgres::PostgresStorage;

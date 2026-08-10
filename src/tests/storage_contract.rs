@@ -7,12 +7,40 @@ use crate::models::CollectionID;
 use crate::services::Services;
 use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
-use crate::storage::{STORAGE_CONTRACT_VERSION, StorageBackendKind};
+use crate::storage::{MetricsStorage, STORAGE_CONTRACT_VERSION, StorageBackendKind};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum LifecycleContractImplementation {
     MemoryModel,
     PostgresAdapter,
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_metrics_snapshots() {
+    let _permit = postgres_permit().await;
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool().get_ref().clone());
+
+                let pool_state = backend.metrics_pool_state();
+                assert!(pool_state.max_connections > 0);
+                backend
+                    .metrics_inventory_snapshot()
+                    .await
+                    .expect("certified backend should supply inventory metrics");
+                backend
+                    .metrics_task_snapshot()
+                    .await
+                    .expect("certified backend should supply task metrics");
+                backend
+                    .metrics_event_snapshot()
+                    .await
+                    .expect("certified backend should supply event metrics");
+            }
+        }
+    }
 }
 
 #[actix_web::test]

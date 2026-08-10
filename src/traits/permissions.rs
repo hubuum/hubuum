@@ -5,8 +5,8 @@ use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{GroupID, Permission, Permissions, PermissionsList};
 use crate::storage::StorageContext;
-use crate::storage::postgres::operations::authz::AuthzSubject;
-use crate::storage::postgres::operations::permissions::PermissionControllerBackend;
+use crate::storage::capabilities::authz::AuthzSubject;
+use crate::storage::capabilities::permissions::PermissionControllerBackend;
 
 use super::CollectionAccessors;
 
