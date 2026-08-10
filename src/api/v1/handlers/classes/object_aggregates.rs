@@ -12,13 +12,13 @@ use crate::extractors::Authenticated;
 use crate::models::object_aggregate::parse_object_aggregate_query;
 use crate::models::search::QueryParamsExt;
 use crate::models::{
-    ClassSelector, HubuumClassID, ObjectAggregateAuthorization, ObjectAggregateBackendRequest,
-    ObjectAggregateCursorBudget, ObjectAggregateRow, ObjectAggregateTarget, Permissions,
+    ClassSelector, HubuumClassID, ObjectAggregateAuthorization, ObjectAggregateCursorBudget,
+    ObjectAggregateRequest, ObjectAggregateRow, ObjectAggregateTarget, Permissions,
     ResolvedClassTarget, UserID,
 };
 use crate::pagination::effective_page_limit;
 use crate::permissions::AppContext;
-use crate::traits::Search;
+use crate::services::object_aggregates;
 
 #[utoipa::path(
     get,
@@ -139,13 +139,13 @@ async fn read_object_aggregates(
     let authorization = ObjectAggregateAuthorization::new(required, requestor.scopes().cloned())?;
 
     let effective_limit = effective_page_limit(query.query_options())?;
-    let mut request = ObjectAggregateBackendRequest::builder(aggregate_target, query)
+    let mut request = ObjectAggregateRequest::builder(aggregate_target, query)
         .authorization(authorization)
         .cursor_budget(cursor_budget);
     if let Some(owner_id) = personal_owner_id {
         request = request.personal_owner(owner_id);
     }
-    let page = user.aggregate_objects(&context, request.build()?).await?;
+    let page = object_aggregates::aggregate_objects(&context, user, request.build()?).await?;
     let (rows, total_count, next_cursor) = page.into_parts();
     Ok(ApiResponse::paginated_items(
         rows,

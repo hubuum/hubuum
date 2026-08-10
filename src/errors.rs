@@ -168,6 +168,9 @@ impl From<StorageError> for ApiError {
     fn from(error: StorageError) -> Self {
         let (kind, message, current_etag) = error.into_parts();
         match kind {
+            StorageErrorKind::AuthorizationUnavailable => {
+                Self::PermissionBackendUnavailable(message)
+            }
             StorageErrorKind::BadRequest => Self::BadRequest(message),
             StorageErrorKind::Conflict => Self::Conflict(message),
             StorageErrorKind::Database => Self::DatabaseError(message),
@@ -467,6 +470,14 @@ mod tests {
     #[test]
     fn storage_errors_preserve_public_failure_categories() {
         for (error, expected_class) in [
+            (
+                StorageError::new(
+                    StorageErrorKind::AuthorizationUnavailable,
+                    "policy unavailable",
+                    None,
+                ),
+                "permission_backend_unavailable",
+            ),
             (
                 StorageError::new(StorageErrorKind::BadRequest, "invalid move", None),
                 "bad_request",

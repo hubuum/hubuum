@@ -34,6 +34,10 @@ pub struct ObjectAggregateCursorBudget {
 }
 
 impl ObjectAggregateCursorBudget {
+    pub(crate) const fn from_max_encoded_bytes(max_encoded_bytes: usize) -> Self {
+        Self { max_encoded_bytes }
+    }
+
     pub fn for_request_target(path: &str, query_string: &str) -> Result<Self, ApiError> {
         let base_query_length = query_string
             .split('&')
@@ -780,6 +784,10 @@ impl ObjectAggregateRow {
     pub const fn object_count(&self) -> i64 {
         self.object_count
     }
+
+    pub(crate) const fn sort_key(&self) -> &serde_json::Value {
+        &self.sort_key
+    }
 }
 
 fn dimensions_from_sort_key(
@@ -938,7 +946,7 @@ impl ObjectAggregateQuery {
     }
 }
 
-pub struct ObjectAggregateBackendRequest {
+pub struct ObjectAggregateRequest {
     target: ObjectAggregateTarget,
     query_options: QueryOptions,
     spec: ObjectAggregateSpec,
@@ -947,7 +955,7 @@ pub struct ObjectAggregateBackendRequest {
     cursor_budget: ObjectAggregateCursorBudget,
 }
 
-pub struct ObjectAggregateBackendRequestBuilder {
+pub struct ObjectAggregateRequestBuilder {
     target: ObjectAggregateTarget,
     query: ObjectAggregateQuery,
     personal_owner_id: Option<UserID>,
@@ -955,7 +963,7 @@ pub struct ObjectAggregateBackendRequestBuilder {
     cursor_budget: Option<ObjectAggregateCursorBudget>,
 }
 
-pub(crate) struct ObjectAggregateBackendParts {
+pub(crate) struct ObjectAggregateRequestParts {
     pub target: ObjectAggregateTarget,
     pub query_options: QueryOptions,
     pub spec: ObjectAggregateSpec,
@@ -1001,12 +1009,12 @@ impl ObjectAggregateAuthorization {
     }
 }
 
-impl ObjectAggregateBackendRequest {
+impl ObjectAggregateRequest {
     pub fn builder(
         target: ObjectAggregateTarget,
         query: ObjectAggregateQuery,
-    ) -> ObjectAggregateBackendRequestBuilder {
-        ObjectAggregateBackendRequestBuilder {
+    ) -> ObjectAggregateRequestBuilder {
+        ObjectAggregateRequestBuilder {
             target,
             query,
             personal_owner_id: None,
@@ -1015,8 +1023,8 @@ impl ObjectAggregateBackendRequest {
         }
     }
 
-    pub(crate) fn into_parts(self) -> ObjectAggregateBackendParts {
-        ObjectAggregateBackendParts {
+    pub(crate) fn into_parts(self) -> ObjectAggregateRequestParts {
+        ObjectAggregateRequestParts {
             target: self.target,
             query_options: self.query_options,
             spec: self.spec,
@@ -1027,7 +1035,7 @@ impl ObjectAggregateBackendRequest {
     }
 }
 
-impl ObjectAggregateBackendRequestBuilder {
+impl ObjectAggregateRequestBuilder {
     pub fn personal_owner(mut self, owner_id: UserID) -> Self {
         self.personal_owner_id = Some(owner_id);
         self
@@ -1043,7 +1051,7 @@ impl ObjectAggregateBackendRequestBuilder {
         self
     }
 
-    pub fn build(mut self) -> Result<ObjectAggregateBackendRequest, ApiError> {
+    pub fn build(mut self) -> Result<ObjectAggregateRequest, ApiError> {
         let authorization = self.authorization.ok_or_else(|| {
             ApiError::InternalServerError(
                 "Object aggregate backend request is missing authorization".to_string(),
@@ -1077,7 +1085,7 @@ impl ObjectAggregateBackendRequestBuilder {
                 "Personal computed aggregation requires exactly one typed owner".to_string(),
             ));
         }
-        Ok(ObjectAggregateBackendRequest {
+        Ok(ObjectAggregateRequest {
             target: self.target,
             query_options,
             spec,

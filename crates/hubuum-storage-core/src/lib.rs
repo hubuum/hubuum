@@ -10,6 +10,7 @@ mod computed_objects;
 mod events;
 mod history;
 mod identity;
+mod object_aggregate;
 mod operational;
 mod relation_query;
 mod unified_search;
@@ -45,6 +46,14 @@ pub use identity::{
     AuthenticationPrincipalKind, AuthenticationResourceScope, AuthenticationStorage,
     AuthenticationTokenScope, AuthenticationTokenScopeQuery,
 };
+pub use object_aggregate::{
+    ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
+    ObjectAggregateStorageQuery, ObjectAggregateStorageQueryBuilder,
+    StorageObjectAggregateAuthorizationCandidate, StorageObjectAggregateAuthorizationTarget,
+    StorageObjectAggregateMeasureState, StorageObjectAggregateMeasureValue,
+    StorageObjectAggregatePage, StorageObjectAggregateRow, StorageObjectAggregateSort,
+    StorageObjectAggregateSpec, StorageObjectAggregateTarget,
+};
 pub use operational::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
     EventHealthStorage, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
@@ -77,7 +86,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 6;
+pub const STORAGE_CONTRACT_VERSION: u16 = 7;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +112,7 @@ pub enum StorageCapability {
     DomainLifecycle,
     CatalogQueries,
     ComputedObjectQueries,
+    ObjectAggregates,
     RelationQueries,
     IdentityAndAuthorizationData,
     TemporalHistory,
@@ -112,10 +122,11 @@ pub enum StorageCapability {
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
         Self::ComputedObjectQueries,
+        Self::ObjectAggregates,
         Self::RelationQueries,
         Self::IdentityAndAuthorizationData,
         Self::TemporalHistory,
@@ -130,6 +141,7 @@ impl StorageCapability {
             Self::DomainLifecycle => "domain_lifecycle",
             Self::CatalogQueries => "catalog_queries",
             Self::ComputedObjectQueries => "computed_object_queries",
+            Self::ObjectAggregates => "object_aggregates",
             Self::RelationQueries => "relation_queries",
             Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
             Self::TemporalHistory => "temporal_history",
@@ -169,6 +181,7 @@ impl StorageBackendDescriptor {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageErrorKind {
+    AuthorizationUnavailable,
     BadRequest,
     Conflict,
     Database,
@@ -185,6 +198,7 @@ impl StorageErrorKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::AuthorizationUnavailable => "authorization_unavailable",
             Self::BadRequest => "bad_request",
             Self::Conflict => "conflict",
             Self::Database => "database",
@@ -200,7 +214,10 @@ impl StorageErrorKind {
 
     #[must_use]
     pub const fn is_backend_failure(self) -> bool {
-        matches!(self, Self::Database | Self::Internal | Self::Unavailable)
+        matches!(
+            self,
+            Self::AuthorizationUnavailable | Self::Database | Self::Internal | Self::Unavailable
+        )
     }
 }
 
@@ -286,6 +303,7 @@ mod tests {
                 "domain_lifecycle",
                 "catalog_queries",
                 "computed_object_queries",
+                "object_aggregates",
                 "relation_queries",
                 "identity_and_authorization_data",
                 "temporal_history",

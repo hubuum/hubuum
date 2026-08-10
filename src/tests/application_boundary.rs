@@ -230,6 +230,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "AuthorizationStorage",
         "CatalogStorage",
         "ComputedObjectStorage",
+        "ObjectAggregateStorage",
         "RelationQueryStorage",
         "EventDeliveryStorage",
         "EventFanoutStorage",
@@ -274,6 +275,10 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         );
     }
     let compact_context = context_source.split_whitespace().collect::<String>();
+    assert!(
+        compact_context.contains("\"object_aggregates\",\"aggregate\""),
+        "object aggregation must use the common storage observer"
+    );
     for operation in [
         "list_classes",
         "list_objects",

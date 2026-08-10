@@ -33,6 +33,9 @@ impl From<PostgresStorageError> for StorageError {
     fn from(error: PostgresStorageError) -> Self {
         let source = error.source;
         match source {
+            ApiError::PermissionBackendUnavailable(message) => {
+                Self::new(StorageErrorKind::AuthorizationUnavailable, message, None)
+            }
             ApiError::BadRequest(message)
             | ApiError::InvalidIntegerRange(message)
             | ApiError::OperatorMismatch(message) => {
@@ -89,6 +92,13 @@ mod tests {
         assert_eq!(
             map_postgres_error(ApiError::NotFound("missing".to_string())).kind(),
             StorageErrorKind::NotFound
+        );
+        assert_eq!(
+            map_postgres_error(ApiError::PermissionBackendUnavailable(
+                "policy unavailable".to_string()
+            ))
+            .kind(),
+            StorageErrorKind::AuthorizationUnavailable
         );
     }
 }

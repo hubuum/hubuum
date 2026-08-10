@@ -44,6 +44,42 @@ pub(crate) const fn permission_to_storage(permission: Permissions) -> Authorizat
     }
 }
 
+pub(crate) const fn permission_from_storage(permission: AuthorizationPermission) -> Permissions {
+    match permission {
+        AuthorizationPermission::ReadCollection => Permissions::ReadCollection,
+        AuthorizationPermission::UpdateCollection => Permissions::UpdateCollection,
+        AuthorizationPermission::DeleteCollection => Permissions::DeleteCollection,
+        AuthorizationPermission::DelegateCollection => Permissions::DelegateCollection,
+        AuthorizationPermission::CreateClass => Permissions::CreateClass,
+        AuthorizationPermission::ReadClass => Permissions::ReadClass,
+        AuthorizationPermission::UpdateClass => Permissions::UpdateClass,
+        AuthorizationPermission::DeleteClass => Permissions::DeleteClass,
+        AuthorizationPermission::CreateObject => Permissions::CreateObject,
+        AuthorizationPermission::ReadObject => Permissions::ReadObject,
+        AuthorizationPermission::UpdateObject => Permissions::UpdateObject,
+        AuthorizationPermission::DeleteObject => Permissions::DeleteObject,
+        AuthorizationPermission::CreateClassRelation => Permissions::CreateClassRelation,
+        AuthorizationPermission::ReadClassRelation => Permissions::ReadClassRelation,
+        AuthorizationPermission::UpdateClassRelation => Permissions::UpdateClassRelation,
+        AuthorizationPermission::DeleteClassRelation => Permissions::DeleteClassRelation,
+        AuthorizationPermission::CreateObjectRelation => Permissions::CreateObjectRelation,
+        AuthorizationPermission::ReadObjectRelation => Permissions::ReadObjectRelation,
+        AuthorizationPermission::UpdateObjectRelation => Permissions::UpdateObjectRelation,
+        AuthorizationPermission::DeleteObjectRelation => Permissions::DeleteObjectRelation,
+        AuthorizationPermission::ReadTemplate => Permissions::ReadTemplate,
+        AuthorizationPermission::CreateTemplate => Permissions::CreateTemplate,
+        AuthorizationPermission::UpdateTemplate => Permissions::UpdateTemplate,
+        AuthorizationPermission::DeleteTemplate => Permissions::DeleteTemplate,
+        AuthorizationPermission::ReadRemoteTarget => Permissions::ReadRemoteTarget,
+        AuthorizationPermission::CreateRemoteTarget => Permissions::CreateRemoteTarget,
+        AuthorizationPermission::UpdateRemoteTarget => Permissions::UpdateRemoteTarget,
+        AuthorizationPermission::DeleteRemoteTarget => Permissions::DeleteRemoteTarget,
+        AuthorizationPermission::ExecuteRemoteTarget => Permissions::ExecuteRemoteTarget,
+        AuthorizationPermission::ReadAudit => Permissions::ReadAudit,
+        AuthorizationPermission::ManageEventSubscription => Permissions::ManageEventSubscription,
+    }
+}
+
 pub(super) fn collection_from_storage(
     collection: AuthorizationCollection,
 ) -> Result<Collection, ApiError> {

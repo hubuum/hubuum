@@ -52,15 +52,17 @@ use super::{
     EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
     ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery,
     HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
+    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
     ObjectRelationsTouchingIdsQuery, ObjectStore, OperationalStateStorage, ReadinessSnapshot,
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
     RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
     StorageClass, StorageClassGraphRow, StorageClassRelation, StorageCollection,
-    StorageComputedObject, StorageError, StorageIdentity, StorageObject, StorageObjectGraphRow,
-    StorageObjectRelation, StoragePoolState, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass,
-    UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageComputedObject, StorageError, StorageIdentity, StorageObject,
+    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation, StoragePoolState,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, TaskGaugeSnapshot,
+    TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
+    UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use error::map_postgres_error;
@@ -462,6 +464,19 @@ impl ComputedObjectStorage for PostgresStorage {
         query: ComputedObjectEnrichmentQuery,
     ) -> Result<Vec<StorageComputedObject>, StorageError> {
         operations::computed_objects::enrich_computed_objects(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl ObjectAggregateStorage for PostgresStorage {
+    async fn aggregate_objects(
+        &self,
+        query: ObjectAggregateStorageQuery,
+        authorizer: Option<&dyn ObjectAggregateAuthorizer>,
+    ) -> Result<StorageObjectAggregatePage, StorageError> {
+        operations::user::aggregate_objects(&self.pool, query, authorizer)
             .await
             .map_err(map_postgres_error)
     }

@@ -64,6 +64,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Domain lifecycle | Collection, class, object, class-relation, and object-relation resolution and lifecycle behavior |
 | Catalog queries | Permission- and resource-scoped collection, class, and object filtering, cursor paging, and optional exact counts |
 | Computed object queries | Computed filtering and sorting, exact counts, cursor-boundary snapshots, and computed-value enrichment |
+| Object aggregates | Permission-scoped grouping, numeric measures, stable aggregate cursors, and bounded delegated-policy batching |
 | Relation queries | Relation filtering and paging, endpoint-set queries, graph traversal, and export-oriented multi-root expansion |
 | Identity and authorization data | Principals, credentials, memberships, grants, and data needed by configured authorization providers |
 | Temporal history | Revision-filtered pages, stable cursors, point-in-time reads, visibility pushdown, and provenance-name resolution |
@@ -82,8 +83,8 @@ be replaced by mandatory operation-shaped traits and shared tests. The former
 identity, catalog-query, relation-query, history, and unified-search gates have
 now been replaced by the real `AuthenticationStorage`,
 `AuthorizationStorage`, `HistoryStorage`, `CatalogStorage`,
-`ComputedObjectStorage`, `RelationQueryStorage`, and `UnifiedSearchStorage`
-contracts; no family is
+`ComputedObjectStorage`, `ObjectAggregateStorage`, `RelationQueryStorage`, and
+`UnifiedSearchStorage` contracts; no family is
 considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
@@ -236,6 +237,21 @@ handle observes the complete capability with bounded
 `computed_objects/{list,enrich}` labels, and the available-backend test invokes
 both operations.
 
+`ObjectAggregateStorage` owns filtered grouping, numeric measures, computed
+aggregate snapshots, exact group counts, and stable aggregate cursors. The
+request uses private-field target and specification DTOs plus the same neutral
+visibility descriptor used by other reads. When authorization can be pushed
+into storage, the backend performs the complete operation directly. For an
+external policy engine, the application supplies an `ObjectAggregateAuthorizer`
+implementation that receives only storage-owned target and candidate DTOs;
+the backend retains bounded candidate paging, computed evaluation, and
+accumulation while the application retains authorization decisions. This
+avoids collecting every authorized object identifier in memory and keeps the
+concrete permission and PostgreSQL implementations on their respective sides
+of the boundary. The opaque handle observes the operation with the bounded
+`object_aggregates/aggregate` label, and the available-backend compatibility
+test exercises both storage-pushdown and delegated authorization modes.
+
 `RelationQueryStorage` owns the complete relation read surface rather than only
 ordinary relation lists. Its mandatory operations cover class and object
 relation filtering and counts, direct relations touching one endpoint,
@@ -327,7 +343,8 @@ There are two complementary test layers:
    contract descriptor, and exercises every mandatory operation family. The
    temporal-history contract test covers all list, point-in-time, visibility,
    and provenance-resolution entry points; the computed-object contract covers
-   query and enrichment entry points.
+   query and enrichment entry points; and the object-aggregate contract covers
+   both storage-pushdown and delegated-policy execution.
 
 PostgreSQL-specific tests remain responsible for behavior a logical model
 cannot reproduce: transactions, rollbacks, isolation, row locks, trigger
@@ -366,9 +383,9 @@ The first workspace boundaries are now in place:
   capability identities, `StorageError`, authentication and authorization
   DTOs, operational snapshot DTOs, and the extracted authentication,
   authorization, catalog-query, temporal-history, unified-search, operational state,
-  event-health, event-fan-out,
-  event-retention, and token-retention traits without application, transport,
-  or driver dependencies.
+  computed-object, object-aggregate, relation-query, event-health,
+  event-fan-out, event-retention, and token-retention traits without
+  application, transport, or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection
   setup, safe endpoint diagnostics, JSONB validation, query capture, and its
   crate-owned pool-construction error.
