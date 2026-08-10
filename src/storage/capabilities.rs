@@ -140,11 +140,8 @@ pub(crate) mod task_import {
 pub(crate) mod user {
     use crate::errors::ApiError;
     use crate::models::search::QueryOptions;
-    use crate::models::{
-        HubuumClass, HubuumClassRelation, HubuumObject, HubuumObjectRelation, TokenScope,
-    };
+    use crate::models::{HubuumObject, TokenScope};
     use crate::storage::StorageContext;
-    use crate::traits::SelfAccessors;
 
     use super::computed_field::ComputedQuerySnapshot;
 
@@ -173,50 +170,6 @@ pub(crate) mod user {
         ) -> Result<i64, ApiError>
         where
             C: StorageContext;
-
-        async fn search_class_relations_from_backend_with_admin_status<C>(
-            &self,
-            context: &C,
-            query_options: QueryOptions,
-            is_admin: bool,
-            scopes: Option<&TokenScope>,
-        ) -> Result<Vec<HubuumClassRelation>, ApiError>
-        where
-            C: StorageContext;
-
-        async fn class_relations_touching_page_from_backend_with_admin_status<C, K>(
-            &self,
-            context: &C,
-            class: K,
-            query_options: QueryOptions,
-            is_admin: bool,
-            scopes: Option<&TokenScope>,
-        ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
-        where
-            C: StorageContext,
-            K: SelfAccessors<HubuumClass>;
-
-        async fn search_object_relations_from_backend_with_admin_status<C>(
-            &self,
-            context: &C,
-            query_options: QueryOptions,
-            is_admin: bool,
-            scopes: Option<&TokenScope>,
-        ) -> Result<Vec<HubuumObjectRelation>, ApiError>
-        where
-            C: StorageContext;
-
-        async fn object_relations_touching_page_from_backend_with_admin_status<C, O>(
-            &self,
-            context: &C,
-            object: O,
-            query_options: QueryOptions,
-            is_admin: bool,
-            scopes: Option<&TokenScope>,
-        ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
-        where
-            C: StorageContext,
-            O: SelfAccessors<HubuumObject>;
     }
 
     impl<T> UserSearchBackend for T
@@ -254,74 +207,6 @@ pub(crate) mod user {
                 )
                 .await
         }
-
-        async fn search_class_relations_from_backend_with_admin_status<C>(
-            &self,
-            context: &C,
-            query_options: QueryOptions,
-            is_admin: bool,
-            scopes: Option<&TokenScope>,
-        ) -> Result<Vec<HubuumClassRelation>, ApiError>
-        where
-            C: StorageContext,
-        {
-            crate::storage::postgres::operations::user::UserSearchBackend::search_class_relations_from_backend_with_admin_status(
-                    self, context, query_options, is_admin, scopes,
-                )
-                .await
-        }
-
-        async fn class_relations_touching_page_from_backend_with_admin_status<C, K>(
-            &self,
-            context: &C,
-            class: K,
-            query_options: QueryOptions,
-            is_admin: bool,
-            scopes: Option<&TokenScope>,
-        ) -> Result<(Vec<HubuumClassRelation>, i64), ApiError>
-        where
-            C: StorageContext,
-            K: SelfAccessors<HubuumClass>,
-        {
-            crate::storage::postgres::operations::user::UserSearchBackend::class_relations_touching_page_from_backend_with_admin_status(
-                    self, context, class, query_options, is_admin, scopes,
-                )
-                .await
-        }
-
-        async fn search_object_relations_from_backend_with_admin_status<C>(
-            &self,
-            context: &C,
-            query_options: QueryOptions,
-            is_admin: bool,
-            scopes: Option<&TokenScope>,
-        ) -> Result<Vec<HubuumObjectRelation>, ApiError>
-        where
-            C: StorageContext,
-        {
-            crate::storage::postgres::operations::user::UserSearchBackend::search_object_relations_from_backend_with_admin_status(
-                    self, context, query_options, is_admin, scopes,
-                )
-                .await
-        }
-
-        async fn object_relations_touching_page_from_backend_with_admin_status<C, O>(
-            &self,
-            context: &C,
-            object: O,
-            query_options: QueryOptions,
-            is_admin: bool,
-            scopes: Option<&TokenScope>,
-        ) -> Result<(Vec<HubuumObjectRelation>, i64), ApiError>
-        where
-            C: StorageContext,
-            O: SelfAccessors<HubuumObject>,
-        {
-            crate::storage::postgres::operations::user::UserSearchBackend::object_relations_touching_page_from_backend_with_admin_status(
-                    self, context, object, query_options, is_admin, scopes,
-                )
-                .await
-        }
     }
 
     pub(crate) mod search {
@@ -329,10 +214,6 @@ pub(crate) mod user {
             ExternalRelatedFilterAuthorization, count_computed_objects_with_authorized_ids,
             externally_authorized_related_object_ids, search_computed_objects_with_authorized_ids,
         };
-    }
-
-    pub(crate) mod workflow {
-        pub(crate) use crate::storage::postgres::operations::user::UserSearchBackend;
     }
 }
 pub(crate) use crate::storage::postgres::{

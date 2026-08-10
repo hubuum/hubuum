@@ -37,6 +37,7 @@ use crate::permissions::{
     ResourceRef,
 };
 use crate::services::catalog as catalog_service;
+use crate::services::relation_queries;
 use crate::storage::StorageContext;
 use crate::storage::capabilities::UserPermissions;
 use crate::storage::capabilities::authz::{scope_allows, scope_allows_resource};
@@ -47,7 +48,6 @@ use crate::storage::capabilities::relations::{
 use crate::storage::capabilities::task::{
     TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate,
 };
-use crate::storage::capabilities::user::workflow::UserSearchBackend;
 use crate::storage::capabilities::with_statement_timeout_scope;
 use crate::tasks::request_hash;
 use crate::traits::{AuthzSubject, SelfAccessors};
@@ -693,25 +693,24 @@ where
         query: QueryOptions,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return self
-                .subject
-                .search_class_relations_from_backend_with_admin_status(
-                    self.pool(),
-                    query,
+            return relation_queries::list_class_relations(
+                self.pool(),
+                relation_queries::RelationAccess::new(
+                    self.subject.principal_id(),
                     is_admin,
                     self.scopes,
-                )
-                .await;
-        }
-        let candidates = self
-            .subject
-            .search_class_relations_from_backend_with_admin_status(
-                self.pool(),
-                count_query_options(&query),
-                true,
-                None,
+                ),
+                query,
             )
-            .await?;
+            .await
+            .map(|(rows, _)| rows);
+        }
+        let (candidates, _) = relation_queries::list_class_relations(
+            self.pool(),
+            relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
+            count_query_options(&query),
+        )
+        .await?;
         let resources = class_relation_authorization_resources(self.pool(), &candidates).await?;
         let permissions = query_permissions(&query, &[Permissions::ReadClassRelation])?;
         self.authorize_page(candidates, resources, permissions, &query)
@@ -723,18 +722,23 @@ where
         class_ids: &[i32],
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return self
-                .subject
-                .search_class_relations_touching_ids_from_backend_with_admin_status(
-                    self.pool(),
-                    class_ids,
+            return relation_queries::class_relations_touching_ids(
+                self.pool(),
+                relation_queries::RelationAccess::new(
+                    self.subject.principal_id(),
                     is_admin,
                     self.scopes,
-                )
-                .await;
+                ),
+                class_ids,
+            )
+            .await;
         }
-        let class_ids = ClassIdSet::new(class_ids.iter().copied())?;
-        let candidates = class_ids.load_relations_touching(self.pool()).await?;
+        let candidates = relation_queries::class_relations_touching_ids(
+            self.pool(),
+            relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
+            class_ids,
+        )
+        .await?;
         let resources = class_relation_authorization_resources(self.pool(), &candidates).await?;
         self.authorize_candidates(
             candidates,
@@ -749,25 +753,24 @@ where
         query: QueryOptions,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return self
-                .subject
-                .search_object_relations_from_backend_with_admin_status(
-                    self.pool(),
-                    query,
+            return relation_queries::list_object_relations(
+                self.pool(),
+                relation_queries::RelationAccess::new(
+                    self.subject.principal_id(),
                     is_admin,
                     self.scopes,
-                )
-                .await;
-        }
-        let candidates = self
-            .subject
-            .search_object_relations_from_backend_with_admin_status(
-                self.pool(),
-                count_query_options(&query),
-                true,
-                None,
+                ),
+                query,
             )
-            .await?;
+            .await
+            .map(|(rows, _)| rows);
+        }
+        let (candidates, _) = relation_queries::list_object_relations(
+            self.pool(),
+            relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
+            count_query_options(&query),
+        )
+        .await?;
         let resources = object_relation_authorization_resources(self.pool(), &candidates).await?;
         let permissions = query_permissions(&query, &[Permissions::ReadObjectRelation])?;
         self.authorize_page(candidates, resources, permissions, &query)
@@ -780,27 +783,26 @@ where
         query: QueryOptions,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return self
-                .subject
-                .search_objects_related_to_from_backend_with_admin_status(
-                    self.pool(),
-                    object,
-                    query,
+            return relation_queries::related_objects(
+                self.pool(),
+                relation_queries::RelationAccess::new(
+                    self.subject.principal_id(),
                     is_admin,
                     self.scopes,
-                )
-                .await;
-        }
-        let candidates = self
-            .subject
-            .search_objects_related_to_from_backend_with_admin_status(
-                self.pool(),
-                object,
-                count_query_options(&query),
-                true,
-                None,
+                ),
+                object.id(),
+                query,
             )
-            .await?;
+            .await
+            .map(|(rows, _)| rows);
+        }
+        let (candidates, _) = relation_queries::related_objects(
+            self.pool(),
+            relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
+            object.id(),
+            count_query_options(&query),
+        )
+        .await?;
         let permissions = query_permissions(&query, &[Permissions::ReadObject])?;
         let authorized_graph = self
             .authorized_object_graph(
@@ -823,30 +825,30 @@ where
         include: ExportIncludeRelatedQuery,
     ) -> Result<Vec<RelatedObjectIncludeRow>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return self
-                .subject
-                .related_objects_for_roots_from_backend_with_admin_status(
-                    self.pool(),
-                    root_ids,
-                    include,
+            return relation_queries::related_objects_for_roots(
+                self.pool(),
+                relation_queries::RelationAccess::new(
+                    self.subject.principal_id(),
                     is_admin,
                     self.scopes,
-                )
-                .await;
-        }
-        let candidates = self
-            .subject
-            .related_objects_for_roots_preserving_paths_from_backend_with_admin_status(
-                self.pool(),
+                ),
                 root_ids,
-                ExportIncludeRelatedQuery {
-                    limit: i32::MAX,
-                    ..include
-                },
-                true,
-                None,
+                include,
+                false,
             )
-            .await?;
+            .await;
+        }
+        let candidates = relation_queries::related_objects_for_roots(
+            self.pool(),
+            relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
+            root_ids,
+            ExportIncludeRelatedQuery {
+                limit: i32::MAX,
+                ..include
+            },
+            true,
+        )
+        .await?;
         let authorized_graph = self
             .authorized_object_graph(
                 &candidates
@@ -870,29 +872,29 @@ where
         per_root_cap: i32,
     ) -> Result<Vec<RelatedObjectForRootRow>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return self
-                .subject
-                .bidirectionally_related_objects_for_roots_from_backend_with_admin_status(
-                    self.pool(),
-                    root_ids,
-                    max_depth,
-                    per_root_cap,
+            return relation_queries::bidirectionally_related_objects_for_roots(
+                self.pool(),
+                relation_queries::RelationAccess::new(
+                    self.subject.principal_id(),
                     is_admin,
                     self.scopes,
-                )
-                .await;
-        }
-        let candidates = self
-            .subject
-            .bidirectionally_related_objects_for_roots_preserving_paths_from_backend_with_admin_status(
-                self.pool(),
+                ),
                 root_ids,
                 max_depth,
-                i32::MAX,
-                true,
-                None,
+                per_root_cap,
+                false,
             )
-            .await?;
+            .await;
+        }
+        let candidates = relation_queries::bidirectionally_related_objects_for_roots(
+            self.pool(),
+            relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
+            root_ids,
+            max_depth,
+            i32::MAX,
+            true,
+        )
+        .await?;
         let authorized_graph = self
             .authorized_object_graph(
                 &candidates
@@ -926,25 +928,23 @@ where
         permissions: PermissionsList,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return self
-                .subject
-                .search_object_relations_between_ids_from_backend_with_admin_status(
-                    self.pool(),
-                    object_ids,
+            return relation_queries::object_relations_between_ids(
+                self.pool(),
+                relation_queries::RelationAccess::new(
+                    self.subject.principal_id(),
                     is_admin,
                     self.scopes,
-                )
-                .await;
-        }
-        let candidates = self
-            .subject
-            .search_object_relations_between_ids_from_backend_with_admin_status(
-                self.pool(),
+                ),
                 object_ids,
-                true,
-                None,
             )
-            .await?;
+            .await;
+        }
+        let candidates = relation_queries::object_relations_between_ids(
+            self.pool(),
+            relation_queries::RelationAccess::new(self.subject.principal_id(), true, None),
+            object_ids,
+        )
+        .await?;
         let resources = object_relation_authorization_resources(self.pool(), &candidates).await?;
         self.authorize_candidates(candidates, resources, permissions)
             .await

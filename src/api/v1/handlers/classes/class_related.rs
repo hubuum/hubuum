@@ -376,15 +376,13 @@ async fn read_related_class_relations(
         }
         let mut candidate_options = count_query_options(&params);
         candidate_options.include_total = false;
-        let (candidates, _) = user
-            .class_relations_touching_page_from_backend_with_admin_status(
-                &context,
-                class.clone(),
-                candidate_options,
-                true,
-                None,
-            )
-            .await?;
+        let (candidates, _) = relation_queries::list_class_relations_touching(
+            &context,
+            relation_queries::RelationAccess::new(user.id(), true, None),
+            class.id,
+            candidate_options,
+        )
+        .await?;
         let resources = class_relation_authorization_resources(&context, &candidates)
             .await?
             .into_iter()

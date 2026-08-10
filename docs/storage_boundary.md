@@ -63,6 +63,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | --- | --- |
 | Domain lifecycle | Collection, class, object, class-relation, and object-relation resolution and lifecycle behavior |
 | Catalog queries | Permission- and resource-scoped collection, class, and object filtering, cursor paging, and optional exact counts |
+| Relation queries | Relation filtering and paging, endpoint-set queries, graph traversal, and export-oriented multi-root expansion |
 | Identity and authorization data | Principals, credentials, memberships, grants, and data needed by configured authorization providers |
 | Temporal history | Revision-filtered pages, stable cursors, point-in-time reads, visibility pushdown, and provenance-name resolution |
 | Unified search | Ranked collection, class, and object search with stable per-kind cursors and token visibility pushdown |
@@ -77,9 +78,10 @@ During extraction, the workflow and remaining operational
 families retain temporary central migration gates. Those gates prevent another
 backend from becoming selectable, but they are not behavioral proof and must
 be replaced by mandatory operation-shaped traits and shared tests. The former
-identity, catalog-query, history, and unified-search gates have now been replaced by the real
-`AuthenticationStorage`, `AuthorizationStorage`, and `HistoryStorage`
-contracts plus `CatalogStorage` and `UnifiedSearchStorage`; no family is
+identity, catalog-query, relation-query, history, and unified-search gates have
+now been replaced by the real `AuthenticationStorage`,
+`AuthorizationStorage`, `HistoryStorage`, `CatalogStorage`,
+`RelationQueryStorage`, and `UnifiedSearchStorage` contracts; no family is
 considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
@@ -220,6 +222,19 @@ paginates. HTTP handlers, computed-list visibility checks, and export hydration
 therefore share one boundary instead of calling PostgreSQL query traits. The
 opaque handle observes the three operations with bounded
 `catalog/{collections,classes,objects}` labels.
+
+`RelationQueryStorage` owns the complete relation read surface rather than only
+ordinary relation lists. Its mandatory operations cover class and object
+relation filtering and counts, direct relations touching one endpoint,
+relations touching or contained within endpoint sets, related-class and
+related-object graph pages, and both directional and bidirectional multi-root
+expansion used by exports. Graph DTOs are composed from storage-owned class and
+object projections, so Diesel query rows and SQL traversal functions remain
+adapter-private. Alternative-path preservation is an explicit backend-neutral
+request semantic used when external policy authorization must remove graph
+edges before canonical paths and limits are selected. The opaque handle
+observes every operation under bounded `relations/*` labels, and the shared
+available-backend compatibility test exercises all eleven operations.
 
 ## Error Direction
 

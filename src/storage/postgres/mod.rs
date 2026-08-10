@@ -44,16 +44,20 @@ use super::{
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
     AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationPolicySnapshotRow,
-    AuthorizationPrincipal, AuthorizationStorage, CatalogListQuery, CatalogPage, CatalogStorage,
-    ClassRelationStore, ClassStore, CollectionStore, EventArchive, EventDeliveryBatch,
-    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
-    ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery,
-    HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
-    ObjectStore, OperationalStateStorage, ReadinessSnapshot, RemoteTargetHistoryRecord,
-    StorageClass, StorageCollection, StorageError, StorageIdentity, StorageObject,
-    StoragePoolState, TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass,
+    AuthorizationPrincipal, AuthorizationStorage, BidirectionalRelatedObjectsQuery,
+    CatalogListQuery, CatalogPage, CatalogStorage, ClassRelationStore, ClassStore, CollectionStore,
+    EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot,
+    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot,
+    EventRetentionStorage, EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery,
+    HistoryCollectionScope, HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage,
+    InventoryGaugeSnapshot, MetricsStorage, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ObjectHistoryRecord, ObjectRelationStore, ObjectStore, OperationalStateStorage,
+    ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
+    RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
+    RemoteTargetHistoryRecord, StorageClass, StorageClassGraphRow, StorageClassRelation,
+    StorageCollection, StorageError, StorageIdentity, StorageObject, StorageObjectGraphRow,
+    StorageObjectRelation, StoragePoolState, StorageRelatedObjectForRootRow,
+    StorageRelatedObjectIncludeRow, TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass,
     UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
@@ -435,6 +439,108 @@ impl CatalogStorage for PostgresStorage {
         query: CatalogListQuery,
     ) -> Result<CatalogPage<StorageObject>, StorageError> {
         operations::catalog::list_objects(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl RelationQueryStorage for PostgresStorage {
+    async fn list_class_relations(
+        &self,
+        query: RelationListQuery,
+    ) -> Result<RelationPage<StorageClassRelation>, StorageError> {
+        operations::relation_query::list_class_relations(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_object_relations(
+        &self,
+        query: RelationListQuery,
+    ) -> Result<RelationPage<StorageObjectRelation>, StorageError> {
+        operations::relation_query::list_object_relations(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_class_relations_touching(
+        &self,
+        query: RelationTouchingQuery,
+    ) -> Result<RelationPage<StorageClassRelation>, StorageError> {
+        operations::relation_query::list_class_relations_touching(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_object_relations_touching(
+        &self,
+        query: RelationTouchingQuery,
+    ) -> Result<RelationPage<StorageObjectRelation>, StorageError> {
+        operations::relation_query::list_object_relations_touching(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn class_relations_touching_ids(
+        &self,
+        query: RelationIdsQuery,
+    ) -> Result<Vec<StorageClassRelation>, StorageError> {
+        operations::relation_query::class_relations_touching_ids(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn class_relations_between_ids(
+        &self,
+        query: RelationIdsQuery,
+    ) -> Result<Vec<StorageClassRelation>, StorageError> {
+        operations::relation_query::class_relations_between_ids(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn object_relations_between_ids(
+        &self,
+        query: RelationIdsQuery,
+    ) -> Result<Vec<StorageObjectRelation>, StorageError> {
+        operations::relation_query::object_relations_between_ids(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn related_classes(
+        &self,
+        query: RelationGraphQuery,
+    ) -> Result<RelationPage<StorageClassGraphRow>, StorageError> {
+        operations::relation_query::related_classes(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn related_objects(
+        &self,
+        query: RelationGraphQuery,
+    ) -> Result<RelationPage<StorageObjectGraphRow>, StorageError> {
+        operations::relation_query::related_objects(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn related_objects_for_roots(
+        &self,
+        query: RelatedObjectsForRootsQuery,
+    ) -> Result<Vec<StorageRelatedObjectIncludeRow>, StorageError> {
+        operations::relation_query::related_objects_for_roots(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn bidirectionally_related_objects_for_roots(
+        &self,
+        query: BidirectionalRelatedObjectsQuery,
+    ) -> Result<Vec<StorageRelatedObjectForRootRow>, StorageError> {
+        operations::relation_query::bidirectionally_related_objects_for_roots(&self.pool, query)
             .await
             .map_err(map_postgres_error)
     }

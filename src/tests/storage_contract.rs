@@ -9,7 +9,8 @@ use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SearchOperator};
 use crate::models::{
     CollectionHistory, CollectionID, ExportTemplateHistory, HubuumClassHistory,
-    HubuumObjectHistory, NewHubuumClass, NewHubuumObject, RemoteTargetHistory,
+    HubuumObjectHistory, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
+    NewHubuumObjectRelation, RemoteTargetHistory,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::services::Services;
@@ -19,13 +20,17 @@ use crate::storage::{
     AuthenticationStorage, AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrantKey,
     AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
-    AuthorizationStorage, CatalogListQuery, CatalogStorage, EventArchive, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryStorage, MetricsStorage,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, OperationalStateStorage, RetainedEvent,
-    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageError, StorageVisibility,
-    TokenRetentionStorage, UnifiedSearchQuery, UnifiedSearchStorage,
+    AuthorizationStorage, BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
+    EventArchive, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
+    EventRetentionStorage, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery,
+    HistoryStorage, MetricsStorage, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    OperationalStateStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
+    RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RetainedEvent,
+    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageError, StorageRelatedDirection,
+    StorageRelatedSort, StorageVisibility, TokenRetentionStorage, UnifiedSearchQuery,
+    UnifiedSearchStorage,
 };
+use crate::traits::CanSave;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum LifecycleContractImplementation {
@@ -539,6 +544,234 @@ async fn every_available_storage_backend_supplies_catalog_queries() {
         .cleanup()
         .await
         .expect("catalog compatibility fixture should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_relation_queries() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let needle = prefix("relation_query");
+    let collection = crate::tests::create_collection_fixture(pool.get_ref(), &needle).await;
+    let class_one = NewHubuumClass {
+        name: format!("{needle}_class_one"),
+        collection_id: collection.collection.id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: "relation compatibility source class".to_string(),
+    }
+    .save_without_events(pool.get_ref())
+    .await
+    .expect("source class should be created");
+    let class_two = NewHubuumClass {
+        name: format!("{needle}_class_two"),
+        collection_id: collection.collection.id,
+        json_schema: None,
+        validate_schema: Some(false),
+        description: "relation compatibility target class".to_string(),
+    }
+    .save_without_events(pool.get_ref())
+    .await
+    .expect("target class should be created");
+    let class_relation = NewHubuumClassRelation {
+        from_hubuum_class_id: class_one.id,
+        to_hubuum_class_id: class_two.id,
+        forward_template_alias: None,
+        reverse_template_alias: None,
+        from_max_relations: None,
+        to_max_relations: None,
+    }
+    .save_without_events(pool.get_ref())
+    .await
+    .expect("class relation should be created");
+    let object_one = NewHubuumObject {
+        name: format!("{needle}_object_one"),
+        collection_id: collection.collection.id,
+        hubuum_class_id: class_one.id,
+        data: serde_json::json!({}),
+        description: "relation compatibility source object".to_string(),
+    }
+    .save_without_events(pool.get_ref())
+    .await
+    .expect("source object should be created");
+    let object_two = NewHubuumObject {
+        name: format!("{needle}_object_two"),
+        collection_id: collection.collection.id,
+        hubuum_class_id: class_two.id,
+        data: serde_json::json!({}),
+        description: "relation compatibility target object".to_string(),
+    }
+    .save_without_events(pool.get_ref())
+    .await
+    .expect("target object should be created");
+    let object_relation = NewHubuumObjectRelation {
+        from_hubuum_object_id: object_one.id,
+        to_hubuum_object_id: object_two.id,
+        class_relation_id: class_relation.id,
+    }
+    .save_without_events(pool.get_ref())
+    .await
+    .expect("object relation should be created");
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let visibility = || {
+                    StorageVisibility::new(
+                        i32::MAX,
+                        true,
+                        None::<Vec<AuthorizationPermission>>,
+                        None,
+                    )
+                };
+                let options = || QueryOptions {
+                    filters: Vec::new(),
+                    sort: Vec::new(),
+                    limit: Some(50),
+                    cursor: None,
+                    include_total: true,
+                };
+
+                let (class_relations, class_total) = backend
+                    .list_class_relations(RelationListQuery::new(options(), visibility()))
+                    .await
+                    .expect("certified backend should list class relations")
+                    .into_parts();
+                assert!(class_total.is_some_and(|total| total >= 1));
+                assert!(class_relations.into_iter().any(|row| {
+                    let (id, ..) = row.into_parts();
+                    id == class_relation.id
+                }));
+
+                let (object_relations, object_total) = backend
+                    .list_object_relations(RelationListQuery::new(options(), visibility()))
+                    .await
+                    .expect("certified backend should list object relations")
+                    .into_parts();
+                assert!(object_total.is_some_and(|total| total >= 1));
+                assert!(object_relations.into_iter().any(|row| {
+                    let (id, ..) = row.into_parts();
+                    id == object_relation.id
+                }));
+
+                let (touching_classes, _) = backend
+                    .list_class_relations_touching(RelationTouchingQuery::new(
+                        class_one.id,
+                        options(),
+                        visibility(),
+                    ))
+                    .await
+                    .expect("certified backend should list class relations touching an id")
+                    .into_parts();
+                assert_eq!(touching_classes.len(), 1);
+
+                let (touching_objects, _) = backend
+                    .list_object_relations_touching(RelationTouchingQuery::new(
+                        object_one.id,
+                        options(),
+                        visibility(),
+                    ))
+                    .await
+                    .expect("certified backend should list object relations touching an id")
+                    .into_parts();
+                assert_eq!(touching_objects.len(), 1);
+
+                let class_ids = [class_one.id, class_two.id];
+                assert_eq!(
+                    backend
+                        .class_relations_touching_ids(RelationIdsQuery::new(
+                            class_ids,
+                            visibility(),
+                        ))
+                        .await
+                        .expect("certified backend should query class relations touching ids")
+                        .len(),
+                    1
+                );
+                assert_eq!(
+                    backend
+                        .class_relations_between_ids(
+                            RelationIdsQuery::new(class_ids, visibility(),)
+                        )
+                        .await
+                        .expect("certified backend should query class relations between ids")
+                        .len(),
+                    1
+                );
+
+                let object_ids = [object_one.id, object_two.id];
+                assert_eq!(
+                    backend
+                        .object_relations_between_ids(RelationIdsQuery::new(
+                            object_ids,
+                            visibility(),
+                        ))
+                        .await
+                        .expect("certified backend should query object relations between ids")
+                        .len(),
+                    1
+                );
+
+                let (related_classes, _) = backend
+                    .related_classes(RelationGraphQuery::new(
+                        class_one.id,
+                        options(),
+                        visibility(),
+                    ))
+                    .await
+                    .expect("certified backend should traverse related classes")
+                    .into_parts();
+                assert!(!related_classes.is_empty());
+
+                let (related_objects, _) = backend
+                    .related_objects(RelationGraphQuery::new(
+                        object_one.id,
+                        options(),
+                        visibility(),
+                    ))
+                    .await
+                    .expect("certified backend should traverse related objects")
+                    .into_parts();
+                assert!(!related_objects.is_empty());
+
+                let included = backend
+                    .related_objects_for_roots(
+                        RelatedObjectsForRootsQuery::new(
+                            [object_one.id],
+                            class_two.id,
+                            visibility(),
+                        )
+                        .class_relation_id(Some(class_relation.id))
+                        .direction(StorageRelatedDirection::Any)
+                        .sort(StorageRelatedSort::Path)
+                        .max_depth(1)
+                        .limit(10),
+                    )
+                    .await
+                    .expect("certified backend should traverse directional root graphs");
+                assert_eq!(included.len(), 1);
+
+                let bidirectional = backend
+                    .bidirectionally_related_objects_for_roots(
+                        BidirectionalRelatedObjectsQuery::new(
+                            [object_one.id],
+                            1,
+                            10,
+                            false,
+                            visibility(),
+                        ),
+                    )
+                    .await
+                    .expect("certified backend should traverse bidirectional root graphs");
+                assert_eq!(bidirectional.len(), 1);
+            }
+        }
+    }
+
+    collection
+        .cleanup()
+        .await
+        .expect("relation compatibility collection should be removed");
 }
 
 #[actix_web::test]
