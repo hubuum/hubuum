@@ -4,10 +4,14 @@ use actix_web::web::Data;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::events::{EventFanoutSettings, EventRetentionSettings};
-use crate::models::CollectionID;
 use crate::models::TokenRetentionSettings;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::search::QueryOptions;
+use crate::models::{
+    CollectionHistory, CollectionID, ExportTemplateHistory, HubuumClassHistory,
+    HubuumObjectHistory, RemoteTargetHistory,
+};
+use crate::pagination::prepare_db_pagination;
 use crate::services::Services;
 use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
@@ -16,9 +20,10 @@ use crate::storage::{
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrantKey,
     AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
     AuthorizationStorage, EventArchive, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionStorage, MetricsStorage, OperationalStateStorage,
-    RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageError,
-    TokenRetentionStorage,
+    EventHealthStorage, EventRetentionStorage, HistoryAsOfQuery, HistoryCollectionScope,
+    HistoryListQuery, HistoryStorage, MetricsStorage, ObjectHistoryAsOfQuery,
+    ObjectHistoryListQuery, OperationalStateStorage, RetainedEvent, STORAGE_CONTRACT_VERSION,
+    StorageBackendKind, StorageError, TokenRetentionStorage,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -289,6 +294,155 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
     user.delete_without_events(pool.get_ref())
         .await
         .expect("authorization compatibility user should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_complete_temporal_history() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let fixture =
+        crate::tests::create_collection_fixture(pool.get_ref(), &prefix("history_collection"))
+            .await;
+    let actor_name = prefix("history_actor");
+    let actor =
+        crate::tests::create_user_with_params(pool.get_ref(), &actor_name, "testpassword").await;
+    let at = chrono::Utc::now();
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let collection_options = prepare_db_pagination::<CollectionHistory>(
+                    &crate::models::search::parse_query_parameter("limit=10")
+                        .expect("history compatibility query should parse"),
+                )
+                .expect("collection history pagination should prepare");
+                let collection_page = backend
+                    .list_collection_history(HistoryListQuery::new(
+                        fixture.collection.id,
+                        collection_options,
+                        HistoryCollectionScope::All,
+                    ))
+                    .await
+                    .expect("certified backend should list collection history");
+                let (collection_rows, total_count) = collection_page.into_parts();
+                assert!(!collection_rows.is_empty());
+                assert!(total_count >= 1);
+                assert!(
+                    backend
+                        .collection_history_as_of(HistoryAsOfQuery::new(fixture.collection.id, at,))
+                        .await
+                        .expect("certified backend should load collection history as of a point")
+                        .is_some()
+                );
+
+                let class_options = prepare_db_pagination::<HubuumClassHistory>(
+                    &crate::models::search::parse_query_parameter("limit=10")
+                        .expect("history compatibility query should parse"),
+                )
+                .expect("class history pagination should prepare");
+                backend
+                    .list_class_history(HistoryListQuery::new(
+                        i32::MAX,
+                        class_options,
+                        HistoryCollectionScope::All,
+                    ))
+                    .await
+                    .expect("certified backend should list class history");
+                assert!(
+                    backend
+                        .class_history_as_of(HistoryAsOfQuery::new(i32::MAX, at))
+                        .await
+                        .expect("certified backend should query class history as of a point")
+                        .is_none()
+                );
+
+                let object_options = prepare_db_pagination::<HubuumObjectHistory>(
+                    &crate::models::search::parse_query_parameter("limit=10")
+                        .expect("history compatibility query should parse"),
+                )
+                .expect("object history pagination should prepare");
+                backend
+                    .list_object_history(ObjectHistoryListQuery::new(
+                        i32::MAX,
+                        i32::MAX,
+                        object_options,
+                        HistoryCollectionScope::All,
+                    ))
+                    .await
+                    .expect("certified backend should list object history");
+                assert!(
+                    backend
+                        .object_history_as_of(ObjectHistoryAsOfQuery::new(i32::MAX, i32::MAX, at))
+                        .await
+                        .expect("certified backend should query object history as of a point")
+                        .is_none()
+                );
+
+                let template_options = prepare_db_pagination::<ExportTemplateHistory>(
+                    &crate::models::search::parse_query_parameter("limit=10")
+                        .expect("history compatibility query should parse"),
+                )
+                .expect("template history pagination should prepare");
+                backend
+                    .list_export_template_history(HistoryListQuery::new(
+                        i32::MAX,
+                        template_options,
+                        HistoryCollectionScope::All,
+                    ))
+                    .await
+                    .expect("certified backend should list template history");
+                assert!(
+                    backend
+                        .export_template_history_as_of(HistoryAsOfQuery::new(i32::MAX, at))
+                        .await
+                        .expect("certified backend should query template history as of a point")
+                        .is_none()
+                );
+
+                let remote_target_options = prepare_db_pagination::<RemoteTargetHistory>(
+                    &crate::models::search::parse_query_parameter("limit=10")
+                        .expect("history compatibility query should parse"),
+                )
+                .expect("remote-target history pagination should prepare");
+                backend
+                    .list_remote_target_history(HistoryListQuery::new(
+                        i32::MAX,
+                        remote_target_options,
+                        HistoryCollectionScope::All,
+                    ))
+                    .await
+                    .expect("certified backend should list remote-target history");
+                assert!(
+                    backend
+                        .remote_target_history_as_of(HistoryAsOfQuery::new(i32::MAX, at))
+                        .await
+                        .expect(
+                            "certified backend should query remote-target history as of a point"
+                        )
+                        .is_none()
+                );
+
+                let names = backend
+                    .resolve_history_principal_names(vec![actor.id])
+                    .await
+                    .expect("certified backend should resolve history principal names");
+                assert!(names.into_iter().any(|row| {
+                    let (principal_id, name) = row.into_parts();
+                    principal_id == actor.id && name == actor_name
+                }));
+            }
+        }
+    }
+
+    fixture
+        .cleanup()
+        .await
+        .expect("history compatibility collection should be removed");
+    actor
+        .delete_without_events(pool.get_ref())
+        .await
+        .expect("history compatibility actor should be removed");
 }
 
 #[actix_web::test]

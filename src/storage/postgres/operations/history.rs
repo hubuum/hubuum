@@ -1,9 +1,18 @@
 use crate::errors::ApiError;
 use crate::events::PrincipalNames;
 use crate::models::search::QueryOptions;
+use crate::models::{
+    CollectionHistory, ExportTemplateHistory, HubuumClassHistory, HubuumObjectHistory,
+    RemoteTargetHistory,
+};
 use crate::storage::postgres::prelude::*;
 use crate::storage::postgres::with_connection;
+use crate::storage::{
+    ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryMetadata,
+    HistoryPrincipalName, ObjectHistoryRecord, RemoteTargetHistoryRecord,
+};
 use chrono::{DateTime, Utc};
+use std::num::NonZeroI64;
 
 /// Collection visibility to apply before history rows are counted or paginated.
 #[derive(Clone, Copy)]
@@ -16,23 +25,139 @@ pub enum HistoryCollectionFilter<'a> {
 /// their tombstoned principal name; ids with no matching principal are absent).
 pub(crate) async fn resolve_principal_names(
     pool: &impl crate::storage::StorageContext,
-    mut principal_ids: Vec<i32>,
+    principal_ids: Vec<i32>,
 ) -> Result<PrincipalNames, ApiError> {
+    Ok(resolve_principal_name_rows(pool, principal_ids)
+        .await?
+        .into_iter()
+        .collect())
+}
+
+pub(crate) async fn resolve_principal_name_rows(
+    pool: &impl crate::storage::StorageContext,
+    mut principal_ids: Vec<i32>,
+) -> Result<Vec<(i32, String)>, ApiError> {
     use crate::schema::principals::dsl::{id, name, principals};
     principal_ids.sort_unstable();
     principal_ids.dedup();
     if principal_ids.is_empty() {
-        return Ok(PrincipalNames::default());
+        return Ok(Vec::new());
     }
-    let rows: Vec<(i32, String)> = with_connection(pool, async |conn| {
+    with_connection(pool, async |conn| {
         principals
             .filter(id.eq_any(&principal_ids))
             .select((id, name))
             .load(conn)
             .await
     })
-    .await?;
-    Ok(rows.into_iter().collect())
+    .await
+}
+
+pub(crate) fn principal_name_to_storage(row: (i32, String)) -> HistoryPrincipalName {
+    HistoryPrincipalName::new(row.0, row.1)
+}
+
+macro_rules! metadata_to_storage {
+    ($row:expr) => {
+        HistoryMetadata::new(
+            $row.op,
+            $row.valid_from,
+            $row.valid_to,
+            $row.history_id,
+            NonZeroI64::new($row.revision.get())
+                .expect("ResourceRevision always contains a positive value"),
+        )
+        .actor($row.actor_id, $row.actor_kind)
+        .initiator_principal_id($row.initiator_user_id)
+        .task_id($row.task_id)
+    };
+}
+
+pub(crate) fn collection_history_to_storage(row: CollectionHistory) -> CollectionHistoryRecord {
+    CollectionHistoryRecord::new(
+        row.id,
+        row.name,
+        row.description,
+        row.created_at,
+        row.updated_at,
+        row.parent_collection_id,
+        metadata_to_storage!(row),
+    )
+}
+
+pub(crate) fn class_history_to_storage(row: HubuumClassHistory) -> ClassHistoryRecord {
+    ClassHistoryRecord::new(
+        row.id,
+        row.name,
+        row.collection_id,
+        row.json_schema,
+        row.validate_schema,
+        row.description,
+        row.created_at,
+        row.updated_at,
+        metadata_to_storage!(row),
+    )
+}
+
+pub(crate) fn object_history_to_storage(row: HubuumObjectHistory) -> ObjectHistoryRecord {
+    ObjectHistoryRecord::new(
+        row.id,
+        row.name,
+        row.collection_id,
+        row.hubuum_class_id,
+        row.data,
+        row.description,
+        row.created_at,
+        row.updated_at,
+        metadata_to_storage!(row),
+    )
+}
+
+pub(crate) fn export_template_history_to_storage(
+    row: ExportTemplateHistory,
+) -> ExportTemplateHistoryRecord {
+    ExportTemplateHistoryRecord::new(
+        row.id,
+        row.collection_id,
+        row.name,
+        row.description,
+        row.content_type,
+        row.template,
+        row.kind,
+        row.scope_kind,
+        row.class_id,
+        row.default_query,
+        row.include,
+        row.relation_context,
+        row.default_missing_data_policy,
+        row.default_limits,
+        row.created_at,
+        row.updated_at,
+        metadata_to_storage!(row),
+    )
+}
+
+pub(crate) fn remote_target_history_to_storage(
+    row: RemoteTargetHistory,
+) -> RemoteTargetHistoryRecord {
+    RemoteTargetHistoryRecord::new(
+        row.id,
+        row.collection_id,
+        row.class_id,
+        row.name,
+        row.description,
+        row.method,
+        row.url_template,
+        row.headers_template,
+        row.body_template,
+        row.auth_config,
+        row.allowed_subject_types,
+        row.timeout_ms,
+        row.enabled,
+        row.created_at,
+        row.updated_at,
+        metadata_to_storage!(row),
+    )
 }
 
 macro_rules! history_db_fns {

@@ -6,6 +6,7 @@
 
 mod authorization;
 mod events;
+mod history;
 mod identity;
 mod operational;
 
@@ -21,6 +22,12 @@ pub use events::{
     EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
     EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
     EventRetentionSummary, RetainedEvent,
+};
+pub use history::{
+    ClassHistoryRecord, CollectionHistoryRecord, ExportTemplateHistoryRecord, HistoryAsOfQuery,
+    HistoryCollectionScope, HistoryListQuery, HistoryMetadata, HistoryPage, HistoryPrincipalName,
+    HistoryStorage, ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord,
+    RemoteTargetHistoryRecord,
 };
 pub use identity::{
     AuthenticationHuman, AuthenticationIdentity, AuthenticationPrincipal,
@@ -40,7 +47,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 1;
+pub const STORAGE_CONTRACT_VERSION: u16 = 2;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,7 +72,7 @@ impl StorageBackendKind {
 pub enum StorageCapability {
     DomainLifecycle,
     IdentityAndAuthorizationData,
-    QueriesAndHistory,
+    TemporalHistory,
     Workflows,
     Operations,
 }
@@ -74,7 +81,7 @@ impl StorageCapability {
     pub const ALL: [Self; 5] = [
         Self::DomainLifecycle,
         Self::IdentityAndAuthorizationData,
-        Self::QueriesAndHistory,
+        Self::TemporalHistory,
         Self::Workflows,
         Self::Operations,
     ];
@@ -84,7 +91,7 @@ impl StorageCapability {
         match self {
             Self::DomainLifecycle => "domain_lifecycle",
             Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
-            Self::QueriesAndHistory => "queries_and_history",
+            Self::TemporalHistory => "temporal_history",
             Self::Workflows => "workflows",
             Self::Operations => "operations",
         }
@@ -236,7 +243,7 @@ mod tests {
             [
                 "domain_lifecycle",
                 "identity_and_authorization_data",
-                "queries_and_history",
+                "temporal_history",
                 "workflows",
                 "operations",
             ]

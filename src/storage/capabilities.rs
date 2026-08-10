@@ -74,16 +74,6 @@ pub(crate) mod group {
     pub(crate) use crate::storage::postgres::operations::group::principal_group_by_ids;
 }
 
-pub(crate) mod history {
-    pub(crate) use crate::storage::postgres::operations::history::{
-        HistoryCollectionFilter, class_as_of, class_history_paginated_with_total_count,
-        collection_as_of, collection_history_paginated_with_total_count, export_template_as_of,
-        export_template_history_paginated_with_total_count, object_as_of,
-        object_history_paginated_with_total_count, remote_target_as_of,
-        remote_target_history_paginated_with_total_count, resolve_principal_names,
-    };
-}
-
 pub(crate) mod identity {
     pub(crate) use crate::storage::postgres::operations::identity::{
         ensure_identity_scope, identity_scope_name_by_id,

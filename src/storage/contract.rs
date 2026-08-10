@@ -3,8 +3,8 @@ use std::sync::Arc;
 use super::{
     AuthenticationStorage, AuthorizationStorage, ClassRelationStore, ClassStore, CollectionStore,
     EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
-    MetricsStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage, PostgresStorage,
-    TokenRetentionStorage, observed::ObservedLifecycleStorage,
+    HistoryStorage, MetricsStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage,
+    PostgresStorage, TokenRetentionStorage, observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -47,7 +47,6 @@ impl<T> LifecycleStorage for T where
 /// the refactor, but they do not certify behavior. Each one must be replaced by
 /// mandatory operation-shaped traits and shared compatibility tests, as the
 /// authentication gate has been in this layer.
-pub(crate) trait QueryAndHistoryStorage: Send + Sync {}
 pub(crate) trait WorkflowStorage: Send + Sync {}
 pub(crate) trait OperationalStorage: Send + Sync {}
 
@@ -67,10 +66,10 @@ pub(crate) trait StorageBackend:
     + EventFanoutStorage
     + EventHealthStorage
     + EventRetentionStorage
+    + HistoryStorage
     + MetricsStorage
     + OperationalStateStorage
     + TokenRetentionStorage
-    + QueryAndHistoryStorage
     + WorkflowStorage
     + OperationalStorage
     + sealed::CertifiedStorageBackend
@@ -78,7 +77,6 @@ pub(crate) trait StorageBackend:
     fn descriptor(&self) -> StorageBackendDescriptor;
 }
 
-impl QueryAndHistoryStorage for PostgresStorage {}
 impl WorkflowStorage for PostgresStorage {}
 impl OperationalStorage for PostgresStorage {}
 impl sealed::CertifiedStorageBackend for PostgresStorage {}
@@ -134,7 +132,7 @@ mod tests {
             [
                 "domain_lifecycle",
                 "identity_and_authorization_data",
-                "queries_and_history",
+                "temporal_history",
                 "workflows",
                 "operations",
             ]

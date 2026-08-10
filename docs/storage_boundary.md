@@ -63,7 +63,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | --- | --- |
 | Domain lifecycle | Collection, class, object, class-relation, and object-relation resolution and lifecycle behavior |
 | Identity and authorization data | Principals, credentials, memberships, grants, and data needed by configured authorization providers |
-| Queries and history | Lists, filtering, stable pagination, search, aggregates, computed enrichment, graphs, and temporal history |
+| Temporal history | Revision-filtered pages, stable cursors, point-in-time reads, visibility pushdown, and provenance-name resolution |
 | Workflows | Imports, restores, tasks, backups, exports, remote calls, and their atomic state transitions |
 | Operations | Probes, metrics snapshots, retention, event delivery, leases, locking, and worker coordination |
 
@@ -71,13 +71,13 @@ The families are not feature flags and the admin configuration does not report
 optional support. Every selectable backend implements the entire list. The
 sealed composition in `src/storage/contract.rs` makes adding a backend an
 explicit architecture change rather than an incidental trait implementation.
-During extraction, the query/history, workflow, and remaining operational
+During extraction, the workflow and remaining operational
 families retain temporary central migration gates. Those gates prevent another
 backend from becoming selectable, but they are not behavioral proof and must
 be replaced by mandatory operation-shaped traits and shared tests. The former
-identity gate has now been replaced by the real `AuthenticationStorage`
-and `AuthorizationStorage` contracts; no family is considered complete merely
-because a marker exists.
+identity and history gates have now been replaced by the real
+`AuthenticationStorage`, `AuthorizationStorage`, and `HistoryStorage`
+contracts; no family is considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Separating their persistence rows from
@@ -85,7 +85,7 @@ root domain models is the next extraction layer; the current location is an
 implementation detail, not partial backend support. `StorageHandle` selects
 one certified PostgreSQL adapter, and only the storage implementation can
 recover its pool. Application consumers use `StorageContext`, lifecycle
-traits, or the explicit capability facade. No second backend can be added to
+traits, mandatory capability traits, or application services. No second backend can be added to
 composition without implementing every operation behind those contracts.
 
 The storage contract version changes when a required family is added or when
@@ -186,6 +186,16 @@ Consequently the complete `src/permissions` application tree is independent of
 PostgreSQL, Diesel, generated schema modules, and connection pools; a source
 guard enforces that boundary.
 
+`HistoryStorage` owns every temporal-history read exposed by the HTTP API:
+collection, class, object, export-template, and remote-target pages and
+point-in-time lookups, plus batched principal-name resolution for provenance.
+Visibility is an owned backend-neutral request, counting happens under the same
+visibility predicate as page selection, and adapter rows are converted to
+private-field DTOs before crossing the boundary. `StorageHandle` observes these
+calls with bounded `history/*` labels. The application history service converts
+DTOs into response models and is the only layer that maps `StorageError` into
+`ApiError`.
+
 ## Error Direction
 
 Errors cross the boundary in one direction:
@@ -260,12 +270,14 @@ There are two complementary test layers:
    PostgreSQL adapter and the in-memory contract model.
 2. The available-backend compatibility registry iterates every selectable
    `StorageBackendKind`, composes it through `StorageHandle`, verifies its
-   contract descriptor, and exercises the service boundary.
+   contract descriptor, and exercises every mandatory operation family. The
+   temporal-history contract test covers all list, point-in-time, visibility,
+   and provenance-resolution entry points.
 
 PostgreSQL-specific tests remain responsible for behavior a logical model
 cannot reproduce: transactions, rollbacks, isolation, row locks, trigger
-serialization, migrations, temporal history, recovery, concurrency, query
-budgets, and production feature combinations. The complete repository test
+serialization, migrations, temporal trigger semantics, recovery, concurrency,
+query budgets, and production feature combinations. The complete repository test
 suite is therefore part of PostgreSQL backend certification, not a substitute
 for the shared logical contracts.
 
@@ -298,7 +310,7 @@ The first workspace boundaries are now in place:
 - `hubuum-storage-core` owns backend-neutral descriptors, the contract version,
   capability identities, `StorageError`, authentication and authorization
   DTOs, operational snapshot DTOs, and the extracted authentication,
-  authorization, operational state, event-health, event-fan-out,
+  authorization, temporal-history, operational state, event-health, event-fan-out,
   event-retention, and token-retention traits without application, transport,
   or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection

@@ -27,6 +27,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking (administrator API):** the storage contract version is now `2`,
+  and the redacted administrator configuration reports the newly enforced
+  `temporal_history` capability instead of the broader provisional
+  `queries_and_history` label. Monitoring or administration clients matching
+  the old capability string must switch to `temporal_history`.
 - Event worker and retention configuration validation now uses backend-neutral
   policy terminology, matching the storage traits and DTOs used by application
   workers instead of exposing database implementation language.

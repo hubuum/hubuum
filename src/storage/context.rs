@@ -15,10 +15,14 @@ use crate::storage::{
     AuthorizationPrincipal, AuthorizationStorage, DynLifecycleStorage, EventArchive,
     EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
     EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
-    EventRetentionSummary, InventoryGaugeSnapshot, MetricsStorage, OperationalStateStorage,
-    PostgresStorage, ReadinessSnapshot, StorageBackend, StorageBackendDescriptor, StorageError,
-    StoragePoolState, TaskGaugeSnapshot, TokenRetentionStorage,
+    EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery,
+    HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, OperationalStateStorage,
+    PostgresStorage, ReadinessSnapshot, RemoteTargetHistoryRecord, StorageBackend,
+    StorageBackendDescriptor, StorageError, StoragePoolState, TaskGaugeSnapshot,
+    TokenRetentionStorage,
 };
+use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
 
 mod private {
@@ -341,6 +345,178 @@ impl AuthorizationStorage for StorageHandle {
                 match &self.implementation {
                     BackendImplementation::Postgresql(backend) => {
                         backend.revoke_all_local_collection_grants(key).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl HistoryStorage for StorageHandle {
+    async fn resolve_history_principal_names(
+        &self,
+        principal_ids: Vec<i32>,
+    ) -> Result<Vec<HistoryPrincipalName>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "history",
+            "resolve_principal_names",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.resolve_history_principal_names(principal_ids).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn list_collection_history(
+        &self,
+        query: HistoryListQuery,
+    ) -> Result<HistoryPage<CollectionHistoryRecord>, StorageError> {
+        observe_storage_call(self.backend_name(), "history", "list_collections", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_collection_history(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn collection_history_as_of(
+        &self,
+        query: HistoryAsOfQuery,
+    ) -> Result<Option<CollectionHistoryRecord>, StorageError> {
+        observe_storage_call(self.backend_name(), "history", "collection_as_of", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.collection_history_as_of(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_class_history(
+        &self,
+        query: HistoryListQuery,
+    ) -> Result<HistoryPage<ClassHistoryRecord>, StorageError> {
+        observe_storage_call(self.backend_name(), "history", "list_classes", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_class_history(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn class_history_as_of(
+        &self,
+        query: HistoryAsOfQuery,
+    ) -> Result<Option<ClassHistoryRecord>, StorageError> {
+        observe_storage_call(self.backend_name(), "history", "class_as_of", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.class_history_as_of(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_object_history(
+        &self,
+        query: ObjectHistoryListQuery,
+    ) -> Result<HistoryPage<ObjectHistoryRecord>, StorageError> {
+        observe_storage_call(self.backend_name(), "history", "list_objects", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_object_history(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn object_history_as_of(
+        &self,
+        query: ObjectHistoryAsOfQuery,
+    ) -> Result<Option<ObjectHistoryRecord>, StorageError> {
+        observe_storage_call(self.backend_name(), "history", "object_as_of", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.object_history_as_of(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_export_template_history(
+        &self,
+        query: HistoryListQuery,
+    ) -> Result<HistoryPage<ExportTemplateHistoryRecord>, StorageError> {
+        observe_storage_call(self.backend_name(), "history", "list_templates", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_export_template_history(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn export_template_history_as_of(
+        &self,
+        query: HistoryAsOfQuery,
+    ) -> Result<Option<ExportTemplateHistoryRecord>, StorageError> {
+        observe_storage_call(self.backend_name(), "history", "template_as_of", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.export_template_history_as_of(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_remote_target_history(
+        &self,
+        query: HistoryListQuery,
+    ) -> Result<HistoryPage<RemoteTargetHistoryRecord>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "history",
+            "list_remote_targets",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.list_remote_target_history(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn remote_target_history_as_of(
+        &self,
+        query: HistoryAsOfQuery,
+    ) -> Result<Option<RemoteTargetHistoryRecord>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "history",
+            "remote_target_as_of",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.remote_target_history_as_of(query).await
                     }
                 }
             },
