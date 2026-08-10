@@ -348,6 +348,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   pinned, hermetic real-service conformance gate now exercises these failure
   paths and the complete shared authorization corpus before releases.
 
+### Fixed
+
+- Structured search now accepts its documented dotted JSON paths, rejects
+  unknown properties on every expression node, and never emits a wrapped
+  cursor too large to reuse in the same compact request.
+- External-policy structured class and object searches now require parent
+  collection visibility in addition to the resource-specific read permission,
+  matching SQL-backed search behavior. Related-object traversal applies the
+  same conjunctive visibility rule to every object it examines.
+
 ## [0.0.9] - 2026-08-07
 
 ### Added

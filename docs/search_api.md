@@ -433,7 +433,10 @@ count query, returns `total` as `null`, and omits `X-Total-Count`. Results are s
 automatic ID tie-breaker. A cursor is bound to the canonical request, resolved
 object class when present, principal, token, and token revision. Reusing it
 after changing the expression, sort, limit, target, or authorization token
-returns `400`.
+returns `400`. The server reserves enough of the 64 KiB request limit for the
+rest of the compact request envelope before emitting `next`; if a sortable
+string is too large to produce a reusable cursor, the search returns `400`
+with guidance to use smaller sort values.
 
 ### Authorization
 
@@ -502,7 +505,8 @@ The endpoint uses the normal `ApiError` response shape. Common statuses are:
 
 Clients must send `version: 1`. New optional fields and new enum members may be
 added compatibly within the API version; a future incompatible grammar will use
-a new DSL version. Unknown request properties remain errors so misspellings do
+a new DSL version. Unknown properties on the request, target, expression,
+predicate, related predicate, and sort objects remain errors so misspellings do
 not silently broaden a query.
 
 Version 1 returns a completed, globally sorted page. Progressive row streaming

@@ -203,31 +203,39 @@ pub(crate) struct StructuredSearchExecution {
 fn finalize_structured_search<T, F>(
     rows: Vec<T>,
     total: Option<i64>,
-    query_options: &crate::models::search::QueryOptions,
-    fingerprint: &str,
-    version: u8,
-    kind: StructuredSearchResourceKind,
+    context: StructuredSearchPageContext<'_>,
     map_result: F,
 ) -> Result<StructuredSearchExecution, ApiError>
 where
     T: CursorPaginated,
     F: FnMut(T) -> StructuredSearchResult,
 {
-    let page = finalize_page(rows, query_options)?;
+    let page = finalize_page(rows, context.query_options)?;
     let next = page
         .next_cursor
-        .map(|cursor| encode_structured_search_cursor(fingerprint, cursor))
+        .map(|cursor| {
+            encode_structured_search_cursor(context.fingerprint, cursor, context.cursor_budget)
+        })
         .transpose()?;
     Ok(StructuredSearchExecution {
         response: StructuredSearchResponse {
-            version,
-            kind,
+            version: context.version,
+            kind: context.kind,
             results: page.items.into_iter().map(map_result).collect(),
             next,
             total,
         },
-        page_limit: effective_page_limit(query_options)?,
+        page_limit: effective_page_limit(context.query_options)?,
     })
+}
+
+#[derive(Clone, Copy)]
+struct StructuredSearchPageContext<'a> {
+    query_options: &'a crate::models::search::QueryOptions,
+    fingerprint: &'a str,
+    cursor_budget: usize,
+    version: u8,
+    kind: StructuredSearchResourceKind,
 }
 
 fn ensure_external_candidate_limit(count: usize) -> Result<(), ApiError> {
@@ -314,6 +322,7 @@ pub(crate) async fn execute_structured_search(
         None
     };
     let fingerprint = request.fingerprint(class_id, principal.id(), token_id, token_revision)?;
+    let cursor_budget = request.reusable_cursor_budget()?;
     let page_cursor = decode_structured_search_cursor(request.cursor.as_deref(), &fingerprint)?;
     let query_options = request.query_options(class_id, page_cursor)?;
     let kind = request.target.kind();
@@ -322,6 +331,13 @@ pub(crate) async fn execute_structured_search(
         principal,
         scopes,
         include_total: request.include_total,
+    };
+    let page_context = StructuredSearchPageContext {
+        query_options: &query_options,
+        fingerprint: &fingerprint,
+        cursor_budget,
+        version: request.version,
+        kind,
     };
 
     match kind {
@@ -372,10 +388,7 @@ pub(crate) async fn execute_structured_search(
             finalize_structured_search(
                 rows,
                 total,
-                &query_options,
-                &fingerprint,
-                request.version,
-                kind,
+                page_context,
                 StructuredSearchResult::Collection,
             )
         }
@@ -401,7 +414,10 @@ pub(crate) async fn execute_structured_search(
                     .search_structured_classes(pool, prepared, request.filter.as_ref(), scopes)
                     .await?;
                 (rows, total)
-            } else if !scope_allows(scopes, &[Permissions::ReadClass]) {
+            } else if !scope_allows(
+                scopes,
+                &[Permissions::ReadClass, Permissions::ReadCollection],
+            ) {
                 (Vec::new(), request.include_total.then_some(0))
             } else {
                 let mut candidate_query = count_query_options(&query_options);
@@ -419,7 +435,7 @@ pub(crate) async fn execute_structured_search(
                     authorization,
                     candidates,
                     &query_options,
-                    vec![Permissions::ReadClass],
+                    vec![Permissions::ReadClass, Permissions::ReadCollection],
                     |class| ResourceRef {
                         kind: ResourceKind::Class,
                         id: class.id,
@@ -432,15 +448,7 @@ pub(crate) async fn execute_structured_search(
                 )
                 .await?
             };
-            finalize_structured_search(
-                rows,
-                total,
-                &query_options,
-                &fingerprint,
-                request.version,
-                kind,
-                StructuredSearchResult::Class,
-            )
+            finalize_structured_search(rows, total, page_context, StructuredSearchResult::Class)
         }
         StructuredSearchResourceKind::Object => {
             let (rows, total) = if pool.permission_backend().supports_sql_visibility_pushdown() {
@@ -493,15 +501,7 @@ pub(crate) async fn execute_structured_search(
                 let rows = paginate_in_memory(matched, &prepared)?;
                 (rows, total)
             };
-            finalize_structured_search(
-                rows,
-                total,
-                &query_options,
-                &fingerprint,
-                request.version,
-                kind,
-                StructuredSearchResult::Object,
-            )
+            finalize_structured_search(rows, total, page_context, StructuredSearchResult::Object)
         }
         StructuredSearchResourceKind::AuditEvent => {
             let (accessible_collection_ids, include_collection_less) =
@@ -518,10 +518,7 @@ pub(crate) async fn execute_structured_search(
             finalize_structured_search(
                 rows,
                 request.include_total.then_some(total),
-                &query_options,
-                &fingerprint,
-                request.version,
-                kind,
+                page_context,
                 |event| StructuredSearchResult::AuditEvent(Box::new(event)),
             )
         }
@@ -553,15 +550,9 @@ pub(crate) async fn execute_structured_search(
             let rows = user
                 .search_structured_users(pool.db_pool(), prepared, request.filter.as_ref())
                 .await?;
-            finalize_structured_search(
-                rows,
-                total,
-                &query_options,
-                &fingerprint,
-                request.version,
-                kind,
-                |user| StructuredSearchResult::User(UserResponse::from(user)),
-            )
+            finalize_structured_search(rows, total, page_context, |user| {
+                StructuredSearchResult::User(UserResponse::from(user))
+            })
         }
         StructuredSearchResourceKind::Group => {
             let user = structured_iam_user(pool, principal, scopes, kind).await?;
@@ -582,15 +573,7 @@ pub(crate) async fn execute_structured_search(
                 .search_structured_groups(pool.db_pool(), prepared, request.filter.as_ref())
                 .await?;
             let rows = GroupResponse::from_groups(pool, rows).await?;
-            finalize_structured_search(
-                rows,
-                total,
-                &query_options,
-                &fingerprint,
-                request.version,
-                kind,
-                StructuredSearchResult::Group,
-            )
+            finalize_structured_search(rows, total, page_context, StructuredSearchResult::Group)
         }
         StructuredSearchResourceKind::ServiceAccount => {
             let user = structured_iam_user(pool, principal, scopes, kind).await?;
@@ -618,17 +601,9 @@ pub(crate) async fn execute_structured_search(
                 request.filter.as_ref(),
             )
             .await?;
-            finalize_structured_search(
-                rows,
-                total,
-                &query_options,
-                &fingerprint,
-                request.version,
-                kind,
-                |account| {
-                    StructuredSearchResult::ServiceAccount(ServiceAccountResponse::from(account))
-                },
-            )
+            finalize_structured_search(rows, total, page_context, |account| {
+                StructuredSearchResult::ServiceAccount(ServiceAccountResponse::from(account))
+            })
         }
     }
 }

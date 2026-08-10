@@ -543,9 +543,9 @@ impl StructuredSearchFieldPredicate {
         self.validate_for(kind)?;
         let operator = self.operator.search_operator()?;
         let value = if self.field.is_json() {
-            let path = self.path.as_deref().expect("validated JSON path");
+            let path = structured_json_path(self.path.as_deref().expect("validated JSON path"))?;
             if self.operator == StructuredSearchOperator::IsNull {
-                path.to_string()
+                path
             } else {
                 format!(
                     "{path}={}",
@@ -585,7 +585,7 @@ impl StructuredSearchFieldPredicate {
                     self.field.query_name()
                 ))
             })?;
-            JsonFieldPathRef::new(path)?;
+            structured_json_path(path)?;
         } else if self.path.is_some() {
             return Err(ApiError::BadRequest(format!(
                 "field '{}' does not accept path",
@@ -624,6 +624,23 @@ impl StructuredSearchFieldPredicate {
         }
         Ok(())
     }
+}
+
+/// Translate the public dot-separated JSON path grammar to the shared
+/// query layer's comma-separated PostgreSQL path representation.
+fn structured_json_path(path: &str) -> Result<String, ApiError> {
+    if path.contains(',') {
+        return Err(ApiError::BadRequest(format!(
+            "Invalid JSON path '{path}': use non-empty dot-separated segments containing only ASCII letters, digits, '_', or '$'"
+        )));
+    }
+    let canonical = path.replace('.', ",");
+    JsonFieldPathRef::new(&canonical).map_err(|_| {
+        ApiError::BadRequest(format!(
+            "Invalid JSON path '{path}': use non-empty dot-separated segments containing only ASCII letters, digits, '_', or '$'"
+        ))
+    })?;
+    Ok(canonical)
 }
 
 /// Existential object-relation predicate.
@@ -684,23 +701,28 @@ impl StructuredRelatedPredicate {
 
 /// Recursive boolean expression used by version 1 structured search.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "op", rename_all = "snake_case")]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StructuredSearchExpression {
+    #[schema(max_properties = 2)]
     And {
         #[schema(no_recursion, min_items = 2, max_items = 64)]
         args: Vec<StructuredSearchExpression>,
     },
+    #[schema(max_properties = 2)]
     Or {
         #[schema(no_recursion, min_items = 2, max_items = 64)]
         args: Vec<StructuredSearchExpression>,
     },
+    #[schema(max_properties = 2)]
     Not {
         #[schema(no_recursion)]
         arg: Box<StructuredSearchExpression>,
     },
+    #[schema(max_properties = 2)]
     Field {
         predicate: StructuredSearchFieldPredicate,
     },
+    #[schema(max_properties = 2)]
     Related {
         predicate: StructuredRelatedPredicate,
     },
@@ -939,6 +961,23 @@ impl StructuredSearchRequest {
         })?;
         Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(canonical)))
     }
+
+    /// Maximum cursor length that keeps a compact serialization of this same
+    /// request within the structured-search request-body limit.
+    pub(crate) fn reusable_cursor_budget(&self) -> Result<usize, ApiError> {
+        let mut request = self.clone();
+        request.cursor = Some(String::new());
+        let fixed_request_bytes = serde_json::to_vec(&request)
+            .map_err(|error| {
+                ApiError::InternalServerError(format!(
+                    "Failed to size structured search cursor request: {error}"
+                ))
+            })?
+            .len();
+        Ok(MAX_STRUCTURED_SEARCH_BYTES
+            .saturating_sub(fixed_request_bytes)
+            .min(MAX_ENCODED_CURSOR_BYTES))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -951,6 +990,7 @@ struct StructuredSearchCursor {
 pub(crate) fn encode_structured_search_cursor(
     fingerprint: &str,
     page_cursor: String,
+    max_encoded_bytes: usize,
 ) -> Result<String, ApiError> {
     let payload = serde_json::to_vec(&StructuredSearchCursor {
         version: STRUCTURED_SEARCH_CURSOR_VERSION,
@@ -962,7 +1002,23 @@ pub(crate) fn encode_structured_search_cursor(
             "Failed to encode structured search cursor: {error}"
         ))
     })?;
-    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload))
+    let limit = max_encoded_bytes.min(MAX_ENCODED_CURSOR_BYTES);
+    let encoded_length = payload.len().saturating_mul(4).saturating_add(2) / 3;
+    if encoded_length > limit {
+        return Err(structured_cursor_too_large());
+    }
+    let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    if cursor.len() > limit {
+        return Err(structured_cursor_too_large());
+    }
+    Ok(cursor)
+}
+
+fn structured_cursor_too_large() -> ApiError {
+    ApiError::BadRequest(
+        "Structured search cursor exceeds the reusable request size limit; use smaller sort values"
+            .to_string(),
+    )
 }
 
 pub(crate) fn decode_structured_search_cursor(
@@ -1139,8 +1195,12 @@ mod tests {
         let first_fingerprint = request
             .fingerprint(Some(HubuumClassID::new(7).unwrap()), 3, 5, 1)
             .unwrap();
-        let cursor =
-            encode_structured_search_cursor(&first_fingerprint, "page".to_string()).unwrap();
+        let cursor = encode_structured_search_cursor(
+            &first_fingerprint,
+            "page".to_string(),
+            request.reusable_cursor_budget().unwrap(),
+        )
+        .unwrap();
         let mut changed = request.clone();
         changed.limit = Some(50);
         let changed_fingerprint = changed
@@ -1190,6 +1250,70 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("Invalid JSON path"));
+    }
+
+    #[test]
+    fn dotted_json_paths_are_translated_for_direct_and_related_filters() {
+        let predicate = StructuredSearchFieldPredicate {
+            field: StructuredSearchField::JsonData,
+            operator: StructuredSearchOperator::Equals,
+            path: Some("hardware.cpu.count".to_string()),
+            value: Some(Value::Number(8.into())),
+        };
+
+        let direct = predicate
+            .query_param(StructuredSearchResourceKind::Object)
+            .unwrap();
+        let related = predicate.related_query_param("target").unwrap();
+
+        assert_eq!(direct.value, "hardware,cpu,count=8");
+        assert_eq!(related.value, "hardware,cpu,count=8");
+    }
+
+    #[test]
+    fn expression_nodes_reject_unknown_properties() {
+        let error = serde_json::from_value::<StructuredSearchExpression>(serde_json::json!({
+            "op": "field",
+            "predicate": {
+                "field": "name",
+                "operator": "equals",
+                "value": "server"
+            },
+            "not": true
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn wrapped_cursor_must_fit_its_reusable_request_budget() {
+        let error = encode_structured_search_cursor(
+            "fingerprint",
+            "x".repeat(MAX_ENCODED_CURSOR_BYTES * 3 / 4),
+            MAX_ENCODED_CURSOR_BYTES,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("reusable request size limit"));
+    }
+
+    #[test]
+    fn cursor_budget_reserves_the_rest_of_the_request_envelope() {
+        let request = StructuredSearchRequest {
+            version: 1,
+            target: target(),
+            filter: None,
+            sort: vec![],
+            limit: Some(25),
+            cursor: None,
+            include_total: false,
+        };
+        let budget = request.reusable_cursor_budget().unwrap();
+        let mut next_request = request;
+        next_request.cursor = Some("x".repeat(budget));
+
+        assert!(serde_json::to_vec(&next_request).unwrap().len() <= MAX_STRUCTURED_SEARCH_BYTES);
     }
 
     #[test]

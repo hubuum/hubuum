@@ -1886,6 +1886,17 @@ mod tests {
         assert_eq!(related["properties"]["depth"]["minimum"], 1);
         assert_eq!(related["properties"]["depth"]["maximum"], 10);
         assert_eq!(related["properties"]["filters"]["maxItems"], 16);
+
+        let expressions = json["components"]["schemas"]["StructuredSearchExpression"]["oneOf"]
+            .as_array()
+            .expect("structured expression variants");
+        assert_eq!(expressions.len(), 5);
+        assert!(
+            expressions
+                .iter()
+                .all(|expression| expression["maxProperties"] == 2),
+            "expression schemas must reject unknown properties"
+        );
     }
 
     #[test]
