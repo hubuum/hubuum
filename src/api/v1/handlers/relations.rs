@@ -20,8 +20,6 @@ use crate::storage::capabilities::relations::{
 };
 use crate::storage::capabilities::user::UserSearchBackend;
 use crate::storage::capabilities::with_revision_precondition_scope;
-use crate::traits::SelfAccessors;
-
 use actix_web::delete;
 use tracing::debug;
 

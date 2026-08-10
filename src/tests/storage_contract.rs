@@ -10,9 +10,10 @@ use crate::services::Services;
 use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
-    EventArchive, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
-    EventRetentionStorage, MetricsStorage, OperationalStateStorage, RetainedEvent,
-    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageError, TokenRetentionStorage,
+    AuthenticationStorage, AuthenticationTokenScopeQuery, EventArchive, EventDeliveryStorage,
+    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, MetricsStorage,
+    OperationalStateStorage, RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind,
+    StorageError, TokenRetentionStorage,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -47,6 +48,52 @@ async fn every_available_storage_backend_supplies_metrics_snapshots() {
             }
         }
     }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_authentication_projections() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let user = crate::tests::create_user_with_params(
+        pool.get_ref(),
+        &prefix("authentication_user"),
+        "testpassword",
+    )
+    .await;
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let identity = backend
+                    .load_authentication_identity(user.id)
+                    .await
+                    .expect("certified backend should supply authentication identity data");
+                let (principal, human) = identity.into_parts();
+
+                assert_eq!(principal.id(), user.id);
+                assert!(principal.is_human());
+                assert!(human.is_some());
+
+                let scope = backend
+                    .load_authentication_token_scope(AuthenticationTokenScopeQuery::new(
+                        i32::MAX,
+                        true,
+                        false,
+                    ))
+                    .await
+                    .expect("certified backend should preserve empty scope dimensions")
+                    .expect("an enabled scope dimension should produce a scope snapshot");
+                let (permissions, resources) = scope.into_parts();
+                assert_eq!(permissions, Some(Vec::new()));
+                assert_eq!(resources, None);
+            }
+        }
+    }
+
+    user.delete_without_events(pool.get_ref())
+        .await
+        .expect("authentication compatibility fixture should be removed");
 }
 
 #[actix_web::test]

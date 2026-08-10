@@ -1,17 +1,19 @@
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
-use crate::models::principal::{Principal, load_principal_by_id};
 use crate::models::token::{PrincipalToken, Token};
 use crate::models::user::User;
 use crate::models::{
-    MAX_OBJECT_DATA_PATCH_BYTES, MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, ObjectDataPatchDocument,
-    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenScope,
+    CollectionID, HubuumClassID, HubuumObjectID, MAX_OBJECT_DATA_PATCH_BYTES,
+    MAX_PRINCIPAL_SETTINGS_PATCH_BYTES, ObjectDataPatchDocument, Permissions, PrincipalSettings,
+    PrincipalSettingsPatch, PrincipalSettingsPatchDocument, TokenResourceScope, TokenScope,
 };
 use crate::permissions::{AppContext, PrincipalRef};
-use crate::storage::StorageContext;
 use crate::storage::capabilities::Status;
-use crate::storage::capabilities::authz::load_token_scope;
-use crate::storage::capabilities::principal::load_principal_with_user;
+use crate::storage::{
+    AuthenticationHuman, AuthenticationPrincipal, AuthenticationResourceScope,
+    AuthenticationStorage, AuthenticationTokenScope, AuthenticationTokenScopeQuery, StorageContext,
+    storage_handle,
+};
 
 use actix_web::{
     FromRequest, HttpMessage, HttpRequest, dev::Payload, error::JsonPayloadError, web::JsonBody,
@@ -183,7 +185,7 @@ pub struct Authenticated {
     /// The raw bearer token (e.g. for current-token logout).
     pub token: Token,
     pub token_meta: PrincipalToken,
-    pub principal: Principal,
+    pub principal: AuthenticationPrincipal,
     /// `None` = unscoped (full principal authority); `Some(..)` = the token's
     /// permission and/or resource narrowing boundary.
     pub scope: Option<TokenScope>,
@@ -227,7 +229,7 @@ pub trait AccessEventContext {
 
 impl AccessEventContext for Authenticated {
     fn event_context(&self, req: &HttpRequest) -> EventContext {
-        user_event_context(req, self.principal.id)
+        user_event_context(req, self.principal.id())
     }
 }
 
@@ -298,8 +300,20 @@ async fn build_authenticated_from_meta(
     token_meta: PrincipalToken,
 ) -> Result<Authenticated, ApiError> {
     crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id).await?;
-    let principal = load_principal_by_id(backend, token_meta.principal_id).await?;
-    let scope = load_token_scope(backend, &token_meta).await?;
+    let storage = storage_handle(backend);
+    let identity = storage
+        .load_authentication_identity(token_meta.principal_id)
+        .await?;
+    let (principal, _) = identity.into_parts();
+    let scope = storage
+        .load_authentication_token_scope(AuthenticationTokenScopeQuery::new(
+            token_meta.id,
+            token_meta.permission_scoped,
+            token_meta.resource_scoped,
+        ))
+        .await?
+        .map(token_scope_from_storage)
+        .transpose()?;
     Ok(Authenticated {
         token,
         token_meta,
@@ -336,16 +350,73 @@ async fn human_unscoped_user_from_meta(
 
     crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id).await?;
 
-    // Single round trip: fetch the principal and (when human) its `users` row
-    // together, rather than a separate principal load followed by a user load.
-    let (principal, user) = load_principal_with_user(backend, token_meta.principal_id).await?;
+    // Single round trip: fetch the backend-neutral principal projection and,
+    // when human, a password-free human projection from the same snapshot.
+    let storage = storage_handle(backend);
+    let identity = storage
+        .load_authentication_identity(token_meta.principal_id)
+        .await?;
+    let (principal, human) = identity.into_parts();
     if !principal.is_human() {
         return Err(ApiError::Forbidden(
             "Service accounts cannot use human/management endpoints".to_string(),
         ));
     }
 
-    user.ok_or_else(|| ApiError::Unauthorized("Invalid token".to_string()))
+    human
+        .map(authentication_human_to_user)
+        .ok_or_else(|| ApiError::Unauthorized("Invalid token".to_string()))
+}
+
+fn authentication_human_to_user(human: AuthenticationHuman) -> User {
+    let (id, proper_name, email, created_at, updated_at, anonymized_at) = human.into_parts();
+    User {
+        id,
+        kind: "human".to_string(),
+        password: None,
+        proper_name,
+        email,
+        created_at,
+        updated_at,
+        anonymized_at,
+    }
+}
+
+fn token_scope_from_storage(scope: AuthenticationTokenScope) -> Result<TokenScope, ApiError> {
+    let (permissions, resources) = scope.into_parts();
+    let permissions = permissions
+        .map(|permissions| {
+            permissions
+                .iter()
+                .map(|permission| Permissions::from_string(permission))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+    let resources = resources
+        .map(authentication_resources_from_storage)
+        .transpose()?;
+
+    TokenScope::from_stored_parts(permissions, resources)
+}
+
+fn authentication_resources_from_storage(
+    resources: AuthenticationResourceScope,
+) -> Result<Vec<TokenResourceScope>, ApiError> {
+    let (collection_ids, class_ids, object_ids) = resources.into_parts();
+    collection_ids
+        .into_iter()
+        .map(|id| CollectionID::new(id).map(TokenResourceScope::Collection))
+        .chain(
+            class_ids
+                .into_iter()
+                .map(|id| HubuumClassID::new(id).map(TokenResourceScope::Class)),
+        )
+        .chain(
+            object_ids
+                .into_iter()
+                .map(|id| HubuumObjectID::new(id).map(TokenResourceScope::Object)),
+        )
+        .collect()
 }
 
 async fn human_unscoped_user(

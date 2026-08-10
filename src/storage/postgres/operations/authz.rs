@@ -30,6 +30,7 @@ use crate::schema::{
     group_memberships, groups, identity_scopes, token_class_scopes, token_collection_scopes,
     token_object_scopes, token_scopes,
 };
+use crate::storage::AuthenticationPrincipal;
 use crate::storage::postgres::{PostgresConnection, with_connection, with_connection_async};
 
 /// Cheap, local access to a subject's principal id (no backend round-trip).
@@ -48,6 +49,11 @@ impl PrincipalIdAccessor for User {
 impl PrincipalIdAccessor for Principal {
     fn principal_id(&self) -> i32 {
         self.id
+    }
+}
+impl PrincipalIdAccessor for AuthenticationPrincipal {
+    fn principal_id(&self) -> i32 {
+        self.id()
     }
 }
 impl PrincipalIdAccessor for ServiceAccount {
@@ -308,18 +314,6 @@ pub(crate) async fn load_token_scope_conn(
     .map(Some)
 }
 
-/// Load all narrowing dimensions for a set of tokens in a bounded number of
-/// queries. Results preserve the input order.
-pub(crate) async fn load_token_scopes_for_tokens(
-    pool: &impl crate::storage::StorageContext,
-    tokens: &[PrincipalToken],
-) -> Result<Vec<Option<TokenScope>>, ApiError> {
-    with_connection(pool, async |conn| {
-        load_token_scopes_for_tokens_conn(conn, tokens).await
-    })
-    .await
-}
-
 /// Load complete token boundaries on an existing connection.
 ///
 /// Callers that hold token row locks use this form so cascading retention
@@ -447,20 +441,4 @@ pub(crate) async fn load_token_scopes_for_tokens_conn(
                 .map(Some)
         })
         .collect()
-}
-
-/// Load all narrowing dimensions for an authenticated token. The two scoped
-/// flags are the source of truth, so a flagged dimension with no rows becomes a
-/// present-but-empty deny-all dimension.
-pub async fn load_token_scope(
-    pool: &impl crate::storage::StorageContext,
-    token: &PrincipalToken,
-) -> Result<Option<TokenScope>, ApiError> {
-    Ok(
-        load_token_scopes_for_tokens(pool, std::slice::from_ref(token))
-            .await?
-            .into_iter()
-            .next()
-            .flatten(),
-    )
 }

@@ -25,9 +25,11 @@ pub(crate) use contract::{
     StorageBackendKind, StorageIdentity,
 };
 pub(crate) use hubuum_storage_core::{
-    EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
-    EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
-    EventRetentionSummary, RetainedEvent,
+    AuthenticationHuman, AuthenticationIdentity, AuthenticationPrincipal,
+    AuthenticationResourceScope, AuthenticationStorage, AuthenticationTokenScope,
+    AuthenticationTokenScopeQuery, EventArchive, EventDeliveryBatch, EventDeliveryClaim,
+    EventDeliverySink, EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem,
+    EventFanoutStorage, EventRetentionStorage, EventRetentionSummary, RetainedEvent,
 };
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
 #[cfg(test)]

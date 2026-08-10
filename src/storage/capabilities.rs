@@ -17,7 +17,7 @@ pub(crate) mod active_tokens {
 
 pub(crate) mod authz {
     pub use crate::storage::postgres::operations::authz::{
-        AuthzSubject, PrincipalIdAccessor, load_token_scope, scope_allows, scope_allows_resource,
+        AuthzSubject, PrincipalIdAccessor, scope_allows, scope_allows_resource,
         scope_allows_resources,
     };
 }
@@ -97,10 +97,6 @@ pub(crate) mod meta {
     pub(crate) use crate::storage::postgres::operations::meta::{
         load_database_state, load_task_queue_state,
     };
-}
-
-pub(crate) mod principal {
-    pub(crate) use crate::storage::postgres::operations::principal::load_principal_with_user;
 }
 
 pub(crate) mod permissions {

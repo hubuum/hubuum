@@ -347,7 +347,7 @@ pub async fn invoke_remote_target(
     );
     let task = find_or_create_remote_call_task(
         &context,
-        PrincipalID::new(user.id)?,
+        PrincipalID::new(user.id())?,
         snapshot,
         idempotency_key_from_headers(req.headers())?,
         payload,

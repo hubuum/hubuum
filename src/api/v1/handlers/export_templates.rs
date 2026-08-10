@@ -60,7 +60,7 @@ pub async fn create_template(
 
     debug!(
         message = "Export template create requested",
-        user_id = user.id,
+        user_id = user.id(),
         collection_id = template.collection_id,
         template_name = template.name
     );
@@ -124,7 +124,7 @@ pub async fn get_templates(
 
     info!(
         message = "Export template list requested",
-        user_id = user.id
+        user_id = user.id()
     );
 
     let (templates, total_count) = if context
@@ -206,7 +206,7 @@ pub async fn get_template(
 
     debug!(
         message = "Export template get requested",
-        user_id = user.id,
+        user_id = user.id(),
         template_id = template_id.id()
     );
 
@@ -256,7 +256,7 @@ pub async fn run_template_export(
 
     debug!(
         message = "Export template execution requested",
-        user_id = user.id,
+        user_id = user.id(),
         template_id = template_id.id()
     );
 
@@ -321,7 +321,7 @@ pub async fn patch_template(
 
     debug!(
         message = "Export template patch requested",
-        user_id = user.id,
+        user_id = user.id(),
         template_id = template_id.id()
     );
 
@@ -385,7 +385,7 @@ pub async fn delete_template(
 
     debug!(
         message = "Export template delete requested",
-        user_id = user.id,
+        user_id = user.id(),
         template_id = template_id.id()
     );
 

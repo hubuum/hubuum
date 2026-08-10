@@ -109,7 +109,7 @@ pub async fn create_backup(
     );
     let task_request = TaskCreateRequest::builder(
         TaskKind::Backup,
-        PrincipalID::new(requestor.principal.id)?,
+        PrincipalID::new(requestor.principal.id())?,
         payload,
         1,
     )

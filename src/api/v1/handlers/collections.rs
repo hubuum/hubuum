@@ -70,7 +70,10 @@ pub async fn get_collections(
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
     let user = &requestor.principal;
-    debug!(message = "Collection list requested", requestor = user.name);
+    debug!(
+        message = "Collection list requested",
+        requestor = user.name()
+    );
 
     let query_string = req.query_string();
 
@@ -184,7 +187,7 @@ pub async fn get_collection(
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Collection get requested",
-        requestor = requestor.principal.name,
+        requestor = requestor.principal.name(),
         collection_id = collection_id.id()
     );
 
@@ -228,7 +231,7 @@ pub async fn update_collection(
     let collection_id = collection_id.into_inner();
     debug!(
         message = "Collection update requested",
-        requestor = requestor.principal.name,
+        requestor = requestor.principal.name(),
         collection_id = collection_id.id()
     );
 
@@ -279,7 +282,7 @@ pub async fn delete_collection(
 ) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Collection delete requested",
-        requestor = requestor.principal.name,
+        requestor = requestor.principal.name(),
         collection_id = collection_id.id()
     );
 
@@ -474,7 +477,7 @@ pub async fn get_collection_permissions(
 ) -> Result<impl Responder, ApiError> {
     info!(
         message = "Collection permissions list requested",
-        requestor = requestor.principal.name,
+        requestor = requestor.principal.name(),
         collection_id = collection_id.id()
     );
 
@@ -534,7 +537,7 @@ pub async fn get_collection_group_permissions(
 
     info!(
         message = "Collection group permissions list requested",
-        requestor = requestor.principal.name,
+        requestor = requestor.principal.name(),
         collection_id = collection_id.id(),
         group_id = group_id.id()
     );
@@ -657,7 +660,7 @@ pub async fn grant_collection_group_permissions(
 
     info!(
         message = "Collection group permissions grant requested",
-        requestor = requestor.principal.id,
+        requestor = requestor.principal.id(),
         collection_id = collection_id.id(),
         group_id = group_id.id(),
         permissions = ?permissions
@@ -727,7 +730,7 @@ pub async fn replace_collection_group_permissions(
 
     info!(
         message = "Collection group permissions replace requested",
-        requestor = requestor.principal.id,
+        requestor = requestor.principal.id(),
         collection_id = collection_id.id(),
         group_id = group_id.id(),
         permissions = ?permissions
@@ -796,7 +799,7 @@ pub async fn revoke_collection_group_permissions(
 
     info!(
         message = "Collection group permissions revoke requested",
-        requestor = requestor.principal.name,
+        requestor = requestor.principal.name(),
         collection_id = collection_id.id(),
         group_id = group_id.id()
     );
@@ -858,7 +861,7 @@ pub async fn get_collection_group_permission(
 
     info!(
         message = "Collection group permission check requested",
-        requestor = requestor.principal.name,
+        requestor = requestor.principal.name(),
         collection_id = collection_id.id(),
         group_id = group_id.id(),
         permission = ?permission
@@ -917,7 +920,7 @@ pub async fn grant_collection_group_permission(
 
     info!(
         message = "Collection group permission grant requested",
-        requestor = requestor.principal.name,
+        requestor = requestor.principal.name(),
         collection_id = collection_id.id(),
         group_id = group_id.id(),
         permission = ?permission
@@ -984,7 +987,7 @@ pub async fn revoke_collection_group_permission(
 
     info!(
         message = "Collection group permission revoke requested",
-        requestor = requestor.principal.name,
+        requestor = requestor.principal.name(),
         collection_id = collection_id.id(),
         group_id = group_id.id(),
         permission = ?permission
@@ -1056,7 +1059,7 @@ pub async fn get_collection_principal_permissions(
 
     info!(
         message = "Collection principal permissions list requested",
-        requestor = requestor.principal.name,
+        requestor = requestor.principal.name(),
         collection_id = collection_id.id(),
         principal_id = principal_id.id()
     );
@@ -1159,7 +1162,7 @@ pub async fn get_collection_groups_with_permission(
 
     info!(
         message = "Collection groups with permission list requested",
-        requestor = requestor.principal.name,
+        requestor = requestor.principal.name(),
         collection_id = collection_id.id(),
         permission = ?permission
     );

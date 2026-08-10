@@ -12,6 +12,7 @@ use crate::errors::ApiError;
 use crate::extractors::{
     AccessEventContext, Authenticated, ManagementAccess, PrincipalSettingsPatchPayload,
 };
+use crate::models::principal::load_principal_by_id;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
     Group, GroupResponse, PrincipalID, PrincipalSettings, PrincipalSettingsPatchDocument,
@@ -65,13 +66,13 @@ pub async fn get_me(
     context: AppContext,
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
+    let principal = load_principal_by_id(&context, requestor.principal.id()).await?;
     let token = CurrentTokenMetadata::from_token_and_scope(&requestor.token_meta, requestor.scope)?;
 
     Ok(ApiResponse::new(
         MeResponse {
             principal: crate::models::MembershipPrincipalResponse::from_principal(
-                &context,
-                requestor.principal,
+                &context, principal,
             )
             .await?,
             token,
@@ -181,7 +182,7 @@ pub async fn get_my_settings(
     context: AppContext,
     requestor: Authenticated,
 ) -> Result<impl Responder, ApiError> {
-    let principal_id = PrincipalID::new(requestor.principal.id)?;
+    let principal_id = PrincipalID::new(requestor.principal.id())?;
     ApiResponse::ok_revisioned(principal_id.settings(&context).await?)
 }
 
@@ -204,7 +205,7 @@ pub async fn put_my_settings(
     settings: web::Json<PrincipalSettings>,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let principal_id = PrincipalID::new(requestor.principal.id)?;
+    let principal_id = PrincipalID::new(requestor.principal.id())?;
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
@@ -257,7 +258,7 @@ pub async fn patch_my_settings(
     patch: PrincipalSettingsPatchPayload,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let principal_id = PrincipalID::new(requestor.principal.id)?;
+    let principal_id = PrincipalID::new(requestor.principal.id())?;
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);
@@ -285,7 +286,7 @@ pub async fn delete_my_settings(
     requestor: Authenticated,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
-    let principal_id = PrincipalID::new(requestor.principal.id)?;
+    let principal_id = PrincipalID::new(requestor.principal.id())?;
     let current = principal_id.settings(&context).await?;
     let precondition = revision_precondition(&req, &current)?;
     let event_context = requestor.event_context(&req);

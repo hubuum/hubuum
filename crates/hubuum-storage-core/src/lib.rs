@@ -5,12 +5,18 @@
 //! these values without reversing the dependency from storage into the server.
 
 mod events;
+mod identity;
 mod operational;
 
 pub use events::{
     EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
     EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
     EventRetentionSummary, RetainedEvent,
+};
+pub use identity::{
+    AuthenticationHuman, AuthenticationIdentity, AuthenticationPrincipal,
+    AuthenticationPrincipalKind, AuthenticationResourceScope, AuthenticationStorage,
+    AuthenticationTokenScope, AuthenticationTokenScopeQuery,
 };
 pub use operational::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,

@@ -311,7 +311,7 @@ pub async fn logout_other(
 pub async fn validate_token(user_access: Authenticated) -> Result<impl Responder, ApiError> {
     debug!(
         message = "Token validation successful",
-        principal_id = user_access.principal.id,
+        principal_id = user_access.principal.id(),
     );
 
     Ok(ApiResponse::message("Token is valid."))

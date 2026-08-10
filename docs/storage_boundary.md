@@ -69,8 +69,14 @@ satisfy every capability family below before `StorageHandle` can compose it:
 
 The families are not feature flags and the admin configuration does not report
 optional support. Every selectable backend implements the entire list. The
-central certification implementations in `src/storage/contract.rs` make adding
-a backend an explicit architecture change rather than an incidental trait impl.
+sealed composition in `src/storage/contract.rs` makes adding a backend an
+explicit architecture change rather than an incidental trait implementation.
+During extraction, the query/history, workflow, and remaining operational
+families retain temporary central migration gates. Those gates prevent another
+backend from becoming selectable, but they are not behavioral proof and must
+be replaced by mandatory operation-shaped traits and shared tests. The former
+identity gate has now been replaced by the real `AuthenticationStorage`
+contract; no family is considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Separating their persistence rows from
@@ -152,6 +158,15 @@ sink settings, and an opaque claim to return on success or failure.
 purge transaction. It passes redacted-debug, serialized `RetainedEvent` DTOs to
 an application-owned `EventArchive`; an archive failure rolls back deletion.
 Neither side sees the PostgreSQL event row, connection, or claim state.
+
+`AuthenticationStorage` owns the consistent principal/human join and token
+scope reads used by bearer-token extractors. It returns a minimal
+`AuthenticationPrincipal`, an optional password-free `AuthenticationHuman`,
+and scope DTOs that distinguish a disabled dimension from an enabled empty
+deny-all dimension. PostgreSQL kind strings, credential hashes, Diesel rows,
+and scope-table layouts never cross into request handling. The opaque
+`StorageHandle` applies the common `authentication` tracing and metric labels
+before dispatching to the selected adapter.
 
 ## Error Direction
 
@@ -263,10 +278,10 @@ The first workspace boundaries are now in place:
   More domain DTOs move here as mixed Diesel/domain models are separated.
 
 - `hubuum-storage-core` owns backend-neutral descriptors, the contract version,
-  capability identities, `StorageError`, operational snapshot DTOs, and the
-  extracted operational state, event-health, event-fan-out, event-retention,
-  and token-retention traits without application, transport, or driver
-  dependencies.
+  capability identities, `StorageError`, authentication DTOs, operational
+  snapshot DTOs, and the extracted authentication, operational state,
+  event-health, event-fan-out, event-retention, and token-retention traits
+  without application, transport, or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection
   setup, safe endpoint diagnostics, JSONB validation, query capture, and its
   crate-owned pool-construction error.
@@ -297,9 +312,10 @@ The crates have deliberately different responsibilities:
   mixed models are an incremental extraction.
 - `hubuum-storage-core` ultimately owns the complete traits in addition to its
   current errors, descriptors, capability metadata, operational traits, and
-  storage DTOs. Behavioral traits that still name root domain types remain in
-  `src/storage` until those types move to `hubuum-domain`; the root aggregate
-  trait enforces completeness meanwhile.
+  storage DTOs. Its authentication contract already uses only crate-owned DTOs
+  and is mandatory in the root aggregate trait. Behavioral traits that still
+  name root domain types remain in `src/storage` until those types move to
+  `hubuum-domain`; the root aggregate trait enforces completeness meanwhile.
 - `hubuum-storage-postgres` currently owns pool and TLS setup, JSONB helpers,
   and query capture. It ultimately owns generated schema, migrations,
   transaction helpers, persistence rows, PostgreSQL queries, and

@@ -12,6 +12,7 @@ rust-api = "workspace-internal"
 
 [dependencies]
 async-trait = "0.1"
+chrono = "0.4"
 hubuum-domain = { path = "../hubuum-domain" }
 hubuum-events-core = { path = "../hubuum-events-core" }
 serde_json = "1"
