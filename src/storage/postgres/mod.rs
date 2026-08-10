@@ -38,12 +38,13 @@ use crate::storage::postgres::operations::relations::{
 };
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, EventArchive, EventDeliveryBatch,
-    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
-    InventoryGaugeSnapshot, MetricsStorage, ObjectRelationStore, ObjectStore,
-    OperationalStateStorage, ReadinessSnapshot, StorageError, StorageIdentity, StoragePoolState,
-    TaskGaugeSnapshot, TokenRetentionStorage,
+    AuthenticationIdentity, AuthenticationStorage, AuthenticationTokenScope,
+    AuthenticationTokenScopeQuery, ClassRelationStore, ClassStore, CollectionStore, EventArchive,
+    EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
+    EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
+    EventRetentionSummary, InventoryGaugeSnapshot, MetricsStorage, ObjectRelationStore,
+    ObjectStore, OperationalStateStorage, ReadinessSnapshot, StorageError, StorageIdentity,
+    StoragePoolState, TaskGaugeSnapshot, TokenRetentionStorage,
 };
 use error::map_postgres_error;
 
@@ -66,6 +67,27 @@ impl PostgresStorage {
 impl StorageIdentity for PostgresStorage {
     fn storage_name(&self) -> &'static str {
         "postgresql"
+    }
+}
+
+#[async_trait]
+impl AuthenticationStorage for PostgresStorage {
+    async fn load_authentication_identity(
+        &self,
+        principal_id: i32,
+    ) -> Result<AuthenticationIdentity, StorageError> {
+        operations::authentication::load_authentication_identity(&self.pool, principal_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn load_authentication_token_scope(
+        &self,
+        query: AuthenticationTokenScopeQuery,
+    ) -> Result<Option<AuthenticationTokenScope>, StorageError> {
+        operations::authentication::load_authentication_token_scope(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
     }
 }
 

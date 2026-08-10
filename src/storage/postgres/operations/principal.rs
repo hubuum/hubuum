@@ -243,25 +243,6 @@ fn stored_principal_settings(
     })
 }
 
-/// Load a principal and, when it is human, its `users` row in one left-joined
-/// query. A service account simply has no `users` row, so the user is `None`.
-pub async fn load_principal_with_user(
-    pool: &impl crate::storage::StorageContext,
-    principal_id_value: i32,
-) -> Result<(Principal, Option<User>), ApiError> {
-    use crate::schema::{principals, users};
-
-    with_connection(pool, async |conn| {
-        principals::table
-            .left_join(users::table.on(users::id.eq(principals::id)))
-            .filter(principals::id.eq(principal_id_value))
-            .select((Principal::as_select(), Option::<User>::as_select()))
-            .first::<(Principal, Option<User>)>(conn)
-            .await
-    })
-    .await
-}
-
 /// Load the rich, untagged user representation in one database snapshot.
 pub(crate) async fn load_user_response(
     pool: &impl crate::storage::StorageContext,

@@ -18,7 +18,7 @@ use crate::models::{
 };
 use crate::pagination::effective_page_limit;
 use crate::permissions::AppContext;
-use crate::traits::{Search, SelfAccessors};
+use crate::traits::Search;
 
 #[utoipa::path(
     get,

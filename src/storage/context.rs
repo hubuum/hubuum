@@ -6,12 +6,13 @@ use crate::permissions::{AppContext, PermissionBackend};
 use crate::storage::observed::observe_storage_call;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
-    DynLifecycleStorage, EventArchive, EventDeliveryBatch, EventDeliveryClaim,
-    EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
-    EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, InventoryGaugeSnapshot,
-    MetricsStorage, OperationalStateStorage, PostgresStorage, ReadinessSnapshot, StorageBackend,
-    StorageBackendDescriptor, StorageError, StoragePoolState, TaskGaugeSnapshot,
-    TokenRetentionStorage,
+    AuthenticationIdentity, AuthenticationStorage, AuthenticationTokenScope,
+    AuthenticationTokenScopeQuery, DynLifecycleStorage, EventArchive, EventDeliveryBatch,
+    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
+    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
+    InventoryGaugeSnapshot, MetricsStorage, OperationalStateStorage, PostgresStorage,
+    ReadinessSnapshot, StorageBackend, StorageBackendDescriptor, StorageError, StoragePoolState,
+    TaskGaugeSnapshot, TokenRetentionStorage,
 };
 use async_trait::async_trait;
 
@@ -68,6 +69,47 @@ impl StorageHandle {
         match &self.implementation {
             BackendImplementation::Postgresql(backend) => backend.pool(),
         }
+    }
+}
+
+#[async_trait]
+impl AuthenticationStorage for StorageHandle {
+    async fn load_authentication_identity(
+        &self,
+        principal_id: i32,
+    ) -> Result<AuthenticationIdentity, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authentication",
+            "load_identity",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.load_authentication_identity(principal_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn load_authentication_token_scope(
+        &self,
+        query: AuthenticationTokenScopeQuery,
+    ) -> Result<Option<AuthenticationTokenScope>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authentication",
+            "load_token_scope",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.load_authentication_token_scope(query).await
+                    }
+                }
+            },
+        )
+        .await
     }
 }
 

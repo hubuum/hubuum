@@ -2292,6 +2292,7 @@ name = "hubuum-storage-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "hubuum-domain",
  "hubuum-events-core",
  "serde_json",

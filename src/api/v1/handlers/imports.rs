@@ -73,7 +73,7 @@ pub async fn create_import(
 
     let task = find_or_create_import_task(
         &context,
-        PrincipalID::new(requestor.principal.id)?,
+        PrincipalID::new(requestor.principal.id())?,
         snapshot,
         idempotency_key,
         payload,

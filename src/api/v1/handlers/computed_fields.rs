@@ -27,7 +27,7 @@ use crate::traits::SelfAccessors;
 
 fn require_human(requestor: &Authenticated) -> Result<i32, ApiError> {
     if requestor.principal.is_human() {
-        Ok(requestor.principal.id)
+        Ok(requestor.principal.id())
     } else {
         Err(ApiError::Forbidden(
             "Service accounts cannot manage personal computed fields".to_string(),
@@ -158,7 +158,7 @@ pub async fn create_shared_computed_field(
         &context,
         class.id,
         class.collection_id,
-        requestor.principal.id,
+        requestor.principal.id(),
         request.into_inner(),
         &event_context,
     )
@@ -219,7 +219,7 @@ pub async fn patch_shared_computed_field(
             class.id,
             class.collection_id,
             field_id.id(),
-            requestor.principal.id,
+            requestor.principal.id(),
             request.into_inner(),
             &event_context,
         ),
@@ -278,7 +278,7 @@ pub async fn delete_shared_computed_field(
             class.id,
             class.collection_id,
             field_id.id(),
-            requestor.principal.id,
+            requestor.principal.id(),
             &event_context,
         ),
     )
@@ -397,7 +397,7 @@ pub async fn rebuild_shared_computed_fields(
             &context,
             class.id,
             class.collection_id,
-            Some(requestor.principal.id),
+            Some(requestor.principal.id()),
         )
         .await?,
     ))

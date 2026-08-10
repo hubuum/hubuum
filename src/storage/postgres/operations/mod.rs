@@ -1,4 +1,5 @@
 pub mod active_tokens;
+pub(crate) mod authentication;
 pub mod authz;
 pub mod backup;
 pub mod bootstrap;

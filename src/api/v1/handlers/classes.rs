@@ -145,7 +145,7 @@ async fn computed_personal_owner(
     )
     .await
     {
-        Ok(()) => Ok(Some(requestor.principal.id)),
+        Ok(()) => Ok(Some(requestor.principal.id())),
         Err(ApiError::Forbidden(_)) => Ok(None),
         Err(error) => Err(error),
     }

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventRetentionStorage, MetricsStorage, ObjectRelationStore, ObjectStore,
-    OperationalStateStorage, PostgresStorage, TokenRetentionStorage,
-    observed::ObservedLifecycleStorage,
+    AuthenticationStorage, ClassRelationStore, ClassStore, CollectionStore, EventDeliveryStorage,
+    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, MetricsStorage,
+    ObjectRelationStore, ObjectStore, OperationalStateStorage, PostgresStorage,
+    TokenRetentionStorage, observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -40,14 +40,13 @@ impl<T> LifecycleStorage for T where
 {
 }
 
-/// Certification gates for capability families that are still implemented by
-/// operation-shaped adapters outside `src/storage`.
+/// Temporary migration gates for capability families whose operation-shaped
+/// traits have not yet been extracted.
 ///
-/// These traits are intentionally sealed and implemented in this central
-/// contract module. They make the composition checklist compile-time visible:
-/// adding a selectable backend requires an explicit implementation for every
-/// family here, followed by the shared compatibility suite.
-pub(crate) trait IdentityAndAuthorizationStorage: Send + Sync {}
+/// These gates prevent another implementation from becoming selectable during
+/// the refactor, but they do not certify behavior. Each one must be replaced by
+/// mandatory operation-shaped traits and shared compatibility tests, as the
+/// authentication gate has been in this layer.
 pub(crate) trait QueryAndHistoryStorage: Send + Sync {}
 pub(crate) trait WorkflowStorage: Send + Sync {}
 pub(crate) trait OperationalStorage: Send + Sync {}
@@ -62,6 +61,7 @@ mod sealed {
 /// and therefore cannot be selected by `AppContext`.
 pub(crate) trait StorageBackend:
     LifecycleStorage
+    + AuthenticationStorage
     + EventDeliveryStorage
     + EventFanoutStorage
     + EventHealthStorage
@@ -69,7 +69,6 @@ pub(crate) trait StorageBackend:
     + MetricsStorage
     + OperationalStateStorage
     + TokenRetentionStorage
-    + IdentityAndAuthorizationStorage
     + QueryAndHistoryStorage
     + WorkflowStorage
     + OperationalStorage
@@ -78,7 +77,6 @@ pub(crate) trait StorageBackend:
     fn descriptor(&self) -> StorageBackendDescriptor;
 }
 
-impl IdentityAndAuthorizationStorage for PostgresStorage {}
 impl QueryAndHistoryStorage for PostgresStorage {}
 impl WorkflowStorage for PostgresStorage {}
 impl OperationalStorage for PostgresStorage {}
