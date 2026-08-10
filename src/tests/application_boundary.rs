@@ -229,6 +229,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "AuthenticationStorage",
         "AuthorizationStorage",
         "CatalogStorage",
+        "ComputedFieldLifecycleStorage",
         "ComputedObjectStorage",
         "ObjectAggregateStorage",
         "RelationQueryStorage",
@@ -275,6 +276,24 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         );
     }
     let compact_context = context_source.split_whitespace().collect::<String>();
+    for operation in [
+        "state",
+        "list_shared",
+        "list_personal",
+        "get",
+        "create_shared",
+        "update_shared",
+        "delete_shared",
+        "create_personal",
+        "update_personal",
+        "delete_personal",
+        "request_rebuild",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"computed_fields\",\"{operation}\"")),
+            "computed-field lifecycle operation {operation} must use the common storage observer"
+        );
+    }
     assert!(
         compact_context.contains("\"object_aggregates\",\"aggregate\""),
         "object aggregation must use the common storage observer"

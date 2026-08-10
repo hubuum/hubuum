@@ -15,13 +15,13 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
-use crate::storage::capabilities::UserPermissions;
-use crate::storage::capabilities::computed_field::{
+use crate::services::computed_fields::{
     class_computation_state_for, create_personal_definition, create_shared_definition,
     delete_personal_definition, delete_shared_definition, get_computed_definition,
     list_personal_definitions_page, list_shared_definitions, preview_computed_definition,
     request_class_rebuild, update_personal_definition, update_shared_definition,
 };
+use crate::storage::capabilities::UserPermissions;
 use crate::storage::capabilities::with_revision_precondition_scope;
 use crate::traits::SelfAccessors;
 
@@ -438,7 +438,7 @@ pub async fn get_personal_computed_fields(
     };
     let search_params = prepare_db_pagination::<ComputedFieldDefinition>(&params)?;
     let (definitions, total_count) =
-        list_personal_definitions_page(&context, owner_id, class_filter, &search_params).await?;
+        list_personal_definitions_page(&context, owner_id, class_filter, search_params).await?;
     ApiResponse::paginated(definitions, total_count, &params)
 }
 

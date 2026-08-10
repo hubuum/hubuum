@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use diesel_async::RunQueryDsl;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use crate::events::{EventFanoutSettings, EventRetentionSettings};
+use crate::events::{EventContext, EventFanoutSettings, EventRetentionSettings};
 use crate::models::TokenRetentionSettings;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::search::{
@@ -26,19 +26,24 @@ use crate::storage::{
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrantKey,
     AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
     AuthorizationStorage, BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
-    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectProjection,
-    ComputedObjectStorage, ComputedObjectVisibility, EventArchive, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryStorage, MetricsStorage,
+    ComputedFieldLifecycleStorage, ComputedObjectEnrichmentQuery, ComputedObjectListQuery,
+    ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility, EventArchive,
+    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
+    HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery, HistoryStorage, MetricsStorage,
     ObjectAggregateAuthorizationMode, ObjectAggregateAuthorizer, ObjectAggregateStorage,
     ObjectAggregateStorageQuery, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
     ObjectRelationsTouchingIdsQuery, OperationalStateStorage, RelatedObjectsForRootsQuery,
     RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
     RelationTouchingQuery, RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind,
-    StorageError, StorageObject, StorageObjectAggregateAuthorizationCandidate,
+    StorageComputedFieldDefinitionInput, StorageComputedFieldDefinitionPatch,
+    StorageComputedFieldRebuildRequest, StorageComputedFieldVisibility, StorageError,
+    StorageObject, StorageObjectAggregateAuthorizationCandidate,
     StorageObjectAggregateAuthorizationTarget, StorageObjectAggregateSort,
-    StorageObjectAggregateSpec, StorageObjectAggregateTarget, StorageRelatedDirection,
-    StorageRelatedSort, StorageVisibility, TokenRetentionStorage, UnifiedSearchQuery,
+    StorageObjectAggregateSpec, StorageObjectAggregateTarget, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StorageRelatedDirection, StorageRelatedSort,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageSharedComputedFieldUpdate, StorageVisibility, TokenRetentionStorage, UnifiedSearchQuery,
     UnifiedSearchStorage,
 };
 use crate::traits::CanSave;
@@ -688,6 +693,182 @@ async fn every_available_storage_backend_supplies_computed_object_queries() {
         .cleanup()
         .await
         .expect("computed-object compatibility fixture should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_computed_field_lifecycle() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let needle = prefix("computed_field_lifecycle");
+    let owner = crate::tests::create_test_user(pool.get_ref()).await;
+    let fixture = crate::tests::create_class_fixture(
+        pool.get_ref(),
+        crate::tests::create_collection_fixture(pool.get_ref(), &needle).await,
+        vec![NewHubuumClass {
+            name: format!("{needle}_class"),
+            collection_id: 0,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "computed-field lifecycle compatibility class".to_string(),
+        }],
+    )
+    .await
+    .expect("computed-field lifecycle compatibility fixture should be created");
+    let class_id = fixture.classes[0].id;
+    let collection_id = fixture.collection.collection.id;
+    let event_context = EventContext::user(owner.id, None, None);
+    let definition = |key: &str| {
+        StorageComputedFieldDefinitionInput::new(
+            key.to_string(),
+            "Compatibility".to_string(),
+            serde_json::json!({
+                "type": "first_non_null",
+                "paths": ["/compatibility"]
+            }),
+            "string".to_string(),
+        )
+        .with_description("Backend compatibility definition".to_string())
+    };
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+
+                let initial_state = backend
+                    .computed_field_state(class_id)
+                    .await
+                    .expect("certified backend should supply computed-field state");
+                assert_eq!(initial_state.class_id(), class_id);
+
+                let (shared, created_state) = backend
+                    .create_shared_computed_field(StorageSharedComputedFieldCreate::new(
+                        class_id,
+                        collection_id,
+                        owner.id,
+                        definition("compatibility_shared"),
+                        event_context.clone(),
+                    ))
+                    .await
+                    .expect("certified backend should create a shared computed field")
+                    .into_parts();
+                assert_eq!(shared.visibility(), StorageComputedFieldVisibility::Shared);
+                assert!(created_state.evaluation_revision() > initial_state.evaluation_revision());
+
+                let shared_rows = backend
+                    .list_shared_computed_fields(class_id)
+                    .await
+                    .expect("certified backend should list shared computed fields");
+                assert!(
+                    shared_rows
+                        .iter()
+                        .any(|row| row.metadata().id() == shared.metadata().id())
+                );
+
+                let loaded = backend
+                    .get_computed_field(shared.metadata().id())
+                    .await
+                    .expect("certified backend should load a computed field");
+                assert_eq!(loaded.key(), "compatibility_shared");
+
+                let (updated_shared, _) = backend
+                    .update_shared_computed_field(StorageSharedComputedFieldUpdate::new(
+                        class_id,
+                        collection_id,
+                        shared.metadata().id(),
+                        owner.id,
+                        StorageComputedFieldDefinitionPatch::new()
+                            .with_label(Some("Updated compatibility".to_string())),
+                        event_context.clone(),
+                    ))
+                    .await
+                    .expect("certified backend should update a shared computed field")
+                    .into_parts();
+                assert_eq!(updated_shared.label(), "Updated compatibility");
+
+                let rebuild_state = backend
+                    .request_computed_field_rebuild(StorageComputedFieldRebuildRequest::new(
+                        class_id,
+                        collection_id,
+                        Some(owner.id),
+                    ))
+                    .await
+                    .expect("certified backend should request a computed-field rebuild");
+                assert_eq!(rebuild_state.class_id(), class_id);
+
+                let personal = backend
+                    .create_personal_computed_field(StoragePersonalComputedFieldCreate::new(
+                        class_id,
+                        owner.id,
+                        definition("compatibility_personal"),
+                    ))
+                    .await
+                    .expect("certified backend should create a personal computed field");
+                assert_eq!(
+                    personal.visibility(),
+                    StorageComputedFieldVisibility::Personal { owner_id: owner.id }
+                );
+
+                let (personal_rows, total) = backend
+                    .list_personal_computed_fields(StoragePersonalComputedFieldListQuery::new(
+                        owner.id,
+                        Some(class_id),
+                        QueryOptions {
+                            filters: Vec::new(),
+                            sort: Vec::new(),
+                            limit: Some(10),
+                            cursor: None,
+                            include_total: true,
+                        },
+                    ))
+                    .await
+                    .expect("certified backend should list personal computed fields")
+                    .into_parts();
+                assert_eq!(total, Some(1));
+                assert_eq!(personal_rows.len(), 1);
+
+                let updated_personal = backend
+                    .update_personal_computed_field(StoragePersonalComputedFieldUpdate::new(
+                        owner.id,
+                        personal.metadata().id(),
+                        StorageComputedFieldDefinitionPatch::new()
+                            .with_label(Some("Updated personal compatibility".to_string())),
+                    ))
+                    .await
+                    .expect("certified backend should update a personal computed field");
+                assert_eq!(updated_personal.label(), "Updated personal compatibility");
+
+                backend
+                    .delete_personal_computed_field(StoragePersonalComputedFieldDelete::new(
+                        owner.id,
+                        personal.metadata().id(),
+                    ))
+                    .await
+                    .expect("certified backend should delete a personal computed field");
+
+                let deleted_state = backend
+                    .delete_shared_computed_field(StorageSharedComputedFieldDelete::new(
+                        class_id,
+                        collection_id,
+                        shared.metadata().id(),
+                        owner.id,
+                        event_context.clone(),
+                    ))
+                    .await
+                    .expect("certified backend should delete a shared computed field");
+                assert_eq!(deleted_state.class_id(), class_id);
+            }
+        }
+    }
+
+    fixture
+        .cleanup()
+        .await
+        .expect("computed-field lifecycle fixture should be removed");
+    owner
+        .delete_without_events(pool.get_ref())
+        .await
+        .expect("computed-field lifecycle owner should be removed");
 }
 
 #[actix_web::test]

@@ -35,6 +35,26 @@ impl StorageRecordMetadata {
     pub const fn into_parts(self) -> (i32, NaiveDateTime, NaiveDateTime, i64) {
         (self.id, self.created_at, self.updated_at, self.revision)
     }
+
+    #[must_use]
+    pub const fn id(self) -> i32 {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn created_at(self) -> NaiveDateTime {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn updated_at(self) -> NaiveDateTime {
+        self.updated_at
+    }
+
+    #[must_use]
+    pub const fn revision(self) -> i64 {
+        self.revision
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

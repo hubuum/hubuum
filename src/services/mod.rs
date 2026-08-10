@@ -2,6 +2,7 @@ pub(crate) mod catalog;
 mod class_relations;
 mod classes;
 mod collections;
+pub(crate) mod computed_fields;
 pub(crate) mod computed_objects;
 pub(crate) mod history;
 pub(crate) mod object_aggregates;

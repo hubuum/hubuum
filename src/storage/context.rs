@@ -13,21 +13,27 @@ use crate::storage::{
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
     AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationPolicySnapshotRow,
     AuthorizationPrincipal, AuthorizationStorage, BidirectionalRelatedObjectsQuery,
-    CatalogListQuery, CatalogPage, CatalogStorage, ComputedObjectEnrichmentQuery,
-    ComputedObjectListQuery, ComputedObjectPage, ComputedObjectStorage, DynLifecycleStorage,
-    EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot,
-    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot,
-    EventRetentionStorage, EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery,
-    HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot,
-    MetricsStorage, ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
+    CatalogListQuery, CatalogPage, CatalogStorage, ComputedFieldLifecycleStorage,
+    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
+    ComputedObjectStorage, DynLifecycleStorage, EventArchive, EventDeliveryBatch,
+    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
+    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
+    ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery, HistoryPage,
+    HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
+    ObjectAggregateAuthorizer, ObjectAggregateStorage, ObjectAggregateStorageQuery,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord,
     ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage, ReadinessSnapshot,
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
     RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
-    StorageBackend, StorageBackendDescriptor, StorageClass, StorageClassGraphRow,
-    StorageClassRelation, StorageCollection, StorageComputedObject, StorageError, StorageObject,
-    StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation, StoragePoolState,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, TaskGaugeSnapshot,
+    StorageBackend, StorageBackendDescriptor, StorageClass, StorageClassComputationState,
+    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
+    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
+    StorageComputedObject, StorageError, StorageObject, StorageObjectAggregatePage,
+    StorageObjectGraphRow, StorageObjectRelation, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StoragePoolState, StorageRelatedObjectForRootRow,
+    StorageRelatedObjectIncludeRow, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, TaskGaugeSnapshot,
     TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
     UnifiedSearchQuery, UnifiedSearchStorage,
 };
@@ -600,6 +606,208 @@ impl ComputedObjectStorage for StorageHandle {
                 }
             }
         })
+        .await
+    }
+}
+
+#[async_trait]
+impl ComputedFieldLifecycleStorage for StorageHandle {
+    async fn computed_field_state(
+        &self,
+        class_id: i32,
+    ) -> Result<StorageClassComputationState, StorageError> {
+        observe_storage_call(self.backend_name(), "computed_fields", "state", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.computed_field_state(class_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_shared_computed_fields(
+        &self,
+        class_id: i32,
+    ) -> Result<Vec<StorageComputedFieldDefinition>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "computed_fields",
+            "list_shared",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.list_shared_computed_fields(class_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn list_personal_computed_fields(
+        &self,
+        query: StoragePersonalComputedFieldListQuery,
+    ) -> Result<StorageComputedFieldPage, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "computed_fields",
+            "list_personal",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.list_personal_computed_fields(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn get_computed_field(
+        &self,
+        definition_id: i32,
+    ) -> Result<StorageComputedFieldDefinition, StorageError> {
+        observe_storage_call(self.backend_name(), "computed_fields", "get", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.get_computed_field(definition_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn create_shared_computed_field(
+        &self,
+        request: StorageSharedComputedFieldCreate,
+    ) -> Result<StorageComputedFieldMutation, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "computed_fields",
+            "create_shared",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.create_shared_computed_field(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn update_shared_computed_field(
+        &self,
+        request: StorageSharedComputedFieldUpdate,
+    ) -> Result<StorageComputedFieldMutation, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "computed_fields",
+            "update_shared",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.update_shared_computed_field(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn delete_shared_computed_field(
+        &self,
+        request: StorageSharedComputedFieldDelete,
+    ) -> Result<StorageClassComputationState, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "computed_fields",
+            "delete_shared",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.delete_shared_computed_field(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn create_personal_computed_field(
+        &self,
+        request: StoragePersonalComputedFieldCreate,
+    ) -> Result<StorageComputedFieldDefinition, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "computed_fields",
+            "create_personal",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.create_personal_computed_field(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn update_personal_computed_field(
+        &self,
+        request: StoragePersonalComputedFieldUpdate,
+    ) -> Result<StorageComputedFieldDefinition, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "computed_fields",
+            "update_personal",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.update_personal_computed_field(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn delete_personal_computed_field(
+        &self,
+        request: StoragePersonalComputedFieldDelete,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "computed_fields",
+            "delete_personal",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.delete_personal_computed_field(request).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn request_computed_field_rebuild(
+        &self,
+        request: StorageComputedFieldRebuildRequest,
+    ) -> Result<StorageClassComputationState, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "computed_fields",
+            "request_rebuild",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.request_computed_field_rebuild(request).await
+                    }
+                }
+            },
+        )
         .await
     }
 }
