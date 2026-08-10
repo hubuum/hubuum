@@ -110,7 +110,7 @@ pub async fn get_remote_targets(
     let query_options = prepare_db_pagination::<RemoteTarget>(&params)?;
     let visible_collections = if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         user_can_on_any(
             &context,
@@ -473,7 +473,7 @@ pub async fn get_remote_target_history(
         .await?
     } else if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let collection_ids = readable_history_collection_ids(
             &context,

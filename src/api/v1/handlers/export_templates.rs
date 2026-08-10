@@ -65,7 +65,7 @@ pub async fn create_template(
         template_name = template.name
     );
 
-    if context.permission_backend().uses_sql_permission_store() {
+    if context.permission_backend().uses_local_permission_store() {
         can!(
             &context,
             user,
@@ -129,7 +129,7 @@ pub async fn get_templates(
 
     let (templates, total_count) = if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let search_params = prepare_db_pagination::<ExportTemplate>(&params)?;
         let mut allowed_collection_ids = user_can_on_any(
@@ -474,7 +474,7 @@ pub async fn get_template_history(
         .await?
     } else if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let collection_ids = readable_history_collection_ids(
             &context,

@@ -479,7 +479,7 @@ where
     ) -> Result<Self, ApiError> {
         let authorization = if let Some(permission_backend) = backend
             .permission_backend()
-            .filter(|backend| !backend.supports_sql_visibility_pushdown())
+            .filter(|backend| !backend.supports_storage_visibility_filtering())
         {
             ExportAuthorization::External {
                 backend: permission_backend,

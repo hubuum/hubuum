@@ -269,7 +269,7 @@ async fn preflight_dry_run(
 
 async fn is_import_admin<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     state: &mut PlanningState,
 ) -> Result<bool, String>
 where
@@ -280,7 +280,7 @@ where
     }
     let pool = backend;
     let is_admin = match backend.permission_backend() {
-        Some(permission_backend) if !permission_backend.uses_sql_permission_store() => {
+        Some(permission_backend) if !permission_backend.uses_local_permission_store() => {
             let principal = PrincipalRef::load(pool, user)
                 .await
                 .map_err(|err| err.to_string())?;
@@ -297,7 +297,7 @@ where
 
 async fn ensure_collection_permission_cached<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     state: &mut PlanningState,
     collection_id: i32,
     collection_exists_in_db: bool,
@@ -417,7 +417,7 @@ impl RelationPlanDecision {
 
 async fn ensure_relation_permissions<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     state: &mut PlanningState,
     collections: [&CollectionResolution; 2],
     permission: Permissions,
@@ -447,7 +447,7 @@ where
 
 pub(super) async fn plan_import<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     scopes: Option<&TokenScope>,
     request: &ImportRequest,
 ) -> PlanningOutcome
@@ -460,7 +460,7 @@ where
 #[cfg(test)]
 pub(super) async fn plan_runtime_admin_import<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     request: &ImportRequest,
 ) -> PlanningOutcome
 where
@@ -472,7 +472,7 @@ where
 
 async fn plan_import_with_admin_status<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     scopes: Option<&TokenScope>,
     request: &ImportRequest,
     admin_status: ImportAdminStatus,
@@ -937,7 +937,7 @@ where
 
 pub(super) async fn plan_collection<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportCollectionInput,
@@ -1154,7 +1154,7 @@ fn validate_planned_class_schema(class: &ClassResolution) -> Result<(), ApiError
 
 pub(super) async fn plan_class<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportClassInput,
@@ -1378,7 +1378,7 @@ where
 
 pub(super) async fn plan_object<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportObjectInput,
@@ -1592,7 +1592,7 @@ where
 
 pub(super) async fn plan_class_relation<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportClassRelationInput,
@@ -1738,7 +1738,7 @@ where
 
 pub(super) async fn plan_object_relation<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportObjectRelationInput,
@@ -1908,7 +1908,7 @@ where
 
 pub(super) async fn plan_collection_permission<C>(
     backend: &C,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     mode: &ImportMode,
     state: &mut PlanningState,
     input: &ImportCollectionPermissionInput,

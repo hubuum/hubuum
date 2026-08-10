@@ -15,78 +15,25 @@
 //! internal callers pass `None`.
 
 use crate::storage::postgres::prelude::*;
-use diesel::pg::Pg;
-use diesel::sql_types::Integer;
+use diesel::{pg::Pg, sql_types::Integer};
 
 use crate::errors::ApiError;
-use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::permissions::Permissions;
 use crate::models::{
-    CollectionID, HubuumClassID, HubuumObjectID, Principal, PrincipalID, PrincipalToken,
-    ServiceAccount, ServiceAccountID, TokenResourceScope, TokenScope, User, UserID,
+    CollectionID, HubuumClassID, HubuumObjectID, PrincipalToken, TokenResourceScope, TokenScope,
 };
 use crate::permissions::ResourceRef;
 use crate::schema::{
-    group_memberships, groups, identity_scopes, token_class_scopes, token_collection_scopes,
-    token_object_scopes, token_scopes,
+    group_memberships, token_class_scopes, token_collection_scopes, token_object_scopes,
+    token_scopes,
 };
-use crate::storage::AuthenticationPrincipal;
-use crate::storage::postgres::{PostgresConnection, with_connection, with_connection_async};
-
-/// Cheap, local access to a subject's principal id (no backend round-trip).
-///
-/// For `User` / `ServiceAccount` / `Principal` the principal id IS `self.id`
-/// (class-table inheritance); for the `*ID` newtypes it is the wrapped value.
-pub trait PrincipalIdAccessor {
-    fn principal_id(&self) -> i32;
-}
-
-impl PrincipalIdAccessor for User {
-    fn principal_id(&self) -> i32 {
-        self.id
-    }
-}
-impl PrincipalIdAccessor for Principal {
-    fn principal_id(&self) -> i32 {
-        self.id
-    }
-}
-impl PrincipalIdAccessor for AuthenticationPrincipal {
-    fn principal_id(&self) -> i32 {
-        self.id()
-    }
-}
-impl PrincipalIdAccessor for ServiceAccount {
-    fn principal_id(&self) -> i32 {
-        self.id
-    }
-}
-impl PrincipalIdAccessor for UserID {
-    fn principal_id(&self) -> i32 {
-        self.id()
-    }
-}
-impl PrincipalIdAccessor for PrincipalID {
-    fn principal_id(&self) -> i32 {
-        self.id()
-    }
-}
-impl PrincipalIdAccessor for ServiceAccountID {
-    fn principal_id(&self) -> i32 {
-        self.id()
-    }
-}
-impl<T: PrincipalIdAccessor + ?Sized> PrincipalIdAccessor for &T {
-    fn principal_id(&self) -> i32 {
-        (**self).principal_id()
-    }
-}
+use crate::storage::postgres::{PostgresConnection, with_connection};
 
 /// Identity-only authorization subject: principal id, group membership, admin
 /// status, and kind. Implemented once (blanket) for everything that can name a
 /// principal id. Carries NO scope state — see the module docs.
 #[allow(async_fn_in_trait)]
-pub trait AuthzSubject: PrincipalIdAccessor {
+pub trait AuthzSubject: crate::traits::AuthzSubject {
     /// Boxed subquery of the group ids this principal belongs to. This is the
     /// single chokepoint every group-based permission query funnels through.
     fn group_ids_subquery<'a>(&self) -> group_memberships::BoxedQuery<'a, Pg, Integer> {
@@ -96,61 +43,9 @@ pub trait AuthzSubject: PrincipalIdAccessor {
             .select(group_id)
             .into_boxed()
     }
-
-    /// The configured admin group name.
-    async fn admin_groupname(&self) -> Result<String, ApiError> {
-        Ok(crate::config::get_config()?.admin_groupname.clone())
-    }
-
-    /// The configured admin identity scope name.
-    async fn admin_identity_scope(&self) -> Result<String, ApiError> {
-        Ok(crate::config::get_config()?
-            .admin_identity_scope
-            .clone()
-            .unwrap_or_else(|| LOCAL_IDENTITY_SCOPE.to_string()))
-    }
-
-    /// Is this principal a member of the named group?
-    async fn is_in_group_by_name(
-        &self,
-        groupname_queried: &str,
-        pool: &impl crate::storage::StorageContext,
-    ) -> Result<bool, ApiError> {
-        use diesel::dsl::{exists, select};
-        let pid = self.principal_id();
-        let scope = self.admin_identity_scope().await?;
-        let group_name = groupname_queried.to_string();
-        let is_in_group = with_connection_async(pool, async move |conn| {
-            select(exists(
-                group_memberships::table
-                    .inner_join(groups::table)
-                    .inner_join(
-                        identity_scopes::table
-                            .on(groups::identity_scope_id.eq(identity_scopes::id)),
-                    )
-                    .filter(group_memberships::principal_id.eq(pid))
-                    .filter(groups::groupname.eq(group_name))
-                    .filter(identity_scopes::name.eq(scope)),
-            ))
-            .get_result(conn)
-            .await
-        })
-        .await?;
-        Ok(is_in_group)
-    }
-
-    /// Is this principal an admin (member of the configured admin group)?
-    ///
-    /// Note: this is a pure group-membership fact. It does NOT make a service
-    /// account a *human IAM* administrator — that separation is enforced by the
-    /// `kind = 'human'` gate on the human/IAM extractors, not here.
-    async fn is_admin(&self, pool: &impl crate::storage::StorageContext) -> Result<bool, ApiError> {
-        let groupname = self.admin_groupname().await?;
-        self.is_in_group_by_name(&groupname, pool).await
-    }
 }
 
-impl<T: PrincipalIdAccessor + ?Sized> AuthzSubject for T {}
+impl<T: crate::traits::AuthzSubject + ?Sized> AuthzSubject for T {}
 
 /// Fail-closed token-scope pre-filter.
 ///

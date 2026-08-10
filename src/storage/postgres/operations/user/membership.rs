@@ -126,7 +126,7 @@ pub trait LoadPermittedCollections: GroupAccessors + AuthzSubject {
     where
         &'a I: IntoIterator<Item = &'a Permissions>,
     {
-        let is_admin = AuthzSubject::is_admin(self, pool).await?;
+        let is_admin = crate::traits::AuthzSubject::is_admin(self, pool).await?;
         self.load_collections_with_permissions_with_admin_status(
             pool,
             permissions_list,

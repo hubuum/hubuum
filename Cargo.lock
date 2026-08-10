@@ -2295,6 +2295,7 @@ dependencies = [
  "chrono",
  "hubuum-domain",
  "hubuum-events-core",
+ "hubuum-query",
  "serde_json",
  "uuid",
 ]

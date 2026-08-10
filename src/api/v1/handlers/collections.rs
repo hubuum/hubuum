@@ -84,7 +84,7 @@ pub async fn get_collections(
 
     let (result, total_count) = if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let total_count = if params.include_total {
             user.count_collections(&context, count_query_options(&params), requestor.scopes())
@@ -492,7 +492,7 @@ pub async fn get_collection_permissions(
         collection
     );
 
-    if context.permission_backend().uses_sql_permission_store() {
+    if context.permission_backend().uses_local_permission_store() {
         let permission_set = sql_collection_permission_set(&context, &collection).await?;
         return Ok(Either::Left(ApiResponse::ok_revisioned(permission_set)?));
     }
@@ -551,7 +551,7 @@ pub async fn get_collection_group_permissions(
         collection
     );
 
-    if context.permission_backend().uses_sql_permission_store() {
+    if context.permission_backend().uses_local_permission_store() {
         let permission_set =
             crate::storage::capabilities::collection::collection_permission_set_from_backend(
                 &context,
@@ -675,7 +675,7 @@ pub async fn grant_collection_group_permissions(
         collection
     );
 
-    if context.permission_backend().uses_sql_permission_store() {
+    if context.permission_backend().uses_local_permission_store() {
         let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
@@ -752,7 +752,7 @@ pub async fn replace_collection_group_permissions(
         ));
     }
 
-    if context.permission_backend().uses_sql_permission_store() {
+    if context.permission_backend().uses_local_permission_store() {
         let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
@@ -813,7 +813,7 @@ pub async fn revoke_collection_group_permissions(
         collection
     );
 
-    if context.permission_backend().uses_sql_permission_store() {
+    if context.permission_backend().uses_local_permission_store() {
         let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
@@ -876,7 +876,7 @@ pub async fn get_collection_group_permission(
         collection
     );
 
-    let allowed = if context.permission_backend().uses_sql_permission_store() {
+    let allowed = if context.permission_backend().uses_local_permission_store() {
         group_can_on(&context, group_id.id(), collection, permission).await?
     } else {
         context
@@ -936,7 +936,7 @@ pub async fn grant_collection_group_permission(
     );
 
     let permissions = PermissionsList::new([permission]);
-    if context.permission_backend().uses_sql_permission_store() {
+    if context.permission_backend().uses_local_permission_store() {
         let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
@@ -1003,7 +1003,7 @@ pub async fn revoke_collection_group_permission(
     );
 
     let permissions = PermissionsList::new([permission]);
-    if context.permission_backend().uses_sql_permission_store() {
+    if context.permission_backend().uses_local_permission_store() {
         let current = sql_collection_permission_set(&context, &collection).await?;
         let precondition = collection_precondition(&req, &current)?;
         let event_context = requestor.event_context(&req);
@@ -1177,7 +1177,7 @@ pub async fn get_collection_groups_with_permission(
     );
 
     let search_params = prepare_db_pagination::<Group>(&query_options)?;
-    let (groups, total_count) = if context.permission_backend().uses_sql_permission_store() {
+    let (groups, total_count) = if context.permission_backend().uses_local_permission_store() {
         collection_model::groups_can_on_paginated_with_total_count(
             &context,
             collection.id,
@@ -1265,7 +1265,7 @@ pub async fn get_collection_history(
         .await?
     } else if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let collection_ids = readable_history_collection_ids(
             &context,

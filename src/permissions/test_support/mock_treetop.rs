@@ -600,11 +600,11 @@ impl PermissionBackend for MockTreetopBackend {
         false
     }
 
-    fn supports_sql_visibility_pushdown(&self) -> bool {
+    fn supports_storage_visibility_filtering(&self) -> bool {
         false
     }
 
-    fn uses_sql_permission_store(&self) -> bool {
+    fn uses_local_permission_store(&self) -> bool {
         false
     }
 

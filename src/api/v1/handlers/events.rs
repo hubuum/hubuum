@@ -90,7 +90,7 @@ async fn list_visible_events(
     let search_params = prepare_db_pagination::<EventResponse>(&params)?;
     let (visible_collections, include_collection_less) = if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let collections = user_can_on_any(
             &context,

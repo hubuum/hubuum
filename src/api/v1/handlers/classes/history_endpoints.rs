@@ -64,7 +64,7 @@ async fn get_class_history(
         .await?
     } else if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let collection_ids = readable_history_collection_ids(
             &context,
@@ -263,7 +263,7 @@ async fn get_object_history(
         .await?
     } else if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let collection_ids = readable_history_collection_ids(
             &context,

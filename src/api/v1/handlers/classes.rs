@@ -323,7 +323,7 @@ async fn get_classes(
 
     let (classes, total_count) = if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let total_count = if params.include_total {
             user.count_classes(&context, count_query_options(&params), requestor.scopes())
@@ -812,7 +812,7 @@ async fn read_resolved_class_permissions(
         Permissions::DeleteClass,
     ];
     let search_params = prepare_db_pagination::<GroupPermission>(&params)?;
-    let (permissions, total_count) = if context.permission_backend().uses_sql_permission_store() {
+    let (permissions, total_count) = if context.permission_backend().uses_local_permission_store() {
         let total_count = if params.include_total {
             collection_model::count_groups_on_paginated(
                 &context,

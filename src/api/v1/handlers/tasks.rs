@@ -112,12 +112,12 @@ pub async fn get_tasks(
     let is_admin = backend.is_admin(&principal).await?;
     let submitted_by_filter = if is_admin {
         filters.submitted_by
-    } else if backend.supports_sql_visibility_pushdown() {
+    } else if backend.supports_storage_visibility_filtering() {
         Some(requestor.principal.id())
     } else {
         None
     };
-    let (tasks, total_count) = if backend.supports_sql_visibility_pushdown() {
+    let (tasks, total_count) = if backend.supports_storage_visibility_filtering() {
         list_tasks_with_total_count(
             &context,
             submitted_by_filter,
@@ -228,7 +228,7 @@ pub async fn get_task(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    let task = if context.permission_backend().uses_sql_permission_store() {
+    let task = if context.permission_backend().uses_local_permission_store() {
         task_id
             .load_authorized(&context, &requestor.principal)
             .await?
@@ -286,7 +286,7 @@ pub async fn get_task_events(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    if context.permission_backend().uses_sql_permission_store() {
+    if context.permission_backend().uses_local_permission_store() {
         task_id
             .load_authorized(&context, &requestor.principal)
             .await?;

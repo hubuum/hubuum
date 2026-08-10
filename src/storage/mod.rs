@@ -27,9 +27,15 @@ pub(crate) use contract::{
 pub(crate) use hubuum_storage_core::{
     AuthenticationHuman, AuthenticationIdentity, AuthenticationPrincipal,
     AuthenticationResourceScope, AuthenticationStorage, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery, EventArchive, EventDeliveryBatch, EventDeliveryClaim,
-    EventDeliverySink, EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem,
-    EventFanoutStorage, EventRetentionStorage, EventRetentionSummary, RetainedEvent,
+    AuthenticationTokenScopeQuery, AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
+    AuthorizationGroupGrantPage, AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery,
+    AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
+    AuthorizationPrincipal, AuthorizationStorage, EventArchive, EventDeliveryBatch,
+    EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage, EventDeliverySubscription,
+    EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage, EventRetentionSummary,
+    RetainedEvent,
 };
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
 #[cfg(test)]

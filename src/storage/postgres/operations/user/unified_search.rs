@@ -10,7 +10,7 @@ use crate::models::{
     Collection, HubuumClass, HubuumClassExpanded, HubuumObject, Permissions,
     UnifiedSearchCursorToken, UnifiedSearchSpec,
 };
-use crate::storage::postgres::operations::authz::{AuthzSubject, scope_allows};
+use crate::storage::postgres::operations::authz::scope_allows;
 use crate::storage::postgres::with_connection_async;
 
 const COLLECTION_SEARCH_SQL: &str = r#"
@@ -177,7 +177,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         params: &UnifiedSearchSpec,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError> {
-        let is_admin = AuthzSubject::is_admin(self, pool).await?;
+        let is_admin = crate::traits::AuthzSubject::is_admin(self, pool).await?;
         self.search_unified_collections_from_backend_with_admin_status(
             pool, params, scopes, is_admin,
         )
@@ -226,7 +226,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         params: &UnifiedSearchSpec,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
-        let is_admin = AuthzSubject::is_admin(self, pool).await?;
+        let is_admin = crate::traits::AuthzSubject::is_admin(self, pool).await?;
         self.search_unified_classes_from_backend_with_admin_status(pool, params, scopes, is_admin)
             .await
     }
@@ -301,7 +301,7 @@ pub trait UnifiedSearchBackend: UserCollectionAccessors {
         params: &UnifiedSearchSpec,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<HubuumObject>, ApiError> {
-        let is_admin = AuthzSubject::is_admin(self, pool).await?;
+        let is_admin = crate::traits::AuthzSubject::is_admin(self, pool).await?;
         self.search_unified_objects_from_backend_with_admin_status(pool, params, scopes, is_admin)
             .await
     }

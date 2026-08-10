@@ -97,7 +97,7 @@ macro_rules! can {
         }
 
         match $crate::storage::StorageContext::permission_backend(backend) {
-            Some(permission_backend) if !permission_backend.uses_sql_permission_store() => {
+            Some(permission_backend) if !permission_backend.uses_local_permission_store() => {
                 $crate::permissions::authorize_resources(
                     permission_backend,
                     backend,

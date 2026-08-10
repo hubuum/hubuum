@@ -164,8 +164,8 @@ pub trait ObjectAggregateBackend: UserCollectionAccessors {
         };
 
         let permission_backend = context.permission_backend();
-        let sql_visibility_pushdown =
-            permission_backend.is_none_or(|backend| backend.supports_sql_visibility_pushdown());
+        let sql_visibility_pushdown = permission_backend
+            .is_none_or(|backend| backend.supports_storage_visibility_filtering());
         if sql_visibility_pushdown {
             return aggregate_objects_with_local_authorization(self, execution).await;
         }

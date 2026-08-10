@@ -326,7 +326,7 @@ pub async fn user_can_on_any_from_backend<U: GroupAccessors + AuthzSubject>(
 
     // The permission scope has already been checked above. Admins retain their
     // collection authority, while the resource predicate still bounds results.
-    if AuthzSubject::is_admin(&user_id, pool).await? {
+    if crate::traits::AuthzSubject::is_admin(&user_id, pool).await? {
         let mut query = collections.into_boxed();
         if let Some(scope) = resource_scope_ids(scopes) {
             query = query.filter(collection_scope_predicate(scope));

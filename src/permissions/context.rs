@@ -55,8 +55,8 @@ impl AppContext {
                 .unwrap_or_else(|_| "admin".to_string());
             return Ok(Self::postgres(
                 pool.get_ref().clone(),
-                Arc::new(LocalPermissionBackend::postgres(
-                    pool.get_ref().clone(),
+                Arc::new(LocalPermissionBackend::new(
+                    StorageHandle::postgres(pool.get_ref().clone()),
                     admin_groupname,
                 )),
             ));

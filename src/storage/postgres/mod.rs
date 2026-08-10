@@ -39,12 +39,16 @@ use crate::storage::postgres::operations::relations::{
 
 use super::{
     AuthenticationIdentity, AuthenticationStorage, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery, ClassRelationStore, ClassStore, CollectionStore, EventArchive,
-    EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
-    EventRetentionSummary, InventoryGaugeSnapshot, MetricsStorage, ObjectRelationStore,
-    ObjectStore, OperationalStateStorage, ReadinessSnapshot, StorageError, StorageIdentity,
-    StoragePoolState, TaskGaugeSnapshot, TokenRetentionStorage,
+    AuthenticationTokenScopeQuery, AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroupGrantPage,
+    AuthorizationGroupMembershipQuery, AuthorizationPrincipal, AuthorizationStorage,
+    ClassRelationStore, ClassStore, CollectionStore, EventArchive, EventDeliveryBatch,
+    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
+    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
+    InventoryGaugeSnapshot, MetricsStorage, ObjectRelationStore, ObjectStore,
+    OperationalStateStorage, ReadinessSnapshot, StorageError, StorageIdentity, StoragePoolState,
+    TaskGaugeSnapshot, TokenRetentionStorage,
 };
 use error::map_postgres_error;
 
@@ -86,6 +90,90 @@ impl AuthenticationStorage for PostgresStorage {
         query: AuthenticationTokenScopeQuery,
     ) -> Result<Option<AuthenticationTokenScope>, StorageError> {
         operations::authentication::load_authentication_token_scope(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl AuthorizationStorage for PostgresStorage {
+    async fn load_authorization_principal(
+        &self,
+        principal_id: i32,
+    ) -> Result<AuthorizationPrincipal, StorageError> {
+        operations::authorization::load_authorization_principal(&self.pool, principal_id)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn authorization_principal_is_group_member(
+        &self,
+        query: AuthorizationGroupMembershipQuery,
+    ) -> Result<bool, StorageError> {
+        operations::authorization::authorization_principal_is_group_member(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn authorize_local_collection(
+        &self,
+        query: AuthorizationCollectionAccessQuery,
+    ) -> Result<bool, StorageError> {
+        operations::authorization::authorize_local_collection(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn local_authorized_collections(
+        &self,
+        query: AuthorizationCollectionsQuery,
+    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+        operations::authorization::local_authorized_collections(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_local_collection_grants(
+        &self,
+        query: AuthorizationCollectionGrantListQuery,
+    ) -> Result<AuthorizationGroupGrantPage, StorageError> {
+        operations::authorization::list_local_collection_grants(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn get_local_collection_grant(
+        &self,
+        key: AuthorizationGrantKey,
+    ) -> Result<Option<AuthorizationGrant>, StorageError> {
+        operations::authorization::get_local_collection_grant(&self.pool, key)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn apply_local_collection_grant(
+        &self,
+        mutation: AuthorizationGrantMutation,
+    ) -> Result<AuthorizationGrant, StorageError> {
+        operations::authorization::apply_local_collection_grant(&self.pool, mutation)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn revoke_local_collection_grant(
+        &self,
+        mutation: AuthorizationGrantMutation,
+    ) -> Result<AuthorizationGrant, StorageError> {
+        operations::authorization::revoke_local_collection_grant(&self.pool, mutation)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn revoke_all_local_collection_grants(
+        &self,
+        key: AuthorizationGrantKey,
+    ) -> Result<(), StorageError> {
+        operations::authorization::revoke_all_local_collection_grants(&self.pool, key)
             .await
             .map_err(map_postgres_error)
     }

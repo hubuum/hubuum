@@ -222,7 +222,7 @@ async fn read_related_object_relations(
 
     let (relations, total_count) = if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
         user.object_relations_touching_page(

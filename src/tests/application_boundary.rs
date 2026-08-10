@@ -111,12 +111,16 @@ fn application_consumers_do_not_import_database_implementation_details() {
         "src/events/fanout.rs",
         "src/events/retention.rs",
         "src/exports/mod.rs",
+        "src/permissions/local/mod.rs",
+        "src/permissions/storage.rs",
+        "src/permissions/types.rs",
         "src/restores/mod.rs",
         "src/tasks/helpers.rs",
         "src/tasks/preload.rs",
         "src/tasks/remote_call.rs",
         "src/token_retention.rs",
         "src/traits/mod.rs",
+        "src/traits/authz.rs",
         "src/traits/permissions.rs",
     ] {
         paths.push(root.join(file));
@@ -222,6 +226,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
     for required in [
         "LifecycleStorage",
         "AuthenticationStorage",
+        "AuthorizationStorage",
         "EventDeliveryStorage",
         "EventFanoutStorage",
         "EventHealthStorage",

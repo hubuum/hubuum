@@ -157,7 +157,7 @@ async fn load_raw_object_page(
     let user = &requestor.principal;
     let (objects, total_count) = if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let total_count = if params.include_total {
             user.count_objects(context, count_query_options(params), requestor.scopes())
