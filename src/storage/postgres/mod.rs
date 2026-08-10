@@ -46,16 +46,18 @@ use super::{
     AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationPolicySnapshotRow,
     AuthorizationPrincipal, AuthorizationStorage, BidirectionalRelatedObjectsQuery,
     CatalogListQuery, CatalogPage, CatalogStorage, ClassRelationStore, ClassStore, CollectionStore,
-    EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot,
-    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot,
-    EventRetentionStorage, EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage,
-    InventoryGaugeSnapshot, MetricsStorage, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectHistoryRecord, ObjectRelationStore, ObjectStore, OperationalStateStorage,
-    ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
-    RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
-    RemoteTargetHistoryRecord, StorageClass, StorageClassGraphRow, StorageClassRelation,
-    StorageCollection, StorageError, StorageIdentity, StorageObject, StorageObjectGraphRow,
+    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
+    ComputedObjectStorage, EventArchive, EventDeliveryBatch, EventDeliveryClaim,
+    EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
+    EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
+    ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery,
+    HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
+    ObjectRelationsTouchingIdsQuery, ObjectStore, OperationalStateStorage, ReadinessSnapshot,
+    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
+    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
+    StorageClass, StorageClassGraphRow, StorageClassRelation, StorageCollection,
+    StorageComputedObject, StorageError, StorageIdentity, StorageObject, StorageObjectGraphRow,
     StorageObjectRelation, StoragePoolState, StorageRelatedObjectForRootRow,
     StorageRelatedObjectIncludeRow, TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass,
     UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
@@ -445,6 +447,27 @@ impl CatalogStorage for PostgresStorage {
 }
 
 #[async_trait]
+impl ComputedObjectStorage for PostgresStorage {
+    async fn list_computed_objects(
+        &self,
+        query: ComputedObjectListQuery,
+    ) -> Result<ComputedObjectPage, StorageError> {
+        operations::computed_objects::list_computed_objects(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn enrich_objects_with_computed(
+        &self,
+        query: ComputedObjectEnrichmentQuery,
+    ) -> Result<Vec<StorageComputedObject>, StorageError> {
+        operations::computed_objects::enrich_computed_objects(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
 impl RelationQueryStorage for PostgresStorage {
     async fn list_class_relations(
         &self,
@@ -505,6 +528,15 @@ impl RelationQueryStorage for PostgresStorage {
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageObjectRelation>, StorageError> {
         operations::relation_query::object_relations_between_ids(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn object_relations_touching_ids(
+        &self,
+        query: ObjectRelationsTouchingIdsQuery,
+    ) -> Result<Vec<StorageObjectRelation>, StorageError> {
+        operations::relation_query::object_relations_touching_ids(&self.pool, query)
             .await
             .map_err(map_postgres_error)
     }

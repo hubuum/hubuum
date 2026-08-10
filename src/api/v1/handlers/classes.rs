@@ -26,6 +26,7 @@ use crate::permissions::{
     authorize_resources,
 };
 use crate::services::catalog as catalog_service;
+use crate::services::computed_objects::enrich_objects_with_computed;
 use crate::services::history::{
     HistoryCollectionFilter, class_as_of, class_history_paginated_with_total_count, object_as_of,
     object_history_paginated_with_total_count,
@@ -33,7 +34,6 @@ use crate::services::history::{
 use crate::services::relation_queries;
 use crate::storage::capabilities::UserPermissions;
 use crate::storage::capabilities::authz::scope_allows;
-use crate::storage::capabilities::computed_field::enrich_objects_with_computed;
 use crate::storage::capabilities::relations::{
     class_relation_authorization_resources, object_relation_authorization_resources,
 };

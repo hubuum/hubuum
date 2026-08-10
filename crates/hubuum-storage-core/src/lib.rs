@@ -6,6 +6,7 @@
 
 mod authorization;
 mod catalog;
+mod computed_objects;
 mod events;
 mod history;
 mod identity;
@@ -22,6 +23,12 @@ pub use authorization::{
     AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationStorage,
 };
 pub use catalog::{CatalogListQuery, CatalogPage, CatalogStorage};
+pub use computed_objects::{
+    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
+    ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility,
+    StorageComputedFieldError, StorageComputedObject, StorageComputedScope,
+    StorageSharedComputedScope,
+};
 pub use events::{
     EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
     EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
@@ -45,12 +52,12 @@ pub use operational::{
     TokenRetentionStorage,
 };
 pub use relation_query::{
-    BidirectionalRelatedObjectsQuery, RelatedObjectsForRootsQuery, RelationGraphQuery,
-    RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
-    StorageClassGraphRow, StorageClassRelation, StorageGraphClass, StorageGraphObject,
-    StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation, StorageRecordMetadata,
-    StorageRelatedDirection, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
-    StorageRelatedSort,
+    BidirectionalRelatedObjectsQuery, ObjectRelationsTouchingIdsQuery, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage,
+    RelationTouchingQuery, StorageClassGraphRow, StorageClassRelation, StorageGraphClass,
+    StorageGraphObject, StorageGraphResource, StorageObjectGraphRow, StorageObjectRelation,
+    StorageRecordMetadata, StorageRelatedDirection, StorageRelatedObjectForRootRow,
+    StorageRelatedObjectIncludeRow, StorageRelatedSort,
 };
 pub use unified_search::{
     UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor, UnifiedSearchObject,
@@ -70,7 +77,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 5;
+pub const STORAGE_CONTRACT_VERSION: u16 = 6;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +102,7 @@ impl StorageBackendKind {
 pub enum StorageCapability {
     DomainLifecycle,
     CatalogQueries,
+    ComputedObjectQueries,
     RelationQueries,
     IdentityAndAuthorizationData,
     TemporalHistory,
@@ -104,9 +112,10 @@ pub enum StorageCapability {
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
+        Self::ComputedObjectQueries,
         Self::RelationQueries,
         Self::IdentityAndAuthorizationData,
         Self::TemporalHistory,
@@ -120,6 +129,7 @@ impl StorageCapability {
         match self {
             Self::DomainLifecycle => "domain_lifecycle",
             Self::CatalogQueries => "catalog_queries",
+            Self::ComputedObjectQueries => "computed_object_queries",
             Self::RelationQueries => "relation_queries",
             Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
             Self::TemporalHistory => "temporal_history",
@@ -275,6 +285,7 @@ mod tests {
             [
                 "domain_lifecycle",
                 "catalog_queries",
+                "computed_object_queries",
                 "relation_queries",
                 "identity_and_authorization_data",
                 "temporal_history",

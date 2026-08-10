@@ -1,3 +1,4 @@
+use crate::errors::ApiError;
 use crate::models::{Collection, HubuumClassExpanded, HubuumObject};
 use crate::storage::{StorageClass, StorageCollection, StorageObject};
 
@@ -39,4 +40,29 @@ pub(super) fn object_to_storage(object: HubuumObject) -> StorageObject {
         object.updated_at,
         object.revision.get(),
     )
+}
+
+pub(super) fn object_from_storage(object: StorageObject) -> Result<HubuumObject, ApiError> {
+    let (
+        id,
+        name,
+        collection_id,
+        hubuum_class_id,
+        data,
+        description,
+        created_at,
+        updated_at,
+        revision,
+    ) = object.into_parts();
+    Ok(HubuumObject {
+        id,
+        name,
+        collection_id,
+        hubuum_class_id,
+        data,
+        description,
+        created_at,
+        updated_at,
+        revision: crate::models::ResourceRevision::new(revision)?,
+    })
 }

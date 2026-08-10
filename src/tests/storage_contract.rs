@@ -1,16 +1,20 @@
 use std::sync::{Arc, LazyLock};
 
 use actix_web::web::Data;
+use diesel_async::RunQueryDsl;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::events::{EventFanoutSettings, EventRetentionSettings};
 use crate::models::TokenRetentionSettings;
 use crate::models::identity::LOCAL_IDENTITY_SCOPE;
-use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SearchOperator};
+use crate::models::search::{
+    FilterField, ParsedQueryParam, QueryOptions, SearchOperator,
+    parse_query_parameter_with_computed_filters_and_passthrough,
+};
 use crate::models::{
     CollectionHistory, CollectionID, ExportTemplateHistory, HubuumClassHistory,
-    HubuumObjectHistory, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
-    NewHubuumObjectRelation, RemoteTargetHistory,
+    HubuumObjectHistory, NewComputedFieldDefinition, NewHubuumClass, NewHubuumClassRelation,
+    NewHubuumObject, NewHubuumObjectRelation, RemoteTargetHistory,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::services::Services;
@@ -21,14 +25,16 @@ use crate::storage::{
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrantKey,
     AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
     AuthorizationStorage, BidirectionalRelatedObjectsQuery, CatalogListQuery, CatalogStorage,
-    EventArchive, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
-    EventRetentionStorage, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery,
-    HistoryStorage, MetricsStorage, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
+    ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectProjection,
+    ComputedObjectStorage, ComputedObjectVisibility, EventArchive, EventDeliveryStorage,
+    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, HistoryAsOfQuery,
+    HistoryCollectionScope, HistoryListQuery, HistoryStorage, MetricsStorage,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectRelationsTouchingIdsQuery,
     OperationalStateStorage, RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery,
     RelationListQuery, RelationQueryStorage, RelationTouchingQuery, RetainedEvent,
-    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageError, StorageRelatedDirection,
-    StorageRelatedSort, StorageVisibility, TokenRetentionStorage, UnifiedSearchQuery,
-    UnifiedSearchStorage,
+    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageError, StorageObject,
+    StorageRelatedDirection, StorageRelatedSort, StorageVisibility, TokenRetentionStorage,
+    UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::traits::CanSave;
 
@@ -547,6 +553,118 @@ async fn every_available_storage_backend_supplies_catalog_queries() {
 }
 
 #[actix_web::test]
+async fn every_available_storage_backend_supplies_computed_object_queries() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let needle = prefix("computed_object_query");
+    let collection = crate::tests::create_collection_fixture(pool.get_ref(), &needle).await;
+    let fixture = crate::tests::create_object_fixture(
+        pool.get_ref(),
+        collection,
+        NewHubuumClass {
+            name: format!("{needle}_class"),
+            collection_id: 0,
+            json_schema: None,
+            validate_schema: Some(false),
+            description: "computed-object compatibility class".to_string(),
+        },
+        vec![NewHubuumObject {
+            name: format!("{needle}_object"),
+            collection_id: 0,
+            hubuum_class_id: 0,
+            data: serde_json::json!({"compatibility": needle}),
+            description: "computed-object compatibility object".to_string(),
+        }],
+    )
+    .await
+    .expect("computed-object compatibility fixture should be created");
+    crate::storage::postgres::with_connection(pool.get_ref(), async |connection| {
+        diesel::insert_into(crate::schema::computed_field_definitions::table)
+            .values(NewComputedFieldDefinition {
+                class_id: fixture.class.id,
+                visibility: "shared".to_string(),
+                owner_user_id: None,
+                key: "compatibility".to_string(),
+                label: "Compatibility".to_string(),
+                description: String::new(),
+                operation: serde_json::json!({
+                    "type": "first_non_null",
+                    "paths": ["/compatibility"]
+                }),
+                result_type: "string".to_string(),
+                enabled: true,
+                semantics_version: 1,
+                created_by: None,
+                updated_by: None,
+            })
+            .execute(connection)
+            .await
+    })
+    .await
+    .expect("computed-object compatibility definition should be inserted");
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let (options, passthrough) =
+                    parse_query_parameter_with_computed_filters_and_passthrough(
+                        &format!("computed.shared.compatibility__equals={needle}&sort=id"),
+                        &[],
+                    )
+                    .expect("computed compatibility query should parse");
+                assert!(passthrough.is_empty());
+                let visibility = StorageVisibility::new(
+                    i32::MAX,
+                    true,
+                    None::<Vec<AuthorizationPermission>>,
+                    None,
+                );
+                let (rows, total, computed, _) = backend
+                    .list_computed_objects(ComputedObjectListQuery::new(
+                        fixture.class.id,
+                        None,
+                        options,
+                        ComputedObjectVisibility::storage(visibility),
+                        ComputedObjectProjection::All,
+                    ))
+                    .await
+                    .expect("certified backend should query computed objects")
+                    .into_parts();
+                assert_eq!(total, Some(1));
+                assert_eq!(rows.len(), 1);
+                assert_eq!(computed.len(), 1);
+
+                let object = &fixture.objects[0];
+                let enriched = backend
+                    .enrich_objects_with_computed(ComputedObjectEnrichmentQuery::new(
+                        vec![StorageObject::new(
+                            object.id,
+                            object.name.clone(),
+                            object.collection_id,
+                            object.hubuum_class_id,
+                            object.data.clone(),
+                            object.description.clone(),
+                            object.created_at,
+                            object.updated_at,
+                            object.revision.get(),
+                        )],
+                        None,
+                    ))
+                    .await
+                    .expect("certified backend should enrich objects with computed values");
+                assert_eq!(enriched.len(), 1);
+            }
+        }
+    }
+
+    fixture
+        .cleanup()
+        .await
+        .expect("computed-object compatibility fixture should be removed");
+}
+
+#[actix_web::test]
 async fn every_available_storage_backend_supplies_relation_queries() {
     let _permit = postgres_permit().await;
     let pool = pool();
@@ -700,6 +818,32 @@ async fn every_available_storage_backend_supplies_relation_queries() {
                 );
 
                 let object_ids = [object_one.id, object_two.id];
+                assert_eq!(
+                    backend
+                        .object_relations_touching_ids(ObjectRelationsTouchingIdsQuery::new(
+                            [object_one.id],
+                            10,
+                            visibility(),
+                        ))
+                        .await
+                        .expect("certified backend should query object relations touching ids")
+                        .len(),
+                    1
+                );
+                assert!(
+                    backend
+                        .object_relations_touching_ids(
+                            ObjectRelationsTouchingIdsQuery::new(
+                                [object_one.id],
+                                10,
+                                visibility(),
+                            )
+                            .excluding_relation_ids([object_relation.id]),
+                        )
+                        .await
+                        .expect("certified backend should exclude previously visited relations")
+                        .is_empty()
+                );
                 assert_eq!(
                     backend
                         .object_relations_between_ids(RelationIdsQuery::new(

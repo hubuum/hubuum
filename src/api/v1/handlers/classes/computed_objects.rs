@@ -10,22 +10,19 @@ use crate::models::{
     HubuumObjectReadResponse, Permissions, TokenScope,
 };
 use crate::pagination::{
-    Page, SKIPPED_TOTAL_COUNT, count_query_options, effective_page_limit, encode_cursor,
-    known_count_or_skipped, page_request, prepare_db_pagination,
+    Page, SKIPPED_TOTAL_COUNT, effective_page_limit, encode_cursor, known_count_or_skipped,
+    page_request,
 };
 use crate::permissions::visibility::{AuthorizedObjectIds, authorize_all_candidates};
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
 use crate::services::catalog as catalog_service;
+use crate::services::computed_objects::{
+    ComputedObjectAccess, ComputedObjectListResult, list_computed_objects,
+};
+use crate::services::related_filter_authorization::externally_authorized_related_object_ids;
+use crate::storage::ComputedObjectProjection;
 use crate::storage::capabilities::authz::scope_allows;
-use crate::storage::capabilities::computed_field::{
-    ComputedQuerySnapshot, enrich_objects_with_computed_query_snapshot,
-    resolve_computed_query_fields,
-};
-use crate::storage::capabilities::user::UserSearchBackend;
-use crate::storage::capabilities::user::search::{
-    ExternalRelatedFilterAuthorization, count_computed_objects_with_authorized_ids,
-    externally_authorized_related_object_ids, search_computed_objects_with_authorized_ids,
-};
+use crate::traits::AuthzSubject;
 
 enum ComputedListVisibility {
     SqlPushdown,
@@ -36,129 +33,89 @@ struct ResolvedComputedObjectQuery<'a> {
     context: &'a AppContext,
     requestor: &'a Authenticated,
     params: &'a QueryOptions,
+    class_id: i32,
     personal_owner: Option<i32>,
-    snapshot: &'a ComputedQuerySnapshot,
     sorts_by_computed: bool,
 }
 
 impl ResolvedComputedObjectQuery<'_> {
-    fn search_options(&self) -> Result<QueryOptions, ApiError> {
-        if self.sorts_by_computed {
-            prepare_db_pagination::<HubuumObjectComputedResponse>(self.params)
-        } else {
-            prepare_db_pagination::<HubuumObject>(self.params)
-        }
-    }
-
     async fn search(
         &self,
         visibility: &ComputedListVisibility,
-    ) -> Result<(Vec<HubuumObject>, i64), ApiError> {
-        match visibility {
-            ComputedListVisibility::SqlPushdown => self.search_with_sql_visibility().await,
-            ComputedListVisibility::Policy(authorized_ids) => {
-                self.search_with_policy_visibility(authorized_ids).await
+        include_computed: bool,
+    ) -> Result<ComputedObjectListResult, ApiError> {
+        let projection = if include_computed {
+            ComputedObjectProjection::All
+        } else if self.sorts_by_computed {
+            ComputedObjectProjection::CursorBoundary {
+                page_limit: effective_page_limit(self.params)?,
             }
-        }
-    }
-
-    async fn search_with_sql_visibility(&self) -> Result<(Vec<HubuumObject>, i64), ApiError> {
-        let total_count = if self.params.include_total {
-            self.requestor
-                .principal
-                .count_objects_with_computed_query_from_backend(
-                    &self.context,
-                    count_query_options(self.params),
-                    self.requestor.scopes(),
-                    self.snapshot,
-                )
-                .await?
         } else {
-            SKIPPED_TOTAL_COUNT
+            ComputedObjectProjection::None
         };
-        let objects = self
-            .requestor
-            .principal
-            .search_objects_with_computed_query_from_backend(
-                &self.context,
-                self.search_options()?,
-                self.requestor.scopes(),
-                self.snapshot,
-            )
-            .await?;
-        Ok((objects, total_count))
-    }
-
-    async fn search_with_policy_visibility(
-        &self,
-        authorized_ids: &AuthorizedObjectIds,
-    ) -> Result<(Vec<HubuumObject>, i64), ApiError> {
-        let total_count = if self.params.include_total {
-            count_computed_objects_with_authorized_ids(
-                &self.requestor.principal,
-                &self.context,
-                count_query_options(self.params),
-                self.snapshot,
-                authorized_ids,
-            )
-            .await?
-        } else {
-            SKIPPED_TOTAL_COUNT
+        let access = match visibility {
+            ComputedListVisibility::SqlPushdown => ComputedObjectAccess::Storage {
+                principal_id: self.requestor.principal.id(),
+                is_admin: AuthzSubject::is_admin(&self.requestor.principal, self.context).await?,
+                scope: self.requestor.scopes(),
+            },
+            ComputedListVisibility::Policy(object_ids) => {
+                ComputedObjectAccess::AuthorizedObjectIds {
+                    principal_id: self.requestor.principal.id(),
+                    object_ids,
+                }
+            }
         };
-        let objects = search_computed_objects_with_authorized_ids(
-            &self.requestor.principal,
-            &self.context,
-            self.search_options()?,
-            self.snapshot,
-            authorized_ids,
+        list_computed_objects(
+            self.context,
+            self.class_id,
+            self.personal_owner,
+            self.params.clone(),
+            access,
+            projection,
         )
-        .await?;
-        Ok((objects, total_count))
+        .await
     }
 
     async fn response(
         &self,
-        objects: Vec<HubuumObject>,
-        total_count: i64,
+        result: ComputedObjectListResult,
         include_computed: bool,
     ) -> Result<ApiResponse<Vec<HubuumObjectReadResponse>>, ApiError> {
+        let total_count = result.total.unwrap_or(SKIPPED_TOTAL_COUNT);
+        let resolved_options = result.resolved_options;
         if include_computed {
-            let enriched = enrich_objects_with_computed_query_snapshot(
-                &self.context,
-                objects,
-                self.personal_owner,
-                self.snapshot,
-            )
-            .await?;
-            let page = crate::pagination::finalize_page(enriched, self.params)?;
+            let page = crate::pagination::finalize_page(result.computed, &resolved_options)?;
             return object_read_page(page, total_count, effective_page_limit(self.params)?, true);
         }
 
         if self.sorts_by_computed {
-            return self.raw_sorted_response(objects, total_count).await;
+            return self
+                .raw_sorted_response(
+                    result.objects,
+                    result.computed,
+                    total_count,
+                    &resolved_options,
+                )
+                .await;
         }
 
-        let page = crate::pagination::finalize_page(objects, self.params)?;
+        let page = crate::pagination::finalize_page(result.objects, self.params)?;
         object_read_page(page, total_count, effective_page_limit(self.params)?, true)
     }
 
     async fn raw_sorted_response(
         &self,
         objects: Vec<HubuumObject>,
+        mut computed: Vec<HubuumObjectComputedResponse>,
         total_count: i64,
+        resolved_options: &QueryOptions,
     ) -> Result<ApiResponse<Vec<HubuumObjectReadResponse>>, ApiError> {
-        let request = page_request::<HubuumObjectComputedResponse>(self.params)?;
+        let request = page_request::<HubuumObjectComputedResponse>(resolved_options)?;
         let (objects, cursor_boundary) = page_items_and_cursor_boundary(objects, request.limit);
-        let next_cursor = if let Some(boundary) = cursor_boundary {
-            let mut enriched = enrich_objects_with_computed_query_snapshot(
-                &self.context,
-                vec![boundary],
-                self.personal_owner,
-                self.snapshot,
-            )
-            .await?;
+        let next_cursor = if cursor_boundary.is_some() {
             Some(encode_cursor(
-                &enriched.pop().ok_or_else(|| {
+                &computed.pop().ok_or_else(|| {
                     ApiError::InternalServerError(
                         "Computed sort cursor boundary was not enriched".to_string(),
                     )
@@ -280,14 +237,11 @@ async fn computed_list_visibility(
     let authorized_ids = authorized_object_ids_in_class(context, requestor, class_id).await?;
     let principal = PrincipalRef::load(&context, &requestor.principal).await?;
     let related_ids = externally_authorized_related_object_ids(
-        &requestor.principal,
+        context,
+        context.permission_backend(),
+        &principal,
+        requestor.scopes(),
         &params.filters,
-        ExternalRelatedFilterAuthorization::new(
-            &context,
-            context.permission_backend(),
-            &principal,
-            requestor.scopes(),
-        ),
     )
     .await?;
     let authorized_ids = match related_ids {
@@ -315,7 +269,7 @@ pub(super) async fn list_objects(
     context: &AppContext,
     requestor: &Authenticated,
     class: &HubuumClass,
-    mut params: QueryOptions,
+    params: QueryOptions,
     include_computed: bool,
 ) -> Result<ApiResponse<Vec<HubuumObjectReadResponse>>, ApiError> {
     if !scope_allows(requestor.scopes(), &[Permissions::ReadObject]) {
@@ -334,25 +288,16 @@ pub(super) async fn list_objects(
         .sort
         .iter()
         .any(|sort| sort.field.computed_query().is_some());
-    let computed_query_snapshot = resolve_computed_query_fields(
-        &context,
-        class.id,
-        personal_owner,
-        &mut params.filters,
-        &mut params.sort,
-    )
-    .await?;
-
     let query = ResolvedComputedObjectQuery {
         context,
         requestor,
         params: &params,
+        class_id: class.id,
         personal_owner,
-        snapshot: &computed_query_snapshot,
         sorts_by_computed: computed_sorting,
     };
-    let (objects, total_count) = query.search(&visibility).await?;
-    query.response(objects, total_count, include_computed).await
+    let result = query.search(&visibility, include_computed).await?;
+    query.response(result, include_computed).await
 }
 
 fn page_items_and_cursor_boundary<T: Clone>(

@@ -1,7 +1,5 @@
 use super::*;
-use crate::storage::capabilities::user::search::{
-    ExternalRelatedFilterAuthorization, externally_authorized_related_object_ids,
-};
+use crate::services::related_filter_authorization::externally_authorized_related_object_ids;
 
 //
 // Object API
@@ -175,14 +173,11 @@ async fn load_raw_object_page(
     } else {
         let principal = PrincipalRef::load(&context, user).await?;
         let related_ids = externally_authorized_related_object_ids(
-            user,
+            context,
+            context.permission_backend(),
+            &principal,
+            requestor.scopes(),
             &params.filters,
-            ExternalRelatedFilterAuthorization::new(
-                &context,
-                context.permission_backend(),
-                &principal,
-                requestor.scopes(),
-            ),
         )
         .await?;
         let mut candidate_options = count_query_options(params);
