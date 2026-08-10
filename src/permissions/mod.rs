@@ -20,6 +20,7 @@ pub mod test_support;
 pub use backend::PermissionBackend;
 pub use context::AppContext;
 pub use local::LocalPermissionBackend;
+pub(crate) use storage::permission_to_storage;
 pub use types::{
     AuthzTarget, PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind,
     ResourceRef,

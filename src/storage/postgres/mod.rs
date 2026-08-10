@@ -52,7 +52,8 @@ use super::{
     InventoryGaugeSnapshot, MetricsStorage, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
     ObjectHistoryRecord, ObjectRelationStore, ObjectStore, OperationalStateStorage,
     ReadinessSnapshot, RemoteTargetHistoryRecord, StorageError, StorageIdentity, StoragePoolState,
-    TaskGaugeSnapshot, TokenRetentionStorage,
+    TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection,
+    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use error::map_postgres_error;
@@ -404,6 +405,36 @@ impl HistoryStorage for PostgresStorage {
         operations::history::remote_target_as_of(entity_id, at, &self.pool)
             .await
             .map(|row| row.map(operations::history::remote_target_history_to_storage))
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl UnifiedSearchStorage for PostgresStorage {
+    async fn search_unified_collections(
+        &self,
+        query: UnifiedSearchQuery,
+    ) -> Result<Vec<UnifiedSearchCollection>, StorageError> {
+        operations::ranked_search::search_collections(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn search_unified_classes(
+        &self,
+        query: UnifiedSearchQuery,
+    ) -> Result<Vec<UnifiedSearchClass>, StorageError> {
+        operations::ranked_search::search_classes(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn search_unified_objects(
+        &self,
+        query: UnifiedSearchQuery,
+    ) -> Result<Vec<UnifiedSearchObject>, StorageError> {
+        operations::ranked_search::search_objects(&self.pool, query)
+            .await
             .map_err(map_postgres_error)
     }
 }

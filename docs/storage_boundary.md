@@ -64,6 +64,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Domain lifecycle | Collection, class, object, class-relation, and object-relation resolution and lifecycle behavior |
 | Identity and authorization data | Principals, credentials, memberships, grants, and data needed by configured authorization providers |
 | Temporal history | Revision-filtered pages, stable cursors, point-in-time reads, visibility pushdown, and provenance-name resolution |
+| Unified search | Ranked collection, class, and object search with stable per-kind cursors and token visibility pushdown |
 | Workflows | Imports, restores, tasks, backups, exports, remote calls, and their atomic state transitions |
 | Operations | Probes, metrics snapshots, retention, event delivery, leases, locking, and worker coordination |
 
@@ -75,9 +76,10 @@ During extraction, the workflow and remaining operational
 families retain temporary central migration gates. Those gates prevent another
 backend from becoming selectable, but they are not behavioral proof and must
 be replaced by mandatory operation-shaped traits and shared tests. The former
-identity and history gates have now been replaced by the real
+identity, history, and unified-search gates have now been replaced by the real
 `AuthenticationStorage`, `AuthorizationStorage`, and `HistoryStorage`
-contracts; no family is considered complete merely because a marker exists.
+contracts plus `UnifiedSearchStorage`; no family is considered complete merely
+because a marker exists.
 
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Separating their persistence rows from
@@ -196,6 +198,16 @@ calls with bounded `history/*` labels. The application history service converts
 DTOs into response models and is the only layer that maps `StorageError` into
 `ApiError`.
 
+`UnifiedSearchStorage` owns all three ranked search projections as one complete
+capability: collections, classes with their collection projection, and objects.
+The request owns decoded cursor state, query options, administrator status, and
+independent token permission/resource dimensions. The PostgreSQL adapter maps
+those DTOs to its private query implementation and returns private-field DTOs;
+the application service alone reconstructs API/domain models. Each entry point
+is observed with a bounded `unified_search/{collections,classes,objects}` label,
+and the available-backend compatibility test exercises every operation with
+real matching rows.
+
 ## Error Direction
 
 Errors cross the boundary in one direction:
@@ -310,7 +322,8 @@ The first workspace boundaries are now in place:
 - `hubuum-storage-core` owns backend-neutral descriptors, the contract version,
   capability identities, `StorageError`, authentication and authorization
   DTOs, operational snapshot DTOs, and the extracted authentication,
-  authorization, temporal-history, operational state, event-health, event-fan-out,
+  authorization, temporal-history, unified-search, operational state,
+  event-health, event-fan-out,
   event-retention, and token-retention traits without application, transport,
   or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection

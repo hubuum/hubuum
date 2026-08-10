@@ -6,14 +6,14 @@ use crate::models::{
     ClassGraphRow, Collection, ExportIncludeRelatedQuery, Group, HubuumClass, HubuumClassExpanded,
     HubuumClassRelation, HubuumObject, HubuumObjectRelation, ObjectAggregateBackendRequest,
     ObjectAggregatePage, Permissions, RelatedObjectForRootRow, RelatedObjectGraphRow,
-    RelatedObjectIncludeRow, UnifiedSearchSpec, User, UserID,
+    RelatedObjectIncludeRow, User, UserID,
 };
 
 use crate::errors::ApiError;
 use crate::storage::StorageContext;
 use crate::storage::postgres::operations::user::{
     LoadPermittedCollections, LoadUserGroups, LoadUserGroupsPaginated, LoadUserRecord,
-    ObjectAggregateBackend, UnifiedSearchBackend, UserSearchBackend,
+    ObjectAggregateBackend, UserSearchBackend,
 };
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{AuthzSubject, ClassAccessors, SelfAccessors};
@@ -312,45 +312,6 @@ pub trait Search: UserCollectionAccessors {
         C: StorageContext,
     {
         self.search_object_relations_between_ids_from_backend(backend, object_ids, scopes)
-            .await
-    }
-
-    async fn search_unified_collections<C>(
-        &self,
-        backend: &C,
-        query: &UnifiedSearchSpec,
-        scopes: Option<&TokenScope>,
-    ) -> Result<Vec<Collection>, ApiError>
-    where
-        C: StorageContext,
-    {
-        self.search_unified_collections_from_backend(backend, query, scopes)
-            .await
-    }
-
-    async fn search_unified_classes<C>(
-        &self,
-        backend: &C,
-        query: &UnifiedSearchSpec,
-        scopes: Option<&TokenScope>,
-    ) -> Result<Vec<HubuumClassExpanded>, ApiError>
-    where
-        C: StorageContext,
-    {
-        self.search_unified_classes_from_backend(backend, query, scopes)
-            .await
-    }
-
-    async fn search_unified_objects<C>(
-        &self,
-        backend: &C,
-        query: &UnifiedSearchSpec,
-        scopes: Option<&TokenScope>,
-    ) -> Result<Vec<HubuumObject>, ApiError>
-    where
-        C: StorageContext,
-    {
-        self.search_unified_objects_from_backend(backend, query, scopes)
             .await
     }
 }

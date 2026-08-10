@@ -453,8 +453,9 @@ mod tests {
         assert!(!json.contains("treetop-token"));
         assert!(json.contains("\"configured\":true"));
         assert!(json.contains("\"backend\":\"postgresql\""));
-        assert!(json.contains("\"contract_version\":2"));
+        assert!(json.contains("\"contract_version\":3"));
         assert!(json.contains("\"temporal_history\""));
+        assert!(json.contains("\"unified_search\""));
         assert!(!debug.contains("secret-password"));
         assert!(!debug.contains("correct horse battery staple"));
     }

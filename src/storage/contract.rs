@@ -4,7 +4,8 @@ use super::{
     AuthenticationStorage, AuthorizationStorage, ClassRelationStore, ClassStore, CollectionStore,
     EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
     HistoryStorage, MetricsStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage,
-    PostgresStorage, TokenRetentionStorage, observed::ObservedLifecycleStorage,
+    PostgresStorage, TokenRetentionStorage, UnifiedSearchStorage,
+    observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -70,6 +71,7 @@ pub(crate) trait StorageBackend:
     + MetricsStorage
     + OperationalStateStorage
     + TokenRetentionStorage
+    + UnifiedSearchStorage
     + WorkflowStorage
     + OperationalStorage
     + sealed::CertifiedStorageBackend
@@ -133,6 +135,7 @@ mod tests {
                 "domain_lifecycle",
                 "identity_and_authorization_data",
                 "temporal_history",
+                "unified_search",
                 "workflows",
                 "operations",
             ]

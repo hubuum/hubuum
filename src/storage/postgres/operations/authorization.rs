@@ -19,7 +19,7 @@ use crate::storage::{
 };
 use crate::traits::PermissionController;
 
-const fn permission_from_storage(permission: AuthorizationPermission) -> Permissions {
+pub(crate) const fn permission_from_storage(permission: AuthorizationPermission) -> Permissions {
     match permission {
         AuthorizationPermission::ReadCollection => Permissions::ReadCollection,
         AuthorizationPermission::UpdateCollection => Permissions::UpdateCollection,
