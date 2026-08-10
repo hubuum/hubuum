@@ -16,24 +16,32 @@ use treetop_client::TreetopError;
 ///   detected after startup; should have failed at boot.
 pub fn treetop_to_api_error(err: TreetopError) -> ApiError {
     match err {
-        TreetopError::Transport(e) => {
-            ApiError::PermissionBackendUnavailable(format!("treetop transport: {e}"))
+        TreetopError::Transport(error) => {
+            let category = if error.is_timeout() {
+                "timeout"
+            } else if error.is_connect() {
+                "connection failure"
+            } else {
+                "transport failure"
+            };
+            ApiError::PermissionBackendUnavailable(format!("treetop {category}"))
         }
-        TreetopError::Api { status, message } if status.as_u16() >= 500 => {
-            ApiError::PermissionBackendUnavailable(format!("treetop {status}: {message}"))
+        TreetopError::Api { status, .. } if status.as_u16() >= 500 => {
+            ApiError::PermissionBackendUnavailable(format!("treetop returned {status}"))
         }
-        TreetopError::Api { status, message } => {
-            ApiError::InternalServerError(format!("treetop {status}: {message}"))
+        TreetopError::Api { status, .. } => {
+            ApiError::InternalServerError(format!("treetop returned {status}"))
         }
-        TreetopError::Deserialization(e) => {
-            ApiError::PermissionBackendUnavailable(format!("treetop response decode: {e}"))
+        TreetopError::Deserialization(_) => ApiError::PermissionBackendUnavailable(
+            "treetop response could not be decoded".to_string(),
+        ),
+        TreetopError::InvalidUrl(_) => {
+            ApiError::InternalServerError("treetop URL is invalid".to_string())
         }
-        TreetopError::InvalidUrl(e) => {
-            ApiError::InternalServerError(format!("treetop URL misconfigured: {e}"))
+        TreetopError::Configuration(_) => {
+            ApiError::InternalServerError("treetop client configuration is invalid".to_string())
         }
-        TreetopError::Configuration(msg) => {
-            ApiError::InternalServerError(format!("treetop configuration: {msg}"))
-        }
+        _ => ApiError::PermissionBackendUnavailable("treetop client failure".to_string()),
     }
 }
 
@@ -59,6 +67,12 @@ mod tests {
             matches!(api, ApiError::PermissionBackendUnavailable(_)),
             "Deserialization errors should map to PermissionBackendUnavailable"
         );
+        assert_eq!(
+            api,
+            ApiError::PermissionBackendUnavailable(
+                "treetop response could not be decoded".to_string()
+            )
+        );
     }
 
     #[test]
@@ -68,6 +82,10 @@ mod tests {
         assert!(
             matches!(api, ApiError::InternalServerError(_)),
             "Configuration errors should map to InternalServerError"
+        );
+        assert_eq!(
+            api,
+            ApiError::InternalServerError("treetop client configuration is invalid".to_string())
         );
     }
 

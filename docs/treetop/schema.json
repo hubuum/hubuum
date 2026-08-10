@@ -1,0 +1,342 @@
+{
+  "": {
+    "entityTypes": {
+      "User": {
+        "memberOfTypes": ["Group"],
+        "shape": {
+          "type": "Record",
+          "attributes": {},
+          "additionalAttributes": false
+        }
+      },
+      "Group": {
+        "shape": {
+          "type": "Record",
+          "attributes": {},
+          "additionalAttributes": false
+        }
+      },
+      "HubuumSystem": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "id": { "type": "String", "required": true }
+          },
+          "additionalAttributes": false
+        }
+      },
+      "HubuumCollection": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "id": { "type": "String", "required": true },
+            "collection_id": { "type": "Long", "required": false },
+            "name": { "type": "String", "required": false }
+          },
+          "additionalAttributes": false
+        }
+      },
+      "HubuumClass": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "id": { "type": "String", "required": true },
+            "collection_id": { "type": "Long", "required": true },
+            "name": { "type": "String", "required": false }
+          },
+          "additionalAttributes": false
+        }
+      },
+      "HubuumObject": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "id": { "type": "String", "required": true },
+            "collection_id": { "type": "Long", "required": true },
+            "class_id": { "type": "Long", "required": true },
+            "name": { "type": "String", "required": false }
+          },
+          "additionalAttributes": false
+        }
+      },
+      "HubuumTemplate": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "id": { "type": "String", "required": true },
+            "collection_id": { "type": "Long", "required": true },
+            "name": { "type": "String", "required": false }
+          },
+          "additionalAttributes": false
+        }
+      },
+      "HubuumClassRelation": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "id": { "type": "String", "required": true },
+            "from_collection_id": { "type": "Long", "required": true },
+            "to_collection_id": { "type": "Long", "required": true },
+            "from_class_id": { "type": "Long", "required": true },
+            "to_class_id": { "type": "Long", "required": true },
+            "collection_id": { "type": "Long", "required": false }
+          },
+          "additionalAttributes": false
+        }
+      },
+      "HubuumObjectRelation": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "id": { "type": "String", "required": true },
+            "from_collection_id": { "type": "Long", "required": true },
+            "to_collection_id": { "type": "Long", "required": true },
+            "from_class_id": { "type": "Long", "required": true },
+            "to_class_id": { "type": "Long", "required": true },
+            "from_object_id": { "type": "Long", "required": true },
+            "to_object_id": { "type": "Long", "required": true },
+            "class_relation_id": { "type": "Long", "required": true },
+            "collection_id": { "type": "Long", "required": false }
+          },
+          "additionalAttributes": false
+        }
+      },
+      "HubuumTask": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "id": { "type": "String", "required": true },
+            "submitted_by": { "type": "Long", "required": false }
+          },
+          "additionalAttributes": false
+        }
+      }
+    },
+    "actions": {
+      "ReadCollection": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumCollection", "HubuumSystem"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "UpdateCollection": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumCollection"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "DeleteCollection": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumCollection"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "DelegateCollection": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumCollection"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "ReadRemoteTarget": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumCollection"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "CreateRemoteTarget": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumCollection"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "UpdateRemoteTarget": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumCollection"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "DeleteRemoteTarget": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumCollection"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "ExecuteRemoteTarget": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumCollection"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "ReadAudit": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumCollection"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "ManageEventSubscription": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumCollection"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "CreateClass": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumClass"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "ReadClass": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumClass"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "UpdateClass": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumClass"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "DeleteClass": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumClass"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "CreateObject": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumObject"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "ReadObject": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumObject"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "UpdateObject": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumObject"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "DeleteObject": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumObject"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "CreateClassRelation": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumClassRelation"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "ReadClassRelation": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumClassRelation"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "UpdateClassRelation": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumClassRelation"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "DeleteClassRelation": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumClassRelation"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "CreateObjectRelation": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumObjectRelation"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "ReadObjectRelation": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumObjectRelation"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "UpdateObjectRelation": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumObjectRelation"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "DeleteObjectRelation": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumObjectRelation"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "ReadTemplate": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumTemplate"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "CreateTemplate": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumTemplate"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "UpdateTemplate": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumTemplate"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "DeleteTemplate": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumTemplate"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      },
+      "ReadTask": {
+        "appliesTo": {
+          "principalTypes": ["User", "Group"],
+          "resourceTypes": ["HubuumTask"],
+          "context": { "type": "Record", "attributes": {}, "additionalAttributes": false }
+        }
+      }
+    }
+  }
+}

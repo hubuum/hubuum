@@ -174,8 +174,8 @@ fn collapse_permission_decisions(
 /// The upstream `AuthorizeBriefResponse` has `.results()` returning a
 /// `Vec<IndexedResult<AuthorizeDecisionBrief>>`. Each result is either
 /// `BatchResult::Success { data }` or `BatchResult::Failed { message }`.
-/// We extract a boolean per Cedar request: Success + Allow => true,
-/// anything else => false.
+/// We extract a boolean per Cedar request. Structural and per-item errors fail
+/// the complete authorization closed without returning upstream diagnostics.
 fn extract_decisions(
     response: &AuthorizeBriefResponse,
     expected_count: usize,
@@ -205,9 +205,9 @@ fn extract_decisions(
             BatchResult::Success { data } => {
                 matches!(data.decision, DecisionBrief::Allow)
             }
-            BatchResult::Failed { message } => {
+            BatchResult::Failed { .. } => {
                 return Err(ApiError::PermissionBackendUnavailable(format!(
-                    "Treetop failed batch item {}: {message}",
+                    "Treetop rejected batch item {}",
                     indexed_result.index
                 )));
             }
@@ -779,14 +779,57 @@ mod tests {
 
     #[test]
     fn failed_batch_item_is_a_backend_error() {
+        let canary = "fixture-policy-secret-canary";
         let response = response(
             json!([{
                 "index": 0,
                 "status": "failed",
-                "error": "schema mismatch"
+                "error": canary
             }]),
             0,
             1,
+        );
+
+        let error = extract_decisions(&response, 1).expect_err("batch failure must fail closed");
+        assert!(matches!(error, ApiError::PermissionBackendUnavailable(_)));
+        assert!(!error.to_string().contains(canary));
+    }
+
+    #[test]
+    fn missing_batch_item_is_a_backend_error() {
+        let response = response(json!([]), 0, 0);
+
+        assert!(matches!(
+            extract_decisions(&response, 1),
+            Err(ApiError::PermissionBackendUnavailable(_))
+        ));
+    }
+
+    #[test]
+    fn extra_batch_item_is_a_backend_error() {
+        let response = response(
+            json!([
+                {
+                    "index": 0,
+                    "status": "success",
+                    "result": {
+                        "decision": "Allow",
+                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                        "policy_id": "allow"
+                    }
+                },
+                {
+                    "index": 1,
+                    "status": "success",
+                    "result": {
+                        "decision": "Deny",
+                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                        "policy_id": ""
+                    }
+                }
+            ]),
+            2,
+            0,
         );
 
         assert!(matches!(
@@ -796,8 +839,53 @@ mod tests {
     }
 
     #[test]
-    fn missing_batch_item_is_a_backend_error() {
-        let response = response(json!([]), 0, 0);
+    fn duplicate_batch_index_is_a_backend_error() {
+        let response = response(
+            json!([
+                {
+                    "index": 0,
+                    "status": "success",
+                    "result": {
+                        "decision": "Allow",
+                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                        "policy_id": "allow"
+                    }
+                },
+                {
+                    "index": 0,
+                    "status": "success",
+                    "result": {
+                        "decision": "Deny",
+                        "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                        "policy_id": ""
+                    }
+                }
+            ]),
+            2,
+            0,
+        );
+
+        assert!(matches!(
+            extract_decisions(&response, 2),
+            Err(ApiError::PermissionBackendUnavailable(_))
+        ));
+    }
+
+    #[test]
+    fn out_of_range_batch_index_is_a_backend_error() {
+        let response = response(
+            json!([{
+                "index": 1,
+                "status": "success",
+                "result": {
+                    "decision": "Allow",
+                    "version": { "hash": "test", "loaded_at": "2025-01-01T00:00:00Z" },
+                    "policy_id": "allow"
+                }
+            }]),
+            1,
+            0,
+        );
 
         assert!(matches!(
             extract_decisions(&response, 1),

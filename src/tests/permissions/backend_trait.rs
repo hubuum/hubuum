@@ -14,6 +14,9 @@ use crate::permissions::local::LocalPermissionBackend;
 use crate::permissions::{
     PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef,
 };
+use crate::tests::permissions::conformance::{
+    ConformanceBackend, ConformanceFixture, assert_backend_conformance,
+};
 use crate::tests::{
     create_collection_fixture, create_test_group, create_test_user, get_pool_and_config,
 };
@@ -153,4 +156,77 @@ async fn local_backend_authorize_many_returns_per_request_decisions() {
         vec![PermissionDecision::Allow, PermissionDecision::Deny],
         "decisions must be returned in the same order as the input requests"
     );
+}
+
+#[actix_test]
+async fn local_backend_satisfies_the_shared_authorization_corpus() {
+    let (pool, _) = get_pool_and_config().await;
+    let normal_user = create_test_user(&pool).await;
+    let administrator = create_test_user(&pool).await;
+    let unprivileged = create_test_user(&pool).await;
+    let normal_group = create_test_group(&pool).await;
+    let administrator_group = create_test_group(&pool).await;
+    normal_group
+        .add_member_without_events(&pool, &normal_user)
+        .await
+        .expect("failed to add the normal conformance user to its group");
+    administrator_group
+        .add_member_without_events(&pool, &administrator)
+        .await
+        .expect("failed to add the conformance administrator to its group");
+
+    let granted = create_collection_fixture(&pool, &unique_label("conformance_granted")).await;
+    let denied = create_collection_fixture(&pool, &unique_label("conformance_denied")).await;
+    let backend = LocalPermissionBackend::new(pool.clone(), administrator_group.groupname.clone());
+    backend
+        .apply_permissions(
+            CollectionID::new(granted.collection.id).unwrap(),
+            GroupID::new(normal_group.id).unwrap(),
+            PermissionsList::new(Permissions::all().iter().copied()),
+            false,
+        )
+        .await
+        .expect("failed to seed the local conformance grants");
+
+    let fixture = ConformanceFixture {
+        normal: PrincipalRef::new(normal_user.id, [normal_group.id]),
+        administrator: PrincipalRef::new(administrator.id, [administrator_group.id]),
+        unprivileged: PrincipalRef::new(unprivileged.id, []),
+        granted_collection_id: granted.collection.id,
+        denied_collection_id: denied.collection.id,
+        class_id: granted.collection.id + 10_000,
+        object_id: granted.collection.id + 20_000,
+        task_id: granted.collection.id + 30_000,
+    };
+
+    assert_backend_conformance(&backend, ConformanceBackend::Local, &fixture).await;
+
+    granted
+        .cleanup()
+        .await
+        .expect("granted fixture cleanup failed");
+    denied
+        .cleanup()
+        .await
+        .expect("denied fixture cleanup failed");
+    normal_group
+        .delete_without_events(&pool)
+        .await
+        .expect("normal group cleanup failed");
+    administrator_group
+        .delete_without_events(&pool)
+        .await
+        .expect("administrator group cleanup failed");
+    normal_user
+        .delete_without_events(&pool)
+        .await
+        .expect("normal user cleanup failed");
+    administrator
+        .delete_without_events(&pool)
+        .await
+        .expect("administrator cleanup failed");
+    unprivileged
+        .delete_without_events(&pool)
+        .await
+        .expect("unprivileged user cleanup failed");
 }
