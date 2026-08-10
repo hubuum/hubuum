@@ -39,8 +39,7 @@ mod query;
 mod rebuild;
 
 pub use materialization::{
-    enrich_objects_with_computed, enrich_objects_with_computed_query_snapshot,
-    preview_computed_definition, source_data_sha256,
+    enrich_objects_with_computed, enrich_objects_with_computed_query_snapshot, source_data_sha256,
 };
 pub(crate) use materialization::{evaluate_definitions, materialize_object_in_transaction};
 use materialization::{shared_definitions_conn, upsert_materialized};

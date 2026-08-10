@@ -25,30 +25,6 @@ pub(crate) fn evaluate_definitions(
     Ok(result)
 }
 
-pub fn preview_computed_definition(
-    data: &serde_json::Value,
-    request: &ComputedFieldDefinitionRequest,
-) -> Result<crate::models::ComputedFieldPreviewResponse, ApiError> {
-    let definition = request.validate()?;
-    let result =
-        evaluate(data, &[definition], 1, EvaluationLimits::standard()).map_err(|error| {
-            ApiError::InternalServerError(format!("Computed-field preview failed: {error}"))
-        })?;
-    crate::observability::metrics::computed_evaluation("preview", &result);
-    Ok(crate::models::ComputedFieldPreviewResponse {
-        value: result
-            .values
-            .get(&request.key)
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-        error: result
-            .errors
-            .get(&request.key)
-            .cloned()
-            .map(ComputedFieldErrorResponse::from),
-    })
-}
-
 fn canonical_json(value: &serde_json::Value, output: &mut String) -> Result<(), ApiError> {
     match value {
         serde_json::Value::Object(values) => {

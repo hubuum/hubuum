@@ -1,3 +1,4 @@
+mod computed_fields;
 mod error;
 #[doc(hidden)]
 pub mod operations;

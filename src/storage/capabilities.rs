@@ -27,15 +27,6 @@ pub(crate) mod collection {
     pub(crate) use crate::storage::postgres::operations::collection::collection_permission_set_from_backend;
 }
 
-pub(crate) mod computed_field {
-    pub(crate) use crate::storage::postgres::operations::computed_field::{
-        class_computation_state_for, create_personal_definition, create_shared_definition,
-        delete_personal_definition, delete_shared_definition, get_computed_definition,
-        list_personal_definitions_page, list_shared_definitions, preview_computed_definition,
-        request_class_rebuild, update_personal_definition, update_shared_definition,
-    };
-}
-
 pub(crate) mod event_delivery {
     #[cfg(test)]
     pub(crate) use crate::storage::postgres::operations::event_delivery::{

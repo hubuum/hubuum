@@ -6,6 +6,7 @@
 
 mod authorization;
 mod catalog;
+mod computed_field_lifecycle;
 mod computed_objects;
 mod events;
 mod history;
@@ -24,6 +25,16 @@ pub use authorization::{
     AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationStorage,
 };
 pub use catalog::{CatalogListQuery, CatalogPage, CatalogStorage};
+pub use computed_field_lifecycle::{
+    ComputedFieldLifecycleStorage, StorageClassComputationState, StorageComputedFieldDefinition,
+    StorageComputedFieldDefinitionContent, StorageComputedFieldDefinitionInput,
+    StorageComputedFieldDefinitionPatch, StorageComputedFieldMutation, StorageComputedFieldPage,
+    StorageComputedFieldProvenance, StorageComputedFieldRebuildRequest,
+    StorageComputedFieldVisibility, StoragePersonalComputedFieldCreate,
+    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
+    StoragePersonalComputedFieldUpdate, StorageSharedComputedFieldCreate,
+    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate,
+};
 pub use computed_objects::{
     ComputedObjectEnrichmentQuery, ComputedObjectListQuery, ComputedObjectPage,
     ComputedObjectProjection, ComputedObjectStorage, ComputedObjectVisibility,
@@ -86,7 +97,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 7;
+pub const STORAGE_CONTRACT_VERSION: u16 = 8;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +123,7 @@ pub enum StorageCapability {
     DomainLifecycle,
     CatalogQueries,
     ComputedObjectQueries,
+    ComputedFieldLifecycle,
     ObjectAggregates,
     RelationQueries,
     IdentityAndAuthorizationData,
@@ -122,10 +134,11 @@ pub enum StorageCapability {
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
         Self::ComputedObjectQueries,
+        Self::ComputedFieldLifecycle,
         Self::ObjectAggregates,
         Self::RelationQueries,
         Self::IdentityAndAuthorizationData,
@@ -141,6 +154,7 @@ impl StorageCapability {
             Self::DomainLifecycle => "domain_lifecycle",
             Self::CatalogQueries => "catalog_queries",
             Self::ComputedObjectQueries => "computed_object_queries",
+            Self::ComputedFieldLifecycle => "computed_field_lifecycle",
             Self::ObjectAggregates => "object_aggregates",
             Self::RelationQueries => "relation_queries",
             Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
@@ -303,6 +317,7 @@ mod tests {
                 "domain_lifecycle",
                 "catalog_queries",
                 "computed_object_queries",
+                "computed_field_lifecycle",
                 "object_aggregates",
                 "relation_queries",
                 "identity_and_authorization_data",
