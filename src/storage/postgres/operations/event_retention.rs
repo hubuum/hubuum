@@ -4,15 +4,12 @@ use diesel::sql_types::{Array, BigInt, Bool, Timestamp};
 
 use crate::errors::ApiError;
 use crate::events::{Event, EventRetentionSettings};
+#[cfg(test)]
+use crate::storage::context::postgres_pool;
 use crate::storage::postgres::PostgresConnection;
 use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
 use crate::storage::postgres::with_transaction;
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct EventRetentionPurgeSummary {
-    pub purged_events: usize,
-    pub purged_terminal_deliveries: usize,
-}
+use crate::storage::{EventArchive, EventRetentionSummary, RetainedEvent};
 
 const EVENT_RETENTION_LOCK_KEY: i64 = 4_850_188_191_125_218;
 
@@ -56,7 +53,7 @@ pub(crate) async fn select_events_for_retention_purge_conn(
                 "event retention exceeds the database timestamp range".to_string(),
             )
         })?;
-    let batch_size = settings.database_batch_size();
+    let batch_size = settings.query_batch_size();
     let ids = select_event_ids_for_retention_purge(conn, cutoff, batch_size).await?;
 
     if ids.is_empty() {
@@ -75,7 +72,7 @@ pub(crate) async fn purge_event_retention_batch_conn(
     conn: &mut PostgresConnection,
     settings: EventRetentionSettings,
     event_ids: &[i64],
-) -> Result<EventRetentionPurgeSummary, ApiError> {
+) -> Result<EventRetentionSummary, ApiError> {
     let delivery_cutoff = settings
         .delivery_cutoff(Utc::now().naive_utc())
         .ok_or_else(|| {
@@ -83,15 +80,15 @@ pub(crate) async fn purge_event_retention_batch_conn(
                 "event delivery retention exceeds the database timestamp range".to_string(),
             )
         })?;
-    let batch_size = settings.database_batch_size();
+    let batch_size = settings.query_batch_size();
     let purged_terminal_deliveries =
         purge_terminal_event_deliveries(conn, delivery_cutoff, batch_size).await?;
     let purged_events = purge_events_by_id(conn, event_ids).await?;
 
-    Ok(EventRetentionPurgeSummary {
+    Ok(EventRetentionSummary::new(
         purged_events,
         purged_terminal_deliveries,
-    })
+    ))
 }
 
 /// Select, optionally archive, and purge one retention batch atomically.
@@ -99,25 +96,38 @@ pub(crate) async fn purge_event_retention_batch_conn(
 /// The adapter owns the transaction, coordinator lock, and maintenance check.
 /// The callback lets the application persist an external archive before rows
 /// are deleted without exposing the PostgreSQL connection or transaction.
-pub(crate) async fn process_event_retention_batch_from_storage<F>(
-    backend: &impl crate::storage::StorageContext,
+pub(crate) async fn process_event_retention_batch(
+    backend: &crate::storage::postgres::PostgresPool,
     settings: EventRetentionSettings,
-    archive: F,
-) -> Result<EventRetentionPurgeSummary, ApiError>
-where
-    F: FnOnce(&[Event]) -> Result<(), ApiError> + Send,
-{
+    archive: &dyn EventArchive,
+) -> Result<EventRetentionSummary, ApiError> {
     with_transaction(backend, async |conn| -> Result<_, ApiError> {
         if !maintenance_state_conn(conn).await?.is_normal() {
-            return Ok(EventRetentionPurgeSummary::default());
+            return Ok(EventRetentionSummary::default());
         }
         if !try_acquire_event_retention_lock(conn).await? {
-            return Ok(EventRetentionPurgeSummary::default());
+            return Ok(EventRetentionSummary::default());
         }
 
         let events = select_events_for_retention_purge_conn(conn, settings).await?;
-        archive(&events)?;
-        let event_ids = events.iter().map(|event| event.id).collect::<Vec<_>>();
+        let retained_events = events
+            .into_iter()
+            .map(|event| {
+                let id = event.id;
+                serde_json::to_string(&event)
+                    .map(|json| RetainedEvent::new(id, json))
+                    .map_err(|error| {
+                        ApiError::InternalServerError(format!(
+                            "Failed to serialize retained event: {error}"
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        archive.archive(&retained_events).map_err(ApiError::from)?;
+        let event_ids = retained_events
+            .iter()
+            .map(RetainedEvent::id)
+            .collect::<Vec<_>>();
         purge_event_retention_batch_conn(conn, settings, &event_ids).await
     })
     .await
@@ -127,8 +137,16 @@ where
 pub(crate) async fn purge_event_retention_without_archive(
     pool: &impl crate::storage::StorageContext,
     settings: EventRetentionSettings,
-) -> Result<EventRetentionPurgeSummary, ApiError> {
-    process_event_retention_batch_from_storage(pool, settings, |_| Ok(())).await
+) -> Result<EventRetentionSummary, ApiError> {
+    struct DiscardArchive;
+
+    impl EventArchive for DiscardArchive {
+        fn archive(&self, _events: &[RetainedEvent]) -> Result<(), crate::storage::StorageError> {
+            Ok(())
+        }
+    }
+
+    process_event_retention_batch(postgres_pool(pool), settings, &DiscardArchive).await
 }
 
 async fn select_event_ids_for_retention_purge(

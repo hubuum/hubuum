@@ -7,7 +7,7 @@ pub use runtime::*;
 
 use async_trait::async_trait;
 
-use crate::events::EventContext;
+use crate::events::{EventContext, EventFanoutSettings, EventRetentionSettings};
 use crate::models::{
     ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassRelationID, HubuumObject,
     MaintenanceState, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
@@ -38,10 +38,12 @@ use crate::storage::postgres::operations::relations::{
 };
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, EventDeliveryHealthSnapshot,
-    EventHealthStorage, EventMetricsSnapshot, InventoryGaugeSnapshot, MetricsStorage,
-    ObjectRelationStore, ObjectStore, OperationalStateStorage, ReadinessSnapshot, StorageError,
-    StorageIdentity, StoragePoolState, TaskGaugeSnapshot, TokenRetentionStorage,
+    ClassRelationStore, ClassStore, CollectionStore, EventArchive, EventDeliveryBatch,
+    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
+    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
+    InventoryGaugeSnapshot, MetricsStorage, ObjectRelationStore, ObjectStore,
+    OperationalStateStorage, ReadinessSnapshot, StorageError, StorageIdentity, StoragePoolState,
+    TaskGaugeSnapshot, TokenRetentionStorage,
 };
 use error::map_postgres_error;
 
@@ -132,6 +134,65 @@ impl OperationalStateStorage for PostgresStorage {
 impl EventHealthStorage for PostgresStorage {
     async fn event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
         operations::event_observability::load_event_delivery_health(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl EventDeliveryStorage for PostgresStorage {
+    async fn claim_event_delivery_batch(
+        &self,
+        settings: crate::events::EventDeliverySettings,
+    ) -> Result<EventDeliveryBatch, StorageError> {
+        operations::event_delivery::claim_event_delivery_batch_from_storage(&self.pool, settings)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn mark_event_delivery_succeeded(
+        &self,
+        claim: &EventDeliveryClaim,
+    ) -> Result<(), StorageError> {
+        operations::event_delivery::mark_event_delivery_claim_succeeded(&self.pool, claim)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn mark_event_delivery_failed(
+        &self,
+        claim: &EventDeliveryClaim,
+        settings: crate::events::EventDeliverySettings,
+        error: &str,
+    ) -> Result<(), StorageError> {
+        operations::event_delivery::mark_event_delivery_claim_failed(
+            &self.pool, claim, settings, error,
+        )
+        .await
+        .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl EventFanoutStorage for PostgresStorage {
+    async fn process_event_fanout_batch(
+        &self,
+        settings: EventFanoutSettings,
+    ) -> Result<usize, StorageError> {
+        operations::event_fanout::process_event_fanout_batch(&self.pool, settings)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl EventRetentionStorage for PostgresStorage {
+    async fn process_event_retention_batch(
+        &self,
+        settings: EventRetentionSettings,
+        archive: &dyn EventArchive,
+    ) -> Result<EventRetentionSummary, StorageError> {
+        operations::event_retention::process_event_retention_batch(&self.pool, settings, archive)
             .await
             .map_err(map_postgres_error)
     }

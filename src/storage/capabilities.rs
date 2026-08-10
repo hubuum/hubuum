@@ -42,20 +42,13 @@ pub(crate) mod computed_field {
 }
 
 pub(crate) mod event_delivery {
+    #[cfg(test)]
     pub(crate) use crate::storage::postgres::operations::event_delivery::{
-        ClaimedEventDelivery, claim_event_delivery_batch, list_event_deliveries_with_total_count,
-        load_event_delivery, mark_event_delivery_dead, mark_event_delivery_failed,
-        mark_event_delivery_succeeded, release_event_delivery_for_retry,
+        ClaimedEventDelivery, claimed_event_delivery_work_item,
     };
-}
-
-pub(crate) mod event_fanout {
-    pub(crate) use crate::storage::postgres::operations::event_fanout::process_event_fanout_batch;
-}
-
-pub(crate) mod event_retention {
-    pub(crate) use crate::storage::postgres::operations::event_retention::{
-        EventRetentionPurgeSummary, process_event_retention_batch_from_storage,
+    pub(crate) use crate::storage::postgres::operations::event_delivery::{
+        list_event_deliveries_with_total_count, load_event_delivery, mark_event_delivery_dead,
+        release_event_delivery_for_retry,
     };
 }
 
@@ -69,7 +62,7 @@ pub(crate) mod event_subscription {
 
 pub(crate) mod events {
     pub(crate) use crate::storage::postgres::operations::events::{
-        list_events_with_total_count, load_queued_task_initiators, parse_event_filters,
+        list_events_with_total_count, parse_event_filters,
     };
 }
 

@@ -140,7 +140,18 @@ validated retention settings without exposing the transaction, advisory lock,
 or SQL cutoffs. `EventHealthStorage` returns only persisted queue and claim
 state. The application adds worker configuration and in-process wake-up
 counters when projecting that snapshot into its API response; those values are
-not a storage backend responsibility.
+not a storage backend responsibility. `EventFanoutStorage` owns the complete
+claim, subscription-match, delivery insertion, claim release, and notification
+operation. Its caller supplies a validated `EventFanoutSettings` policy and
+receives only the processed count. `EventDeliveryStorage` owns due-work
+selection, locking, legacy provenance enrichment, principal resolution, and
+claim-checked acknowledgements. The delivery worker receives only a complete
+`EventDeliveryWorkItem`: an event envelope, transport routing, redacted-debug
+sink settings, and an opaque claim to return on success or failure.
+`EventRetentionStorage` similarly owns worker coordination, selection, and the
+purge transaction. It passes redacted-debug, serialized `RetainedEvent` DTOs to
+an application-owned `EventArchive`; an archive failure rolls back deletion.
+Neither side sees the PostgreSQL event row, connection, or claim state.
 
 ## Error Direction
 
@@ -247,14 +258,15 @@ not an available storage backend.
 
 The first workspace boundaries are now in place:
 
-- `hubuum-domain` owns maintenance and token-policy values and their validation
-  errors without application or persistence dependencies. More domain DTOs
-  move here as mixed Diesel/domain models are separated.
+- `hubuum-domain` owns maintenance, token-policy, and event-worker policy values
+  and their validation errors without application or persistence dependencies.
+  More domain DTOs move here as mixed Diesel/domain models are separated.
 
 - `hubuum-storage-core` owns backend-neutral descriptors, the contract version,
   capability identities, `StorageError`, operational snapshot DTOs, and the
-  extracted operational state, event-health, and token-retention traits without
-  application, transport, or driver dependencies.
+  extracted operational state, event-health, event-fan-out, event-retention,
+  and token-retention traits without application, transport, or driver
+  dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection
   setup, safe endpoint diagnostics, JSONB validation, query capture, and its
   crate-owned pool-construction error.
@@ -281,8 +293,8 @@ The crates have deliberately different responsibilities:
 
 - `hubuum-domain` owns validated identifiers, commands, aggregates, and result
   types without Diesel, Actix, global configuration, or `ApiError`. It starts
-  with maintenance and token-policy values; remaining mixed models are an
-  incremental extraction.
+  with maintenance, token-policy, and event-worker policy values; remaining
+  mixed models are an incremental extraction.
 - `hubuum-storage-core` ultimately owns the complete traits in addition to its
   current errors, descriptors, capability metadata, operational traits, and
   storage DTOs. Behavioral traits that still name root domain types remain in
