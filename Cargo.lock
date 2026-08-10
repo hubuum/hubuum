@@ -2091,6 +2091,7 @@ dependencies = [
  "hubuum-auth-core",
  "hubuum-auth-ldap",
  "hubuum-computed-fields",
+ "hubuum-domain",
  "hubuum-event-sink-amqp",
  "hubuum-event-sink-email",
  "hubuum-event-sink-valkey",
@@ -2168,6 +2169,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "hubuum-domain"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rstest",
 ]
 
 [[package]]
@@ -2281,6 +2290,10 @@ dependencies = [
 [[package]]
 name = "hubuum-storage-core"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hubuum-domain",
+]
 
 [[package]]
 name = "hubuum-storage-postgres"

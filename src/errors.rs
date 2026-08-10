@@ -10,6 +10,7 @@ use std::num::ParseIntError;
 
 use tracing::{debug, error};
 
+use crate::models::TokenPolicyError;
 use crate::observability::metrics;
 use crate::storage::{StorageError, StorageErrorKind};
 
@@ -176,6 +177,12 @@ impl From<StorageError> for ApiError {
             StorageErrorKind::Unavailable => Self::ServiceUnavailable(message),
             StorageErrorKind::Validation => Self::ValidationError(message),
         }
+    }
+}
+
+impl From<TokenPolicyError> for ApiError {
+    fn from(error: TokenPolicyError) -> Self {
+        Self::BadRequest(error.to_string())
     }
 }
 

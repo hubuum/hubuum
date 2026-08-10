@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, MetricsStorage, ObjectRelationStore,
-    ObjectStore, PostgresStorage, observed::ObservedLifecycleStorage,
+    ClassRelationStore, ClassStore, CollectionStore, EventHealthStorage, MetricsStorage,
+    ObjectRelationStore, ObjectStore, OperationalStateStorage, PostgresStorage,
+    TokenRetentionStorage, observed::ObservedLifecycleStorage,
 };
 
 #[cfg(test)]
@@ -60,7 +61,10 @@ mod sealed {
 /// and therefore cannot be selected by `AppContext`.
 pub(crate) trait StorageBackend:
     LifecycleStorage
+    + EventHealthStorage
     + MetricsStorage
+    + OperationalStateStorage
+    + TokenRetentionStorage
     + IdentityAndAuthorizationStorage
     + QueryAndHistoryStorage
     + WorkflowStorage

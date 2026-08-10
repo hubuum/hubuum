@@ -1,20 +1,13 @@
 use crate::storage::postgres::prelude::*;
 use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text};
 
-use crate::config::{
-    DEFAULT_EVENT_DELIVERY_BATCH_SIZE, DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS,
-    DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS, DEFAULT_EVENT_DELIVERY_WORKERS,
-    DEFAULT_EVENT_FANOUT_BATCH_SIZE, DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
-    DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS, DEFAULT_EVENT_FANOUT_WORKERS, get_config,
-};
 use crate::errors::ApiError;
-use crate::events::{event_delivery_wakeup_stats, event_fanout_wakeup_stats};
-use crate::models::{
-    EventDeliveryHealthResponse, EventDeliveryQueueHealth, EventDeliveryStatusCounts,
-    EventFanoutHealth, EventSinkDeliveryHealth, EventSubscriptionDeliveryHealth, EventWorkerHealth,
-};
-use crate::storage::EventMetricsSnapshot;
 use crate::storage::postgres::with_connection;
+use crate::storage::{
+    EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
+    EventMetricsSnapshot, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
+    EventSubscriptionHealthSnapshot,
+};
 
 #[derive(Debug, QueryableByName)]
 struct FanoutHealthRow {
@@ -120,27 +113,27 @@ struct SubscriptionHealthRow {
     oldest_due_age_seconds: Option<i64>,
 }
 
-pub async fn load_event_delivery_health(
-    pool: &impl crate::storage::StorageContext,
-) -> Result<EventDeliveryHealthResponse, ApiError> {
+pub(crate) async fn load_event_delivery_health(
+    pool: &crate::storage::postgres::PostgresPool,
+) -> Result<EventDeliveryHealthSnapshot, ApiError> {
     with_connection(pool, async |conn| {
         let fanout = load_fanout_health(conn).await?;
         let delivery = load_delivery_queue_health(conn).await?;
         let sinks = load_sink_health(conn).await?;
         let subscriptions = load_subscription_health(conn).await?;
 
-        Ok::<EventDeliveryHealthResponse, ApiError>(EventDeliveryHealthResponse {
+        Ok::<EventDeliveryHealthSnapshot, ApiError>(EventDeliveryHealthSnapshot::new(
             fanout,
             delivery,
             sinks,
             subscriptions,
-        })
+        ))
     })
     .await
 }
 
 pub(crate) async fn load_event_metrics_snapshot(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
 ) -> Result<EventMetricsSnapshot, ApiError> {
     with_connection(pool, async |conn| {
         Ok::<EventMetricsSnapshot, ApiError>(EventMetricsSnapshot {
@@ -153,7 +146,7 @@ pub(crate) async fn load_event_metrics_snapshot(
 
 async fn load_fanout_health(
     conn: &mut crate::storage::postgres::PostgresConnection,
-) -> Result<EventFanoutHealth, ApiError> {
+) -> Result<EventFanoutSnapshot, ApiError> {
     let row = diesel::sql_query(
         r#"
         SELECT
@@ -180,18 +173,17 @@ async fn load_fanout_health(
     .get_result::<FanoutHealthRow>(conn)
     .await?;
 
-    Ok(EventFanoutHealth {
-        pending_events: row.pending_events,
-        in_flight_events: row.in_flight_events,
-        stale_claims: row.stale_claims,
-        oldest_pending_age_seconds: row.oldest_pending_age_seconds,
-        worker: fanout_worker_health(),
-    })
+    Ok(EventFanoutSnapshot::new(
+        row.pending_events,
+        row.in_flight_events,
+        row.stale_claims,
+        row.oldest_pending_age_seconds,
+    ))
 }
 
 async fn load_delivery_queue_health(
     conn: &mut crate::storage::postgres::PostgresConnection,
-) -> Result<EventDeliveryQueueHealth, ApiError> {
+) -> Result<EventQueueSnapshot, ApiError> {
     let row = diesel::sql_query(
         r#"
         SELECT
@@ -230,17 +222,16 @@ async fn load_delivery_queue_health(
     .get_result::<DeliveryQueueHealthRow>(conn)
     .await?;
 
-    Ok(EventDeliveryQueueHealth {
-        counts: status_counts(&row),
-        stale_claims: row.stale_claims,
-        oldest_due_age_seconds: row.oldest_due_age_seconds,
-        worker: delivery_worker_health(),
-    })
+    Ok(EventQueueSnapshot::new(
+        status_counts(&row),
+        row.stale_claims,
+        row.oldest_due_age_seconds,
+    ))
 }
 
 async fn load_sink_health(
     conn: &mut crate::storage::postgres::PostgresConnection,
-) -> Result<Vec<EventSinkDeliveryHealth>, ApiError> {
+) -> Result<Vec<EventSinkHealthSnapshot>, ApiError> {
     let rows = diesel::sql_query(
         r#"
         SELECT
@@ -292,23 +283,18 @@ async fn load_sink_health(
         .into_iter()
         .map(|row| {
             let counts = status_counts(&row);
-            EventSinkDeliveryHealth {
-                sink_id: row.sink_id,
-                sink_name: row.sink_name,
-                sink_kind: row.sink_kind,
-                sink_enabled: row.sink_enabled,
-                subscription_count: row.subscription_count,
-                counts,
-                stale_claims: row.stale_claims,
-                oldest_due_age_seconds: row.oldest_due_age_seconds,
-            }
+            EventSinkHealthSnapshot::new(
+                EventSinkSnapshot::new(row.sink_id, row.sink_name, row.sink_kind, row.sink_enabled),
+                row.subscription_count,
+                EventQueueSnapshot::new(counts, row.stale_claims, row.oldest_due_age_seconds),
+            )
         })
         .collect())
 }
 
 async fn load_subscription_health(
     conn: &mut crate::storage::postgres::PostgresConnection,
-) -> Result<Vec<EventSubscriptionDeliveryHealth>, ApiError> {
+) -> Result<Vec<EventSubscriptionHealthSnapshot>, ApiError> {
     let rows = diesel::sql_query(
         r#"
         SELECT
@@ -363,87 +349,28 @@ async fn load_subscription_health(
         .into_iter()
         .map(|row| {
             let counts = status_counts(&row);
-            EventSubscriptionDeliveryHealth {
-                subscription_id: row.subscription_id,
-                subscription_name: row.subscription_name,
-                collection_id: row.collection_id,
-                sink_id: row.sink_id,
-                sink_name: row.sink_name,
-                sink_kind: row.sink_kind,
-                subscription_enabled: row.subscription_enabled,
-                sink_enabled: row.sink_enabled,
-                counts,
-                stale_claims: row.stale_claims,
-                oldest_due_age_seconds: row.oldest_due_age_seconds,
-            }
+            EventSubscriptionHealthSnapshot::new(
+                row.subscription_id,
+                row.subscription_name,
+                row.collection_id,
+                row.subscription_enabled,
+                EventSinkSnapshot::new(row.sink_id, row.sink_name, row.sink_kind, row.sink_enabled),
+                EventQueueSnapshot::new(counts, row.stale_claims, row.oldest_due_age_seconds),
+            )
         })
         .collect())
 }
 
-fn fanout_worker_health() -> EventWorkerHealth {
-    let config = get_config().ok();
-    EventWorkerHealth {
-        workers_configured: config
-            .as_ref()
-            .map(|config| {
-                config
-                    .runtime_role
-                    .effective_worker_count(config.event_fanout_workers)
-            })
-            .unwrap_or(DEFAULT_EVENT_FANOUT_WORKERS),
-        batch_size: config
-            .as_ref()
-            .map(|config| config.event_fanout_batch_size)
-            .unwrap_or(DEFAULT_EVENT_FANOUT_BATCH_SIZE),
-        poll_interval_ms: config
-            .as_ref()
-            .map(|config| config.event_fanout_poll_interval_ms)
-            .unwrap_or(DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS),
-        lock_timeout_ms: config
-            .as_ref()
-            .map(|config| config.event_fanout_lock_timeout_ms)
-            .unwrap_or(DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS),
-        wakeups: event_fanout_wakeup_stats(),
-    }
-}
-
-fn delivery_worker_health() -> EventWorkerHealth {
-    let config = get_config().ok();
-    EventWorkerHealth {
-        workers_configured: config
-            .as_ref()
-            .map(|config| {
-                config
-                    .runtime_role
-                    .effective_worker_count(config.event_delivery_workers)
-            })
-            .unwrap_or(DEFAULT_EVENT_DELIVERY_WORKERS),
-        batch_size: config
-            .as_ref()
-            .map(|config| config.event_delivery_batch_size)
-            .unwrap_or(DEFAULT_EVENT_DELIVERY_BATCH_SIZE),
-        poll_interval_ms: config
-            .as_ref()
-            .map(|config| config.event_delivery_poll_interval_ms)
-            .unwrap_or(DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS),
-        lock_timeout_ms: config
-            .as_ref()
-            .map(|config| config.event_delivery_lock_timeout_ms)
-            .unwrap_or(DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS),
-        wakeups: event_delivery_wakeup_stats(),
-    }
-}
-
-fn status_counts(row: &impl HasDeliveryCounts) -> EventDeliveryStatusCounts {
-    EventDeliveryStatusCounts {
-        total: row.total(),
-        pending: row.pending(),
-        in_flight: row.in_flight(),
-        succeeded: row.succeeded(),
-        failed: row.failed(),
-        dead: row.dead(),
-        retryable: row.retryable(),
-    }
+fn status_counts(row: &impl HasDeliveryCounts) -> EventDeliveryStatusSnapshot {
+    EventDeliveryStatusSnapshot::new(
+        row.total(),
+        row.pending(),
+        row.in_flight(),
+        row.succeeded(),
+        row.failed(),
+        row.dead(),
+        row.retryable(),
+    )
 }
 
 trait HasDeliveryCounts {

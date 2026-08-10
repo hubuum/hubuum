@@ -4,10 +4,14 @@ use actix_web::web::Data;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::models::CollectionID;
+use crate::models::TokenRetentionSettings;
 use crate::services::Services;
 use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
-use crate::storage::{MetricsStorage, STORAGE_CONTRACT_VERSION, StorageBackendKind};
+use crate::storage::{
+    EventHealthStorage, MetricsStorage, OperationalStateStorage, STORAGE_CONTRACT_VERSION,
+    StorageBackendKind, TokenRetentionStorage,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum LifecycleContractImplementation {
@@ -38,6 +42,72 @@ async fn every_available_storage_backend_supplies_metrics_snapshots() {
                     .metrics_event_snapshot()
                     .await
                     .expect("certified backend should supply event metrics");
+            }
+        }
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_operational_state() {
+    let _permit = postgres_permit().await;
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool().get_ref().clone());
+                let state = backend
+                    .maintenance_state()
+                    .await
+                    .expect("certified backend should expose maintenance state");
+                let readiness = backend
+                    .readiness_snapshot()
+                    .await
+                    .expect("certified backend should expose readiness state");
+
+                assert_eq!(readiness.maintenance_state(), state);
+                assert!(readiness.schema_is_ready());
+            }
+        }
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_event_health() {
+    let _permit = postgres_permit().await;
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool().get_ref().clone());
+                backend
+                    .event_delivery_health()
+                    .await
+                    .expect("certified backend should expose event delivery health");
+            }
+        }
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_token_retention() {
+    let _permit = postgres_permit().await;
+    let settings = TokenRetentionSettings::builder()
+        .retention_days(1_000_000)
+        .token_lifetime_hours(24)
+        .batch_size(10)
+        .build()
+        .expect("compatibility retention settings should be valid");
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool().get_ref().clone());
+                let purged = backend
+                    .purge_expired_tokens(settings)
+                    .await
+                    .expect("certified backend should execute token retention");
+
+                assert_eq!(purged, 0);
             }
         }
     }

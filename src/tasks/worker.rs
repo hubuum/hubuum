@@ -310,7 +310,10 @@ async fn process_one_task_with_settings(
     backup_settings: &BackupSettings,
 ) -> Result<bool, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
-    if !current_maintenance_state(context).await?.is_normal() {
+    if !current_maintenance_state(context.backend())
+        .await?
+        .is_normal()
+    {
         metrics::task_worker_iteration("idle");
         return Ok(false);
     }

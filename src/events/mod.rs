@@ -24,9 +24,11 @@ mod sink;
 pub use context::RequestProvenance;
 pub use db::emit_event;
 pub(crate) use db::emit_events;
+pub(crate) use delivery::event_delivery_worker_health;
 pub use delivery::{
     ensure_event_delivery_worker_running, event_delivery_wakeup_stats, kick_event_delivery_worker,
 };
+pub(crate) use fanout::event_fanout_worker_health;
 pub use fanout::{
     ensure_event_fanout_worker_running, event_fanout_wakeup_stats, kick_event_fanout_worker,
 };

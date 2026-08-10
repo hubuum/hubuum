@@ -62,8 +62,8 @@ pub(crate) async fn try_acquire_token_retention_lock(
 /// token_lifetime_hours`, matching the authentication predicate. Foreign keys
 /// cascade scope-row deletion and set task `submitted_token_id` provenance to
 /// null.
-pub async fn purge_expired_token_batch(
-    pool: &impl crate::storage::StorageContext,
+pub(crate) async fn purge_expired_token_batch(
+    pool: &crate::storage::postgres::PostgresPool,
     settings: TokenRetentionSettings,
 ) -> Result<usize, ApiError> {
     purge_expired_token_batch_at(pool, settings, Utc::now().naive_utc()).await

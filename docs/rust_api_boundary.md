@@ -76,6 +76,7 @@ manifest.
 | `hubuum-auth-core` | Workspace-internal |
 | `hubuum-auth-ldap` | Workspace-internal |
 | `hubuum-computed-fields` | Workspace-internal |
+| `hubuum-domain` | Workspace-internal |
 | `hubuum-event-sink-amqp` | Workspace-internal |
 | `hubuum-event-sink-email` | Workspace-internal |
 | `hubuum-event-sink-valkey` | Workspace-internal |

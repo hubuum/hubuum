@@ -41,7 +41,7 @@ pub async fn reject_during_maintenance(
             let backend = AppContext::from_http_request(req.request())?;
             let state = with_storage_call_site(
                 StorageCallSite::RequestMaintenance,
-                current_maintenance_state(&backend),
+                current_maintenance_state(backend.backend()),
             )
             .await?;
             if !state.is_normal() {

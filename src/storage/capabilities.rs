@@ -59,10 +59,6 @@ pub(crate) mod event_retention {
     };
 }
 
-pub(crate) mod event_observability {
-    pub(crate) use crate::storage::postgres::operations::event_observability::load_event_delivery_health;
-}
-
 pub(crate) mod event_subscription {
     pub(crate) use crate::storage::postgres::operations::event_subscription::{
         DeleteEventSinkRecord, DeleteEventSubscriptionRecord, SaveEventSinkRecord,
@@ -104,10 +100,6 @@ pub(crate) mod identity {
     };
 }
 
-pub(crate) mod maintenance {
-    pub(crate) use crate::storage::postgres::operations::maintenance::maintenance_state_db;
-}
-
 pub(crate) mod meta {
     pub(crate) use crate::storage::postgres::operations::meta::{
         load_database_state, load_task_queue_state,
@@ -120,10 +112,6 @@ pub(crate) mod principal {
 
 pub(crate) mod permissions {
     pub(crate) use crate::storage::postgres::operations::permissions::PermissionControllerBackend;
-}
-
-pub(crate) mod probe {
-    pub(crate) use crate::storage::postgres::operations::probe::ProbeBackend;
 }
 
 pub(crate) mod relations {
@@ -171,10 +159,6 @@ pub(crate) mod task_import {
         lookup_classes_by_collection_and_names, lookup_collections_by_name,
         lookup_objects_by_class_and_names,
     };
-}
-
-pub(crate) mod token_retention {
-    pub(crate) use crate::storage::postgres::operations::token_retention::purge_expired_token_batch;
 }
 
 pub(crate) mod user {

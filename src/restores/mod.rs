@@ -23,9 +23,7 @@ use crate::models::{
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID, RestoreJobRecord,
     RestoreJobStatus, RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
 };
-use crate::storage::StorageContext;
 use crate::storage::capabilities::identity::identity_scope_name_by_id;
-use crate::storage::capabilities::maintenance::maintenance_state_db;
 use crate::storage::capabilities::restore::{
     RestoreCompletion, RestoreCoordinatorSnapshot, apply_restore_db, delete_server_instance_db,
     expire_restore_stage_db, fail_restore_and_resume_db, insert_restore_job_db,
@@ -35,6 +33,7 @@ use crate::storage::capabilities::restore::{
 };
 use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 use crate::storage::storage_handle;
+use crate::storage::{OperationalStateStorage, StorageContext};
 
 static RESTORE_COORDINATOR: Once = Once::new();
 static ACTIVE_MAINTENANCE_WORK: AtomicUsize = AtomicUsize::new(0);
@@ -1100,15 +1099,14 @@ where
 }
 
 pub(crate) async fn current_maintenance_state(
-    pool: &impl crate::storage::StorageContext,
+    storage: &(impl OperationalStateStorage + ?Sized),
 ) -> Result<MaintenanceState, ApiError> {
-    maintenance_state_db(pool).await
+    storage.maintenance_state().await.map_err(Into::into)
 }
 
-pub async fn maintenance_state(
-    pool: &impl crate::storage::StorageContext,
-) -> Result<String, ApiError> {
-    current_maintenance_state(pool)
+pub async fn maintenance_state(storage: &impl StorageContext) -> Result<String, ApiError> {
+    let storage = storage_handle(storage);
+    current_maintenance_state(&storage)
         .await
         .map(|state| state.as_str().to_string())
 }

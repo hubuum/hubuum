@@ -13,7 +13,7 @@ use crate::config::{
 use crate::errors::ApiError;
 use crate::events::EventFanoutSettings;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
-use crate::models::EventWorkerWakeupStats;
+use crate::models::{EventWorkerHealth, EventWorkerWakeupStats};
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
@@ -200,5 +200,25 @@ pub fn event_fanout_wakeup_stats() -> EventWorkerWakeupStats {
         notifications_sent: EVENT_FANOUT_NOTIFICATIONS_SENT.load(Ordering::Relaxed),
         notification_wakeups: EVENT_FANOUT_NOTIFICATION_WAKEUPS.load(Ordering::Relaxed),
         poll_wakeups: EVENT_FANOUT_POLL_WAKEUPS.load(Ordering::Relaxed),
+    }
+}
+
+pub(crate) fn event_fanout_worker_health() -> EventWorkerHealth {
+    let config = get_config().ok();
+    EventWorkerHealth {
+        workers_configured: configured_event_fanout_worker_count(),
+        batch_size: config
+            .as_ref()
+            .map(|config| config.event_fanout_batch_size)
+            .unwrap_or(DEFAULT_EVENT_FANOUT_BATCH_SIZE),
+        poll_interval_ms: config
+            .as_ref()
+            .map(|config| config.event_fanout_poll_interval_ms)
+            .unwrap_or(DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS),
+        lock_timeout_ms: config
+            .as_ref()
+            .map(|config| config.event_fanout_lock_timeout_ms)
+            .unwrap_or(DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS),
+        wakeups: event_fanout_wakeup_stats(),
     }
 }

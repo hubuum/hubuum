@@ -1,8 +1,8 @@
 [package]
-name = "hubuum-storage-core"
+name = "hubuum-domain"
 version = "0.1.0"
 edition = "2024"
-description = "Backend-neutral storage contracts and diagnostics for Hubuum."
+description = "Backend-neutral domain types and validation for Hubuum."
 license = "MIT"
 repository = "https://github.com/hubuum/hubuum"
 publish = false
@@ -11,5 +11,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
-async-trait = "0.1"
-hubuum-domain = { path = "../hubuum-domain" }
+chrono = "0.4"
+
+[dev-dependencies]
+rstest = "0.26"

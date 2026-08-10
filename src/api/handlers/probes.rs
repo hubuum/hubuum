@@ -6,7 +6,7 @@ use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::permissions::AppContext;
-use crate::storage::capabilities::probe::ProbeBackend;
+use crate::storage::OperationalStateStorage;
 use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
 
 #[derive(Serialize, ToSchema)]
@@ -46,9 +46,12 @@ pub async fn healthz() -> impl Responder {
 )]
 #[get("/readyz")]
 pub async fn readyz(context: AppContext) -> Result<impl Responder, ApiError> {
-    let snapshot = with_storage_call_site(StorageCallSite::Readiness, context.readiness_snapshot())
-        .await
-        .map_err(|_| ApiError::ServiceUnavailable("Database is not ready".to_string()))?;
+    let snapshot = with_storage_call_site(
+        StorageCallSite::Readiness,
+        context.backend().readiness_snapshot(),
+    )
+    .await
+    .map_err(|_| ApiError::ServiceUnavailable("Database is not ready".to_string()))?;
     if !snapshot.schema_is_ready() {
         return Err(ApiError::ServiceUnavailable(
             "Database schema is not ready".to_string(),
