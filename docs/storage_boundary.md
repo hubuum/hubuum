@@ -70,6 +70,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Identity and authorization data | Principals, credentials, memberships, grants, and data needed by configured authorization providers |
 | Temporal history | Revision-filtered pages, stable cursors, point-in-time reads, visibility pushdown, and provenance-name resolution |
 | Unified search | Ranked collection, class, and object search with stable per-kind cursors and token visibility pushdown |
+| Task queue | Idempotent task submission, access facts, task/event/result paging, and retained export and backup output reads |
 | Workflows | Imports, restores, tasks, backups, exports, remote calls, and their atomic state transitions |
 | Operations | Probes, metrics snapshots, retention, event delivery, leases, locking, and worker coordination |
 
@@ -86,7 +87,10 @@ now been replaced by the real `AuthenticationStorage`,
 `AuthorizationStorage`, `HistoryStorage`, `CatalogStorage`,
 `ComputedObjectStorage`, `ComputedFieldLifecycleStorage`,
 `ObjectAggregateStorage`, `RelationQueryStorage`, and `UnifiedSearchStorage`
-contracts; no family is
+contracts. `TaskQueueStorage` now replaces the task submission and read portion
+of the workflow gate; worker leases and workflow-specific atomic transitions
+remain in that gate until their complete contracts and compatibility tests land.
+No family is
 considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
@@ -281,6 +285,18 @@ edges before canonical paths and limits are selected. The opaque handle
 observes every operation under bounded `relations/*` labels, and the shared
 available-backend compatibility test exercises all twelve operations.
 
+`TaskQueueStorage` owns the complete application-facing task queue surface:
+idempotent submission under active-task limits, task access facts, filtered
+task pages, lifecycle events, import item results, and retained export and
+backup outputs. The PostgreSQL adapter converts persistence records and legacy
+event provenance into private-field storage DTOs. The application task service
+owns authorization decisions, principal-name resolution, and API/domain model
+conversion; handlers do not call task query traits or receive Diesel records.
+All eleven entry points are observed under bounded `tasks/*` labels, and the
+available-backend compatibility test invokes every operation. Claiming,
+leasing, terminal transitions, and workflow-specific atomic writes remain a
+separate mandatory extraction rather than optional backend behavior.
+
 ## Error Direction
 
 Errors cross the boundary in one direction:
@@ -400,7 +416,7 @@ The first workspace boundaries are now in place:
   capability identities, `StorageError`, authentication and authorization
   DTOs, operational snapshot DTOs, and the extracted authentication,
   authorization, catalog-query, temporal-history, unified-search, operational
-  state, computed-object, computed-field lifecycle, object-aggregate,
+  state, computed-object, computed-field lifecycle, object-aggregate, task-queue,
   relation-query, event-health, event-fan-out, event-retention, and
   token-retention traits without application, transport, or driver
   dependencies.

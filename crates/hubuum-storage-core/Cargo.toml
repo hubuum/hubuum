@@ -16,5 +16,6 @@ chrono = "0.4"
 hubuum-domain = { path = "../hubuum-domain" }
 hubuum-events-core = { path = "../hubuum-events-core" }
 hubuum-query = { path = "../hubuum-query" }
+hubuum-task-core = { path = "../hubuum-task-core" }
 serde_json = "1"
 uuid = "1"

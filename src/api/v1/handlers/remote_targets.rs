@@ -24,13 +24,14 @@ use crate::permissions::{AppContext, PrincipalRef};
 use crate::services::history::{
     HistoryCollectionFilter, remote_target_as_of, remote_target_history_paginated_with_total_count,
 };
+use crate::services::tasks::{TaskSubmission, submit_task, task_scope_snapshot};
+use crate::storage::StorageTaskScopeSnapshot;
 use crate::storage::capabilities::UserPermissions;
 use crate::storage::capabilities::authz::scope_allows;
 use crate::storage::capabilities::remote_target::{
     DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
     emit_remote_target_invoked_event,
 };
-use crate::storage::capabilities::task::{TaskCreateRequest, TaskScopeSnapshot};
 use crate::storage::capabilities::with_revision_precondition_scope;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
@@ -341,7 +342,7 @@ pub async fn invoke_remote_target(
         parameters: invoke.parameters,
         body_override: invoke.body_override,
     })?;
-    let snapshot = TaskScopeSnapshot::from_request(
+    let snapshot = task_scope_snapshot(
         Some(TokenID::new(requestor.token_meta.id)?),
         requestor.scopes(),
     );
@@ -382,7 +383,7 @@ pub async fn invoke_remote_target(
 async fn find_or_create_remote_call_task(
     context: &impl crate::storage::StorageContext,
     submitted_by: PrincipalID,
-    snapshot: TaskScopeSnapshot,
+    snapshot: StorageTaskScopeSnapshot,
     idempotency_key: Option<IdempotencyKey>,
     payload: serde_json::Value,
 ) -> Result<TaskRecord, ApiError> {
@@ -392,13 +393,20 @@ async fn find_or_create_remote_call_task(
         message = "Creating remote call task",
         submitted_by = submitted_by.id()
     );
-    TaskCreateRequest::builder(TaskKind::RemoteCall, submitted_by, payload, 1)
+    submit_task(
+        context,
+        TaskSubmission::new(
+            TaskKind::RemoteCall,
+            submitted_by,
+            payload,
+            1,
+            max_active_remote_call_tasks_per_user(),
+        )
         .idempotency_key(idempotency_key)
         .request_hash(Some(hash))
-        .scope_snapshot(snapshot)
-        .build()
-        .create_idempotently_with_active_limit(context, max_active_remote_call_tasks_per_user())
-        .await
+        .scope_snapshot(snapshot),
+    )
+    .await
 }
 
 fn max_active_remote_call_tasks_per_user() -> usize {

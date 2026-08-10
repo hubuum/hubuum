@@ -2296,6 +2296,7 @@ dependencies = [
  "hubuum-domain",
  "hubuum-events-core",
  "hubuum-query",
+ "hubuum-task-core",
  "serde_json",
  "uuid",
 ]

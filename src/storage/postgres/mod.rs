@@ -3,6 +3,7 @@ mod error;
 #[doc(hidden)]
 pub mod operations;
 mod runtime;
+mod task_queue;
 
 pub use runtime::*;
 

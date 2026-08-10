@@ -179,6 +179,7 @@ impl From<StorageError> for ApiError {
             StorageErrorKind::NotAcceptable => Self::NotAcceptable(message),
             StorageErrorKind::PayloadTooLarge => Self::PayloadTooLarge(message),
             StorageErrorKind::PreconditionFailed => Self::PreconditionFailed(message, current_etag),
+            StorageErrorKind::TooManyRequests => Self::TooManyRequests(message),
             StorageErrorKind::Unavailable => Self::ServiceUnavailable(message),
             StorageErrorKind::Validation => Self::ValidationError(message),
         }
@@ -509,6 +510,14 @@ mod tests {
                     Some("\"collection-1-r2\"".to_string()),
                 ),
                 "precondition_failed",
+            ),
+            (
+                StorageError::new(
+                    StorageErrorKind::TooManyRequests,
+                    "task capacity reached",
+                    None,
+                ),
+                "too_many_requests",
             ),
         ] {
             assert_eq!(ApiError::from(error).class(), expected_class);

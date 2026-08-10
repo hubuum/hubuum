@@ -61,11 +61,18 @@ pub(crate) use hubuum_storage_core::{
     StorageRecordMetadata, StorageRelatedDirection, StorageRelatedObjectForRootRow,
     StorageRelatedObjectIncludeRow, StorageRelatedSort, StorageResourceScope,
     StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageSharedComputedScope, StorageVisibility,
-    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor, UnifiedSearchObject,
-    UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageSharedComputedFieldUpdate, StorageSharedComputedScope, StorageTask, StorageTaskAccess,
+    StorageTaskCreateRequest, StorageTaskDurations, StorageTaskEvent, StorageTaskEventPage,
+    StorageTaskKind, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage,
+    StorageTaskPageQuery, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageVisibility, TaskQueueStorage, UnifiedSearchClass, UnifiedSearchCollection,
+    UnifiedSearchCursor, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 pub(crate) use hubuum_storage_core::{ClassHistoryRecord, CollectionHistoryRecord};
+pub(crate) use hubuum_storage_core::{
+    StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
+    StorageExportOutputSummary, StorageImportTaskResult, StorageImportTaskResultPage,
+};
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
 #[cfg(test)]
 pub(crate) use memory::MemoryStorageModel;

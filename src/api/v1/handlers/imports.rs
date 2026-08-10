@@ -1,5 +1,4 @@
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
-use hubuum_task_core::IdempotencyKey;
 
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
@@ -9,33 +8,16 @@ use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    ImportRequest, ImportTaskResultResponse, PrincipalID, TaskID, TaskKind, TaskRecord,
-    TaskResponse, TokenID,
+    ImportRequest, ImportTaskResultResponse, PrincipalID, TaskID, TaskKind, TaskResponse, TokenID,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
-use crate::storage::capabilities::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot};
+use crate::services::tasks::{
+    TaskSubmission, list_import_results, load_authorized_import, submit_task, task_scope_snapshot,
+};
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
-
-async fn find_or_create_import_task(
-    context: &impl crate::storage::StorageContext,
-    submitted_by: PrincipalID,
-    snapshot: TaskScopeSnapshot,
-    idempotency_key: Option<IdempotencyKey>,
-    payload: serde_json::Value,
-    request_hash: String,
-    total_items: i32,
-) -> Result<TaskRecord, ApiError> {
-    TaskCreateRequest::builder(TaskKind::Import, submitted_by, payload, total_items)
-        .idempotency_key(idempotency_key)
-        .request_hash(Some(request_hash))
-        .scope_snapshot(snapshot)
-        .build()
-        .create_idempotently_with_active_limit(context, max_active_import_tasks_per_user())
-        .await
-}
 
 #[utoipa::path(
     post,
@@ -66,19 +48,23 @@ pub async fn create_import(
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
-    let snapshot = TaskScopeSnapshot::from_request(
+    let snapshot = task_scope_snapshot(
         Some(TokenID::new(requestor.token_meta.id)?),
         requestor.scopes(),
     );
 
-    let task = find_or_create_import_task(
+    let task = submit_task(
         &context,
-        PrincipalID::new(requestor.principal.id())?,
-        snapshot,
-        idempotency_key,
-        payload,
-        hash,
-        import_request.total_items(),
+        TaskSubmission::new(
+            TaskKind::Import,
+            PrincipalID::new(requestor.principal.id())?,
+            payload,
+            import_request.total_items(),
+            max_active_import_tasks_per_user(),
+        )
+        .idempotency_key(idempotency_key)
+        .request_hash(Some(hash))
+        .scope_snapshot(snapshot),
     )
     .await?;
 
@@ -119,10 +105,7 @@ pub async fn get_import(
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
-    let task = task_id
-        .into_inner()
-        .load_authorized_import(&context, &requestor.principal)
-        .await?;
+    let task = load_authorized_import(&context, &requestor.principal, task_id.into_inner()).await?;
     Ok(ApiResponse::new(task.to_response()?, StatusCode::OK))
 }
 
@@ -150,14 +133,10 @@ pub async fn get_import_results(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    task_id
-        .load_authorized_import(&context, &requestor.principal)
-        .await?;
+    load_authorized_import(&context, &requestor.principal, task_id).await?;
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<ImportTaskResultResponse>(&params)?;
-    let (results, total_count) = task_id
-        .list_import_results_with_total_count(&context, &search_params)
-        .await?;
+    let (results, total_count) = list_import_results(&context, task_id, search_params).await?;
     let results = results
         .into_iter()
         .map(ImportTaskResultResponse::from)

@@ -8,16 +8,16 @@ use crate::exports::{ExportTaskSubmission, submit_export_task};
 use crate::extractors::Authenticated;
 use crate::models::{
     ExportContentType, ExportJsonResponse, ExportMeta, ExportOutputLookup, ExportRequest,
-    ExportTaskOutputRecord, ExportWarning, TaskID, TaskResponse, TokenID,
+    ExportTaskOutput, ExportWarning, TaskID, TaskResponse, TokenID,
 };
 use crate::permissions::AppContext;
-use crate::storage::capabilities::task::TaskBackend;
+use crate::services::tasks::{export_output, export_output_summary, load_authorized_export};
 use crate::tasks::{ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker};
 
 const EXPORT_WARNINGS_HEADER: &str = "X-Hubuum-Export-Warnings";
 const EXPORT_TRUNCATED_HEADER: &str = "X-Hubuum-Export-Truncated";
 
-fn render_export_task_output(output: ExportTaskOutputRecord) -> Result<HttpResponse, ApiError> {
+fn render_export_task_output(output: ExportTaskOutput) -> Result<HttpResponse, ApiError> {
     let content_type = ExportContentType::from_mime(&output.content_type)?;
     let _meta: ExportMeta = serde_json::from_value(output.meta_json)?;
     let warnings: Vec<ExportWarning> = serde_json::from_value(output.warnings_json)?;
@@ -105,11 +105,9 @@ pub async fn get_export(
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
-    let task = task_id
-        .into_inner()
-        .load_authorized_export(&context, &requestor.principal)
-        .await?;
-    let output = task.find_export_output_summary(&context).await?;
+    let task_id = task_id.into_inner();
+    let task = load_authorized_export(&context, &requestor.principal, task_id).await?;
+    let output = export_output_summary(&context, task_id).await?;
     Ok(ApiResponse::new(
         task.to_response_with_export_output(output.as_ref())?,
         StatusCode::OK,
@@ -148,10 +146,8 @@ pub async fn get_export_output(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    task_id
-        .load_authorized_export(&context, &requestor.principal)
-        .await?;
-    match task_id.find_export_output(&context).await? {
+    load_authorized_export(&context, &requestor.principal, task_id).await?;
+    match export_output(&context, task_id).await? {
         ExportOutputLookup::Available(output) => render_export_task_output(output),
         ExportOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
             "Export output expired at {expires_at} UTC"
@@ -167,17 +163,8 @@ mod tests {
     use super::*;
     use crate::models::{ExportScope, ExportScopeKind};
 
-    fn test_timestamp() -> chrono::NaiveDateTime {
-        chrono::DateTime::from_timestamp(1_700_000_000, 0)
-            .unwrap()
-            .naive_utc()
-    }
-
-    fn text_export_output(meta_truncated: bool, output_truncated: bool) -> ExportTaskOutputRecord {
-        ExportTaskOutputRecord {
-            id: 1,
-            task_id: 1,
-            template_name: Some("summary".to_string()),
+    fn text_export_output(meta_truncated: bool, output_truncated: bool) -> ExportTaskOutput {
+        ExportTaskOutput {
             content_type: ExportContentType::TextPlain.as_mime().to_string(),
             json_output: None,
             text_output: Some("ok".to_string()),
@@ -193,14 +180,7 @@ mod tests {
             })
             .unwrap(),
             warnings_json: serde_json::json!([]),
-            warning_count: 0,
             truncated: output_truncated,
-            output_expires_at: test_timestamp(),
-            total_duration_ms: 0,
-            query_duration_ms: 0,
-            hydration_duration_ms: 0,
-            render_duration_ms: 0,
-            created_at: test_timestamp(),
         }
     }
 

@@ -15,7 +15,6 @@ use crate::models::{
 };
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::{backup_task_outputs, export_task_outputs, import_task_results, tasks};
-use crate::storage::postgres::operations::task::TaskBackend;
 use crate::traits::SelfAccessors;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
@@ -500,6 +499,16 @@ pub struct ExportTaskOutputRecord {
     pub created_at: NaiveDateTime,
 }
 
+/// Backend-neutral application projection of a retained export output.
+pub struct ExportTaskOutput {
+    pub content_type: String,
+    pub json_output: Option<serde_json::Value>,
+    pub text_output: Option<String>,
+    pub meta_json: serde_json::Value,
+    pub warnings_json: serde_json::Value,
+    pub truncated: bool,
+}
+
 #[derive(Clone, Insertable)]
 #[diesel(table_name = export_task_outputs)]
 pub struct NewExportTaskOutputRecord {
@@ -561,6 +570,20 @@ pub struct ExportTaskOutputSummaryRecord {
     pub created_at: NaiveDateTime,
 }
 
+#[derive(Debug, Clone)]
+pub struct ExportTaskOutputSummary {
+    pub task_id: i32,
+    pub template_name: Option<String>,
+    pub content_type: String,
+    pub warning_count: i32,
+    pub truncated: bool,
+    pub output_expires_at: NaiveDateTime,
+    pub total_duration_ms: i32,
+    pub query_duration_ms: i32,
+    pub hydration_duration_ms: i32,
+    pub render_duration_ms: i32,
+}
+
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = backup_task_outputs)]
 pub struct BackupTaskOutputSummaryRecord {
@@ -570,6 +593,19 @@ pub struct BackupTaskOutputSummaryRecord {
     pub output_expires_at: NaiveDateTime,
 }
 
+#[derive(Debug, Clone)]
+pub struct BackupTaskOutputSummary {
+    pub task_id: i32,
+    pub byte_size: i64,
+    pub sha256: String,
+    pub output_expires_at: NaiveDateTime,
+}
+
+pub struct BackupTaskOutput {
+    pub document: Vec<u8>,
+    pub sha256: String,
+}
+
 impl TaskRecord {
     pub fn to_response(&self) -> Result<TaskResponse, ApiError> {
         self.to_response_with_outputs(ExportOutputLookup::Missing, BackupOutputLookup::Missing)
@@ -577,22 +613,22 @@ impl TaskRecord {
 
     pub fn to_response_with_export_output(
         &self,
-        export_output: ExportOutputLookup<&ExportTaskOutputSummaryRecord>,
+        export_output: ExportOutputLookup<&ExportTaskOutputSummary>,
     ) -> Result<TaskResponse, ApiError> {
         self.to_response_with_outputs(export_output, BackupOutputLookup::Missing)
     }
 
     pub fn to_response_with_backup_output(
         &self,
-        backup_output: BackupOutputLookup<&BackupTaskOutputSummaryRecord>,
+        backup_output: BackupOutputLookup<&BackupTaskOutputSummary>,
     ) -> Result<TaskResponse, ApiError> {
         self.to_response_with_outputs(ExportOutputLookup::Missing, backup_output)
     }
 
     pub(crate) fn to_response_with_outputs(
         &self,
-        export_output: ExportOutputLookup<&ExportTaskOutputSummaryRecord>,
-        backup_output: BackupOutputLookup<&BackupTaskOutputSummaryRecord>,
+        export_output: ExportOutputLookup<&ExportTaskOutputSummary>,
+        backup_output: BackupOutputLookup<&BackupTaskOutputSummary>,
     ) -> Result<TaskResponse, ApiError> {
         let kind = TaskKind::from_db(&self.kind)?;
         let status = TaskStatus::from_db(&self.status)?;
@@ -1005,7 +1041,7 @@ impl InstanceAdapter<TaskRecord> for TaskID {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<TaskRecord, ApiError> {
-        self.find_record(pool).await
+        crate::services::tasks::find_task(pool, *self).await
     }
 }
 
@@ -1192,8 +1228,7 @@ mod tests {
             attempt_count: 1,
             initiator_user_id: Some(1),
         };
-        let output = ExportTaskOutputSummaryRecord {
-            id: 3,
+        let output = ExportTaskOutputSummary {
             task_id: task.id,
             template_name: Some("inventory".to_string()),
             content_type: "text/plain".to_string(),
@@ -1204,7 +1239,6 @@ mod tests {
             query_duration_ms: 40,
             hydration_duration_ms: 30,
             render_duration_ms: 70,
-            created_at: timestamp,
         };
 
         let response = task

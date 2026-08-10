@@ -14,6 +14,7 @@ mod identity;
 mod object_aggregate;
 mod operational;
 mod relation_query;
+mod task_queue;
 mod unified_search;
 
 pub use authorization::{
@@ -79,6 +80,16 @@ pub use relation_query::{
     StorageRecordMetadata, StorageRelatedDirection, StorageRelatedObjectForRootRow,
     StorageRelatedObjectIncludeRow, StorageRelatedSort,
 };
+pub use task_queue::{
+    StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
+    StorageExportOutputBuilder, StorageExportOutputSummary, StorageImportTaskResult,
+    StorageImportTaskResultBuilder, StorageImportTaskResultPage, StorageTask, StorageTaskAccess,
+    StorageTaskBuilder, StorageTaskCreateRequest, StorageTaskCreateRequestBuilder,
+    StorageTaskDurations, StorageTaskEvent, StorageTaskEventBuilder, StorageTaskEventPage,
+    StorageTaskKind, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage,
+    StorageTaskPageQuery, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
+    TaskQueueStorage,
+};
 pub use unified_search::{
     UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor, UnifiedSearchObject,
     UnifiedSearchQuery, UnifiedSearchResourceScope, UnifiedSearchStorage, UnifiedSearchVisibility,
@@ -97,7 +108,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 8;
+pub const STORAGE_CONTRACT_VERSION: u16 = 9;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,12 +140,13 @@ pub enum StorageCapability {
     IdentityAndAuthorizationData,
     TemporalHistory,
     UnifiedSearch,
+    TaskQueue,
     Workflows,
     Operations,
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::DomainLifecycle,
         Self::CatalogQueries,
         Self::ComputedObjectQueries,
@@ -144,6 +156,7 @@ impl StorageCapability {
         Self::IdentityAndAuthorizationData,
         Self::TemporalHistory,
         Self::UnifiedSearch,
+        Self::TaskQueue,
         Self::Workflows,
         Self::Operations,
     ];
@@ -160,6 +173,7 @@ impl StorageCapability {
             Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
             Self::TemporalHistory => "temporal_history",
             Self::UnifiedSearch => "unified_search",
+            Self::TaskQueue => "task_queue",
             Self::Workflows => "workflows",
             Self::Operations => "operations",
         }
@@ -204,6 +218,7 @@ pub enum StorageErrorKind {
     NotAcceptable,
     PayloadTooLarge,
     PreconditionFailed,
+    TooManyRequests,
     Unavailable,
     Validation,
 }
@@ -221,6 +236,7 @@ impl StorageErrorKind {
             Self::NotAcceptable => "not_acceptable",
             Self::PayloadTooLarge => "payload_too_large",
             Self::PreconditionFailed => "precondition_failed",
+            Self::TooManyRequests => "too_many_requests",
             Self::Unavailable => "unavailable",
             Self::Validation => "validation",
         }
@@ -323,6 +339,7 @@ mod tests {
                 "identity_and_authorization_data",
                 "temporal_history",
                 "unified_search",
+                "task_queue",
                 "workflows",
                 "operations",
             ]

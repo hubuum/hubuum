@@ -60,6 +60,9 @@ impl From<PostgresStorageError> for StorageError {
             ApiError::PreconditionFailed(message, current_etag) => {
                 Self::new(StorageErrorKind::PreconditionFailed, message, current_etag)
             }
+            ApiError::TooManyRequests(message) => {
+                Self::new(StorageErrorKind::TooManyRequests, message, None)
+            }
             ApiError::ServiceUnavailable(message) => {
                 Self::new(StorageErrorKind::Unavailable, message, None)
             }
@@ -99,6 +102,10 @@ mod tests {
             ))
             .kind(),
             StorageErrorKind::AuthorizationUnavailable
+        );
+        assert_eq!(
+            map_postgres_error(ApiError::TooManyRequests("capacity reached".to_string())).kind(),
+            StorageErrorKind::TooManyRequests
         );
     }
 }

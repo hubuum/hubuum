@@ -2,7 +2,9 @@ use std::sync::{Arc, LazyLock};
 
 use actix_web::web::Data;
 use async_trait::async_trait;
+use diesel::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
+use hubuum_task_core::IdempotencyKey;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::events::{EventContext, EventFanoutSettings, EventRetentionSettings};
@@ -43,8 +45,10 @@ use crate::storage::{
     StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
     StoragePersonalComputedFieldUpdate, StorageRelatedDirection, StorageRelatedSort,
     StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageVisibility, TokenRetentionStorage, UnifiedSearchQuery,
-    UnifiedSearchStorage,
+    StorageSharedComputedFieldUpdate, StorageTaskCreateRequest, StorageTaskKind,
+    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPageQuery, StorageTaskScopeSnapshot,
+    StorageTaskStatus, StorageVisibility, TaskQueueStorage, TokenRetentionStorage,
+    UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::traits::CanSave;
 
@@ -147,6 +151,137 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
     user.delete_without_events(pool.get_ref())
         .await
         .expect("authentication compatibility fixture should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_the_complete_task_queue() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let user = crate::tests::create_user_with_params(
+        pool.get_ref(),
+        &prefix("task_queue_user"),
+        "testpassword",
+    )
+    .await;
+    let options = || QueryOptions {
+        filters: Vec::new(),
+        sort: Vec::new(),
+        limit: Some(10),
+        cursor: None,
+        include_total: true,
+    };
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let task = backend
+                    .create_task(
+                        StorageTaskCreateRequest::builder(
+                            StorageTaskKind::Import,
+                            user.id,
+                            serde_json::json!({"items": []}),
+                            0,
+                        )
+                        .idempotency_key(Some(
+                            IdempotencyKey::new(prefix("task_queue_key"))
+                                .expect("compatibility idempotency key should be valid"),
+                        ))
+                        .request_hash(Some(prefix("task_queue_hash")))
+                        .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
+                        .build(10),
+                    )
+                    .await
+                    .expect("certified backend should create a task");
+                let task_id = task.id();
+                assert_eq!(task.kind(), StorageTaskKind::Import);
+                assert_eq!(task.status(), StorageTaskStatus::Queued);
+
+                let access = backend
+                    .get_task_access(task_id)
+                    .await
+                    .expect("certified backend should return task access facts");
+                assert_eq!(access.into_parts().0.id(), task_id);
+
+                let (tasks, total) = backend
+                    .list_tasks(StorageTaskListQuery::new(
+                        Some(user.id),
+                        Some(StorageTaskKind::Import),
+                        Some(StorageTaskStatus::Queued),
+                        options(),
+                    ))
+                    .await
+                    .expect("certified backend should list tasks")
+                    .into_parts();
+                assert_eq!(total, Some(1));
+                assert_eq!(tasks.len(), 1);
+
+                let (events, event_total) = backend
+                    .list_task_events(StorageTaskPageQuery::new(task_id, options()))
+                    .await
+                    .expect("certified backend should list task events")
+                    .into_parts();
+                assert_eq!(event_total, Some(1));
+                assert_eq!(events.len(), 1);
+
+                let (results, result_total) = backend
+                    .list_import_task_results(StorageTaskPageQuery::new(task_id, options()))
+                    .await
+                    .expect("certified backend should list import results")
+                    .into_parts();
+                assert_eq!(result_total, Some(0));
+                assert!(results.is_empty());
+
+                assert!(
+                    backend
+                        .list_export_output_summaries(vec![task_id])
+                        .await
+                        .expect("certified backend should list export output summaries")
+                        .is_empty()
+                );
+                assert!(
+                    backend
+                        .list_backup_output_summaries(vec![task_id])
+                        .await
+                        .expect("certified backend should list backup output summaries")
+                        .is_empty()
+                );
+                assert!(matches!(
+                    backend.get_export_output_summary(task_id).await,
+                    Ok(StorageTaskOutputLookup::Missing)
+                ));
+                assert!(matches!(
+                    backend.get_backup_output_summary(task_id).await,
+                    Ok(StorageTaskOutputLookup::Missing)
+                ));
+                assert!(matches!(
+                    backend.get_export_output(task_id).await,
+                    Ok(StorageTaskOutputLookup::Missing)
+                ));
+                assert!(matches!(
+                    backend.get_backup_output(task_id).await,
+                    Ok(StorageTaskOutputLookup::Missing)
+                ));
+
+                crate::storage::postgres::with_transaction(
+                    pool.get_ref(),
+                    async |conn| -> Result<(), crate::errors::ApiError> {
+                        use crate::schema::tasks::dsl::{id, tasks};
+                        diesel::delete(tasks.filter(id.eq(task_id)))
+                            .execute(conn)
+                            .await?;
+                        Ok(())
+                    },
+                )
+                .await
+                .expect("task queue compatibility fixture should be removed");
+            }
+        }
+    }
+
+    user.delete_without_events(pool.get_ref())
+        .await
+        .expect("task queue compatibility user should be removed");
 }
 
 #[actix_web::test]

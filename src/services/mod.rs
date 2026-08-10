@@ -11,6 +11,7 @@ mod objects;
 pub(crate) mod related_filter_authorization;
 pub(crate) mod relation_queries;
 mod storage_boundary;
+pub(crate) mod tasks;
 pub(crate) mod unified_search;
 
 pub use class_relations::ClassRelationService;
