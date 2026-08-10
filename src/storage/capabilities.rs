@@ -113,9 +113,7 @@ pub(crate) mod service_account {
 
 pub(crate) mod task {
     pub(crate) use crate::storage::postgres::operations::task::{
-        TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate, insert_import_results,
-        list_backup_task_output_summaries, list_export_task_output_summaries,
-        list_tasks_with_total_count, task_event_responses,
+        TaskBackend, TaskStateUpdate, insert_import_results,
     };
 }
 

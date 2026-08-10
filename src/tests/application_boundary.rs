@@ -242,6 +242,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "TokenRetentionStorage",
         "HistoryStorage",
         "UnifiedSearchStorage",
+        "TaskQueueStorage",
         "WorkflowStorage",
         "OperationalStorage",
         "sealed::CertifiedStorageBackend",
@@ -298,6 +299,24 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         compact_context.contains("\"object_aggregates\",\"aggregate\""),
         "object aggregation must use the common storage observer"
     );
+    for operation in [
+        "create",
+        "get_access",
+        "list",
+        "list_events",
+        "list_import_results",
+        "list_export_outputs",
+        "list_backup_outputs",
+        "get_export_summary",
+        "get_backup_summary",
+        "get_export_output",
+        "get_backup_output",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"tasks\",\"{operation}\"")),
+            "task queue operation {operation} must use the common storage observer"
+        );
+    }
     for operation in [
         "list_classes",
         "list_objects",

@@ -52,6 +52,9 @@ impl From<MemoryStorageModelError> for StorageError {
             ApiError::PreconditionFailed(message, current_etag) => {
                 Self::new(StorageErrorKind::PreconditionFailed, message, current_etag)
             }
+            ApiError::TooManyRequests(message) => {
+                Self::new(StorageErrorKind::TooManyRequests, message, None)
+            }
             ApiError::ServiceUnavailable(message) => {
                 Self::new(StorageErrorKind::Unavailable, message, None)
             }

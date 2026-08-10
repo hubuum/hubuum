@@ -453,7 +453,7 @@ mod tests {
         assert!(!json.contains("treetop-token"));
         assert!(json.contains("\"configured\":true"));
         assert!(json.contains("\"backend\":\"postgresql\""));
-        assert!(json.contains("\"contract_version\":8"));
+        assert!(json.contains("\"contract_version\":9"));
         assert!(json.contains("\"catalog_queries\""));
         assert!(json.contains("\"computed_object_queries\""));
         assert!(json.contains("\"computed_field_lifecycle\""));
@@ -461,6 +461,7 @@ mod tests {
         assert!(json.contains("\"relation_queries\""));
         assert!(json.contains("\"temporal_history\""));
         assert!(json.contains("\"unified_search\""));
+        assert!(json.contains("\"task_queue\""));
         assert!(!debug.contains("secret-password"));
         assert!(!debug.contains("correct horse battery staple"));
     }

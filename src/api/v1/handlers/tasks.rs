@@ -13,10 +13,11 @@ use crate::pagination::{
     count_query_options, known_count_or_skipped, paginate_in_memory, prepare_db_pagination,
 };
 use crate::permissions::AppContext;
-use crate::permissions::{AuthzTarget, PermissionDecision, PrincipalRef};
-use crate::storage::capabilities::task::{
-    TaskBackend, list_backup_task_output_summaries, list_export_task_output_summaries,
-    list_tasks_with_total_count, task_event_responses,
+use crate::permissions::{PermissionDecision, PrincipalRef};
+use crate::services::tasks::{
+    backup_output_summary, export_output_summary, list_backup_output_summaries,
+    list_export_output_summaries, list_task_events, list_tasks, load_authorized_task,
+    task_resource,
 };
 use crate::tasks::ensure_task_worker_running;
 
@@ -118,34 +119,27 @@ pub async fn get_tasks(
         None
     };
     let (tasks, total_count) = if backend.supports_storage_visibility_filtering() {
-        list_tasks_with_total_count(
+        list_tasks(
             &context,
             submitted_by_filter,
-            filters.kind.map(TaskKind::as_str),
-            filters.status.map(TaskStatus::as_str),
-            &search_params,
+            filters.kind,
+            filters.status,
+            search_params.clone(),
         )
         .await?
     } else {
         let mut candidate_options = count_query_options(&params);
         candidate_options.include_total = false;
-        let (candidates, _) = list_tasks_with_total_count(
+        let (candidates, _) = list_tasks(
             &context,
             submitted_by_filter,
-            filters.kind.map(TaskKind::as_str),
-            filters.status.map(TaskStatus::as_str),
-            &candidate_options,
+            filters.kind,
+            filters.status,
+            candidate_options,
         )
         .await?;
-        let resources = candidates
-            .iter()
-            .map(|task| task.to_resource_ref(&context))
-            .collect::<Vec<_>>();
-        let mut task_resources = Vec::with_capacity(resources.len());
-        for resource in resources {
-            task_resources.push(resource.await?);
-        }
-        let decisions = backend.authorize_tasks(&principal, &task_resources).await?;
+        let resources = candidates.iter().map(task_resource).collect::<Vec<_>>();
+        let decisions = backend.authorize_tasks(&principal, &resources).await?;
         let authorized = candidates
             .into_iter()
             .zip(decisions)
@@ -159,7 +153,7 @@ pub async fn get_tasks(
         .filter(|task| task.kind == TaskKind::Export.as_str())
         .map(|task| task.id)
         .collect::<Vec<_>>();
-    let export_outputs = list_export_task_output_summaries(&context, &export_task_ids)
+    let export_outputs = list_export_output_summaries(&context, export_task_ids)
         .await?
         .into_iter()
         .map(|output| (output.task_id, output))
@@ -169,7 +163,7 @@ pub async fn get_tasks(
         .filter(|task| task.kind == TaskKind::Backup.as_str())
         .map(|task| task.id)
         .collect::<Vec<_>>();
-    let backup_outputs = list_backup_task_output_summaries(&context, &backup_task_ids)
+    let backup_outputs = list_backup_output_summaries(&context, backup_task_ids)
         .await?
         .into_iter()
         .map(|output| (output.task_id, output))
@@ -228,31 +222,14 @@ pub async fn get_task(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    let task = if context.permission_backend().uses_local_permission_store() {
-        task_id
-            .load_authorized(&context, &requestor.principal)
-            .await?
-    } else {
-        let task = task_id.find_record(&context).await?;
-        let principal = PrincipalRef::load(&context, &requestor.principal).await?;
-        let resource = task.to_resource_ref(&context).await?;
-        if context
-            .permission_backend()
-            .authorize_task(&principal, &resource)
-            .await?
-            != PermissionDecision::Allow
-        {
-            return Err(ApiError::Forbidden("Permission denied".to_string()));
-        }
-        task
-    };
+    let task = load_authorized_task(&context, &requestor.principal, task_id).await?;
     let export_output = if task.kind == TaskKind::Export.as_str() {
-        task.find_export_output_summary(&context).await?
+        export_output_summary(&context, task_id).await?
     } else {
         ExportOutputLookup::Missing
     };
     let backup_output = if task.kind == TaskKind::Backup.as_str() {
-        task.find_backup_output_summary(&context).await?
+        backup_output_summary(&context, task_id).await?
     } else {
         BackupOutputLookup::Missing
     };
@@ -286,28 +263,9 @@ pub async fn get_task_events(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    if context.permission_backend().uses_local_permission_store() {
-        task_id
-            .load_authorized(&context, &requestor.principal)
-            .await?;
-    } else {
-        let task = task_id.find_record(&context).await?;
-        let principal = PrincipalRef::load(&context, &requestor.principal).await?;
-        let resource = task.to_resource_ref(&context).await?;
-        if context
-            .permission_backend()
-            .authorize_task(&principal, &resource)
-            .await?
-            != PermissionDecision::Allow
-        {
-            return Err(ApiError::Forbidden("Permission denied".to_string()));
-        }
-    }
+    load_authorized_task(&context, &requestor.principal, task_id).await?;
     let (params, _) = parse_query_parameter_with_passthrough(req.query_string(), &[])?;
     let search_params = prepare_db_pagination::<TaskEventResponse>(&params)?;
-    let (events, total_count) = task_id
-        .list_events_with_total_count(&context, &search_params)
-        .await?;
-    let events = task_event_responses(&context, events).await?;
+    let (events, total_count) = list_task_events(&context, task_id, search_params).await?;
     ApiResponse::paginated(events, total_count, &params)
 }

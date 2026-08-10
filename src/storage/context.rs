@@ -25,17 +25,21 @@ use crate::storage::{
     ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage, ReadinessSnapshot,
     RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
     RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
-    StorageBackend, StorageBackendDescriptor, StorageClass, StorageClassComputationState,
-    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageComputedFieldDefinition,
-    StorageComputedFieldMutation, StorageComputedFieldPage, StorageComputedFieldRebuildRequest,
-    StorageComputedObject, StorageError, StorageObject, StorageObjectAggregatePage,
-    StorageObjectGraphRow, StorageObjectRelation, StoragePersonalComputedFieldCreate,
-    StoragePersonalComputedFieldDelete, StoragePersonalComputedFieldListQuery,
-    StoragePersonalComputedFieldUpdate, StoragePoolState, StorageRelatedObjectForRootRow,
-    StorageRelatedObjectIncludeRow, StorageSharedComputedFieldCreate,
-    StorageSharedComputedFieldDelete, StorageSharedComputedFieldUpdate, TaskGaugeSnapshot,
-    TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
-    UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageBackend, StorageBackendDescriptor, StorageBackupOutput, StorageBackupOutputSummary,
+    StorageClass, StorageClassComputationState, StorageClassGraphRow, StorageClassRelation,
+    StorageCollection, StorageComputedFieldDefinition, StorageComputedFieldMutation,
+    StorageComputedFieldPage, StorageComputedFieldRebuildRequest, StorageComputedObject,
+    StorageError, StorageExportOutput, StorageExportOutputSummary, StorageImportTaskResultPage,
+    StorageObject, StorageObjectAggregatePage, StorageObjectGraphRow, StorageObjectRelation,
+    StoragePersonalComputedFieldCreate, StoragePersonalComputedFieldDelete,
+    StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
+    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
+    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskAccess, StorageTaskCreateRequest,
+    StorageTaskEventPage, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage,
+    StorageTaskPageQuery, TaskGaugeSnapshot, TaskQueueStorage, TokenRetentionStorage,
+    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
+    UnifiedSearchStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
@@ -603,6 +607,154 @@ impl ComputedObjectStorage for StorageHandle {
             match &self.implementation {
                 BackendImplementation::Postgresql(backend) => {
                     backend.enrich_objects_with_computed(query).await
+                }
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl TaskQueueStorage for StorageHandle {
+    async fn create_task(
+        &self,
+        request: StorageTaskCreateRequest,
+    ) -> Result<StorageTask, StorageError> {
+        observe_storage_call(self.backend_name(), "tasks", "create", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.create_task(request).await,
+            }
+        })
+        .await
+    }
+
+    async fn get_task_access(&self, task_id: i32) -> Result<StorageTaskAccess, StorageError> {
+        observe_storage_call(self.backend_name(), "tasks", "get_access", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.get_task_access(task_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_tasks(
+        &self,
+        query: StorageTaskListQuery,
+    ) -> Result<StorageTaskPage, StorageError> {
+        observe_storage_call(self.backend_name(), "tasks", "list", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.list_tasks(query).await,
+            }
+        })
+        .await
+    }
+
+    async fn list_task_events(
+        &self,
+        query: StorageTaskPageQuery,
+    ) -> Result<StorageTaskEventPage, StorageError> {
+        observe_storage_call(self.backend_name(), "tasks", "list_events", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.list_task_events(query).await,
+            }
+        })
+        .await
+    }
+
+    async fn list_import_task_results(
+        &self,
+        query: StorageTaskPageQuery,
+    ) -> Result<StorageImportTaskResultPage, StorageError> {
+        observe_storage_call(self.backend_name(), "tasks", "list_import_results", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_import_task_results(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_export_output_summaries(
+        &self,
+        task_ids: Vec<i32>,
+    ) -> Result<Vec<StorageExportOutputSummary>, StorageError> {
+        observe_storage_call(self.backend_name(), "tasks", "list_export_outputs", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_export_output_summaries(task_ids).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn list_backup_output_summaries(
+        &self,
+        task_ids: Vec<i32>,
+    ) -> Result<Vec<StorageBackupOutputSummary>, StorageError> {
+        observe_storage_call(self.backend_name(), "tasks", "list_backup_outputs", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_backup_output_summaries(task_ids).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn get_export_output_summary(
+        &self,
+        task_id: i32,
+    ) -> Result<StorageTaskOutputLookup<StorageExportOutputSummary>, StorageError> {
+        observe_storage_call(self.backend_name(), "tasks", "get_export_summary", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.get_export_output_summary(task_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn get_backup_output_summary(
+        &self,
+        task_id: i32,
+    ) -> Result<StorageTaskOutputLookup<StorageBackupOutputSummary>, StorageError> {
+        observe_storage_call(self.backend_name(), "tasks", "get_backup_summary", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.get_backup_output_summary(task_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn get_export_output(
+        &self,
+        task_id: i32,
+    ) -> Result<StorageTaskOutputLookup<StorageExportOutput>, StorageError> {
+        observe_storage_call(self.backend_name(), "tasks", "get_export_output", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.get_export_output(task_id).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn get_backup_output(
+        &self,
+        task_id: i32,
+    ) -> Result<StorageTaskOutputLookup<StorageBackupOutput>, StorageError> {
+        observe_storage_call(self.backend_name(), "tasks", "get_backup_output", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.get_backup_output(task_id).await
                 }
             }
         })

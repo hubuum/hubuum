@@ -38,17 +38,16 @@ use crate::permissions::{
 };
 use crate::services::catalog as catalog_service;
 use crate::services::relation_queries;
-use crate::storage::StorageContext;
+use crate::services::tasks::{TaskSubmission, submit_task, task_scope_snapshot};
 use crate::storage::capabilities::UserPermissions;
 use crate::storage::capabilities::authz::{scope_allows, scope_allows_resource};
 use crate::storage::capabilities::relations::{
     class_relation_authorization_resources, object_authorization_resources,
     object_relation_authorization_resources,
 };
-use crate::storage::capabilities::task::{
-    TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate,
-};
+use crate::storage::capabilities::task::{TaskBackend, TaskStateUpdate};
 use crate::storage::capabilities::with_statement_timeout_scope;
+use crate::storage::{StorageContext, StorageTaskScopeSnapshot};
 use crate::tasks::request_hash;
 use crate::traits::{AuthzSubject, SelfAccessors};
 use crate::utilities::exporting::render_template;
@@ -955,7 +954,7 @@ pub(crate) struct ExportTaskSubmission {
     export: ExportRequest,
     template: Option<ExportTemplate>,
     idempotency_key: Option<IdempotencyKey>,
-    scope_snapshot: TaskScopeSnapshot,
+    scope_snapshot: StorageTaskScopeSnapshot,
 }
 
 impl ExportTaskSubmission {
@@ -968,7 +967,7 @@ impl ExportTaskSubmission {
             export,
             template: None,
             idempotency_key: None,
-            scope_snapshot: TaskScopeSnapshot::from_request(Some(token_id), scopes),
+            scope_snapshot: task_scope_snapshot(Some(token_id), scopes),
         }
     }
 
@@ -1093,18 +1092,25 @@ fn runtime_to_task_payload(runtime: &ExportRuntime) -> Result<StoredExportTaskPa
 async fn find_or_create_export_task(
     pool: &impl crate::storage::StorageContext,
     submitted_by: PrincipalID,
-    snapshot: TaskScopeSnapshot,
+    snapshot: StorageTaskScopeSnapshot,
     idempotency_key: Option<IdempotencyKey>,
     payload: serde_json::Value,
     request_hash_value: String,
 ) -> Result<TaskRecord, ApiError> {
-    TaskCreateRequest::builder(TaskKind::Export, submitted_by, payload, 1)
+    submit_task(
+        pool,
+        TaskSubmission::new(
+            TaskKind::Export,
+            submitted_by,
+            payload,
+            1,
+            max_active_export_tasks_per_user(),
+        )
         .idempotency_key(idempotency_key)
         .request_hash(Some(request_hash_value))
-        .scope_snapshot(snapshot)
-        .build()
-        .create_idempotently_with_active_limit(pool, max_active_export_tasks_per_user())
-        .await
+        .scope_snapshot(snapshot),
+    )
+    .await
 }
 
 pub(crate) async fn execute_export_task<C>(

@@ -26,6 +26,7 @@ use crate::models::{
 };
 use crate::observability::metrics;
 use crate::pagination::{CursorValue, decode_cursor_values, page_limits_or_defaults};
+#[cfg(test)]
 use crate::storage::postgres::operations::history::resolve_principal_names;
 use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
 use crate::storage::postgres::{with_connection, with_transaction};
@@ -123,6 +124,18 @@ impl TaskScopeSnapshot {
 
     pub fn unscoped() -> Self {
         Self::from_request(None, None)
+    }
+
+    pub(in crate::storage::postgres) fn from_persisted(
+        token_id: Option<i32>,
+        scoped: bool,
+        scopes: serde_json::Value,
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
+            token_id: token_id.map(TokenID::new).transpose()?,
+            scoped,
+            scopes,
+        })
     }
 }
 
@@ -998,10 +1011,30 @@ pub async fn list_tasks_with_total_count(
 
 /// Enrich one task-event page with legacy queued-event initiators and one
 /// batched principal-name lookup.
+#[cfg(test)]
 pub(crate) async fn task_event_responses(
     pool: &impl crate::storage::StorageContext,
-    mut records: Vec<TaskEventRecord>,
+    records: Vec<TaskEventRecord>,
 ) -> Result<Vec<crate::models::TaskEventResponse>, ApiError> {
+    let records = enrich_legacy_task_event_initiators(pool, records).await?;
+    let principal_ids = records
+        .iter()
+        .flat_map(|record| [record.actor_user_id, record.initiator_user_id])
+        .flatten()
+        .collect();
+    let principal_names = resolve_principal_names(pool, principal_ids).await?;
+    Ok(records
+        .into_iter()
+        .map(|record| {
+            crate::models::TaskEventResponse::from_record_with_names(record, &principal_names)
+        })
+        .collect())
+}
+
+pub(crate) async fn enrich_legacy_task_event_initiators(
+    pool: &impl crate::storage::StorageContext,
+    mut records: Vec<TaskEventRecord>,
+) -> Result<Vec<TaskEventRecord>, ApiError> {
     use crate::schema::events::dsl as stored;
 
     let legacy_task_ids = records
@@ -1039,18 +1072,7 @@ pub(crate) async fn task_event_responses(
         }
     }
 
-    let principal_ids = records
-        .iter()
-        .flat_map(|record| [record.actor_user_id, record.initiator_user_id])
-        .flatten()
-        .collect();
-    let principal_names = resolve_principal_names(pool, principal_ids).await?;
-    Ok(records
-        .into_iter()
-        .map(|record| {
-            crate::models::TaskEventResponse::from_record_with_names(record, &principal_names)
-        })
-        .collect())
+    Ok(records)
 }
 
 pub async fn list_export_task_output_summaries(
