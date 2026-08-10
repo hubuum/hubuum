@@ -6,7 +6,7 @@ use crate::models::{
     ClassGraphRow, Collection, ExportIncludeRelatedQuery, Group, HubuumClass, HubuumClassExpanded,
     HubuumClassRelation, HubuumObject, HubuumObjectRelation, ObjectAggregateBackendRequest,
     ObjectAggregatePage, Permissions, RelatedObjectForRootRow, RelatedObjectGraphRow,
-    RelatedObjectIncludeRow, UnifiedSearchSpec, User, UserID,
+    RelatedObjectIncludeRow, StructuredSearchExpression, UnifiedSearchSpec, User, UserID,
 };
 
 use crate::db::DbPool;
@@ -60,6 +60,44 @@ pub trait Search: UserCollectionAccessors {
             .await
     }
 
+    async fn search_structured_collections<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<Collection>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_structured_collections_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
+    }
+
+    async fn count_structured_collections<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<i64, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.count_structured_collections_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
+    }
+
     async fn search_classes<C>(
         &self,
         backend: &C,
@@ -86,6 +124,44 @@ pub trait Search: UserCollectionAccessors {
             .await
     }
 
+    async fn search_structured_classes<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_structured_classes_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
+    }
+
+    async fn count_structured_classes<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<i64, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.count_structured_classes_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
+    }
+
     async fn search_objects<C>(
         &self,
         backend: &C,
@@ -110,6 +186,44 @@ pub trait Search: UserCollectionAccessors {
     {
         self.count_objects_from_backend(backend.db_pool(), query_options, scopes)
             .await
+    }
+
+    async fn search_structured_objects<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<HubuumObject>, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.search_structured_objects_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
+    }
+
+    async fn count_structured_objects<C>(
+        &self,
+        backend: &C,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<i64, ApiError>
+    where
+        C: BackendContext + ?Sized,
+    {
+        self.count_structured_objects_from_backend(
+            backend.db_pool(),
+            query_options,
+            expression,
+            scopes,
+        )
+        .await
     }
 
     async fn search_class_relations<C>(

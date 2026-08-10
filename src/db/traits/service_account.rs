@@ -7,6 +7,7 @@ use crate::db::traits::principal::{
 };
 use crate::db::traits::task::{QueuedTaskCancellation, cancel_queued_tasks_conn};
 use crate::db::traits::token::revoke_all_tokens_for_principal_conn;
+use crate::db::traits::user::search::structured_direct_filter_predicate;
 use crate::db::{DbConnection, DbPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::{Action, EntityType, EventContext, NewEvent, emit_event};
@@ -14,8 +15,9 @@ use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::principal::{NewPrincipal, Principal, PrincipalID, PrincipalKind};
 use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{
-    NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountWithName, TaskKind,
-    TaskRecord, TaskStatus, UpdateServiceAccount,
+    NewServiceAccount, ServiceAccount, ServiceAccountID, ServiceAccountWithName,
+    StructuredSearchExpression, StructuredSearchResourceKind, TaskKind, TaskRecord, TaskStatus,
+    UpdateServiceAccount,
 };
 use crate::schema::service_accounts;
 use crate::traits::accessors::InstanceAdapter;
@@ -548,6 +550,46 @@ pub async fn search_manageable_service_accounts<S>(
 where
     S: AuthzSubject + ?Sized,
 {
+    search_manageable_service_accounts_with_expression(
+        pool,
+        requestor,
+        is_admin,
+        query_options,
+        None,
+    )
+    .await
+}
+
+pub async fn search_structured_manageable_service_accounts<S>(
+    pool: &DbPool,
+    requestor: &S,
+    is_admin: bool,
+    query_options: QueryOptions,
+    expression: Option<&StructuredSearchExpression>,
+) -> Result<Vec<ServiceAccountWithName>, ApiError>
+where
+    S: AuthzSubject + ?Sized,
+{
+    search_manageable_service_accounts_with_expression(
+        pool,
+        requestor,
+        is_admin,
+        query_options,
+        expression,
+    )
+    .await
+}
+
+async fn search_manageable_service_accounts_with_expression<S>(
+    pool: &DbPool,
+    requestor: &S,
+    is_admin: bool,
+    query_options: QueryOptions,
+    expression: Option<&StructuredSearchExpression>,
+) -> Result<Vec<ServiceAccountWithName>, ApiError>
+where
+    S: AuthzSubject + ?Sized,
+{
     use crate::schema::identity_scopes;
     use crate::schema::principals;
     use crate::schema::service_accounts::dsl::{
@@ -589,6 +631,13 @@ where
         }
     }
 
+    if let Some(expression) = expression {
+        base_query = base_query.filter(structured_direct_filter_predicate(
+            expression,
+            StructuredSearchResourceKind::ServiceAccount,
+        )?);
+    }
+
     apply_query_options!(base_query, query_options, ServiceAccountWithName);
 
     let rows = with_connection(pool, async |conn| {
@@ -620,6 +669,46 @@ pub async fn count_manageable_service_accounts<S>(
     requestor: &S,
     is_admin: bool,
     query_options: QueryOptions,
+) -> Result<i64, ApiError>
+where
+    S: AuthzSubject + ?Sized,
+{
+    count_manageable_service_accounts_with_expression(
+        pool,
+        requestor,
+        is_admin,
+        query_options,
+        None,
+    )
+    .await
+}
+
+pub async fn count_structured_manageable_service_accounts<S>(
+    pool: &DbPool,
+    requestor: &S,
+    is_admin: bool,
+    query_options: QueryOptions,
+    expression: Option<&StructuredSearchExpression>,
+) -> Result<i64, ApiError>
+where
+    S: AuthzSubject + ?Sized,
+{
+    count_manageable_service_accounts_with_expression(
+        pool,
+        requestor,
+        is_admin,
+        query_options,
+        expression,
+    )
+    .await
+}
+
+async fn count_manageable_service_accounts_with_expression<S>(
+    pool: &DbPool,
+    requestor: &S,
+    is_admin: bool,
+    query_options: QueryOptions,
+    expression: Option<&StructuredSearchExpression>,
 ) -> Result<i64, ApiError>
 where
     S: AuthzSubject + ?Sized,
@@ -663,6 +752,13 @@ where
                 )));
             }
         }
+    }
+
+    if let Some(expression) = expression {
+        base_query = base_query.filter(structured_direct_filter_predicate(
+            expression,
+            StructuredSearchResourceKind::ServiceAccount,
+        )?);
     }
 
     with_connection(pool, async |conn| {

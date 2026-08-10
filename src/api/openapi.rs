@@ -182,6 +182,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         relations::create_object_relation,
         relations::delete_object_relation,
         search::get_search,
+        search::post_search,
         search::stream_search,
         exports::run_export,
         exports::get_export,
@@ -1838,6 +1839,64 @@ mod tests {
         assert!(schema["description"]
             .as_str()
             .is_some_and(|description| description.contains("final root must remain an object")));
+    }
+
+    #[test]
+    fn structured_search_schema_documents_protocol_targets_and_bounds() {
+        let json = openapi_json();
+        let operation = json
+            .pointer("/paths/~1api~1v1~1search/post")
+            .expect("structured search operation");
+        assert_eq!(
+            operation
+                .pointer("/requestBody/content/application~1json/schema/$ref")
+                .and_then(Value::as_str),
+            Some("#/components/schemas/StructuredSearchRequest")
+        );
+        for status in ["200", "400", "401", "403", "404", "413", "415"] {
+            assert!(
+                operation["responses"].get(status).is_some(),
+                "missing documented structured-search response {status}"
+            );
+        }
+
+        let request = &json["components"]["schemas"]["StructuredSearchRequest"];
+        assert_eq!(request["properties"]["version"]["minimum"], 1);
+        assert_eq!(request["properties"]["version"]["maximum"], 1);
+        assert_eq!(request["properties"]["limit"]["minimum"], 1);
+        assert_eq!(request["properties"]["sort"]["maxItems"], 8);
+        assert!(request["example"].is_object());
+
+        let targets =
+            serde_json::to_string(&json["components"]["schemas"]["StructuredSearchTarget"])
+                .unwrap();
+        for target in [
+            "collection",
+            "class",
+            "object",
+            "audit_event",
+            "user",
+            "group",
+            "service_account",
+        ] {
+            assert!(targets.contains(&format!("\"{target}\"")));
+        }
+
+        let related = &json["components"]["schemas"]["StructuredRelatedPredicate"];
+        assert_eq!(related["properties"]["depth"]["minimum"], 1);
+        assert_eq!(related["properties"]["depth"]["maximum"], 10);
+        assert_eq!(related["properties"]["filters"]["maxItems"], 16);
+
+        let expressions = json["components"]["schemas"]["StructuredSearchExpression"]["oneOf"]
+            .as_array()
+            .expect("structured expression variants");
+        assert_eq!(expressions.len(), 5);
+        assert!(
+            expressions
+                .iter()
+                .all(|expression| expression["maxProperties"] == 2),
+            "expression schemas must reject unknown properties"
+        );
     }
 
     #[test]

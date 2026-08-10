@@ -9,6 +9,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Added a read-only, versioned `POST /api/v1/search` DSL for collections,
+  classes, objects, audit events, users, groups, and service accounts. It
+  supports typed `and`/`or`/`not`, target-specific fields, stable
+  fingerprint-bound cursors, optional exact totals, audit redaction, and
+  equivalent permission-aware behavior for SQL and external policy backends.
+  Object searches additionally support an optional exact class selector and
+  bounded existential related-object predicates.
 - Class object lists now accept up to four named `related.<alias>` filter
   groups. Each group selects one target class, normal target-object fields, and
   an optional bidirectional depth up to 10; groups are combined with `AND`, and
@@ -33,6 +40,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   consumers must pin and maintain internal interfaces themselves or migrate to
   the client. The server, admin, and OpenAPI binaries now call narrow internal
   library entrypoints, and the library owns API/worker/all runtime composition.
+
+### Fixed
+
+- Structured search now accepts its documented dotted JSON paths, rejects
+  unknown properties on every expression node, and never emits a wrapped
+  cursor too large to reuse in the same compact request.
+- External-policy structured class and object searches now require parent
+  collection visibility in addition to the resource-specific read permission,
+  matching SQL-backed search behavior. Related-object traversal applies the
+  same conjunctive visibility rule to every object it examines.
 
 ## [0.0.9] - 2026-08-07
 

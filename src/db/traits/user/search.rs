@@ -17,6 +17,10 @@ use crate::models::search::{
     RelatedClassField, RelatedFilterTarget, RelatedObjectField, SQLComponent, SQLValue,
 };
 use crate::models::token_scope::TokenScope;
+use crate::models::{
+    MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES, StructuredSearchExpression, StructuredSearchField,
+    StructuredSearchResourceKind,
+};
 use crate::permissions::visibility::{
     AuthorizedObjectIds, authorize_all_candidates, authorize_resource_permissions,
 };
@@ -64,6 +68,10 @@ pub struct ObjectQueryPlan<'a>(ObjectQueryPlanKind<'a>);
 
 enum ObjectQueryPlanKind<'a> {
     Ordinary(QueryOptions),
+    Structured {
+        options: QueryOptions,
+        expression: Option<&'a StructuredSearchExpression>,
+    },
     Computed {
         options: QueryOptions,
         snapshot: &'a ComputedQuerySnapshot,
@@ -74,6 +82,9 @@ enum ObjectQueryPlanKind<'a> {
 #[derive(Clone, Copy)]
 enum ObjectQueryMode<'a> {
     Ordinary,
+    Structured {
+        expression: Option<&'a StructuredSearchExpression>,
+    },
     Computed {
         snapshot: &'a ComputedQuerySnapshot,
         authorized_object_ids: Option<&'a AuthorizedObjectIds>,
@@ -84,7 +95,7 @@ impl<'a> ObjectQueryMode<'a> {
     fn snapshot(self) -> Result<&'a ComputedQuerySnapshot, ApiError> {
         match self {
             Self::Computed { snapshot, .. } => Ok(snapshot),
-            Self::Ordinary => Err(ApiError::BadRequest(
+            Self::Ordinary | Self::Structured { .. } => Err(ApiError::BadRequest(
                 "Computed object queries require a resolved query plan".to_string(),
             )),
         }
@@ -96,7 +107,14 @@ impl<'a> ObjectQueryMode<'a> {
                 authorized_object_ids,
                 ..
             } => authorized_object_ids,
-            Self::Ordinary => None,
+            Self::Ordinary | Self::Structured { .. } => None,
+        }
+    }
+
+    const fn structured_expression(self) -> Option<&'a StructuredSearchExpression> {
+        match self {
+            Self::Structured { expression } => expression,
+            Self::Ordinary | Self::Computed { .. } => None,
         }
     }
 }
@@ -127,6 +145,20 @@ impl<'a> ObjectQueryPlan<'a> {
         })
     }
 
+    fn structured(
+        options: QueryOptions,
+        expression: Option<&'a StructuredSearchExpression>,
+    ) -> Result<Self, ApiError> {
+        let plan = Self::ordinary(options)?;
+        let ObjectQueryPlanKind::Ordinary(options) = plan.0 else {
+            unreachable!("ordinary query plan has ordinary variant")
+        };
+        Ok(Self(ObjectQueryPlanKind::Structured {
+            options,
+            expression,
+        }))
+    }
+
     fn computed_for_authorized_objects(
         options: QueryOptions,
         snapshot: &'a ComputedQuerySnapshot,
@@ -142,6 +174,10 @@ impl<'a> ObjectQueryPlan<'a> {
     fn into_parts(self) -> (QueryOptions, ObjectQueryMode<'a>) {
         match self.0 {
             ObjectQueryPlanKind::Ordinary(options) => (options, ObjectQueryMode::Ordinary),
+            ObjectQueryPlanKind::Structured {
+                options,
+                expression,
+            } => (options, ObjectQueryMode::Structured { expression }),
             ObjectQueryPlanKind::Computed {
                 options,
                 snapshot,
@@ -276,7 +312,346 @@ where
     dynamic_sql_predicate(component).map(Some)
 }
 
+async fn structured_object_filter_predicate<U>(
+    user: &U,
+    pool: &DbPool,
+    expression: &StructuredSearchExpression,
+    is_admin: bool,
+    scopes: Option<&TokenScope>,
+) -> Result<JsonSqlPredicate, ApiError>
+where
+    U: UserCollectionAccessors + ?Sized,
+{
+    let (graph_collection_ids, class_collection_ids) = if expression.contains_related() {
+        let graph_permissions =
+            PermissionsList::new([Permissions::ReadObject, Permissions::ReadObjectRelation]);
+        let graph_collection_ids = user
+            .load_collections_with_permissions_with_admin_status(
+                pool,
+                &graph_permissions,
+                is_admin,
+                scopes,
+            )
+            .await?
+            .into_iter()
+            .map(|collection| collection.id)
+            .collect::<Vec<_>>();
+        let class_permissions =
+            PermissionsList::new([Permissions::ReadClass, Permissions::ReadCollection]);
+        let class_collection_ids = user
+            .load_collections_with_permissions_with_admin_status(
+                pool,
+                &class_permissions,
+                is_admin,
+                scopes,
+            )
+            .await?
+            .into_iter()
+            .map(|collection| collection.id)
+            .collect::<Vec<_>>();
+        (graph_collection_ids, class_collection_ids)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
+    dynamic_sql_predicate(structured_expression_sql(
+        expression,
+        StructuredSearchResourceKind::Object,
+        &graph_collection_ids,
+        &class_collection_ids,
+        scopes,
+    )?)
+}
+
+pub(crate) fn structured_direct_filter_predicate(
+    expression: &StructuredSearchExpression,
+    kind: StructuredSearchResourceKind,
+) -> Result<JsonSqlPredicate, ApiError> {
+    if expression.contains_related() {
+        return Err(ApiError::BadRequest(
+            "related predicates are only supported by the object search planner".to_string(),
+        ));
+    }
+    dynamic_sql_predicate(structured_expression_sql(expression, kind, &[], &[], None)?)
+}
+
+fn structured_expression_sql(
+    expression: &StructuredSearchExpression,
+    kind: StructuredSearchResourceKind,
+    graph_collection_ids: &[i32],
+    class_collection_ids: &[i32],
+    scopes: Option<&TokenScope>,
+) -> Result<SQLComponent, ApiError> {
+    match expression {
+        StructuredSearchExpression::And { args } => structured_boolean_sql(
+            args,
+            "AND",
+            kind,
+            graph_collection_ids,
+            class_collection_ids,
+            scopes,
+        ),
+        StructuredSearchExpression::Or { args } => structured_boolean_sql(
+            args,
+            "OR",
+            kind,
+            graph_collection_ids,
+            class_collection_ids,
+            scopes,
+        ),
+        StructuredSearchExpression::Not { arg } => {
+            let component = structured_expression_sql(
+                arg,
+                kind,
+                graph_collection_ids,
+                class_collection_ids,
+                scopes,
+            )?;
+            Ok(SQLComponent {
+                sql: format!("NOT ({})", component.sql),
+                bind_variables: component.bind_variables,
+            })
+        }
+        StructuredSearchExpression::Field { predicate } => {
+            let param = predicate.query_param(kind)?;
+            let mut bind_variables = Vec::new();
+            let sql = structured_field_clause(predicate.field, kind, &param, &mut bind_variables)?;
+            Ok(SQLComponent {
+                // Structured expressions use two-valued set semantics. A SQL
+                // comparison against a nullable column or missing JSON path
+                // yields UNKNOWN; treating that as false makes structural NOT
+                // the exact complement and matches the external-policy planner.
+                sql: format!("COALESCE(({sql}), FALSE)"),
+                bind_variables,
+            })
+        }
+        StructuredSearchExpression::Related { predicate } => {
+            if graph_collection_ids.is_empty() || class_collection_ids.is_empty() {
+                return Ok(SQLComponent {
+                    sql: "FALSE".to_string(),
+                    bind_variables: Vec::new(),
+                });
+            }
+            let filters = predicate.query_params("dsl")?;
+            let groups = related_filter_groups(&filters)?;
+            build_related_object_filter_sql(
+                &groups,
+                graph_collection_ids,
+                class_collection_ids,
+                scopes,
+            )
+        }
+    }
+}
+
+fn structured_boolean_sql(
+    args: &[StructuredSearchExpression],
+    operator: &str,
+    kind: StructuredSearchResourceKind,
+    graph_collection_ids: &[i32],
+    class_collection_ids: &[i32],
+    scopes: Option<&TokenScope>,
+) -> Result<SQLComponent, ApiError> {
+    let mut sql = Vec::with_capacity(args.len());
+    let mut bind_variables = Vec::new();
+    for argument in args {
+        let component = structured_expression_sql(
+            argument,
+            kind,
+            graph_collection_ids,
+            class_collection_ids,
+            scopes,
+        )?;
+        sql.push(format!("({})", component.sql));
+        bind_variables.extend(component.bind_variables);
+    }
+    Ok(SQLComponent {
+        sql: sql.join(&format!(" {operator} ")),
+        bind_variables,
+    })
+}
+
+#[derive(Clone, Copy)]
+enum StructuredSqlField {
+    Integer(&'static str),
+    BigInteger(&'static str),
+    Date(&'static str),
+    String(&'static str),
+    Boolean(&'static str),
+    Json(&'static str),
+}
+
+fn structured_field_clause(
+    field: StructuredSearchField,
+    kind: StructuredSearchResourceKind,
+    param: &ParsedQueryParam,
+    bind_variables: &mut Vec<SQLValue>,
+) -> Result<String, ApiError> {
+    use StructuredSearchField as Field;
+    use StructuredSearchResourceKind as Kind;
+
+    let sql_field = match (kind, field) {
+        (Kind::Collection, Field::Id) => StructuredSqlField::Integer("collections.id"),
+        (Kind::Collection, Field::Name) => StructuredSqlField::String("collections.name"),
+        (Kind::Collection, Field::Description) => {
+            StructuredSqlField::String("collections.description")
+        }
+        (Kind::Collection, Field::CreatedAt) => StructuredSqlField::Date("collections.created_at"),
+        (Kind::Collection, Field::UpdatedAt) => StructuredSqlField::Date("collections.updated_at"),
+        (Kind::Collection, Field::Revision) => {
+            StructuredSqlField::BigInteger("collections.revision")
+        }
+        (Kind::Class, Field::Id) => StructuredSqlField::Integer("hubuumclass.id"),
+        (Kind::Class, Field::Name) => StructuredSqlField::String("hubuumclass.name"),
+        (Kind::Class, Field::Description) => StructuredSqlField::String("hubuumclass.description"),
+        (Kind::Class, Field::CollectionId) => {
+            StructuredSqlField::Integer("hubuumclass.collection_id")
+        }
+        (Kind::Class, Field::CreatedAt) => StructuredSqlField::Date("hubuumclass.created_at"),
+        (Kind::Class, Field::UpdatedAt) => StructuredSqlField::Date("hubuumclass.updated_at"),
+        (Kind::Class, Field::Revision) => StructuredSqlField::BigInteger("hubuumclass.revision"),
+        (Kind::Class, Field::ValidateSchema) => {
+            StructuredSqlField::Boolean("hubuumclass.validate_schema")
+        }
+        (Kind::Class, Field::JsonSchema) => StructuredSqlField::Json("hubuumclass.json_schema"),
+        (Kind::Object, Field::Id) => StructuredSqlField::Integer("hubuumobject.id"),
+        (Kind::Object, Field::Name) => StructuredSqlField::String("hubuumobject.name"),
+        (Kind::Object, Field::Description) => {
+            StructuredSqlField::String("hubuumobject.description")
+        }
+        (Kind::Object, Field::CollectionId) => {
+            StructuredSqlField::Integer("hubuumobject.collection_id")
+        }
+        (Kind::Object, Field::CreatedAt) => StructuredSqlField::Date("hubuumobject.created_at"),
+        (Kind::Object, Field::UpdatedAt) => StructuredSqlField::Date("hubuumobject.updated_at"),
+        (Kind::Object, Field::Revision) => StructuredSqlField::BigInteger("hubuumobject.revision"),
+        (Kind::Object, Field::JsonData) => StructuredSqlField::Json("hubuumobject.data"),
+        (Kind::User, Field::Id) => StructuredSqlField::Integer("users.id"),
+        (Kind::User, Field::Name) => StructuredSqlField::String("principals.name"),
+        (Kind::User, Field::IdentityScope) => StructuredSqlField::String("identity_scopes.name"),
+        (Kind::User, Field::ProperName) => StructuredSqlField::String("users.proper_name"),
+        (Kind::User, Field::Email) => StructuredSqlField::String("users.email"),
+        (Kind::User, Field::CreatedAt) => StructuredSqlField::Date("users.created_at"),
+        (Kind::User, Field::UpdatedAt) => StructuredSqlField::Date("users.updated_at"),
+        (Kind::User, Field::Revision) => StructuredSqlField::BigInteger("principals.revision"),
+        (Kind::Group, Field::Id) => StructuredSqlField::Integer("groups.id"),
+        (Kind::Group, Field::Name) => StructuredSqlField::String("groups.groupname"),
+        (Kind::Group, Field::Description) => StructuredSqlField::String("groups.description"),
+        (Kind::Group, Field::IdentityScope) => StructuredSqlField::String("identity_scopes.name"),
+        (Kind::Group, Field::ManagedBy) => StructuredSqlField::String("groups.managed_by"),
+        (Kind::Group, Field::ExternalKey) => StructuredSqlField::String("groups.external_key"),
+        (Kind::Group, Field::LastSyncAttemptedAt) => {
+            StructuredSqlField::Date("groups.last_sync_attempted_at")
+        }
+        (Kind::Group, Field::LastSyncSuccessAt) => {
+            StructuredSqlField::Date("groups.last_sync_success_at")
+        }
+        (Kind::Group, Field::CreatedAt) => StructuredSqlField::Date("groups.created_at"),
+        (Kind::Group, Field::UpdatedAt) => StructuredSqlField::Date("groups.updated_at"),
+        (Kind::Group, Field::Revision) => StructuredSqlField::BigInteger("groups.revision"),
+        (Kind::ServiceAccount, Field::Id) => StructuredSqlField::Integer("service_accounts.id"),
+        (Kind::ServiceAccount, Field::Name) => StructuredSqlField::String("principals.name"),
+        (Kind::ServiceAccount, Field::Description) => {
+            StructuredSqlField::String("service_accounts.description")
+        }
+        (Kind::ServiceAccount, Field::IdentityScope) => {
+            StructuredSqlField::String("identity_scopes.name")
+        }
+        (Kind::ServiceAccount, Field::OwnerGroupId) => {
+            StructuredSqlField::Integer("service_accounts.owner_group_id")
+        }
+        (Kind::ServiceAccount, Field::CreatedBy) => {
+            StructuredSqlField::Integer("service_accounts.created_by")
+        }
+        (Kind::ServiceAccount, Field::DisabledAt) => {
+            StructuredSqlField::Date("service_accounts.disabled_at")
+        }
+        (Kind::ServiceAccount, Field::CreatedAt) => {
+            StructuredSqlField::Date("service_accounts.created_at")
+        }
+        (Kind::ServiceAccount, Field::UpdatedAt) => {
+            StructuredSqlField::Date("service_accounts.updated_at")
+        }
+        (Kind::ServiceAccount, Field::Revision) => {
+            StructuredSqlField::BigInteger("principals.revision")
+        }
+        (Kind::AuditEvent, Field::Id) => StructuredSqlField::BigInteger("events.id"),
+        (Kind::AuditEvent, Field::OccurredAt) => StructuredSqlField::Date("events.occurred_at"),
+        (Kind::AuditEvent, Field::EntityType) => StructuredSqlField::String("events.entity_type"),
+        (Kind::AuditEvent, Field::EntityId) => StructuredSqlField::Integer("events.entity_id"),
+        (Kind::AuditEvent, Field::EntityName) => StructuredSqlField::String("events.entity_name"),
+        (Kind::AuditEvent, Field::CollectionId) => {
+            StructuredSqlField::Integer("events.collection_id")
+        }
+        (Kind::AuditEvent, Field::Action) => StructuredSqlField::String("events.action"),
+        (Kind::AuditEvent, Field::ActorKind) => StructuredSqlField::String("events.actor_kind"),
+        (Kind::AuditEvent, Field::ActorUserId) => {
+            StructuredSqlField::Integer("events.actor_user_id")
+        }
+        (Kind::AuditEvent, Field::InitiatorUserId) => {
+            StructuredSqlField::Integer("events.initiator_user_id")
+        }
+        (Kind::AuditEvent, Field::Summary) => StructuredSqlField::String("events.summary"),
+        (Kind::AuditEvent, Field::Metadata) => StructuredSqlField::Json("events.metadata"),
+        _ => {
+            return Err(ApiError::BadRequest(format!(
+                "field '{field:?}' is not searchable for target kind '{}'",
+                kind.as_str()
+            )));
+        }
+    };
+
+    let column = match sql_field {
+        StructuredSqlField::Integer(column)
+        | StructuredSqlField::BigInteger(column)
+        | StructuredSqlField::Date(column)
+        | StructuredSqlField::String(column)
+        | StructuredSqlField::Boolean(column)
+        | StructuredSqlField::Json(column) => column,
+    };
+    let (operator, negated) = param.operator.op_and_neg();
+    if operator == Operator::IsNull && !matches!(sql_field, StructuredSqlField::Json(_)) {
+        let should_be_null = param.value_as_boolean()? != negated;
+        return Ok(format!(
+            "{column} IS {}NULL",
+            if should_be_null { "" } else { "NOT " }
+        ));
+    }
+
+    match sql_field {
+        StructuredSqlField::Integer(_) => related_integer_clause(param, column, bind_variables),
+        StructuredSqlField::BigInteger(_) => related_revision_clause(param, column, bind_variables),
+        StructuredSqlField::Date(_) => related_date_clause(param, column, bind_variables),
+        StructuredSqlField::String(_) => related_string_clause(param, column, bind_variables),
+        StructuredSqlField::Boolean(_) => related_boolean_clause(param, column, bind_variables),
+        StructuredSqlField::Json(_) => {
+            let mut json_param = param.clone();
+            json_param.field = FilterField::JsonData;
+            let predicate = json_param.as_json_sql_for_field_expr(column)?;
+            bind_variables.extend(predicate.bind_variables);
+            Ok(format!("({})", predicate.sql))
+        }
+    }
+}
+
+fn related_boolean_clause(
+    param: &ParsedQueryParam,
+    column: &str,
+    bind_variables: &mut Vec<SQLValue>,
+) -> Result<String, ApiError> {
+    let (operator, negated) = param.operator.op_and_neg();
+    if operator != Operator::Equals {
+        return Err(ApiError::OperatorMismatch(format!(
+            "Operator '{}' is not implemented for boolean field '{}'",
+            param.operator, param.field
+        )));
+    }
+    bind_variables.push(SQLValue::Boolean(param.value_as_boolean()?));
+    Ok(wrap_negated(format!("{column} = ?"), negated))
+}
+
 /// Dependencies and caller scope for external-policy related filtering.
+#[derive(Clone, Copy)]
 pub(crate) struct ExternalRelatedFilterAuthorization<'a> {
     pool: &'a DbPool,
     permission_backend: &'a dyn PermissionBackend,
@@ -374,7 +749,7 @@ where
             authorization.principal,
             target_candidates,
             authorization.scopes,
-            vec![Permissions::ReadObject],
+            vec![Permissions::ReadObject, Permissions::ReadCollection],
             HubuumObject::authorization_resource,
         )
         .await?;
@@ -402,6 +777,195 @@ where
     }
 
     AuthorizedObjectIds::new(intersection.unwrap_or_default()).map(Some)
+}
+
+/// Evaluate the structured boolean DSL when authorization decisions come from
+/// an external policy backend and therefore cannot be embedded in SQL.
+pub(crate) async fn externally_authorized_structured_objects<U>(
+    user: &U,
+    mut source_query: QueryOptions,
+    expression: Option<&StructuredSearchExpression>,
+    authorization: ExternalRelatedFilterAuthorization<'_>,
+) -> Result<Vec<HubuumObject>, ApiError>
+where
+    U: UserSearchBackend + Sync + ?Sized,
+{
+    if !scope_allows(
+        authorization.scopes,
+        &[Permissions::ReadCollection, Permissions::ReadObject],
+    ) {
+        return Ok(Vec::new());
+    }
+
+    let class_id = source_query
+        .filters
+        .iter()
+        .find(|filter| filter.field == FilterField::ClassId)
+        .map(|filter| {
+            filter.value.parse::<i32>().map_err(|_| {
+                ApiError::InternalServerError(
+                    "Structured object search has an invalid resolved class filter".to_string(),
+                )
+            })
+        })
+        .transpose()?;
+    source_query.limit = Some(MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES + 1);
+    source_query.cursor = None;
+    source_query.include_total = false;
+    let candidates = user
+        .search_objects_from_backend_with_admin_status(authorization.pool, source_query, true, None)
+        .await?;
+    ensure_structured_external_candidate_count(candidates.len())?;
+    let visible = authorize_all_candidates(
+        authorization.permission_backend,
+        authorization.principal,
+        candidates,
+        authorization.scopes,
+        vec![Permissions::ReadObject, Permissions::ReadCollection],
+        HubuumObject::authorization_resource,
+    )
+    .await?;
+    let universe = visible
+        .iter()
+        .map(|object| object.id)
+        .collect::<HashSet<_>>();
+    let matched = match expression {
+        Some(expression) => {
+            evaluate_external_structured_expression(
+                user,
+                class_id,
+                expression,
+                &universe,
+                authorization,
+            )
+            .await?
+        }
+        None => universe,
+    };
+
+    Ok(visible
+        .into_iter()
+        .filter(|object| matched.contains(&object.id))
+        .collect())
+}
+
+fn evaluate_external_structured_expression<'a, U>(
+    user: &'a U,
+    class_id: Option<i32>,
+    expression: &'a StructuredSearchExpression,
+    universe: &'a HashSet<i32>,
+    authorization: ExternalRelatedFilterAuthorization<'a>,
+) -> futures::future::LocalBoxFuture<'a, Result<HashSet<i32>, ApiError>>
+where
+    U: UserSearchBackend + Sync + ?Sized,
+{
+    use futures::FutureExt;
+
+    async move {
+        match expression {
+            StructuredSearchExpression::And { args } => {
+                let mut matched = universe.clone();
+                for argument in args {
+                    let argument_matches = evaluate_external_structured_expression(
+                        user,
+                        class_id,
+                        argument,
+                        universe,
+                        authorization,
+                    )
+                    .await?;
+                    matched.retain(|id| argument_matches.contains(id));
+                    if matched.is_empty() {
+                        break;
+                    }
+                }
+                Ok(matched)
+            }
+            StructuredSearchExpression::Or { args } => {
+                let mut matched = HashSet::new();
+                for argument in args {
+                    matched.extend(
+                        evaluate_external_structured_expression(
+                            user,
+                            class_id,
+                            argument,
+                            universe,
+                            authorization,
+                        )
+                        .await?,
+                    );
+                }
+                matched.retain(|id| universe.contains(id));
+                Ok(matched)
+            }
+            StructuredSearchExpression::Not { arg } => {
+                let excluded = evaluate_external_structured_expression(
+                    user,
+                    class_id,
+                    arg,
+                    universe,
+                    authorization,
+                )
+                .await?;
+                Ok(universe.difference(&excluded).copied().collect())
+            }
+            StructuredSearchExpression::Field { predicate } => {
+                let mut filters = Vec::with_capacity(2);
+                if let Some(class_id) = class_id {
+                    filters.push(ParsedQueryParam {
+                        field: FilterField::ClassId,
+                        operator: SearchOperator::Equals { is_negated: false },
+                        value: class_id.to_string(),
+                    });
+                }
+                filters.push(predicate.query_param(StructuredSearchResourceKind::Object)?);
+                let query = QueryOptions {
+                    filters,
+                    sort: Vec::new(),
+                    limit: Some(MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES + 1),
+                    cursor: None,
+                    include_total: false,
+                };
+                let matches = user
+                    .search_objects_from_backend_with_admin_status(
+                        authorization.pool,
+                        query,
+                        true,
+                        None,
+                    )
+                    .await?;
+                ensure_structured_external_candidate_count(matches.len())?;
+                Ok(matches
+                    .into_iter()
+                    .map(|object| object.id)
+                    .filter(|id| universe.contains(id))
+                    .collect())
+            }
+            StructuredSearchExpression::Related { predicate } => {
+                let filters = predicate.query_params("dsl")?;
+                let matches =
+                    externally_authorized_related_object_ids(user, &filters, authorization)
+                        .await?
+                        .unwrap_or_else(AuthorizedObjectIds::empty);
+                Ok(matches
+                    .as_slice()
+                    .iter()
+                    .copied()
+                    .filter(|id| universe.contains(id))
+                    .collect())
+            }
+        }
+    }
+    .boxed_local()
+}
+
+fn ensure_structured_external_candidate_count(count: usize) -> Result<(), ApiError> {
+    if count <= MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES {
+        return Ok(());
+    }
+    Err(ApiError::BadRequest(format!(
+        "Structured search exceeds the {MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES} object safety limit for external authorization; narrow the filter"
+    )))
 }
 
 async fn load_related_target_class(
@@ -679,7 +1243,7 @@ async fn externally_authorized_related_group_ids(
             authorization.principal,
             object_candidates,
             authorization.scopes,
-            vec![Permissions::ReadObject],
+            vec![Permissions::ReadObject, Permissions::ReadCollection],
             |(_, resource)| resource.clone(),
         )
         .await?
@@ -801,6 +1365,42 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         is_admin: bool,
         scopes: Option<&TokenScope>,
     ) -> Result<Vec<Collection>, ApiError> {
+        self.search_collections_from_backend_with_admin_status_and_expression(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            None,
+        )
+        .await
+    }
+
+    async fn search_structured_collections_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<Collection>, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.search_collections_from_backend_with_admin_status_and_expression(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            expression,
+        )
+        .await
+    }
+
+    async fn search_collections_from_backend_with_admin_status_and_expression(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+        scopes: Option<&TokenScope>,
+        expression: Option<&StructuredSearchExpression>,
+    ) -> Result<Vec<Collection>, ApiError> {
         // Fail-closed: a scoped token must carry the resource read permission.
         if !scope_allows(scopes, &[Permissions::ReadCollection]) {
             return Ok(Vec::new());
@@ -894,6 +1494,13 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
+        if let Some(expression) = expression {
+            base_query = base_query.filter(structured_direct_filter_predicate(
+                expression,
+                StructuredSearchResourceKind::Collection,
+            )?);
+        }
+
         crate::apply_query_options!(base_query, query_options, Collection);
 
         with_connection(pool, async |conn| {
@@ -911,6 +1518,42 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
+    ) -> Result<i64, ApiError> {
+        self.count_collections_from_backend_with_admin_status_and_expression(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            None,
+        )
+        .await
+    }
+
+    async fn count_structured_collections_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<i64, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.count_collections_from_backend_with_admin_status_and_expression(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            expression,
+        )
+        .await
+    }
+
+    async fn count_collections_from_backend_with_admin_status_and_expression(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+        scopes: Option<&TokenScope>,
+        expression: Option<&StructuredSearchExpression>,
     ) -> Result<i64, ApiError> {
         use crate::schema::collection_closure::dsl::{
             ancestor_collection_id, collection_closure, descendant_collection_id,
@@ -999,6 +1642,13 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
+        if let Some(expression) = expression {
+            base_query = base_query.filter(structured_direct_filter_predicate(
+                expression,
+                StructuredSearchResourceKind::Collection,
+            )?);
+        }
+
         with_connection(pool, async |conn| {
             base_query.count().get_result::<i64>(conn).await
         })
@@ -1033,6 +1683,42 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
+        self.search_classes_from_backend_with_admin_status_and_expression(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            None,
+        )
+        .await
+    }
+
+    async fn search_structured_classes_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.search_classes_from_backend_with_admin_status_and_expression(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            expression,
+        )
+        .await
+    }
+
+    async fn search_classes_from_backend_with_admin_status_and_expression(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+        scopes: Option<&TokenScope>,
+        expression: Option<&StructuredSearchExpression>,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         use crate::schema::hubuumclass::dsl::{
             collection_id as class_collection_id, created_at as class_created_at,
@@ -1128,6 +1814,13 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
+        if let Some(expression) = expression {
+            base_query = base_query.filter(structured_direct_filter_predicate(
+                expression,
+                StructuredSearchResourceKind::Class,
+            )?);
+        }
+
         crate::apply_query_options!(base_query, query_options, HubuumClassExpanded);
 
         trace_query!(base_query, "Searching classes");
@@ -1153,6 +1846,42 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         query_options: QueryOptions,
         is_admin: bool,
         scopes: Option<&TokenScope>,
+    ) -> Result<i64, ApiError> {
+        self.count_classes_from_backend_with_admin_status_and_expression(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            None,
+        )
+        .await
+    }
+
+    async fn count_structured_classes_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<i64, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        self.count_classes_from_backend_with_admin_status_and_expression(
+            pool,
+            query_options,
+            is_admin,
+            scopes,
+            expression,
+        )
+        .await
+    }
+
+    async fn count_classes_from_backend_with_admin_status_and_expression(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        is_admin: bool,
+        scopes: Option<&TokenScope>,
+        expression: Option<&StructuredSearchExpression>,
     ) -> Result<i64, ApiError> {
         use crate::schema::hubuumclass::dsl::{
             collection_id as class_collection_id, created_at as class_created_at,
@@ -1227,6 +1956,13 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             }
         }
 
+        if let Some(expression) = expression {
+            base_query = base_query.filter(structured_direct_filter_predicate(
+                expression,
+                StructuredSearchResourceKind::Class,
+            )?);
+        }
+
         with_connection(pool, async |conn| {
             base_query
                 .select(class_id)
@@ -1257,6 +1993,32 @@ pub trait UserSearchBackend: UserCollectionAccessors {
     ) -> Result<i64, ApiError> {
         let is_admin = self.is_admin(pool).await?;
         self.count_objects_from_backend_with_admin_status(pool, query_options, is_admin, scopes)
+            .await
+    }
+
+    async fn search_structured_objects_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<HubuumObject>, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        let plan = ObjectQueryPlan::structured(query_options, expression)?;
+        self.search_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
+            .await
+    }
+
+    async fn count_structured_objects_from_backend(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+        scopes: Option<&TokenScope>,
+    ) -> Result<i64, ApiError> {
+        let is_admin = self.is_admin(pool).await?;
+        let plan = ObjectQueryPlan::structured(query_options, expression)?;
+        self.count_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
             .await
     }
 
@@ -1343,6 +2105,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             related_object_filter_predicate(self, pool, &query_params, is_admin, scopes).await?
         {
             base_query = base_query.filter(predicate);
+        }
+        if let Some(expression) = query_mode.structured_expression() {
+            base_query = base_query.filter(
+                structured_object_filter_predicate(self, pool, expression, is_admin, scopes)
+                    .await?,
+            );
         }
 
         let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
@@ -1508,6 +2276,12 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             related_object_filter_predicate(self, pool, &query_params, is_admin, scopes).await?
         {
             base_query = base_query.filter(predicate);
+        }
+        if let Some(expression) = query_mode.structured_expression() {
+            base_query = base_query.filter(
+                structured_object_filter_predicate(self, pool, expression, is_admin, scopes)
+                    .await?,
+            );
         }
 
         let json_data_queries = query_params.json_datas(FilterField::JsonData)?;
@@ -3915,18 +4689,28 @@ fn related_target_object_clause(
     field: RelatedObjectField,
     bind_variables: &mut Vec<SQLValue>,
 ) -> Result<String, ApiError> {
+    object_filter_clause(param, field, "target_object", bind_variables)
+}
+
+fn object_filter_clause(
+    param: &ParsedQueryParam,
+    field: RelatedObjectField,
+    table_alias: &str,
+    bind_variables: &mut Vec<SQLValue>,
+) -> Result<String, ApiError> {
     let column = match field {
-        RelatedObjectField::Id => "target_object.id",
-        RelatedObjectField::Name => "target_object.name",
-        RelatedObjectField::Description => "target_object.description",
-        RelatedObjectField::CollectionId => "target_object.collection_id",
-        RelatedObjectField::CreatedAt => "target_object.created_at",
-        RelatedObjectField::UpdatedAt => "target_object.updated_at",
-        RelatedObjectField::Revision => "target_object.revision",
+        RelatedObjectField::Id => format!("{table_alias}.id"),
+        RelatedObjectField::Name => format!("{table_alias}.name"),
+        RelatedObjectField::Description => format!("{table_alias}.description"),
+        RelatedObjectField::CollectionId => format!("{table_alias}.collection_id"),
+        RelatedObjectField::CreatedAt => format!("{table_alias}.created_at"),
+        RelatedObjectField::UpdatedAt => format!("{table_alias}.updated_at"),
+        RelatedObjectField::Revision => format!("{table_alias}.revision"),
         RelatedObjectField::JsonData => {
             let mut json_param = param.clone();
             json_param.field = FilterField::JsonData;
-            let predicate = json_param.as_json_sql_for_field_expr("target_object.data")?;
+            let predicate =
+                json_param.as_json_sql_for_field_expr(&format!("{table_alias}.data"))?;
             bind_variables.extend(predicate.bind_variables);
             return Ok(format!("({})", predicate.sql));
         }
@@ -3943,14 +4727,14 @@ fn related_target_object_clause(
 
     match field {
         RelatedObjectField::Id | RelatedObjectField::CollectionId => {
-            related_integer_clause(param, column, bind_variables)
+            related_integer_clause(param, &column, bind_variables)
         }
-        RelatedObjectField::Revision => related_revision_clause(param, column, bind_variables),
+        RelatedObjectField::Revision => related_revision_clause(param, &column, bind_variables),
         RelatedObjectField::CreatedAt | RelatedObjectField::UpdatedAt => {
-            related_date_clause(param, column, bind_variables)
+            related_date_clause(param, &column, bind_variables)
         }
         RelatedObjectField::Name | RelatedObjectField::Description => {
-            related_string_clause(param, column, bind_variables)
+            related_string_clause(param, &column, bind_variables)
         }
         RelatedObjectField::JsonData => unreachable!(),
     }
@@ -4877,6 +5661,26 @@ impl User {
         pool: &DbPool,
         query_options: QueryOptions,
     ) -> Result<Vec<crate::models::UserWithName>, ApiError> {
+        self.search_users_with_expression(pool, query_options, None)
+            .await
+    }
+
+    pub async fn search_structured_users(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+    ) -> Result<Vec<crate::models::UserWithName>, ApiError> {
+        self.search_users_with_expression(pool, query_options, expression)
+            .await
+    }
+
+    async fn search_users_with_expression(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+    ) -> Result<Vec<crate::models::UserWithName>, ApiError> {
         use crate::schema::identity_scopes;
         use crate::schema::principals;
         use crate::schema::users::dsl::{created_at, email, id, proper_name, updated_at, users};
@@ -4925,6 +5729,13 @@ impl User {
             }
         }
 
+        if let Some(expression) = expression {
+            base_query = base_query.filter(structured_direct_filter_predicate(
+                expression,
+                StructuredSearchResourceKind::User,
+            )?);
+        }
+
         crate::apply_query_options!(base_query, query_options, crate::models::UserWithName);
 
         trace_query!(base_query, "Searching users");
@@ -4967,6 +5778,26 @@ impl User {
         pool: &DbPool,
         query_options: QueryOptions,
     ) -> Result<i64, ApiError> {
+        self.count_users_with_expression(pool, query_options, None)
+            .await
+    }
+
+    pub async fn count_structured_users(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+    ) -> Result<i64, ApiError> {
+        self.count_users_with_expression(pool, query_options, expression)
+            .await
+    }
+
+    async fn count_users_with_expression(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+    ) -> Result<i64, ApiError> {
         use crate::schema::identity_scopes;
         use crate::schema::principals;
         use crate::schema::users::dsl::{created_at, email, id, proper_name, updated_at, users};
@@ -5007,6 +5838,13 @@ impl User {
             }
         }
 
+        if let Some(expression) = expression {
+            base_query = base_query.filter(structured_direct_filter_predicate(
+                expression,
+                StructuredSearchResourceKind::User,
+            )?);
+        }
+
         with_connection(pool, async |conn| {
             base_query
                 .select(id)
@@ -5022,6 +5860,26 @@ impl User {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+    ) -> Result<Vec<Group>, ApiError> {
+        self.search_groups_with_expression(pool, query_options, None)
+            .await
+    }
+
+    pub async fn search_structured_groups(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+    ) -> Result<Vec<Group>, ApiError> {
+        self.search_groups_with_expression(pool, query_options, expression)
+            .await
+    }
+
+    async fn search_groups_with_expression(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
     ) -> Result<Vec<Group>, ApiError> {
         use crate::schema::groups::dsl::{
             created_at, description, groupname, groups, id, revision, updated_at,
@@ -5063,6 +5921,13 @@ impl User {
             }
         }
 
+        if let Some(expression) = expression {
+            base_query = base_query.filter(structured_direct_filter_predicate(
+                expression,
+                StructuredSearchResourceKind::Group,
+            )?);
+        }
+
         crate::apply_query_options!(base_query, query_options, Group);
 
         trace_query!(base_query, "Searching groups");
@@ -5083,6 +5948,26 @@ impl User {
         &self,
         pool: &DbPool,
         query_options: QueryOptions,
+    ) -> Result<i64, ApiError> {
+        self.count_groups_with_expression(pool, query_options, None)
+            .await
+    }
+
+    pub async fn count_structured_groups(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
+    ) -> Result<i64, ApiError> {
+        self.count_groups_with_expression(pool, query_options, expression)
+            .await
+    }
+
+    async fn count_groups_with_expression(
+        &self,
+        pool: &DbPool,
+        query_options: QueryOptions,
+        expression: Option<&StructuredSearchExpression>,
     ) -> Result<i64, ApiError> {
         use crate::schema::groups::dsl::{
             created_at, description, groupname, groups, id, revision, updated_at,
@@ -5114,6 +5999,13 @@ impl User {
                     )));
                 }
             }
+        }
+
+        if let Some(expression) = expression {
+            base_query = base_query.filter(structured_direct_filter_predicate(
+                expression,
+                StructuredSearchResourceKind::Group,
+            )?);
         }
 
         with_connection(pool, async |conn| {
