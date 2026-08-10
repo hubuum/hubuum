@@ -88,37 +88,8 @@ async fn list_visible_events(
         filters.entity_id = Some(entity_id);
     }
     let search_params = prepare_db_pagination::<EventResponse>(&params)?;
-    let (visible_collections, include_collection_less) =
-        if pool.permission_backend().supports_sql_visibility_pushdown() {
-            let collections = user_can_on_any(
-                &pool,
-                &requestor.principal,
-                Permissions::ReadAudit,
-                requestor.scopes(),
-            )
-            .await?;
-            let include_collection_less =
-                requestor.scopes().is_none() && requestor.principal.is_admin(&pool).await?;
-            (collections, include_collection_less)
-        } else if scope_allows(requestor.scopes(), &[Permissions::ReadAudit]) {
-            let principal = PrincipalRef::load(&pool, &requestor.principal).await?;
-            let collections = pool
-                .permission_backend()
-                .collections_user_can(&principal, &[Permissions::ReadAudit])
-                .await?;
-            let include_collection_less = requestor.scopes().is_none()
-                && pool.permission_backend().is_admin(&principal).await?;
-            (collections, include_collection_less)
-        } else {
-            (Vec::new(), false)
-        };
-    let mut accessible_collection_ids = visible_collections
-        .iter()
-        .map(|collection| collection.id)
-        .collect::<Vec<_>>();
-    if let Some(scope) = requestor.scopes() {
-        scope.retain_allowed_collection_ids(&mut accessible_collection_ids);
-    }
+    let (accessible_collection_ids, include_collection_less) =
+        visible_event_scope(&pool, &requestor.principal, requestor.scopes()).await?;
     let (events, total_count) = list_events_with_total_count(
         &pool,
         &accessible_collection_ids,
@@ -128,6 +99,42 @@ async fn list_visible_events(
     )
     .await?;
     ApiResponse::paginated(events, total_count, &params)
+}
+
+pub(crate) async fn visible_event_scope(
+    pool: &AppContext,
+    principal: &crate::models::Principal,
+    scopes: Option<&crate::models::TokenScope>,
+) -> Result<(Vec<i32>, bool), ApiError> {
+    let (visible_collections, include_collection_less) =
+        if pool.permission_backend().supports_sql_visibility_pushdown() {
+            let collections =
+                user_can_on_any(pool, principal, Permissions::ReadAudit, scopes).await?;
+            let include_collection_less = scopes.is_none() && principal.is_admin(pool).await?;
+            (collections, include_collection_less)
+        } else if scope_allows(scopes, &[Permissions::ReadAudit]) {
+            let policy_principal = PrincipalRef::load(pool, principal).await?;
+            let collections = pool
+                .permission_backend()
+                .collections_user_can(&policy_principal, &[Permissions::ReadAudit])
+                .await?;
+            let include_collection_less = scopes.is_none()
+                && pool
+                    .permission_backend()
+                    .is_admin(&policy_principal)
+                    .await?;
+            (collections, include_collection_less)
+        } else {
+            (Vec::new(), false)
+        };
+    let mut accessible_collection_ids = visible_collections
+        .iter()
+        .map(|collection| collection.id)
+        .collect::<Vec<_>>();
+    if let Some(scope) = scopes {
+        scope.retain_allowed_collection_ids(&mut accessible_collection_ids);
+    }
+    Ok((accessible_collection_ids, include_collection_less))
 }
 
 #[utoipa::path(

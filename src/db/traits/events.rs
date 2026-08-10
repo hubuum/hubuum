@@ -3,10 +3,12 @@ use std::collections::{HashMap, HashSet};
 
 use crate::apply_query_options;
 use crate::db::traits::history::resolve_principal_names;
+use crate::db::traits::user::search::structured_direct_filter_predicate;
 use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::events::{Action, ActorKind, EntityType, Event, EventResponse, PrincipalNames};
 use crate::models::search::QueryOptions;
+use crate::models::{StructuredSearchExpression, StructuredSearchResourceKind};
 use crate::utilities::extensions::CustomStringExtensions;
 
 #[derive(Debug, Clone, Default)]
@@ -29,6 +31,43 @@ pub async fn list_events_with_total_count(
     filters: &EventListFilters,
     query_options: &QueryOptions,
 ) -> Result<(Vec<EventResponse>, i64), ApiError> {
+    list_events_with_total_count_and_expression(
+        pool,
+        accessible_collection_ids,
+        include_collection_less,
+        filters,
+        query_options,
+        None,
+    )
+    .await
+}
+
+pub async fn list_structured_events_with_total_count(
+    pool: &DbPool,
+    accessible_collection_ids: &[i32],
+    include_collection_less: bool,
+    query_options: &QueryOptions,
+    expression: Option<&StructuredSearchExpression>,
+) -> Result<(Vec<EventResponse>, i64), ApiError> {
+    list_events_with_total_count_and_expression(
+        pool,
+        accessible_collection_ids,
+        include_collection_less,
+        &EventListFilters::default(),
+        query_options,
+        expression,
+    )
+    .await
+}
+
+async fn list_events_with_total_count_and_expression(
+    pool: &DbPool,
+    accessible_collection_ids: &[i32],
+    include_collection_less: bool,
+    filters: &EventListFilters,
+    query_options: &QueryOptions,
+    expression: Option<&StructuredSearchExpression>,
+) -> Result<(Vec<EventResponse>, i64), ApiError> {
     crate::logger::log_operation_read(filters.entity_type, filters.action, filters.entity_id);
 
     let query = build_event_query(
@@ -36,6 +75,7 @@ pub async fn list_events_with_total_count(
         include_collection_less,
         filters,
         query_options,
+        expression,
     )?;
     let total_count = crate::pagination::exact_count_or_skipped(query_options, async || {
         with_connection(pool, async |conn| {
@@ -50,6 +90,7 @@ pub async fn list_events_with_total_count(
         include_collection_less,
         filters,
         query_options,
+        expression,
     )?;
     apply_query_options!(query, query_options, EventResponse);
     let mut rows = with_connection(pool, async |conn| query.load::<Event>(conn).await).await?;
@@ -84,6 +125,7 @@ fn build_event_query<'a>(
     include_collection_less: bool,
     filters: &EventListFilters,
     query_options: &QueryOptions,
+    expression: Option<&StructuredSearchExpression>,
 ) -> Result<crate::schema::events::BoxedQuery<'a, diesel::pg::Pg>, ApiError> {
     use crate::schema::event_related_collections::dsl as related;
     use crate::schema::events::dsl::{
@@ -194,6 +236,13 @@ fn build_event_query<'a>(
                 )));
             }
         }
+    }
+
+    if let Some(expression) = expression {
+        query = query.filter(structured_direct_filter_predicate(
+            expression,
+            StructuredSearchResourceKind::AuditEvent,
+        )?);
     }
 
     Ok(query)
