@@ -8,12 +8,12 @@ mod tests {
     use diesel_async::RunQueryDsl;
     use rstest::rstest;
 
-    use crate::db::with_connection;
     use crate::models::{
         BackupDocument, BackupManifest, BackupState, Permissions, RESTORE_CONFIRMATION_PHRASE,
         RestoreConfirmRequest, RestoreJobStatus, RestoreStageResponse,
     };
     use crate::schema::restore_jobs::dsl::{id, restore_jobs};
+    use crate::storage::postgres::with_connection;
     use crate::tests::api_operations::{get_request_with_headers, post_request};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{TestContext, scoped_token, test_context};

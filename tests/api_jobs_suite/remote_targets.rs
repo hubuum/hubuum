@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::db::prelude::*;
+    use crate::storage::postgres::prelude::*;
     use actix_rt::time::sleep;
     use actix_web::{
         http::{StatusCode, header},
@@ -20,12 +20,12 @@ mod tests {
         pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
     };
 
-    use crate::db::with_connection;
     use crate::models::{
         GroupID, HubuumClassRelation, HubuumObjectRelation, NewHubuumClass, NewHubuumClassRelation,
         NewHubuumObject, NewHubuumObjectRelation, Permissions, PermissionsList, RemoteCallResult,
         RemoteTarget, TaskResponse, TaskStatus,
     };
+    use crate::storage::postgres::with_connection;
     use crate::tests::TestContext;
     use crate::tests::api_operations::{
         delete_request, get_request, patch_request, post_request, post_request_with_headers,

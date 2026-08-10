@@ -3,12 +3,12 @@ use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::middleware::Next;
 use actix_web::{Error, HttpMessage};
 
-use crate::backend::capabilities::Status;
-use crate::backend::with_mutation_provenance_scope;
 use crate::events::MutationProvenance;
 use crate::middlewares::tracing::record_principal_on_current_span;
 use crate::models::token::{PrincipalToken, Token};
 use crate::permissions::AppContext;
+use crate::storage::capabilities::Status;
+use crate::storage::capabilities::with_mutation_provenance_scope;
 
 /// Outcome of resolving the bearer token once per request. Stored in request
 /// extensions and consumed by the auth extractors so they never re-query.

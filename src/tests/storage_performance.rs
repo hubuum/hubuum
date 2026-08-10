@@ -7,13 +7,6 @@
 use diesel::sql_types::{Integer, Json, Text};
 use serde_json::Value;
 
-use crate::db::prelude::{QueryableByName, RunQueryDsl};
-use crate::db::traits::history::{
-    HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_principal_names,
-};
-use crate::db::traits::user::UserSearchBackend;
-use crate::db::with_actor_scope;
-use crate::db::{DbPool, capture_queries, with_connection};
 use crate::events::EventContext;
 use crate::models::collection::effective_group_on;
 use crate::models::search::parse_query_parameter;
@@ -24,6 +17,13 @@ use crate::models::{
     ObjectSelector, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject, UserID,
 };
 use crate::services::Services;
+use crate::storage::postgres::operations::history::{
+    HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_principal_names,
+};
+use crate::storage::postgres::operations::user::UserSearchBackend;
+use crate::storage::postgres::prelude::{QueryableByName, RunQueryDsl};
+use crate::storage::postgres::with_actor_scope;
+use crate::storage::postgres::{PostgresPool, capture_queries, with_connection};
 use crate::tests::{CollectionFixture, TestScope, ensure_admin_user};
 use crate::traits::{CanDelete, CanSave, CanUpdate};
 
@@ -34,7 +34,7 @@ async fn object_relation_budget_fixture(
     label: &str,
 ) -> (CollectionFixture, Services, ObjectRelationCreateSelector) {
     let fixture = scope.collection_fixture(label).await;
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let class_one = NewHubuumClass {
         collection_id: fixture.collection.id,
         name: scope.scoped_name(&format!("{label}_class_one")),
@@ -137,7 +137,11 @@ fn root_shared_blocks(plan: &Value) -> u64 {
             .unwrap_or_default()
 }
 
-async fn add_representative_collection_rows(pool: &DbPool, name_prefix: &str, parent_id: i32) {
+async fn add_representative_collection_rows(
+    pool: &PostgresPool,
+    name_prefix: &str,
+    parent_id: i32,
+) {
     with_connection(pool, async |conn| {
         diesel::sql_query(
             "WITH inserted AS (\
@@ -166,7 +170,7 @@ async fn add_representative_collection_rows(pool: &DbPool, name_prefix: &str, pa
     .expect("representative query-plan rows should be created");
 }
 
-async fn remove_representative_collection_rows(pool: &DbPool, name_prefix: &str) {
+async fn remove_representative_collection_rows(pool: &PostgresPool, name_prefix: &str) {
     with_connection(pool, async |conn| {
         diesel::sql_query("DELETE FROM collections WHERE left(name, length($1)) = $1")
             .bind::<Text, _>(name_prefix)
@@ -177,7 +181,11 @@ async fn remove_representative_collection_rows(pool: &DbPool, name_prefix: &str)
     .expect("representative query-plan rows should be removed");
 }
 
-async fn explain_storage_query(pool: &DbPool, query: &'static str, collection_id: i32) -> Value {
+async fn explain_storage_query(
+    pool: &PostgresPool,
+    query: &'static str,
+    collection_id: i32,
+) -> Value {
     with_connection(pool, async |conn| {
         diesel::sql_query(query)
             .bind::<Integer, _>(collection_id)
@@ -190,8 +198,8 @@ async fn explain_storage_query(pool: &DbPool, query: &'static str, collection_id
 }
 
 fn assert_same_query_shape(
-    smaller: &crate::db::QueryCaptureSnapshot,
-    larger: &crate::db::QueryCaptureSnapshot,
+    smaller: &crate::storage::postgres::QueryCaptureSnapshot,
+    larger: &crate::storage::postgres::QueryCaptureSnapshot,
 ) {
     assert_eq!(
         larger.total_queries(),
@@ -214,7 +222,7 @@ async fn collection_point_read_uses_one_query() {
     let scope = TestScope::new();
     let fixture = scope.collection_fixture("query_budget_point_read").await;
     let collection_id = CollectionID::new(fixture.collection.id).expect("valid collection id");
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
 
     let (loaded, queries) = capture_queries(services.collections().get(collection_id)).await;
     assert_eq!(loaded.expect("collection should load"), fixture.collection);
@@ -233,7 +241,7 @@ async fn class_storage_query_budget_point_read_uses_one_query() {
     let fixture = scope
         .collection_fixture("query_budget_class_point_read")
         .await;
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let class = NewHubuumClass {
         name: scope.scoped_name("query_budget_class_point_read"),
         collection_id: fixture.collection.id,
@@ -267,7 +275,7 @@ async fn class_storage_query_budget_point_read_uses_one_query() {
 async fn class_storage_query_budget_create_with_event_is_fixed() {
     let scope = TestScope::new();
     let fixture = scope.collection_fixture("query_budget_class_create").await;
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let command = NewHubuumClass {
         name: scope.scoped_name("query_budget_class_create"),
         collection_id: fixture.collection.id,
@@ -297,7 +305,7 @@ async fn class_storage_query_budget_create_with_event_is_fixed() {
 async fn class_storage_query_budget_no_op_avoids_writes_and_events() {
     let scope = TestScope::new();
     let fixture = scope.collection_fixture("query_budget_class_no_op").await;
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let class = NewHubuumClass {
         name: scope.scoped_name("query_budget_class_no_op"),
         collection_id: fixture.collection.id,
@@ -354,7 +362,7 @@ async fn class_relation_storage_query_budget_point_resolution_is_fixed() {
     let fixture = scope
         .collection_fixture("query_budget_class_relation_point")
         .await;
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let from_class = NewHubuumClass {
         name: scope.scoped_name("query_budget_class_relation_point_from"),
         collection_id: fixture.collection.id,
@@ -413,7 +421,7 @@ async fn class_relation_storage_query_budget_create_with_event_is_fixed() {
     let fixture = scope
         .collection_fixture("query_budget_class_relation_create")
         .await;
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let from_class = NewHubuumClass {
         name: scope.scoped_name("query_budget_class_relation_create_from"),
         collection_id: fixture.collection.id,
@@ -473,7 +481,7 @@ async fn class_relation_storage_query_budget_delete_with_event_is_fixed() {
     let fixture = scope
         .collection_fixture("query_budget_class_relation_delete")
         .await;
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let from_class = NewHubuumClass {
         name: scope.scoped_name("query_budget_class_relation_delete_from"),
         collection_id: fixture.collection.id,
@@ -538,7 +546,7 @@ async fn object_storage_query_budget_point_read_uses_one_query() {
     let fixture = scope
         .collection_fixture("query_budget_object_point_read")
         .await;
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let class = NewHubuumClass {
         name: scope.scoped_name("query_budget_object_point_read_class"),
         collection_id: fixture.collection.id,
@@ -579,7 +587,7 @@ async fn object_storage_query_budget_point_read_uses_one_query() {
 async fn object_storage_query_budget_create_with_event_is_fixed() {
     let scope = TestScope::new();
     let fixture = scope.collection_fixture("query_budget_object_create").await;
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let class = NewHubuumClass {
         name: scope.scoped_name("query_budget_object_create_class"),
         collection_id: fixture.collection.id,
@@ -626,7 +634,7 @@ async fn object_storage_query_budget_create_with_event_is_fixed() {
 async fn object_storage_query_budget_no_op_avoids_object_writes_and_events() {
     let scope = TestScope::new();
     let fixture = scope.collection_fixture("query_budget_object_no_op").await;
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let class = NewHubuumClass {
         name: scope.scoped_name("query_budget_object_no_op_class"),
         collection_id: fixture.collection.id,
@@ -718,7 +726,7 @@ async fn collection_point_read_plan_has_bounded_logical_work_at_representative_s
 #[actix_web::test]
 async fn collection_ancestor_query_count_is_constant_with_depth() {
     let scope = TestScope::new();
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let root_fixture = scope.collection_fixture("query_budget_ancestors").await;
     let mut collections = vec![root_fixture.collection.clone()];
 
@@ -831,7 +839,7 @@ async fn collection_ancestor_plan_has_bounded_logical_work_at_representative_sca
 #[actix_web::test]
 async fn collection_create_with_event_has_a_fixed_query_budget() {
     let scope = TestScope::new();
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let parent = scope.collection_fixture("query_budget_create_parent").await;
     let command = NewCollectionWithAssignee {
         name: scope.scoped_name("query_budget_create_child"),
@@ -873,7 +881,7 @@ async fn collection_create_with_event_has_a_fixed_query_budget() {
 #[actix_web::test]
 async fn collection_no_op_update_does_not_write_or_emit_an_event() {
     let scope = TestScope::new();
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let fixture = scope.collection_fixture("query_budget_no_op_update").await;
     let update = UpdateCollection {
         name: Some(fixture.collection.name.clone()),
@@ -1039,7 +1047,7 @@ async fn effective_permission_query_count_is_constant_with_collection_depth() {
 #[actix_web::test]
 async fn changed_collection_update_writes_once_and_emits_one_event() {
     let scope = TestScope::new();
-    let services = Services::postgres(scope.pool.get_ref().clone());
+    let services = crate::tests::services_for_postgres(scope.pool.get_ref().clone());
     let fixture = scope
         .collection_fixture("query_budget_changed_update")
         .await;

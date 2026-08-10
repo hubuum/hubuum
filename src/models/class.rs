@@ -1,14 +1,15 @@
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::traits::class::total_class_count_from_backend;
 use crate::errors::ApiError;
 use crate::models::ResourceRevision;
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::hubuumclass;
-use crate::traits::{BackendContext, SelfAccessors};
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::class::total_class_count_from_backend;
+use crate::traits::SelfAccessors;
 
 #[derive(Serialize, Deserialize, Queryable, QueryableByName, Clone, PartialEq, Debug, ToSchema)]
 #[diesel(table_name = hubuumclass )]
@@ -200,7 +201,7 @@ impl ResolvedClassTarget {
 /// Construct via [`ClassIdSet::new`]; the inner vec stays private so the "sorted, deduped,
 /// positive" invariant holds for every consumer — including callers that `binary_search` the
 /// set and rely on the ordering. Bulk class-keyed backend lookups hang off this type (see
-/// `crate::db::traits::class`).
+/// `crate::storage::postgres::operations::class`).
 #[derive(Debug, Clone)]
 pub(crate) struct ClassIdSet(Vec<i32>);
 
@@ -230,9 +231,9 @@ impl ClassIdSet {
 
 pub async fn total_class_count<C>(backend: &C) -> Result<i64, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    total_class_count_from_backend(crate::traits::backend_pool(backend)).await
+    total_class_count_from_backend(backend).await
 }
 
 fn new_hubuum_class_example() -> NewHubuumClass {
@@ -283,7 +284,7 @@ crate::impl_history_pagination!(HubuumClassHistory, "hubuumclass_history");
 impl AuthzTarget for HubuumClass {
     async fn to_resource_ref(
         &self,
-        _pool: &dyn crate::traits::BackendContext,
+        _pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         Ok(self.authorization_resource())
     }
@@ -293,7 +294,7 @@ impl AuthzTarget for HubuumClass {
 impl AuthzTarget for HubuumClassID {
     async fn to_resource_ref(
         &self,
-        pool: &dyn crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
@@ -302,13 +303,13 @@ impl AuthzTarget for HubuumClassID {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::db::DbPool;
+
     use crate::models::class::HubuumClass;
     use crate::models::collection::Collection;
     use crate::tests::TestScope;
     use crate::traits::{CanDelete, CanSave, CanUpdate, ClassAccessors, CollectionAccessors};
 
-    pub async fn verify_no_such_class(pool: &DbPool, id: i32) {
+    pub async fn verify_no_such_class(pool: &impl crate::storage::StorageContext, id: i32) {
         match HubuumClassID(id).class(pool).await {
             Ok(_) => panic!("Class should not exist"),
             Err(e) => match e {
@@ -318,12 +319,12 @@ pub mod tests {
         }
     }
 
-    pub async fn get_class(id: i32, pool: &DbPool) -> HubuumClass {
+    pub async fn get_class(id: i32, pool: &impl crate::storage::StorageContext) -> HubuumClass {
         HubuumClassID(id).class(pool).await.unwrap()
     }
 
     pub async fn create_class(
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         collection: &Collection,
         class_name: &str,
     ) -> HubuumClass {

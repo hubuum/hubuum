@@ -12,11 +12,11 @@
 
 use std::io::Write;
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 
-use crate::db::{DbPool, with_connection};
 use crate::errors::ApiError;
 use crate::models::{Collection, Group, Permission};
+use crate::storage::postgres::with_connection;
 
 /// Helper macro to convert io::Error to ApiError for writeln! calls
 macro_rules! w {
@@ -29,7 +29,10 @@ macro_rules! w {
 }
 
 /// Emit the Cedar bundle to `writer`.
-pub async fn export_cedar_to<W: Write>(pool: &DbPool, writer: &mut W) -> Result<(), ApiError> {
+pub async fn export_cedar_to<W: Write>(
+    pool: &impl crate::storage::StorageContext,
+    writer: &mut W,
+) -> Result<(), ApiError> {
     use crate::schema::{collections, groups, permissions as perms_schema};
 
     let rows: Vec<(Permission, Group, Collection)> = with_connection(pool, async |conn| {

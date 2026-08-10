@@ -1,18 +1,16 @@
-use crate::db::traits::group::{
-    DeletePrincipalGroupRecord, PrincipalGroupGroupLookup, PrincipalGroupPrincipalLookup,
-    SavePrincipalGroupRecord,
-};
 use crate::models::ResourceRevision;
 use crate::models::group::Group;
 use crate::models::principal::Principal;
+use crate::storage::postgres::operations::group::{
+    DeletePrincipalGroupRecord, PrincipalGroupGroupLookup, PrincipalGroupPrincipalLookup,
+    SavePrincipalGroupRecord,
+};
 
 use crate::errors::ApiError;
 use crate::schema::group_memberships;
-use crate::traits::BackendContext;
+use crate::storage::StorageContext;
 
-use crate::db::DbPool;
-
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use crate::traits::crud::SaveAdapter;
 use serde::{Deserialize, Serialize};
 
@@ -40,7 +38,10 @@ pub struct NewPrincipalGroup {
 impl SaveAdapter for NewPrincipalGroup {
     type Output = PrincipalGroup;
 
-    async fn save_adapter_without_events(&self, pool: &DbPool) -> Result<Self::Output, ApiError> {
+    async fn save_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Self::Output, ApiError> {
         self.save_principal_group_record_without_events(pool).await
     }
 }
@@ -48,33 +49,30 @@ impl SaveAdapter for NewPrincipalGroup {
 impl PrincipalGroup {
     pub async fn principal<C>(&self, backend: &C) -> Result<Principal, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.load_principal_group_principal(crate::traits::backend_pool(backend))
-            .await
+        self.load_principal_group_principal(backend).await
     }
 
     pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.load_principal_group_group(crate::traits::backend_pool(backend))
-            .await
+        self.load_principal_group_group(backend).await
     }
 
     pub async fn save<C>(&self, backend: &C) -> Result<PrincipalGroup, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.save_principal_group_record_without_events(crate::traits::backend_pool(backend))
+        self.save_principal_group_record_without_events(backend)
             .await
     }
 
     pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.delete_principal_group_record(crate::traits::backend_pool(backend))
-            .await
+        self.delete_principal_group_record(backend).await
     }
 }

@@ -2,7 +2,7 @@ use super::*;
 
 use diesel::sql_types::{BigInt, Bool, Integer};
 
-use crate::db::DbPool;
+use crate::storage::postgres::PostgresPool;
 
 #[rstest]
 #[actix_web::test]
@@ -272,7 +272,8 @@ async fn successful_patch_updates_computed_history_event_and_timestamp_together(
     assert_eq!(computed.values["display_name"], "after.example");
     assert_eq!(
         computed.source_data_sha256,
-        crate::db::traits::computed_field::source_data_sha256(&updated.data).unwrap()
+        crate::storage::postgres::operations::computed_field::source_data_sha256(&updated.data)
+            .unwrap()
     );
     assert_eq!(history.len() as i64, history_before + 1);
     assert_eq!(history.last().unwrap().data, updated.data);
@@ -413,7 +414,7 @@ struct TransactionId {
     id: i64,
 }
 
-async fn wait_for_computed_lock_waiter(pool: &DbPool, class_id: i32) {
+async fn wait_for_computed_lock_waiter(pool: &PostgresPool, class_id: i32) {
     for _ in 0..100 {
         let waiting = with_connection(pool, async |conn| {
             diesel::sql_query(
@@ -442,7 +443,7 @@ async fn wait_for_computed_lock_waiter(pool: &DbPool, class_id: i32) {
     panic!("JSON Patch did not request the computed-class lock");
 }
 
-async fn wait_for_transaction_waiter(pool: &DbPool, transaction_id: i64) {
+async fn wait_for_transaction_waiter(pool: &PostgresPool, transaction_id: i64) {
     for _ in 0..100 {
         let waiting = with_connection(pool, async |conn| {
             diesel::sql_query(

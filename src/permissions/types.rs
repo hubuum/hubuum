@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
-use crate::db::with_connection;
 use crate::errors::ApiError;
 use crate::models::Permissions;
+use crate::storage::postgres::with_connection;
 use crate::traits::PrincipalIdAccessor;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,15 +24,14 @@ impl PrincipalRef {
     }
 
     pub async fn load<S>(
-        pool: &impl crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
         subject: &S,
     ) -> Result<Self, ApiError>
     where
         S: PrincipalIdAccessor + ?Sized,
     {
-        let pool = crate::traits::backend_pool(pool);
-        use crate::db::prelude::*;
         use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
+        use crate::storage::postgres::prelude::*;
 
         let user_id = subject.principal_id();
         let group_ids = with_connection(pool, async |conn| {
@@ -264,7 +263,7 @@ pub struct AuthorizationResult {
 pub trait AuthzTarget: Send + Sync {
     async fn to_resource_ref(
         &self,
-        backend: &dyn crate::traits::BackendContext,
+        backend: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError>;
 }
 
@@ -275,7 +274,7 @@ where
 {
     async fn to_resource_ref(
         &self,
-        pool: &dyn crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         (*self).to_resource_ref(pool).await
     }

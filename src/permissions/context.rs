@@ -5,13 +5,15 @@ use futures_util::future::{Ready, ready};
 
 #[cfg(any(test, feature = "integration-test-support"))]
 use crate::config::get_config;
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::services::{
     ClassRelationService, ClassService, CollectionService, ObjectRelationService, ObjectService,
     Services,
 };
-use crate::traits::{BackendContext, BackendHandle};
+use crate::storage::StorageContext;
+use crate::storage::StorageHandle;
+#[cfg(any(test, feature = "integration-test-support"))]
+use crate::storage::postgres::PostgresPool;
 
 use super::backend::PermissionBackend;
 #[cfg(any(test, feature = "integration-test-support"))]
@@ -19,14 +21,13 @@ use super::local::LocalPermissionBackend;
 
 #[derive(Clone)]
 pub struct AppContext {
-    backend: BackendHandle,
+    backend: StorageHandle,
     permissions: Arc<dyn PermissionBackend>,
     services: Services,
 }
 
 impl AppContext {
-    pub fn new(db_pool: DbPool, permissions: Arc<dyn PermissionBackend>) -> Self {
-        let backend = BackendHandle::postgres(db_pool);
+    pub(crate) fn new(backend: StorageHandle, permissions: Arc<dyn PermissionBackend>) -> Self {
         let services = Services::from_lifecycle_storage(backend.lifecycle_storage());
         Self {
             backend,
@@ -35,19 +36,26 @@ impl AppContext {
         }
     }
 
+    /// PostgreSQL composition helper retained for integration tests.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "integration-test-support"))]
+    pub fn postgres(db_pool: PostgresPool, permissions: Arc<dyn PermissionBackend>) -> Self {
+        Self::new(StorageHandle::postgres(db_pool), permissions)
+    }
+
     pub(crate) fn from_http_request(req: &HttpRequest) -> Result<Self, ApiError> {
         if let Some(context) = req.app_data::<Data<Self>>() {
             return Ok(context.get_ref().clone());
         }
 
         #[cfg(any(test, feature = "integration-test-support"))]
-        if let Some(pool) = req.app_data::<Data<DbPool>>() {
+        if let Some(pool) = req.app_data::<Data<PostgresPool>>() {
             let admin_groupname = get_config()
                 .map(|config| config.admin_groupname.clone())
                 .unwrap_or_else(|_| "admin".to_string());
-            return Ok(Self::new(
+            return Ok(Self::postgres(
                 pool.get_ref().clone(),
-                Arc::new(LocalPermissionBackend::new(
+                Arc::new(LocalPermissionBackend::postgres(
                     pool.get_ref().clone(),
                     admin_groupname,
                 )),
@@ -61,11 +69,11 @@ impl AppContext {
 }
 
 impl AppContext {
-    pub(crate) fn backend(&self) -> &BackendHandle {
+    pub(crate) fn backend(&self) -> &StorageHandle {
         &self.backend
     }
 
-    pub(crate) fn clone_backend(&self) -> BackendHandle {
+    pub(crate) fn clone_backend(&self) -> StorageHandle {
         self.backend.clone()
     }
 
@@ -98,7 +106,7 @@ impl AppContext {
     }
 }
 
-impl BackendContext for AppContext {
+impl StorageContext for AppContext {
     fn permission_backend(&self) -> Option<&dyn PermissionBackend> {
         Some(self.permissions.as_ref())
     }

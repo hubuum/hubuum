@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use chrono::NaiveDateTime;
 use hubuum_events_core::EventSubscriptionFilter;
 use serde::{Deserialize, Serialize, Serializer};

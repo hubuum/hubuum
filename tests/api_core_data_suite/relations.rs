@@ -2,11 +2,10 @@
 mod tests {
     use std::time::Duration;
 
-    use crate::db::prelude::*;
+    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
     use rstest::rstest;
 
-    use crate::db::{DbPool, with_transaction};
     use crate::errors::ApiError;
     use crate::models::{
         CollectionID, GroupID, HubuumClass, HubuumClassRelation, HubuumClassWithPath, HubuumObject,
@@ -15,6 +14,7 @@ mod tests {
         ObjectRelationLimit, Permissions, RelatedClassGraph, RelatedObjectGraph,
     };
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
+    use crate::storage::postgres::{PostgresPool, with_transaction};
     use crate::traits::{CanSave, PermissionController, SelfAccessors};
     use crate::{assert_contains_all, assert_contains_same_ids};
 
@@ -60,7 +60,7 @@ mod tests {
     }
 
     async fn create_relation(
-        pool: &DbPool,
+        pool: &PostgresPool,
         from_class: &HubuumClass,
         to_class: &HubuumClass,
     ) -> HubuumClassRelation {
@@ -77,7 +77,7 @@ mod tests {
     }
 
     async fn create_object_relation(
-        pool: &DbPool,
+        pool: &PostgresPool,
         from_object: &HubuumObject,
         to_object: &HubuumObject,
         relation: &HubuumClassRelation,
@@ -137,7 +137,7 @@ mod tests {
     }
 
     async fn create_objects_in_classes(
-        pool: &DbPool,
+        pool: &PostgresPool,
         classes: &[HubuumClass],
     ) -> Vec<HubuumObject> {
         let mut objects = Vec::new();
@@ -202,7 +202,7 @@ mod tests {
     }
 
     async fn create_relation_test_object(
-        pool: &DbPool,
+        pool: &PostgresPool,
         class: &HubuumClass,
         label: &str,
     ) -> HubuumObject {

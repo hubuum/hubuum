@@ -9,16 +9,6 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::db::traits::identity::identity_scope_name_by_id;
-use crate::db::traits::maintenance::maintenance_state_db;
-use crate::db::traits::restore::{
-    RestoreCompletion, RestoreCoordinatorSnapshot, apply_restore_db, delete_server_instance_db,
-    expire_restore_stage_db, fail_restore_and_resume_db, insert_restore_job_db,
-    load_restore_coordinator_snapshot_db, load_restore_job_db, load_restore_status_job_db,
-    maintenance_generation_and_instances_db, restore_coordinator_tick_db,
-    resume_maintenance_without_job_db, resume_terminal_restore_db, start_restore_draining_db,
-};
-use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::events::{Action, ActorKind, EntityType, NewEvent};
 use crate::lifecycle::spawn_background_worker;
@@ -33,7 +23,18 @@ use crate::models::{
     RESTORE_CONFIRMATION_PHRASE, RestoreConfirmRequest, RestoreJobID, RestoreJobRecord,
     RestoreJobStatus, RestoreStageRequest, RestoreStageResponse, RestoreValidationSummary,
 };
-use crate::traits::{BackendContext, backend_pool};
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::identity::identity_scope_name_by_id;
+use crate::storage::postgres::operations::maintenance::maintenance_state_db;
+use crate::storage::postgres::operations::restore::{
+    RestoreCompletion, RestoreCoordinatorSnapshot, apply_restore_db, delete_server_instance_db,
+    expire_restore_stage_db, fail_restore_and_resume_db, insert_restore_job_db,
+    load_restore_coordinator_snapshot_db, load_restore_job_db, load_restore_status_job_db,
+    maintenance_generation_and_instances_db, restore_coordinator_tick_db,
+    resume_maintenance_without_job_db, resume_terminal_restore_db, start_restore_draining_db,
+};
+use crate::storage::postgres::{StorageCallSite, with_storage_call_site};
+use crate::storage::storage_handle;
 
 static RESTORE_COORDINATOR: Once = Once::new();
 static ACTIVE_MAINTENANCE_WORK: AtomicUsize = AtomicUsize::new(0);
@@ -628,11 +629,10 @@ fn validate_required_seed_rows(document: &BackupDocument) -> Result<(), ApiError
 }
 
 pub async fn stage_restore(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
     settings: &RestoreSettings,
     request: RestoreStageRequest,
 ) -> Result<RestoreStageResponse, ApiError> {
-    let pool = crate::traits::backend_pool(pool);
     let (initiator, document_bytes) = request.into_parts();
     if document_bytes.len() > settings.max_upload_bytes() {
         return Err(ApiError::PayloadTooLarge(format!(
@@ -692,18 +692,17 @@ pub async fn stage_restore(
 }
 
 pub async fn load_restore_job(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     job_id: RestoreJobID,
 ) -> Result<RestoreJobRecord, ApiError> {
     load_restore_job_db(pool, job_id.id()).await
 }
 
 pub async fn restore_status(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
     job_id: RestoreJobID,
     capability: &str,
 ) -> Result<RestoreStageResponse, ApiError> {
-    let pool = crate::traits::backend_pool(pool);
     let job = match load_restore_status_job_db(pool, job_id.id()).await {
         Ok(job) => Some(job),
         Err(ApiError::NotFound(_)) => None,
@@ -752,7 +751,7 @@ pub async fn restore_status(
 }
 
 async fn apply_restore(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     job: &RestoreJobRecord,
     document: &BackupDocument,
 ) -> Result<RestoreCompletion, ApiError> {
@@ -780,7 +779,7 @@ async fn apply_restore(
 }
 
 async fn fail_restore_and_resume(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     job_id: i64,
     error: &ApiError,
 ) -> Result<(), ApiError> {
@@ -794,11 +793,10 @@ fn restore_error_for_storage(error: &ApiError) -> String {
 }
 
 pub async fn confirm_restore(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
     job_id: RestoreJobID,
     confirmation: &RestoreConfirmRequest,
 ) -> Result<RestoreStageResponse, ApiError> {
-    let pool = crate::traits::backend_pool(pool);
     let job = match load_restore_job(pool, job_id).await {
         Ok(job) => Some(job),
         Err(ApiError::NotFound(_)) => None,
@@ -896,13 +894,15 @@ pub async fn confirm_restore(
 /// restart. The destructive transaction is guarded by an advisory lock and
 /// re-checks the job/maintenance state. Once one coordinator commits, the
 /// maintenance row is normal and every restore staging row has been removed.
-pub async fn reconcile_interrupted_restore(pool: &DbPool) -> Result<(), ApiError> {
+pub async fn reconcile_interrupted_restore(
+    pool: &impl crate::storage::StorageContext,
+) -> Result<(), ApiError> {
     let snapshot = load_restore_coordinator_snapshot_db(pool).await?;
     reconcile_interrupted_restore_from_snapshot(pool, snapshot).await
 }
 
 async fn reconcile_interrupted_restore_from_snapshot(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     snapshot: RestoreCoordinatorSnapshot,
 ) -> Result<(), ApiError> {
     let maintenance_state = snapshot.maintenance_state();
@@ -977,7 +977,7 @@ async fn reconcile_interrupted_restore_from_snapshot(
 }
 
 async fn heartbeat_instance(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     instance_id: Uuid,
     expire_validated_jobs: bool,
 ) -> Result<RestoreCoordinatorSnapshot, ApiError> {
@@ -990,7 +990,9 @@ async fn heartbeat_instance(
     .await
 }
 
-async fn wait_for_instances_drained(pool: &DbPool) -> Result<(), ApiError> {
+async fn wait_for_instances_drained(
+    pool: &impl crate::storage::StorageContext,
+) -> Result<(), ApiError> {
     let deadline = Instant::now() + StdDuration::from_secs(RESTORE_DRAIN_TIMEOUT_SECONDS);
     loop {
         let cutoff = Utc::now().naive_utc() - Duration::seconds(10);
@@ -1019,7 +1021,7 @@ async fn wait_for_instances_drained(pool: &DbPool) -> Result<(), ApiError> {
 }
 
 async fn reconcile_interrupted_restore_with_heartbeat(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     instance_id: Uuid,
     snapshot: RestoreCoordinatorSnapshot,
 ) -> Result<(), ApiError> {
@@ -1037,9 +1039,9 @@ async fn reconcile_interrupted_restore_with_heartbeat(
 
 pub fn ensure_restore_coordinator_running<C>(backend: C)
 where
-    C: BackendContext,
+    C: StorageContext,
 {
-    let pool = backend_pool(&backend).clone();
+    let pool = storage_handle(&backend);
     RESTORE_COORDINATOR.call_once(move || {
         spawn_background_worker("restore-coordinator", move |shutdown| {
             let system = actix_rt::System::new();
@@ -1051,8 +1053,8 @@ where
                         last_run.elapsed()
                             >= StdDuration::from_secs(RESTORE_STAGE_EXPIRY_INTERVAL_SECONDS)
                     });
-                    let snapshot = with_db_call_site(
-                        DbCallSite::RestoreCoordinator,
+                    let snapshot = with_storage_call_site(
+                        StorageCallSite::RestoreCoordinator,
                         heartbeat_instance(&pool, instance_id, expire_validated_jobs),
                     )
                     .await;
@@ -1061,8 +1063,8 @@ where
                             if expire_validated_jobs {
                                 last_expiry_run = Some(Instant::now());
                             }
-                            if let Err(error) = with_db_call_site(
-                                DbCallSite::RestoreCoordinator,
+                            if let Err(error) = with_storage_call_site(
+                                StorageCallSite::RestoreCoordinator,
                                 reconcile_interrupted_restore_with_heartbeat(
                                     &pool,
                                     instance_id,
@@ -1098,23 +1100,23 @@ where
 }
 
 pub(crate) async fn current_maintenance_state(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
 ) -> Result<MaintenanceState, ApiError> {
-    let pool = crate::traits::backend_pool(pool);
     maintenance_state_db(pool).await
 }
 
-pub async fn maintenance_state(pool: &DbPool) -> Result<String, ApiError> {
+pub async fn maintenance_state(
+    pool: &impl crate::storage::StorageContext,
+) -> Result<String, ApiError> {
     current_maintenance_state(pool)
         .await
         .map(|state| state.as_str().to_string())
 }
 
 pub async fn identity_scope_name(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
     identity_scope_id: i32,
 ) -> Result<String, ApiError> {
-    let pool = crate::traits::backend_pool(pool);
     identity_scope_name_by_id(pool, identity_scope_id).await
 }
 

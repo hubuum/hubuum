@@ -11,15 +11,6 @@ use crate::config::{
     DEFAULT_EXPORT_MAX_OUTPUT_BYTES, DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS,
     DEFAULT_EXPORT_STAGE_TIMEOUT_MS, DEFAULT_EXPORT_TEMPLATE_MAX_OBJECTS, get_config,
 };
-use crate::db::traits::UserPermissions;
-use crate::db::traits::authz::{scope_allows, scope_allows_resource};
-use crate::db::traits::relations::{
-    class_relation_authorization_resources, object_authorization_resources,
-    object_relation_authorization_resources,
-};
-use crate::db::traits::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate};
-use crate::db::traits::user::UserSearchBackend;
-use crate::db::{DbPool, with_statement_timeout_scope};
 use crate::errors::ApiError;
 use crate::models::retention::FutureRetention;
 use crate::models::search::{
@@ -45,8 +36,20 @@ use crate::permissions::{
     AuthzTarget, PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef,
     ResourceRef,
 };
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::UserPermissions;
+use crate::storage::postgres::operations::authz::{scope_allows, scope_allows_resource};
+use crate::storage::postgres::operations::relations::{
+    class_relation_authorization_resources, object_authorization_resources,
+    object_relation_authorization_resources,
+};
+use crate::storage::postgres::operations::task::{
+    TaskBackend, TaskCreateRequest, TaskScopeSnapshot, TaskStateUpdate,
+};
+use crate::storage::postgres::operations::user::UserSearchBackend;
+use crate::storage::postgres::with_statement_timeout_scope;
 use crate::tasks::request_hash;
-use crate::traits::{AuthzSubject, BackendContext, SelfAccessors};
+use crate::traits::{AuthzSubject, SelfAccessors};
 use crate::utilities::exporting::render_template;
 
 use crate::models::traits::check_if_object_in_class;
@@ -466,7 +469,7 @@ struct PermissionAwareExport<'a, C: ?Sized, S: ?Sized> {
 
 impl<'a, C, S> PermissionAwareExport<'a, C, S>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: crate::traits::Search + ?Sized,
 {
     async fn new(
@@ -480,14 +483,11 @@ where
         {
             ExportAuthorization::External {
                 backend: permission_backend,
-                principal: PrincipalRef::load(crate::traits::backend_pool(backend), subject)
-                    .await?,
+                principal: PrincipalRef::load(backend, subject).await?,
             }
         } else {
             ExportAuthorization::LocalSql {
-                is_admin: subject
-                    .is_admin(crate::traits::backend_pool(backend))
-                    .await?,
+                is_admin: subject.is_admin(backend).await?,
             }
         };
         Ok(Self {
@@ -498,8 +498,8 @@ where
         })
     }
 
-    fn pool(&self) -> &DbPool {
-        crate::traits::backend_pool(self.backend)
+    fn pool(&self) -> &C {
+        self.backend
     }
 
     fn external_backend(
@@ -977,11 +977,10 @@ impl ExportTaskSubmission {
 }
 
 pub(crate) async fn submit_export_task<S: AuthzSubject>(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
     subject: &S,
     submission: ExportTaskSubmission,
 ) -> Result<TaskRecord, ApiError> {
-    let pool = crate::traits::backend_pool(pool);
     let ExportTaskSubmission {
         export,
         template,
@@ -1011,7 +1010,7 @@ pub(crate) async fn submit_export_task<S: AuthzSubject>(
 }
 
 async fn prepare_export_runtime(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     export: ExportRequest,
     template: Option<ExportTemplate>,
 ) -> Result<ExportRuntime, ApiError> {
@@ -1044,7 +1043,7 @@ async fn prepare_export_runtime(
 }
 
 async fn resolve_template(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     template_id: Option<i32>,
 ) -> Result<Option<ExportTemplate>, ApiError> {
     let Some(template_id) = template_id else {
@@ -1085,7 +1084,7 @@ fn runtime_to_task_payload(runtime: &ExportRuntime) -> Result<StoredExportTaskPa
 }
 
 async fn find_or_create_export_task(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     submitted_by: PrincipalID,
     snapshot: TaskScopeSnapshot,
     idempotency_key: Option<IdempotencyKey>,
@@ -1108,9 +1107,9 @@ pub(crate) async fn execute_export_task<C>(
     scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     let payload = task
         .request_payload
         .clone()
@@ -1687,7 +1686,7 @@ async fn build_template_items<C, S>(
     relation_hydration: Option<RelationHydrationPlan>,
 ) -> Result<(Vec<serde_json::Value>, Option<serde_json::Value>), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: crate::traits::Search + ?Sized,
 {
     let pool = exporter.pool();
@@ -1827,7 +1826,7 @@ async fn hydrate_related_root<C, S>(
     hydration_budget: &mut HydrationBudget,
 ) -> Result<HydratedTemplateObject, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: crate::traits::Search + ?Sized,
 {
     let max_related_objects = hydration_budget.remaining_related_capacity()?;
@@ -1879,7 +1878,7 @@ async fn load_hydration_class_metadata<C, S>(
     objects_by_id: &BTreeMap<i32, HubuumObjectWithPath>,
 ) -> Result<HydrationClassMetadata, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: crate::traits::Search + ?Sized,
 {
     let pool = exporter.pool();
@@ -2060,7 +2059,7 @@ fn seed_alias_buckets(
 }
 
 async fn ensure_class_name_ids(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     class_ids: &[i32],
     class_names: &mut BTreeMap<i32, String>,
 ) -> Result<(), ApiError> {
@@ -2623,7 +2622,7 @@ async fn execute_scope<C, S>(
     mut query_options: QueryOptions,
 ) -> Result<(Vec<serde_json::Value>, Vec<ExportWarning>, bool), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: crate::traits::Search + ?Sized,
 {
     let pool = exporter.pool();
@@ -2677,7 +2676,7 @@ async fn apply_export_includes<C, S>(
     items: &mut [serde_json::Value],
 ) -> Result<(), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: crate::traits::Search + ?Sized,
 {
     let Some(related_objects) = export
@@ -2896,8 +2895,8 @@ mod tests {
         object_with_root_path, pluralize_alias, take_related_within_budget, validate_export_limits,
         validate_export_submission,
     };
-    use crate::db::capture_queries;
     use crate::errors::ApiError;
+    use crate::storage::postgres::capture_queries;
     use crate::tests::{TestContext, create_test_group};
     use crate::traits::CanSave;
 
@@ -2992,7 +2991,8 @@ mod tests {
                 ..Default::default()
             },
         });
-        let backend = AppContext::new(context.pool.get_ref().clone(), Arc::new(permission_backend));
+        let backend =
+            AppContext::postgres(context.pool.get_ref().clone(), Arc::new(permission_backend));
         let exporter = PermissionAwareExport::new(&backend, &context.normal_user, None)
             .await
             .unwrap();
@@ -3079,7 +3079,8 @@ mod tests {
             resource_id: Some(source_object.id),
             attrs: ResourceAttrs::default(),
         });
-        let backend = AppContext::new(context.pool.get_ref().clone(), Arc::new(permission_backend));
+        let backend =
+            AppContext::postgres(context.pool.get_ref().clone(), Arc::new(permission_backend));
         let exporter = PermissionAwareExport::new(&backend, &context.normal_user, None)
             .await
             .unwrap();
@@ -3242,7 +3243,8 @@ mod tests {
                 attrs: ResourceAttrs::default(),
             });
         }
-        let backend = AppContext::new(context.pool.get_ref().clone(), Arc::new(permission_backend));
+        let backend =
+            AppContext::postgres(context.pool.get_ref().clone(), Arc::new(permission_backend));
         let exporter = PermissionAwareExport::new(&backend, &context.normal_user, None)
             .await
             .unwrap();

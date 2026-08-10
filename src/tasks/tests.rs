@@ -23,16 +23,6 @@ use super::types::{
     PlanningFailure, PlanningState, RuntimeState, WorkerLoopAction,
 };
 use super::worker::{background_worker_action, mark_claimed_task_failed, process_one_task};
-use crate::db::traits::collection::DeleteCollectionRecord;
-use crate::db::traits::task::{TaskBackend, insert_import_results};
-use crate::db::traits::task_import::{
-    create_class_db, create_class_relation_db, create_collection_db, create_object_db,
-    create_object_relation_db, update_class_db, update_class_relation_timestamps_db,
-    update_collection_db, update_object_db, update_object_relation_timestamps_db,
-    upsert_export_template_db, upsert_group_membership_db, upsert_identity_scope_db,
-    upsert_remote_target_db,
-};
-use crate::db::{capture_queries, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
     CURRENT_IMPORT_VERSION, ClassKey, CollectionID, CollectionKey, ExportContentType,
@@ -52,6 +42,16 @@ use crate::permissions::{AppContext, PermissionBackend};
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
 use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
+use crate::storage::postgres::operations::collection::DeleteCollectionRecord;
+use crate::storage::postgres::operations::task::{TaskBackend, insert_import_results};
+use crate::storage::postgres::operations::task_import::{
+    create_class_db, create_class_relation_db, create_collection_db, create_object_db,
+    create_object_relation_db, update_class_db, update_class_relation_timestamps_db,
+    update_collection_db, update_object_db, update_object_relation_timestamps_db,
+    upsert_export_template_db, upsert_group_membership_db, upsert_identity_scope_db,
+    upsert_remote_target_db,
+};
+use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
 use crate::tests::{TestContext, create_test_group};
 use crate::traits::CanSave;
 
@@ -196,7 +196,7 @@ async fn import_planning_uses_the_task_execution_permission_backend() {
         .collection_fixture("external_task_authorization")
         .await;
     let permissions: Arc<dyn PermissionBackend> = Arc::new(MockTreetopBackend::new());
-    let backend = AppContext::new(context.pool.get_ref().clone(), permissions);
+    let backend = AppContext::postgres(context.pool.get_ref().clone(), permissions);
     let request = ImportRequest {
         version: CURRENT_IMPORT_VERSION,
         dry_run: Some(true),
@@ -320,7 +320,8 @@ async fn relation_timestamp_overwrite_requires_update_permission(
             },
         });
     }
-    let backend = AppContext::new(context.pool.get_ref().clone(), Arc::new(permission_backend));
+    let backend =
+        AppContext::postgres(context.pool.get_ref().clone(), Arc::new(permission_backend));
 
     let collection_key = |index: usize| CollectionKey {
         name: fixtures[index].collection.name.clone(),
@@ -883,7 +884,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
 #[tokio::test]
 async fn test_extended_import_uses_backend_denial_for_sql_administrator() {
     let test = TestContext::new().await;
-    let context = AppContext::new(
+    let context = AppContext::postgres(
         test.pool.get_ref().clone(),
         Arc::new(MockTreetopBackend::new()),
     );
@@ -908,7 +909,7 @@ async fn test_extended_import_uses_backend_grant_for_non_sql_administrator() {
         .unwrap();
     let backend = MockTreetopBackend::new();
     backend.add_admin_rule(policy_group.id);
-    let context = AppContext::new(test.pool.get_ref().clone(), Arc::new(backend));
+    let context = AppContext::postgres(test.pool.get_ref().clone(), Arc::new(backend));
     let request = extended_import_request(test.scoped_name("backend_allowed_import"));
 
     let planning = plan_import(&context, &test.normal_user, None, &request).await;

@@ -5,8 +5,6 @@ use std::time::Duration;
 use actix_web::{http::StatusCode, test};
 use rstest::rstest;
 
-use crate::db::prelude::*;
-use crate::db::{with_connection, with_transaction};
 use crate::events::{Event, EventContext};
 use crate::models::traits::{PatchObjectData, ResolveObjectTarget};
 use crate::models::{
@@ -14,6 +12,8 @@ use crate::models::{
     NewHubuumClass, NewHubuumObject, NewObjectComputedData, ObjectComputedData,
     ObjectDataPatchDocument, ObjectSelector,
 };
+use crate::storage::postgres::prelude::*;
+use crate::storage::postgres::{with_connection, with_transaction};
 use crate::tests::api_operations::{
     patch_request, patch_request_with_content_type, patch_request_with_raw_body, post_request,
 };

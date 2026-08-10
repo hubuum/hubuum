@@ -135,7 +135,7 @@ in an audit/event stream rather than in the row's temporal state.
 
 ### Ambient Mutation-Provenance Task-Local
 
-In `src/db/mod.rs`, an async task-local (`tokio::task_local!`) variable stores
+In `src/storage/postgres/runtime.rs`, an async task-local (`tokio::task_local!`) variable stores
 typed mutation provenance:
 
 ```rust
@@ -268,7 +268,7 @@ This achieves **pseudonymization** under GDPR Article 4(5): once a user is anony
 Located in `src/utilities/iam.rs`:
 
 ```rust
-pub async fn anonymize_user(pool: &DbPool, target_id: i32) -> Result<(), ApiError> {
+pub async fn anonymize_user(pool: &PostgresPool, target_id: i32) -> Result<(), ApiError> {
     use crate::schema::principals::dsl as p;
     use crate::schema::tokens::dsl as t;
     use crate::schema::users::dsl as u;
@@ -310,7 +310,7 @@ Exposed as `POST /api/v1/iam/users/{user_id}/anonymize` (admin-only):
 ```rust
 #[post("/{user_id}/anonymize")]
 pub async fn anonymize_user(
-    pool: web::Data<DbPool>,
+    pool: web::Data<PostgresPool>,
     user_id: web::Path<UserID>,
     requestor: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
@@ -520,7 +520,7 @@ Writes performed by background tasks (e.g., imports, async jobs in `src/tasks`) 
 ## References
 
 - **Schema**: `migrations/2023-12-27-011440_initial/up.sql`
-- **Database actor plumbing**: `src/db/mod.rs`
+- **Database actor plumbing**: `src/storage/postgres/runtime.rs`
 - **Request-scoped actor context**: `src/middlewares/actor_context.rs`
 - **Anonymization logic**: `src/utilities/iam.rs`
 - **Anonymization endpoint**: `src/api/v1/handlers/users.rs`

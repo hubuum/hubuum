@@ -1,10 +1,10 @@
 use std::time::Instant;
 
-use crate::db::traits::authz::{scope_allows, scope_allows_resource};
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{Permissions, TokenScope};
 use crate::pagination::{known_count_or_skipped, paginate_in_memory};
+use crate::storage::postgres::operations::authz::{scope_allows, scope_allows_resource};
 use crate::traits::CursorPaginated;
 
 use super::backend::PermissionBackend;

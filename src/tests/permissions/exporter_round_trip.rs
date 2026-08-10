@@ -34,7 +34,7 @@ mod tests {
     #[actix_test]
     async fn exported_cedar_grants_same_non_relation_decisions_as_local() {
         let (pool, _) = get_pool_and_config().await;
-        let local: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
+        let local: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::postgres(
             pool.clone(),
             "admin".to_string(),
         ));
@@ -184,7 +184,7 @@ mod tests {
     #[actix_test]
     async fn exporter_relation_permits_emit_or_doubled_rules() {
         let (pool, _) = get_pool_and_config().await;
-        let local: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
+        let local: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::postgres(
             pool.clone(),
             "admin".to_string(),
         ));

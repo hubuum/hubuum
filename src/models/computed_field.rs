@@ -7,7 +7,6 @@ use hubuum_computed_fields::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::prelude::*;
 use crate::errors::ApiError;
 use crate::models::search::{ComputedQueryValueType, FilterField, SortParam};
 use crate::models::{HubuumObject, ResourceRevision};
@@ -15,6 +14,7 @@ use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 use crate::schema::{class_computation_state, computed_field_definitions, object_computed_data};
+use crate::storage::postgres::prelude::*;
 
 pub const COMPUTED_FIELD_VISIBILITY_SHARED: &str = "shared";
 pub const COMPUTED_FIELD_VISIBILITY_PERSONAL: &str = "personal";

@@ -22,7 +22,7 @@ HTTP / workers / administration
      application use cases
               |
               v
-      opaque BackendContext
+      opaque StorageContext
               |
               v
  complete StorageBackend contract
@@ -57,7 +57,7 @@ uses `DynLifecycleStorage::from_backend`, which requires `StorageBackend`.
 ## Complete Backend Contract
 
 `StorageBackend` is a sealed aggregate trait. A selectable implementation must
-satisfy every capability family below before `BackendHandle` can compose it:
+satisfy every capability family below before `StorageHandle` can compose it:
 
 | Required family | Contract responsibility |
 | --- | --- |
@@ -72,12 +72,14 @@ optional support. Every selectable backend implements the entire list. The
 central certification implementations in `src/storage/contract.rs` make adding
 a backend an explicit architecture change rather than an incidental trait impl.
 
-Some PostgreSQL capability implementations remain in `src/db/traits/*` while
-the internal migration continues. That is an implementation-location detail,
-not partial backend support. `BackendHandle` selects one certified PostgreSQL
-adapter, and compatibility helpers may recover its pool only behind the sealed
-boundary. No second backend can be added to composition while those adapters
-remain PostgreSQL-only without completing their backend-neutral ports.
+PostgreSQL query implementations live in
+`src/storage/postgres/operations/*`. Separating their persistence rows from
+root domain models is the next extraction layer; the current location is an
+implementation detail, not partial backend support. `StorageHandle` selects
+one certified PostgreSQL adapter, and only the storage implementation can
+recover its pool. Application consumers use `StorageContext`, lifecycle
+traits, or the explicit capability facade. No second backend can be added to
+composition without implementing every operation behind those contracts.
 
 The storage contract version changes when a required family is added or when
 observable semantics change. The selected backend and contract version are
@@ -197,7 +199,7 @@ There are two complementary test layers:
 1. Shared lifecycle contract tests run the same focused behaviors against the
    PostgreSQL adapter and the in-memory contract model.
 2. The available-backend compatibility registry iterates every selectable
-   `StorageBackendKind`, composes it through `BackendHandle`, verifies its
+   `StorageBackendKind`, composes it through `StorageHandle`, verifies its
    contract descriptor, and exercises the service boundary.
 
 PostgreSQL-specific tests remain responsible for behavior a logical model
@@ -212,7 +214,7 @@ Adding another selectable backend requires all of the following in one change:
 1. Implement every capability family in `StorageBackend`.
 2. Add the backend to the sealed certification module and
    `StorageBackendKind::ALL`.
-3. Add an exhaustive `BackendHandle` composition variant without a fallback.
+3. Add an exhaustive `StorageHandle` composition variant without a fallback.
 4. Run every shared compatibility contract against the implementation.
 5. Add backend-specific unit and integration coverage for its native failure,
    consistency, concurrency, and recovery behavior.
@@ -225,10 +227,18 @@ Adding another selectable backend requires all of the following in one change:
 If any item is absent, the implementation is a test model or internal adapter,
 not an available storage backend.
 
-## Workspace Extraction Path
+## Workspace Crates and Extraction Path
 
-The boundary is intended to become a set of workspace crates. The target
-dependency graph is:
+The first workspace boundary is now in place:
+
+- `hubuum-storage-core` owns backend-neutral descriptors, the contract version,
+  capability identities, and `StorageError` without runtime or driver
+  dependencies.
+- `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection
+  setup, safe endpoint diagnostics, JSONB validation, query capture, and its
+  crate-owned pool-construction error.
+
+The remaining target dependency graph is:
 
 ```text
 root hubuum application
@@ -250,11 +260,14 @@ The crates have deliberately different responsibilities:
 
 - `hubuum-domain` owns validated identifiers, commands, aggregates, and result
   types without Diesel, Actix, global configuration, or `ApiError`.
-- `hubuum-storage-core` owns the complete traits, `StorageError`, backend
-  descriptors, and the adapter-independent observation contract.
-- `hubuum-storage-postgres` intentionally owns Diesel, generated schema,
-  migrations, pool and TLS setup, transaction helpers, persistence rows,
-  PostgreSQL queries, and `PostgresStorageError`.
+- `hubuum-storage-core` ultimately owns the complete traits in addition to its
+  current errors, descriptors, and capability metadata. Behavioral traits that
+  still name root domain types remain in `src/storage` until `hubuum-domain`
+  exists; the root aggregate trait already enforces completeness meanwhile.
+- `hubuum-storage-postgres` currently owns pool and TLS setup, JSONB helpers,
+  and query capture. It ultimately owns generated schema, migrations,
+  transaction helpers, persistence rows, PostgreSQL queries, and
+  `PostgresStorageError` as domain types are separated.
 - `hubuum-storage-contract-tests` supplies the reusable compatibility suite and
   focused logical model. Every available adapter runs that suite; each adapter
   also retains native unit and integration tests.
@@ -269,14 +282,14 @@ combine domain behavior with `Queryable`, `Insertable`, schema references, or
 SQL methods therefore need to split into backend-neutral types and private
 PostgreSQL row types at the adapter edge.
 
-A safe extraction stack is:
+A safe continuation stack is:
 
 1. Introduce backend-neutral domain command/result types and explicit
    conversions to private PostgreSQL rows.
-2. Move the contract, errors, descriptors, and compatibility harness into
+2. Move domain-typed behavioral contracts and the compatibility harness into
    `hubuum-storage-core` and `hubuum-storage-contract-tests`.
-3. Move the pool/TLS runtime and transaction boundary, then queries and adapter
-   errors, into `hubuum-storage-postgres`.
+3. Move the remaining transaction boundary, queries, and adapter errors into
+   `hubuum-storage-postgres`.
 4. Move `src/schema.rs` and `migrations/` together so generated schema,
    embedded migrations, and production queries stay owned by one crate.
 5. Forward root package features such as embedded migrations and TLS to the
@@ -285,22 +298,24 @@ A safe extraction stack is:
 6. Update the Docker manifest-copy stage, CI change classifier, Rust API policy,
    and production container build in the same stack layers that add the crates.
 
-The pool/TLS/transaction runtime can be extracted before all queries if its API
-uses crate-owned configuration and errors. It should not expose Diesel pool or
-connection types to the root application; closures or adapter-owned operation
-APIs keep those implementation details on the PostgreSQL side.
+The pool and TLS runtime is already extracted behind crate-owned settings and
+errors. Its concrete pool and connection types are an adapter integration
+surface used by composition and `src/storage/postgres`; application consumers
+must not import them. Subsequent query extraction replaces that transitional
+integration surface with adapter-owned operation APIs.
 
 ## Boundary Enforcement
 
 Architecture tests enforce that:
 
-- handlers, extractors, middleware, and metrics scraping do not import Diesel,
-  `DbPool`, transaction helpers, or database implementation modules;
+- handlers, services, extractors, middleware, and metrics scraping do not
+  import Diesel, `PostgresPool`, transaction helpers, or database
+  implementation modules;
 - backend-neutral services and storage contracts do not import PostgreSQL or
   application API errors;
 - only adapter modules translate implementation errors to `StorageError`;
 - the application error layer owns `StorageError` to `ApiError` conversion;
-- `AppContext` owns an opaque `BackendHandle` and composes services from a
+- `AppContext` owns an opaque `StorageHandle` and composes services from a
   complete backend;
 - the complete backend trait contains every required capability family; and
 - the memory contract model cannot be certified or selected as a full backend.

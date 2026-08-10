@@ -1,7 +1,7 @@
 use crate::models::token_scope::TokenScope;
 use std::{fmt, str::FromStr};
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use chrono::NaiveDateTime;
 use hubuum_outbound_http::OutboundHeaderName;
 use hubuum_templates::prepare_template;
@@ -11,8 +11,6 @@ use utoipa::ToSchema;
 use crate::config::{
     DEFAULT_EXPORT_TEMPLATE_FUEL, DEFAULT_EXPORT_TEMPLATE_RECURSION_LIMIT, get_config,
 };
-use crate::db::DbPool;
-use crate::db::traits::UserPermissions;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
@@ -24,6 +22,7 @@ use crate::pagination::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 use crate::schema::{remote_call_results, remote_targets};
+use crate::storage::postgres::operations::UserPermissions;
 use crate::traits::{ClassAccessors, CollectionAccessors, ObjectAccessors, SelfAccessors};
 
 crate::int_id_newtype! {
@@ -917,15 +916,15 @@ impl RemoteTarget {
 
 pub async fn authorize_remote_invocation<C>(
     backend: &C,
-    actor: &impl crate::db::traits::authz::AuthzSubject,
+    actor: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     scopes: Option<&TokenScope>,
     target: &RemoteTarget,
     subject: &RemoteInvocationSubject,
 ) -> Result<ResolvedRemoteInvocationSubject, ApiError>
 where
-    C: crate::traits::BackendContext + ?Sized,
+    C: crate::storage::StorageContext,
 {
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     let target_collection_id = CollectionID::new(target.collection_id)?;
     crate::can!(
         backend,
@@ -980,7 +979,7 @@ where
 impl RemoteInvocationSubject {
     pub async fn resolve(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResolvedRemoteInvocationSubject, ApiError> {
         match self {
             Self::Collection { collection_id } => {

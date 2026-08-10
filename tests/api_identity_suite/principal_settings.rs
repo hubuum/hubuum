@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use crate::db::prelude::*;
+    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
     use chrono::NaiveDateTime;
     use rstest::rstest;
 
-    use crate::db::{DbPool, with_connection};
     use crate::errors::ApiError;
     use crate::events::{Action, EntityType, Event};
     use crate::models::{Permissions, PrincipalID, PrincipalSettingsResponse};
+    use crate::storage::postgres::{PostgresPool, with_connection};
     use crate::tests::api_operations::{delete_request, get_request, patch_request, put_request};
     use crate::tests::{
         TestContext, create_test_group, create_test_service_account, ensure_admin_group,
@@ -31,7 +31,10 @@ mod tests {
         }
     }
 
-    async fn principal_mutation_state(pool: &DbPool, principal_id: i32) -> (NaiveDateTime, i64) {
+    async fn principal_mutation_state(
+        pool: &PostgresPool,
+        principal_id: i32,
+    ) -> (NaiveDateTime, i64) {
         use crate::schema::{events, principals};
 
         with_connection(pool, async |conn| -> Result<_, ApiError> {

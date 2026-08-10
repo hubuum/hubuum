@@ -1,13 +1,14 @@
 use crate::models::token_scope::TokenScope;
 use serde::Serialize;
 
-use crate::db::traits::authz::AuthzSubject;
-use crate::db::traits::permissions::PermissionControllerBackend;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{GroupID, Permission, Permissions, PermissionsList};
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::authz::AuthzSubject;
+use crate::storage::postgres::operations::permissions::PermissionControllerBackend;
 
-use super::{BackendContext, CollectionAccessors};
+use super::CollectionAccessors;
 
 pub trait PermissionController: Serialize + CollectionAccessors {
     /// Check if the user has all the given permissions on the object.
@@ -65,16 +66,11 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         scopes: Option<&TokenScope>,
     ) -> Result<bool, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
         S: AuthzSubject,
     {
-        self.user_can_all_from_backend(
-            crate::traits::backend_pool(backend),
-            subject,
-            permission,
-            scopes,
-        )
-        .await
+        self.user_can_all_from_backend(backend, subject, permission, scopes)
+            .await
     }
 
     /// Grant a set of permissions to a group.
@@ -107,7 +103,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         permission_list: PermissionsList,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.apply_permissions_without_events(backend, group_id_for_grant, permission_list, false)
             .await
@@ -121,7 +117,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.apply_permissions(backend, group_id_for_grant, permission_list, false, context)
             .await
@@ -146,10 +142,10 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         replace_existing: bool,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.apply_permissions_from_backend_without_events(
-            crate::traits::backend_pool(backend),
+            backend,
             group_id_for_grant,
             permission_list,
             replace_existing,
@@ -166,10 +162,10 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.apply_permissions_from_backend(
-            crate::traits::backend_pool(backend),
+            backend,
             group_id_for_grant,
             permission_list,
             replace_existing,
@@ -210,10 +206,10 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         permission_list: PermissionsList,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.revoke_permissions_from_backend_without_events(
-            crate::traits::backend_pool(backend),
+            backend,
             group_id_for_revoke,
             permission_list,
         )
@@ -228,15 +224,10 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.revoke_permissions_from_backend(
-            crate::traits::backend_pool(backend),
-            group_id_for_revoke,
-            permission_list,
-            context,
-        )
-        .await
+        self.revoke_permissions_from_backend(backend, group_id_for_revoke, permission_list, context)
+            .await
     }
 
     /// Grant a specific permission to a group.
@@ -267,7 +258,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         permission: Permissions,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.grant_without_events(
             backend,
@@ -304,7 +295,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         permission: Permissions,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.revoke_without_events(
             backend,
@@ -346,7 +337,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         permission_list: PermissionsList,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.apply_permissions_without_events(backend, group_identifier, permission_list, true)
             .await
@@ -360,7 +351,7 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         context: Option<&EventContext>,
     ) -> Result<Permission, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         self.apply_permissions(backend, group_identifier, permission_list, true, context)
             .await
@@ -393,13 +384,10 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         group_id_for_revoke: GroupID,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.revoke_all_from_backend_without_events(
-            crate::traits::backend_pool(backend),
-            group_id_for_revoke,
-        )
-        .await
+        self.revoke_all_from_backend_without_events(backend, group_id_for_revoke)
+            .await
     }
 
     async fn revoke_all<C>(
@@ -409,13 +397,9 @@ pub trait PermissionController: Serialize + CollectionAccessors {
         context: Option<&EventContext>,
     ) -> Result<(), ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        self.revoke_all_from_backend(
-            crate::traits::backend_pool(backend),
-            group_id_for_revoke,
-            context,
-        )
-        .await
+        self.revoke_all_from_backend(backend, group_id_for_revoke, context)
+            .await
     }
 }

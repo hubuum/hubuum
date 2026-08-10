@@ -3,14 +3,6 @@ use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, po
 use crate::api::etag::{RevisionedResource, revision_precondition};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::UserPermissions;
-use crate::backend::capabilities::computed_field::{
-    class_computation_state_for, create_personal_definition, create_shared_definition,
-    delete_personal_definition, delete_shared_definition, get_computed_definition,
-    list_personal_definitions_page, list_shared_definitions, preview_computed_definition,
-    request_class_rebuild, update_personal_definition, update_shared_definition,
-};
-use crate::backend::with_revision_precondition_scope;
 use crate::can;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
@@ -23,6 +15,14 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
+use crate::storage::capabilities::UserPermissions;
+use crate::storage::capabilities::computed_field::{
+    class_computation_state_for, create_personal_definition, create_shared_definition,
+    delete_personal_definition, delete_shared_definition, get_computed_definition,
+    list_personal_definitions_page, list_shared_definitions, preview_computed_definition,
+    request_class_rebuild, update_personal_definition, update_shared_definition,
+};
+use crate::storage::capabilities::with_revision_precondition_scope;
 use crate::traits::SelfAccessors;
 
 fn require_human(requestor: &Authenticated) -> Result<i32, ApiError> {

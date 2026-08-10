@@ -47,7 +47,7 @@ async fn live_backend(url: &str) -> Result<TreetopPermissionBackend, ApiError> {
     let mut cfg = get_config().expect("failed to load test config").clone();
     cfg.treetop_url = Some(url.to_string());
     cfg.permission_backend = PermissionBackendKind::Treetop;
-    TreetopPermissionBackend::connect(url, &cfg, pool).await
+    TreetopPermissionBackend::connect_postgres(url, &cfg, pool).await
 }
 
 #[actix_test]
@@ -212,10 +212,10 @@ async fn live_group_permission_on_returns_grant_grid_for_known_group() {
 /// collection id so the external Cedar policy can reference it. If a
 /// collection already exists with that id, this is a no-op.
 async fn seed_collection_if_missing(collection_id: i32) {
-    use crate::db::prelude::*;
-    use crate::db::with_connection;
     use crate::schema::collections::dsl::{collections, id};
     use crate::schema::collections::{description, name};
+    use crate::storage::postgres::prelude::*;
+    use crate::storage::postgres::with_connection;
     use diesel::dsl::exists;
     use diesel::result::Error as DieselError;
     use diesel::{insert_into, select};

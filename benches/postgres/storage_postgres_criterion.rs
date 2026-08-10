@@ -3,12 +3,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use hubuum::db::{DbPool, ensure_database_schema_ready, init_pool_with_statement_timeout};
 use hubuum::events::EventContext;
 use hubuum::models::{
     Collection, CollectionID, Group, GroupID, NewCollectionWithAssignee, NewGroup,
 };
-use hubuum::services::Services;
+use hubuum::storage::postgres::{
+    PostgresPool, ensure_postgres_schema_ready, init_postgres_pool_with_statement_timeout,
+};
 use hubuum::traits::{CanDelete, CanSave};
 use tokio::runtime::{Builder, Runtime};
 
@@ -32,7 +33,7 @@ fn runtime() -> Runtime {
 }
 
 struct StorageFixture {
-    pool: DbPool,
+    pool: PostgresPool,
     owner_group: Group,
     collections: Vec<Collection>,
 }
@@ -41,10 +42,10 @@ impl StorageFixture {
     fn new(runtime: &Runtime, database_url: &str) -> Self {
         let pool = {
             let _runtime_guard = runtime.enter();
-            init_pool_with_statement_timeout(database_url, 4, 0)
+            init_postgres_pool_with_statement_timeout(database_url, 4, 0)
         };
         runtime
-            .block_on(ensure_database_schema_ready(&pool))
+            .block_on(ensure_postgres_schema_ready(&pool))
             .expect("benchmark database should be migrated");
 
         let owner_group = runtime
@@ -136,7 +137,7 @@ fn benchmark_postgres_storage(c: &mut Criterion) {
 
     let runtime = runtime();
     let fixture = StorageFixture::new(&runtime, &database_url);
-    let services = Services::postgres(fixture.pool.clone());
+    let services = hubuum::benchmark_support::services_for_postgres(fixture.pool.clone());
     let collections = services.collections();
     let point_read_id = fixture.point_read_id();
     let leaf_id = fixture.leaf_id();

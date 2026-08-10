@@ -38,7 +38,7 @@ The result/output tables are typed per task kind.
 Relevant code:
 
 - [src/models/task.rs](../src/models/task.rs)
-- [src/db/traits/task.rs](../src/db/traits/task.rs)
+- [src/storage/postgres/operations/task.rs](../src/storage/postgres/operations/task.rs)
 - [migrations/2023-12-27-011440_initial/up.sql](../migrations/2023-12-27-011440_initial/up.sql)
 
 ### `tasks`
@@ -158,7 +158,7 @@ Submission flow:
 
 Task creation itself is generic and implemented in:
 
-- [create_generic_task](../src/db/traits/task.rs)
+- [create_generic_task](../src/storage/postgres/operations/task.rs)
 
 When a task is created:
 
@@ -229,7 +229,7 @@ The HTTP worker count and background task worker count are intentionally separat
 
 Task claiming is DB-backed and implemented in:
 
-- [claim_next_queued_task](../src/db/traits/task.rs)
+- [claim_next_queued_task](../src/storage/postgres/operations/task.rs)
 
 Claiming uses:
 
@@ -382,7 +382,7 @@ After execution:
 
 Redaction is implemented in:
 
-- [finalize_task_terminal_state](../src/db/traits/task.rs)
+- [finalize_task_terminal_state](../src/storage/postgres/operations/task.rs)
 
 Redaction means:
 
@@ -552,7 +552,7 @@ The task system now has coverage in three areas:
 
 See:
 
-- [src/db/traits/task.rs](../src/db/traits/task.rs)
+- [src/storage/postgres/operations/task.rs](../src/storage/postgres/operations/task.rs)
 - [src/tasks/tests.rs](../src/tasks/tests.rs)
 - [src/tests/api/v1/imports.rs](../src/tests/api/v1/imports.rs)
 - [src/tests/api/meta.rs](../src/tests/api/meta.rs)

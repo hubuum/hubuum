@@ -8,8 +8,6 @@ use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::principals::{
     PrincipalCollectionPermissions, parse_token_list_query, principal_permissions_response,
 };
-use crate::backend::capabilities::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
-use crate::backend::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{
     AccessEventContext, Authenticated, ManagementAccess, PrincipalSettingsPatchPayload,
@@ -21,6 +19,8 @@ use crate::models::{
 };
 use crate::pagination::{effective_page_limit, finalize_page, prepare_db_pagination};
 use crate::permissions::AppContext;
+use crate::storage::capabilities::active_tokens::retained_token_metadata_by_principal_id_paginated_with_total_count;
+use crate::storage::capabilities::with_revision_precondition_scope;
 use crate::traits::GroupAccessors;
 
 pub use crate::models::CurrentTokenMetadata;

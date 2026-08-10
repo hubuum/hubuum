@@ -1,10 +1,8 @@
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::openapi::{RefOr, schema::Schema};
 use utoipa::{PartialSchema, ToSchema};
 
-use crate::db::DbPool;
-use crate::db::traits::principal::PrincipalSettingsMutation;
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::ResourceRevision;
@@ -14,7 +12,8 @@ use crate::models::json_patch::{
 };
 use crate::models::search::{FilterField, SortParam};
 use crate::schema::principals;
-use crate::traits::BackendContext;
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::principal::PrincipalSettingsMutation;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
     CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
@@ -307,13 +306,14 @@ pub struct MembershipPrincipalResponse {
 impl MembershipPrincipalResponse {
     pub async fn from_principal<C>(backend: &C, principal: Principal) -> Result<Self, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        let identity_scope = crate::db::traits::identity::identity_scope_name_by_id(
-            crate::traits::backend_pool(backend),
-            principal.identity_scope_id,
-        )
-        .await?;
+        let identity_scope =
+            crate::storage::postgres::operations::identity::identity_scope_name_by_id(
+                backend,
+                principal.identity_scope_id,
+            )
+            .await?;
         Ok(Self {
             principal_id: principal.id,
             identity_scope,
@@ -358,17 +358,17 @@ impl PrincipalMemberResponse {
         memberships: Vec<(crate::models::PrincipalGroup, Principal)>,
     ) -> Result<Vec<Self>, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
         let scope_ids = memberships
             .iter()
             .map(|(_, principal)| principal.identity_scope_id)
             .collect::<Vec<_>>();
-        let scope_names = crate::db::traits::identity::identity_scope_names_by_ids(
-            crate::traits::backend_pool(backend),
-            &scope_ids,
-        )
-        .await?;
+        let scope_names =
+            crate::storage::postgres::operations::identity::identity_scope_names_by_ids(
+                backend, &scope_ids,
+            )
+            .await?;
 
         memberships
             .into_iter()
@@ -494,7 +494,10 @@ impl IdAccessor for Principal {
 }
 
 impl InstanceAdapter<Principal> for Principal {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<Principal, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<Principal, ApiError> {
         Ok(self.clone())
     }
 }
@@ -522,7 +525,10 @@ impl IdAccessor for PrincipalID {
 }
 
 impl InstanceAdapter<Principal> for PrincipalID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<Principal, ApiError> {
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<Principal, ApiError> {
         load_principal_by_id(pool, self.id()).await
     }
 }
@@ -530,20 +536,17 @@ impl InstanceAdapter<Principal> for PrincipalID {
 impl PrincipalID {
     pub async fn principal<C>(&self, backend: &C) -> Result<Principal, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        load_principal_by_id(crate::traits::backend_pool(backend), self.id()).await
+        load_principal_by_id(backend, self.id()).await
     }
 
     pub async fn settings<C>(&self, backend: &C) -> Result<PrincipalSettingsResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        crate::db::traits::principal::load_principal_settings(
-            crate::traits::backend_pool(backend),
-            self.id(),
-        )
-        .await
+        crate::storage::postgres::operations::principal::load_principal_settings(backend, self.id())
+            .await
     }
 
     pub async fn replace_settings<C>(
@@ -553,10 +556,10 @@ impl PrincipalID {
         event_context: &EventContext,
     ) -> Result<PrincipalSettingsResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        crate::db::traits::principal::mutate_principal_settings(
-            crate::traits::backend_pool(backend),
+        crate::storage::postgres::operations::principal::mutate_principal_settings(
+            backend,
             self.id(),
             PrincipalSettingsMutation::Replace,
             settings,
@@ -572,10 +575,10 @@ impl PrincipalID {
         event_context: &EventContext,
     ) -> Result<PrincipalSettingsResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        crate::db::traits::principal::mutate_principal_settings(
-            crate::traits::backend_pool(backend),
+        crate::storage::postgres::operations::principal::mutate_principal_settings(
+            backend,
             self.id(),
             PrincipalSettingsMutation::Patch,
             patch,
@@ -591,10 +594,10 @@ impl PrincipalID {
         event_context: &EventContext,
     ) -> Result<PrincipalSettingsResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        crate::db::traits::principal::apply_principal_settings_patch(
-            crate::traits::backend_pool(backend),
+        crate::storage::postgres::operations::principal::apply_principal_settings_patch(
+            backend,
             self.id(),
             patch,
             event_context,
@@ -608,10 +611,10 @@ impl PrincipalID {
         event_context: &EventContext,
     ) -> Result<PrincipalSettingsResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        crate::db::traits::principal::mutate_principal_settings(
-            crate::traits::backend_pool(backend),
+        crate::storage::postgres::operations::principal::mutate_principal_settings(
+            backend,
             self.id(),
             PrincipalSettingsMutation::Reset,
             PrincipalSettings::default(),
@@ -623,11 +626,10 @@ impl PrincipalID {
 
 /// Load a principal by id.
 pub async fn load_principal_by_id(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
     principal_id: i32,
 ) -> Result<Principal, ApiError> {
-    let pool = crate::traits::backend_pool(pool);
-    crate::db::traits::principal::load_principal_by_id(pool, principal_id).await
+    crate::storage::postgres::operations::principal::load_principal_by_id(pool, principal_id).await
 }
 
 impl CursorPaginated for Principal {

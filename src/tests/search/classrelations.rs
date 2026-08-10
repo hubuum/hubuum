@@ -3,18 +3,18 @@ mod test {
     use regex::Regex;
     use rstest::rstest;
 
-    use crate::db::DbPool;
     use crate::models::class::NewHubuumClass;
     use crate::models::group::GroupID;
     use crate::models::search::{FilterField, ParsedQueryParam, QueryOptions, SearchOperator};
     use crate::models::{
         Collection, HubuumClass, HubuumClassRelation, NewCollection, NewHubuumClassRelation,
     };
+    use crate::storage::postgres::PostgresPool;
     use crate::tests::{TestContext, ensure_admin_group, test_context};
     use crate::traits::{CanDelete, CanSave, Search};
 
     async fn create_data(
-        pool: &DbPool,
+        pool: &PostgresPool,
         prefix: &str,
     ) -> (Collection, Vec<HubuumClass>, Vec<HubuumClassRelation>) {
         let admin_group = ensure_admin_group(pool).await;

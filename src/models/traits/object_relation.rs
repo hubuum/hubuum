@@ -1,5 +1,4 @@
-use crate::db::DbPool;
-use crate::db::traits::relations::{
+use crate::storage::postgres::operations::relations::{
     DeleteObjectRelationRecord, LoadObjectRelationRecord, SaveObjectRelationRecord,
 };
 
@@ -23,7 +22,10 @@ impl IdAccessor for HubuumObjectRelationID {
 }
 
 impl InstanceAdapter<HubuumObjectRelation> for HubuumObjectRelationID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<HubuumObjectRelation, ApiError> {
         self.load_object_relation_record(pool).await
     }
 }
@@ -34,30 +36,47 @@ impl IdAccessor for HubuumObjectRelation {
 }
 
 impl InstanceAdapter<HubuumObjectRelation> for HubuumObjectRelation {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<HubuumObjectRelation, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<HubuumObjectRelation, ApiError> {
         Ok(*self)
     }
 }
 
 impl DeleteAdapter for HubuumObjectRelation {
-    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<(), ApiError> {
         self.delete_object_relation_record_without_events(pool)
             .await
     }
 
-    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+    async fn delete_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+        context: &EventContext,
+    ) -> Result<(), ApiError> {
         self.delete_object_relation_record(pool, Some(context))
             .await
     }
 }
 
 impl DeleteAdapter for HubuumObjectRelationID {
-    async fn delete_adapter_without_events(&self, pool: &DbPool) -> Result<(), ApiError> {
+    async fn delete_adapter_without_events(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<(), ApiError> {
         self.delete_object_relation_record_without_events(pool)
             .await
     }
 
-    async fn delete_adapter(&self, pool: &DbPool, context: &EventContext) -> Result<(), ApiError> {
+    async fn delete_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+        context: &EventContext,
+    ) -> Result<(), ApiError> {
         self.delete_object_relation_record(pool, Some(context))
             .await
     }
@@ -68,14 +87,14 @@ impl SaveAdapter for NewHubuumObjectRelation {
 
     async fn save_adapter_without_events(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<HubuumObjectRelation, ApiError> {
         self.save_object_relation_record_without_events(pool).await
     }
 
     async fn save_adapter(
         &self,
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<HubuumObjectRelation, ApiError> {
         self.save_object_relation_record(pool, Some(context)).await

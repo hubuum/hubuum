@@ -4,9 +4,9 @@ mod tests {
     use rstest::rstest;
     use serde_json::json;
 
-    use crate::db::with_connection;
     use crate::events::{Action, ActorKind, EntityType, EventResponse, NewEvent, emit_event};
     use crate::models::{GroupID, NewHubuumClass, NewHubuumObject, Permissions, PermissionsList};
+    use crate::storage::postgres::with_connection;
     use crate::tests::TestContext;
     use crate::tests::api_operations::get_request;
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -15,7 +15,10 @@ mod tests {
 
     const EVENTS_ENDPOINT: &str = "/api/v1/events";
 
-    async fn emit_test_event(pool: &crate::db::DbPool, event: &NewEvent) -> EventResponse {
+    async fn emit_test_event(
+        pool: &crate::storage::postgres::PostgresPool,
+        event: &NewEvent,
+    ) -> EventResponse {
         with_connection(pool, async |conn| emit_event(conn, event).await)
             .await
             .expect("failed to emit test event")

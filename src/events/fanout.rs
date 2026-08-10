@@ -10,15 +10,16 @@ use crate::config::{
     DEFAULT_EVENT_FANOUT_BATCH_SIZE, DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
     DEFAULT_EVENT_FANOUT_POLL_INTERVAL_MS, DEFAULT_EVENT_FANOUT_WORKERS, get_config,
 };
-use crate::db::traits::event_fanout::process_event_fanout_batch;
-use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::events::EventFanoutSettings;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::EventWorkerWakeupStats;
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
-use crate::traits::{BackendContext, backend_pool};
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::event_fanout::process_event_fanout_batch;
+use crate::storage::postgres::{StorageCallSite, with_storage_call_site};
+use crate::storage::{StorageHandle, storage_handle};
 
 static EVENT_FANOUT_WORKER: Once = Once::new();
 static EVENT_FANOUT_LISTENER: Once = Once::new();
@@ -91,7 +92,7 @@ async fn wait_for_event_fanout_wakeup(poll_interval: Duration, shutdown: &Shutdo
 }
 
 async fn event_fanout_worker_loop(
-    pool: DbPool,
+    pool: StorageHandle,
     settings: EventFanoutSettings,
     poll_interval: Duration,
     shutdown: ShutdownSignal,
@@ -101,8 +102,8 @@ async fn event_fanout_worker_loop(
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = with_db_call_site(
-                DbCallSite::EventFanout,
+            result = with_storage_call_site(
+                StorageCallSite::EventFanout,
                 process_event_fanout_batch(&pool, settings),
             ) => result,
         };
@@ -117,7 +118,7 @@ async fn event_fanout_worker_loop(
 }
 
 fn spawn_event_fanout_worker_loop(
-    pool: DbPool,
+    pool: StorageHandle,
     settings: EventFanoutSettings,
     poll_interval: Duration,
     worker_index: usize,
@@ -145,9 +146,9 @@ fn spawn_event_fanout_worker_loop(
 
 pub fn ensure_event_fanout_worker_running<C>(backend: C)
 where
-    C: BackendContext,
+    C: StorageContext,
 {
-    let pool = backend_pool(&backend).clone();
+    let pool = storage_handle(&backend);
     let worker_count = configured_event_fanout_worker_count();
     if worker_count == 0 {
         return;
@@ -186,7 +187,7 @@ where
 
 pub fn kick_event_fanout_worker<C>(backend: C)
 where
-    C: BackendContext,
+    C: StorageContext,
 {
     ensure_event_fanout_worker_running(backend);
     EVENT_FANOUT_NOTIFICATIONS_SENT.fetch_add(1, Ordering::Relaxed);

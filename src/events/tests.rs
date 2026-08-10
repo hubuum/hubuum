@@ -7,28 +7,11 @@
 
 #![cfg(test)]
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use rstest::rstest;
 use uuid::Uuid;
 
 use super::delivery::process_claimed_event_delivery;
-use crate::db::traits::event_delivery::{
-    claim_event_deliveries, claim_event_delivery_by_id, mark_event_delivery_dead,
-    mark_event_delivery_failed, next_event_delivery_wakeup_in_db,
-};
-use crate::db::traits::event_fanout::{
-    claim_events_for_fanout, count_event_deliveries_for_event, fanout_event, fanout_events,
-};
-use crate::db::traits::event_retention::{
-    purge_event_retention_without_archive, try_acquire_event_retention_lock,
-};
-use crate::db::traits::event_subscription::{SaveEventSinkRecord, SaveEventSubscriptionRecord};
-use crate::db::traits::events::{EventListFilters, list_events_with_total_count};
-use crate::db::traits::remote_target::{
-    DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
-    emit_remote_target_invoked_event,
-};
-use crate::db::{capture_queries, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::events::retention::process_event_retention_batch;
 use crate::events::{
@@ -51,6 +34,27 @@ use crate::models::{
     Token, TokenID, TokenScope, UpdateExportTemplate, UpdateRemoteTargetRow, UpdateUser, UserID,
 };
 use crate::schema::events::dsl::events;
+use crate::storage::postgres::operations::event_delivery::{
+    claim_event_deliveries, claim_event_delivery_by_id, mark_event_delivery_dead,
+    mark_event_delivery_failed, next_event_delivery_wakeup_in_db,
+};
+use crate::storage::postgres::operations::event_fanout::{
+    claim_events_for_fanout, count_event_deliveries_for_event, fanout_event, fanout_events,
+};
+use crate::storage::postgres::operations::event_retention::{
+    purge_event_retention_without_archive, try_acquire_event_retention_lock,
+};
+use crate::storage::postgres::operations::event_subscription::{
+    SaveEventSinkRecord, SaveEventSubscriptionRecord,
+};
+use crate::storage::postgres::operations::events::{
+    EventListFilters, list_events_with_total_count,
+};
+use crate::storage::postgres::operations::remote_target::{
+    DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
+    emit_remote_target_invoked_event,
+};
+use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
 use crate::tests::{
     TestMutex, TestScope, create_test_user, lock_test_mutex, test_mutex, test_scope,
 };
@@ -102,7 +106,10 @@ async fn audit_revision_is_null_filters_nullable_revisions(
 }
 
 /// Count event rows for a given `event_id` (0 or 1, since `event_id` is UNIQUE).
-async fn count_events_for(conn: &mut crate::db::DbConnection, target: Uuid) -> i64 {
+async fn count_events_for(
+    conn: &mut crate::storage::postgres::PostgresConnection,
+    target: Uuid,
+) -> i64 {
     use crate::schema::events::dsl::event_id;
     events
         .filter(event_id.eq(target))

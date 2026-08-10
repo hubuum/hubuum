@@ -2,16 +2,9 @@
 mod tests {
     use std::sync::Arc;
 
-    use crate::db::prelude::*;
+    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
 
-    use crate::db::traits::computed_field::{
-        class_computation_state_for, create_personal_definition, create_shared_definition,
-        enrich_objects_with_computed_query_snapshot, execute_computed_reindex_task,
-        request_class_rebuild, resolve_computed_query_fields, source_data_sha256,
-    };
-    use crate::db::traits::task::recover_expired_task_leases;
-    use crate::db::{capture_queries, with_connection};
     use crate::events::EventContext;
     use crate::models::search::parse_query_parameter;
     use crate::models::{
@@ -21,6 +14,13 @@ mod tests {
     use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER, finalize_page};
     use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
     use crate::permissions::{ResourceAttrs, ResourceKind};
+    use crate::storage::postgres::operations::computed_field::{
+        class_computation_state_for, create_personal_definition, create_shared_definition,
+        enrich_objects_with_computed_query_snapshot, execute_computed_reindex_task,
+        request_class_rebuild, resolve_computed_query_fields, source_data_sha256,
+    };
+    use crate::storage::postgres::operations::task::recover_expired_task_leases;
+    use crate::storage::postgres::{capture_queries, with_connection};
     use crate::tests::api_operations::{
         get_request, get_request_with_permission_backend, patch_request,
         patch_request_with_headers, post_request,

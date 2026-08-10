@@ -8,7 +8,6 @@ mod tests {
     use rstest::rstest;
     use std::time::Duration;
 
-    use crate::db::traits::task::{TaskBackend, TaskStateUpdate, purge_expired_export_outputs};
     use crate::models::{
         CollectionID, ExportContentType, ExportJsonResponse, ExportRelationContext, ExportRequest,
         ExportScope, ExportScopeKind, ExportTemplate, ExportTemplateID, ExportTemplateKind,
@@ -17,6 +16,9 @@ mod tests {
         NewHubuumObjectRelation, NewTaskEventRecord, NewTaskRecord, Permissions, TaskEventResponse,
         TaskID, TaskKind, TaskResponse, TaskResultCounts, TaskStatus, TokenResourceScope,
         UpdateExportTemplate,
+    };
+    use crate::storage::postgres::operations::task::{
+        TaskBackend, TaskStateUpdate, purge_expired_export_outputs,
     };
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
@@ -222,7 +224,7 @@ mod tests {
     }
 
     async fn wait_for_task_with_token(
-        pool: &crate::db::DbPool,
+        pool: &crate::storage::postgres::PostgresPool,
         token: &str,
         task_id: i32,
         expected_terminal_statuses: &[TaskStatus],
@@ -256,7 +258,7 @@ mod tests {
     }
 
     async fn create_export_objects(
-        pool: &crate::db::DbPool,
+        pool: &crate::storage::postgres::PostgresPool,
         class: &HubuumClass,
     ) -> Vec<crate::models::HubuumObject> {
         let objects = vec![
@@ -284,7 +286,7 @@ mod tests {
     }
 
     async fn create_class_relation(
-        pool: &crate::db::DbPool,
+        pool: &crate::storage::postgres::PostgresPool,
         from_class_id: i32,
         to_class_id: i32,
     ) -> HubuumClassRelation {
@@ -302,7 +304,7 @@ mod tests {
     }
 
     async fn create_named_class(
-        pool: &crate::db::DbPool,
+        pool: &crate::storage::postgres::PostgresPool,
         collection_id: i32,
         name: &str,
     ) -> HubuumClass {
@@ -319,7 +321,7 @@ mod tests {
     }
 
     async fn create_object_relation(
-        pool: &crate::db::DbPool,
+        pool: &crate::storage::postgres::PostgresPool,
         from_object_id: i32,
         to_object_id: i32,
         class_relation_id: i32,
@@ -335,7 +337,7 @@ mod tests {
     }
 
     async fn create_template(
-        pool: &crate::db::DbPool,
+        pool: &crate::storage::postgres::PostgresPool,
         collection_id: i32,
         class_id: i32,
         scope_kind: ExportScopeKind,
@@ -1730,7 +1732,7 @@ mod tests {
     async fn test_export_output_cleanup_removes_expired_artifacts(
         #[future(awt)] test_context: TestContext,
     ) {
-        use crate::db::prelude::*;
+        use crate::storage::postgres::prelude::*;
 
         let context = test_context;
         let classes = create_test_classes(&context, "export_cleanup").await;
@@ -1767,7 +1769,7 @@ mod tests {
         // test, which relies on its own expired row surviving.
         let _purge_guard = lock_test_mutex(&EXPIRED_OUTPUT_PURGE_LOCK).await;
 
-        crate::db::with_connection(&context.pool, async |conn| {
+        crate::storage::postgres::with_connection(&context.pool, async |conn| {
             use crate::schema::export_task_outputs::dsl::{
                 export_task_outputs, output_expires_at, task_id,
             };
@@ -1860,7 +1862,7 @@ mod tests {
     async fn test_export_output_returns_gone_when_expired_before_purge(
         #[future(awt)] test_context: TestContext,
     ) {
-        use crate::db::prelude::*;
+        use crate::storage::postgres::prelude::*;
 
         let context = test_context;
         let classes = create_test_classes(&context, "export_expired").await;
@@ -1901,7 +1903,7 @@ mod tests {
             .unwrap()
             .and_hms_opt(0, 0, 0)
             .unwrap();
-        crate::db::with_connection(&context.pool, async |conn| {
+        crate::storage::postgres::with_connection(&context.pool, async |conn| {
             use crate::schema::export_task_outputs::dsl::{
                 export_task_outputs, output_expires_at, task_id,
             };
@@ -1974,7 +1976,7 @@ mod tests {
     async fn test_finalize_export_with_output_is_idempotent(
         #[future(awt)] test_context: TestContext,
     ) {
-        use crate::db::prelude::*;
+        use crate::storage::postgres::prelude::*;
 
         let context = test_context;
         let classes = create_test_classes(&context, "export_refinalize").await;
@@ -2043,7 +2045,7 @@ mod tests {
 
         // The output row is untouched: exactly one row, and the original body, not the duplicate.
         let (count, text): (i64, Option<String>) =
-            crate::db::with_connection(&context.pool, async |conn| {
+            crate::storage::postgres::with_connection(&context.pool, async |conn| {
                 use crate::schema::export_task_outputs::dsl::{
                     export_task_outputs, task_id, text_output,
                 };

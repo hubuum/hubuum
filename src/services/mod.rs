@@ -10,8 +10,7 @@ pub use collections::CollectionService;
 pub use object_relations::ObjectRelationService;
 pub use objects::ObjectService;
 
-use crate::db::DbPool;
-use crate::storage::{DynLifecycleStorage, PostgresStorage};
+use crate::storage::DynLifecycleStorage;
 
 /// Application use-case facade.
 #[derive(Clone)]
@@ -24,12 +23,6 @@ pub struct Services {
 }
 
 impl Services {
-    pub fn postgres(pool: DbPool) -> Self {
-        Self::from_lifecycle_storage(DynLifecycleStorage::from_backend(PostgresStorage::new(
-            pool,
-        )))
-    }
-
     pub(crate) fn from_lifecycle_storage(storage: DynLifecycleStorage) -> Self {
         Self {
             classes: ClassService::new(storage.clone()),

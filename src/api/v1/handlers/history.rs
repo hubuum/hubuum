@@ -5,8 +5,6 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::backend::capabilities::authz::scope_allows;
-use crate::backend::capabilities::history::resolve_principal_names;
 use crate::errors::ApiError;
 use crate::events::{PrincipalNames, Provenance, StoredProvenance};
 use crate::models::collection::user_can_on_any;
@@ -17,6 +15,8 @@ use crate::models::{
 use crate::pagination::count_query_options;
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
+use crate::storage::capabilities::authz::scope_allows;
+use crate::storage::capabilities::history::resolve_principal_names;
 use crate::traits::{AuthzSubject, CursorPaginated};
 
 /// A serialized history row plus the resolved username of its actor (if any).
@@ -51,7 +51,7 @@ where
 
 /// Resolve the union of actor and initiator ids with one principal query.
 pub(crate) async fn resolve_history_principal_names<T>(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
     rows: &[T],
 ) -> Result<PrincipalNames, ApiError>
 where
@@ -325,14 +325,15 @@ mod tests {
 
         let allow_backend = MockTreetopBackend::new();
         allow_backend.add_admin_rule(policy_group.id);
-        let allow_context = AppContext::new(test.pool.get_ref().clone(), Arc::new(allow_backend));
+        let allow_context =
+            AppContext::postgres(test.pool.get_ref().clone(), Arc::new(allow_backend));
         assert!(
             can_read_deleted_history(&allow_context, &test.normal_user, false)
                 .await
                 .unwrap()
         );
 
-        let deny_context = AppContext::new(
+        let deny_context = AppContext::postgres(
             test.pool.get_ref().clone(),
             Arc::new(MockTreetopBackend::new()),
         );
@@ -369,7 +370,7 @@ mod tests {
                 ..Default::default()
             },
         });
-        let context = AppContext::new(test.pool.get_ref().clone(), backend.clone());
+        let context = AppContext::postgres(test.pool.get_ref().clone(), backend.clone());
         let timestamp = Utc::now();
         let visible = HubuumClassHistory {
             id: 41,

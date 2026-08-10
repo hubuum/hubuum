@@ -2,10 +2,6 @@ use actix_web::{HttpRequest, Responder, get, http::StatusCode, routes, web};
 
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::task::{
-    TaskBackend, list_backup_task_output_summaries, list_export_task_output_summaries,
-    list_tasks_with_total_count, task_event_responses,
-};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::{QueryOptions, parse_query_parameter_with_passthrough};
@@ -18,6 +14,10 @@ use crate::pagination::{
 };
 use crate::permissions::AppContext;
 use crate::permissions::{AuthzTarget, PermissionDecision, PrincipalRef};
+use crate::storage::capabilities::task::{
+    TaskBackend, list_backup_task_output_summaries, list_export_task_output_summaries,
+    list_tasks_with_total_count, task_event_responses,
+};
 use crate::tasks::ensure_task_worker_running;
 
 #[derive(Debug, Default)]

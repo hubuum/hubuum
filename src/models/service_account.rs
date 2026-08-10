@@ -1,15 +1,15 @@
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{GroupID, ResourceRevision};
 use crate::schema::service_accounts;
+use crate::storage::StorageContext;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
-    BackendContext, CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
+    CursorPaginated, CursorSqlField, CursorSqlMapping, CursorSqlType, CursorValue,
 };
 
 /// A non-human principal used by automation/integrations. Its id is the
@@ -41,11 +41,10 @@ impl ServiceAccount {
         backend: &C,
     ) -> Result<ServiceAccountPointResponse, ApiError>
     where
-        C: BackendContext + ?Sized,
+        C: StorageContext,
     {
-        crate::db::traits::principal::load_service_account_point_response(
-            crate::traits::backend_pool(backend),
-            self.id,
+        crate::storage::postgres::operations::principal::load_service_account_point_response(
+            backend, self.id,
         )
         .await
     }
@@ -58,7 +57,10 @@ impl IdAccessor for ServiceAccount {
 }
 
 impl InstanceAdapter<ServiceAccount> for ServiceAccount {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<ServiceAccount, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<ServiceAccount, ApiError> {
         Ok(self.clone())
     }
 }

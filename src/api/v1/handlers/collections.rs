@@ -3,13 +3,6 @@ use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
-use crate::backend::capabilities::UserPermissions;
-use crate::backend::capabilities::authz::scope_allows;
-use crate::backend::capabilities::history::{
-    HistoryCollectionFilter, collection_as_of, collection_history_paginated_with_total_count,
-};
-use crate::backend::capabilities::user::UserSearchBackend;
-use crate::backend::with_revision_precondition_scope;
 use crate::can;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, Authenticated};
@@ -24,6 +17,13 @@ use crate::models::{
 use crate::pagination::{SKIPPED_TOTAL_COUNT, count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, ResourceRef};
+use crate::storage::capabilities::UserPermissions;
+use crate::storage::capabilities::authz::scope_allows;
+use crate::storage::capabilities::history::{
+    HistoryCollectionFilter, collection_as_of, collection_history_paginated_with_total_count,
+};
+use crate::storage::capabilities::user::UserSearchBackend;
+use crate::storage::capabilities::with_revision_precondition_scope;
 use actix_web::{
     Either, HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, routes, web,
 };
@@ -35,7 +35,7 @@ async fn sql_collection_permission_set(
     context: &AppContext,
     collection: &Collection,
 ) -> Result<CollectionPermissionSet, ApiError> {
-    crate::backend::capabilities::collection::collection_permission_set_from_backend(
+    crate::storage::capabilities::collection::collection_permission_set_from_backend(
         &context,
         collection.id,
         None,
@@ -550,7 +550,7 @@ pub async fn get_collection_group_permissions(
 
     if context.permission_backend().uses_sql_permission_store() {
         let permission_set =
-            crate::backend::capabilities::collection::collection_permission_set_from_backend(
+            crate::storage::capabilities::collection::collection_permission_set_from_backend(
                 &context,
                 collection.id,
                 Some(group_id.id()),

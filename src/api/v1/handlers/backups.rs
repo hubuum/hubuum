@@ -4,7 +4,6 @@ use base64::Engine;
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot};
 use crate::backups::{BackupSettings, authorize_backup_request};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
@@ -13,6 +12,7 @@ use crate::models::{
     TaskResponse, TokenID,
 };
 use crate::permissions::{AppContext, AuthzTarget, PermissionDecision, PrincipalRef};
+use crate::storage::capabilities::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot};
 use crate::tasks::{idempotency_key_from_headers, kick_task_worker, request_hash};
 
 fn digest_header_from_sha256(sha256: &str) -> Result<String, ApiError> {

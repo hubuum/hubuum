@@ -1,13 +1,11 @@
 use std::fmt;
 
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::DbPool;
-use crate::db::traits::task::TaskBackend;
 use crate::errors::ApiError;
 use crate::events::{Event, MutationProvenance, PrincipalNames, Provenance, StoredProvenance};
 use crate::models::principal::PrincipalID;
@@ -17,6 +15,7 @@ use crate::models::{
 };
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::{backup_task_outputs, export_task_outputs, import_task_results, tasks};
+use crate::storage::postgres::operations::task::TaskBackend;
 use crate::traits::SelfAccessors;
 use crate::traits::accessors::{IdAccessor, InstanceAdapter};
 use crate::traits::{
@@ -993,13 +992,19 @@ impl IdAccessor for TaskID {
 }
 
 impl InstanceAdapter<TaskRecord> for TaskRecord {
-    async fn instance_adapter(&self, _pool: &DbPool) -> Result<TaskRecord, ApiError> {
+    async fn instance_adapter(
+        &self,
+        _pool: &impl crate::storage::StorageContext,
+    ) -> Result<TaskRecord, ApiError> {
         Ok(self.clone())
     }
 }
 
 impl InstanceAdapter<TaskRecord> for TaskID {
-    async fn instance_adapter(&self, pool: &DbPool) -> Result<TaskRecord, ApiError> {
+    async fn instance_adapter(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+    ) -> Result<TaskRecord, ApiError> {
         self.find_record(pool).await
     }
 }
@@ -1008,7 +1013,7 @@ impl InstanceAdapter<TaskRecord> for TaskID {
 impl AuthzTarget for TaskRecord {
     async fn to_resource_ref(
         &self,
-        _pool: &dyn crate::traits::BackendContext,
+        _pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         Ok(ResourceRef {
             kind: ResourceKind::Task,
@@ -1025,7 +1030,7 @@ impl AuthzTarget for TaskRecord {
 impl AuthzTarget for TaskID {
     async fn to_resource_ref(
         &self,
-        pool: &dyn crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }

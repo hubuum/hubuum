@@ -7,8 +7,6 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::db::traits::authz::scope_allows;
-use crate::db::traits::user::UnifiedSearchBackend;
 use crate::errors::ApiError;
 use crate::models::{Collection, HubuumClassExpanded, HubuumObject, Permissions};
 use crate::pagination::{PageLimits, page_limits};
@@ -16,7 +14,10 @@ use crate::permissions::visibility::authorize_all_candidates;
 use crate::permissions::{
     PermissionBackend, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
 };
-use crate::traits::{BackendContext, Search};
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::authz::scope_allows;
+use crate::storage::postgres::operations::user::UnifiedSearchBackend;
+use crate::traits::Search;
 use crate::utilities::extensions::CustomStringExtensions;
 
 const MAX_UNIFIED_SEARCH_QUERY_LENGTH: usize = 256;
@@ -455,7 +456,7 @@ async fn search_collections<C, S>(
     authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<Collection>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: Search + ?Sized,
 {
     let rows = if let Some((permission_backend, principal)) = authorization {
@@ -466,7 +467,7 @@ where
             candidate_spec.limit_per_kind = usize::MAX;
             let candidates = user
                 .search_unified_collections_from_backend_with_admin_status(
-                    crate::traits::backend_pool(backend),
+                    backend,
                     &candidate_spec,
                     None,
                     true,
@@ -527,7 +528,7 @@ async fn search_classes<C, S>(
     authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<HubuumClassExpanded>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: Search + ?Sized,
 {
     let rows = if let Some((permission_backend, principal)) = authorization {
@@ -538,7 +539,7 @@ where
             candidate_spec.limit_per_kind = usize::MAX;
             let candidates = user
                 .search_unified_classes_from_backend_with_admin_status(
-                    crate::traits::backend_pool(backend),
+                    backend,
                     &candidate_spec,
                     None,
                     true,
@@ -605,7 +606,7 @@ async fn search_objects<C, S>(
     authorization: Option<(&dyn PermissionBackend, &PrincipalRef)>,
 ) -> Result<SearchPage<HubuumObject>, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: Search + ?Sized,
 {
     let rows = if let Some((permission_backend, principal)) = authorization {
@@ -616,7 +617,7 @@ where
             candidate_spec.limit_per_kind = usize::MAX;
             let candidates = user
                 .search_unified_objects_from_backend_with_admin_status(
-                    crate::traits::backend_pool(backend),
+                    backend,
                     &candidate_spec,
                     None,
                     true,
@@ -678,7 +679,7 @@ pub async fn execute_unified_search<C, S>(
     scopes: Option<&TokenScope>,
 ) -> Result<UnifiedSearchResponse, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: Search + ?Sized,
 {
     let search_spec = params.search_spec();
@@ -686,7 +687,7 @@ where
         .permission_backend()
         .filter(|permission_backend| !permission_backend.supports_sql_visibility_pushdown());
     let principal = if external_backend.is_some() {
-        Some(PrincipalRef::load(crate::traits::backend_pool(backend), user).await?)
+        Some(PrincipalRef::load(backend, user).await?)
     } else {
         None
     };
@@ -747,7 +748,7 @@ pub async fn execute_unified_search_batch<C, S>(
     scopes: Option<&TokenScope>,
 ) -> Result<UnifiedSearchBatchResponse, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
     S: Search + ?Sized,
 {
     let search_spec = params.search_spec();
@@ -755,7 +756,7 @@ where
         .permission_backend()
         .filter(|permission_backend| !permission_backend.supports_sql_visibility_pushdown());
     let principal = if external_backend.is_some() {
-        Some(PrincipalRef::load(crate::traits::backend_pool(backend), user).await?)
+        Some(PrincipalRef::load(backend, user).await?)
     } else {
         None
     };

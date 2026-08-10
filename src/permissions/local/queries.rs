@@ -3,8 +3,8 @@ use diesel::prelude::*;
 use diesel::sql_types::Bool;
 use diesel::{delete, insert_into, update};
 
-use crate::db::traits::user::GroupIdsSubqueryBackend;
-use crate::db::{DbPool, with_connection, with_transaction};
+use crate::storage::postgres::operations::user::GroupIdsSubqueryBackend;
+use crate::storage::postgres::{PostgresPool, with_connection, with_transaction};
 use crate::errors::ApiError;
 use crate::models::permissions::PermissionFilter;
 use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
@@ -89,7 +89,7 @@ fn permission_filter_sql(permission: Permissions, target: bool) -> &'static str 
 }
 
 pub(crate) async fn user_can_all_query(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     user_id: i32,
     collection_id: i32,
     permissions_requested: Vec<Permissions>,
@@ -123,7 +123,7 @@ pub(crate) async fn user_can_all_query(
 }
 
 pub(crate) async fn apply_permissions_query(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     collection_id_param: i32,
     group_id_for_grant: i32,
     permission_list: PermissionsList,
@@ -302,7 +302,7 @@ pub(crate) async fn apply_permissions_query(
 }
 
 pub(crate) async fn revoke_permissions_query(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     collection_id_param: i32,
     group_id_for_revoke: i32,
     permission_list: PermissionsList,
@@ -402,7 +402,7 @@ pub(crate) async fn revoke_permissions_query(
 }
 
 pub(crate) async fn revoke_all_query(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     collection_id_param: i32,
     group_id_for_revoke: i32,
 ) -> Result<(), ApiError> {
@@ -419,7 +419,7 @@ pub(crate) async fn revoke_all_query(
 }
 
 pub(crate) async fn user_on_query<T: CollectionAccessors>(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     user_id: UserID,
     collection_ref: T,
 ) -> Result<Vec<GroupPermission>, ApiError> {
@@ -441,7 +441,7 @@ pub(crate) async fn user_on_query<T: CollectionAccessors>(
 }
 
 pub(crate) async fn user_on_paginated_query<T: CollectionAccessors>(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     user_id: UserID,
     collection_ref: T,
     query_options: &QueryOptions,
@@ -509,14 +509,14 @@ pub(crate) async fn user_on_paginated_query<T: CollectionAccessors>(
 
 /// Load all collections from the database without any permission filtering.
 /// Used by the Treetop backend's candidate enumeration.
-pub(crate) async fn all_collections(pool: &DbPool) -> Result<Vec<Collection>, ApiError> {
+pub(crate) async fn all_collections(pool: &impl crate::storage::StorageContext) -> Result<Vec<Collection>, ApiError> {
     with_connection(pool, |conn| {
         collections_schema::table.load::<Collection>(conn)
     })
 }
 
 pub(crate) async fn user_can_on_any_query(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     user_id: i32,
     permissions_requested: &[Permissions],
 ) -> Result<Vec<Collection>, ApiError> {
@@ -555,7 +555,7 @@ pub(crate) async fn user_can_on_any_query(
 }
 
 pub(crate) async fn group_can_on_query<T: CollectionAccessors>(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     gid: i32,
     collection_ref: T,
     permission_type: Permissions,
@@ -574,7 +574,7 @@ pub(crate) async fn group_can_on_query<T: CollectionAccessors>(
 }
 
 pub(crate) async fn groups_can_on_query(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     nid: i32,
     permission_type: Permissions,
 ) -> Result<Vec<Group>, ApiError> {
@@ -600,7 +600,7 @@ pub(crate) async fn groups_can_on_query(
 }
 
 pub(crate) async fn groups_can_on_paginated_with_total_count_query(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     nid: i32,
     permission_type: Permissions,
     query_options: &QueryOptions,
@@ -652,7 +652,7 @@ pub(crate) async fn groups_can_on_paginated_with_total_count_query(
 }
 
 pub(crate) async fn groups_on_query<T: CollectionAccessors>(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     collection_ref: T,
     permissions_filter: Vec<Permissions>,
     query_options: QueryOptions,
@@ -738,7 +738,7 @@ pub(crate) async fn groups_on_query<T: CollectionAccessors>(
 }
 
 pub(crate) async fn groups_on_paginated_query<T: CollectionAccessors>(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     collection_ref: T,
     permissions_filter: Vec<Permissions>,
     query_options: &QueryOptions,
@@ -754,7 +754,7 @@ pub(crate) async fn groups_on_paginated_query<T: CollectionAccessors>(
 }
 
 pub(crate) async fn groups_on_paginated_with_total_count_query<T: CollectionAccessors>(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     collection_ref: T,
     permissions_filter: Vec<Permissions>,
     query_options: &QueryOptions,
@@ -826,7 +826,7 @@ pub(crate) async fn groups_on_paginated_with_total_count_query<T: CollectionAcce
 }
 
 pub(crate) async fn count_groups_on_paginated_query<T: CollectionAccessors>(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     collection_ref: T,
     permissions_filter: Vec<Permissions>,
     query_options: &QueryOptions,
@@ -842,7 +842,7 @@ pub(crate) async fn count_groups_on_paginated_query<T: CollectionAccessors>(
 }
 
 pub(crate) async fn group_on_query(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     nid: i32,
     gid: i32,
 ) -> Result<Permission, ApiError> {

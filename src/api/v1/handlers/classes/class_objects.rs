@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::capabilities::user::search::{
+use crate::storage::capabilities::user::search::{
     ExternalRelatedFilterAuthorization, externally_authorized_related_object_ids,
 };
 

@@ -5,11 +5,6 @@ use crate::api::etag::{RevisionedResource, revision_precondition, revision_preco
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::service_account::{
-    DisableServiceAccount, SaveServiceAccount, count_manageable_service_accounts,
-    is_human_owner_group_member, search_manageable_service_accounts,
-};
-use crate::backend::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, ManagementAccess};
 use crate::models::search::parse_query_parameter;
@@ -19,7 +14,13 @@ use crate::models::{
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::AppContext;
-use crate::traits::{AuthzSubject, BackendContext, CanDelete, CanUpdate, SelfAccessors};
+use crate::storage::StorageContext;
+use crate::storage::capabilities::service_account::{
+    DisableServiceAccount, SaveServiceAccount, count_manageable_service_accounts,
+    is_human_owner_group_member, search_manageable_service_accounts,
+};
+use crate::storage::capabilities::with_revision_precondition_scope;
+use crate::traits::{AuthzSubject, CanDelete, CanUpdate, SelfAccessors};
 
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(create_service_account)
@@ -33,7 +34,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 /// A caller may manage an SA iff they are an admin or a **human** member of the
 /// SA's owner group (a service account never manages itself; see token routes).
 async fn ensure_can_manage(
-    context: &impl BackendContext,
+    context: &impl StorageContext,
     requestor: &ManagementAccess,
     sa: &ServiceAccount,
 ) -> Result<(), ApiError> {

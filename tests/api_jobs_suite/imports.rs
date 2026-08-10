@@ -9,7 +9,6 @@ mod tests {
     use rstest::rstest;
     use std::time::Duration;
 
-    use crate::db::{DbPool, with_connection};
     use crate::models::{
         CURRENT_IMPORT_VERSION, ClassKey, CollectionKey, ComputedResultType, GroupID, GroupKey,
         HubuumClass, HubuumClassRelation, IdentityScopeKey, ImportAtomicity, ImportClassInput,
@@ -38,6 +37,7 @@ mod tests {
     use crate::schema::tasks::dsl::{
         id as task_id_field, request_payload, request_redacted_at, tasks,
     };
+    use crate::storage::postgres::{PostgresPool, with_connection};
     use crate::tests::api_operations::{get_request, post_request_with_headers};
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
@@ -161,7 +161,7 @@ mod tests {
     }
 
     async fn load_core_timestamp_pairs(
-        pool: &DbPool,
+        pool: &PostgresPool,
         names: &CoreTimestampImportNames,
     ) -> Vec<TimestampPair> {
         with_connection(pool, async |conn| {
@@ -250,7 +250,7 @@ mod tests {
     }
 
     async fn wait_for_task_with_token(
-        pool: &crate::db::DbPool,
+        pool: &crate::storage::postgres::PostgresPool,
         token: &str,
         task_id: i32,
         expected_terminal_statuses: &[TaskStatus],
@@ -513,7 +513,7 @@ mod tests {
                 .unwrap();
 
         let returned = with_connection(&context.pool, async |conn| {
-            crate::db::traits::task_import::apply_permissions_db(
+            crate::storage::postgres::operations::task_import::apply_permissions_db(
                 conn,
                 fixture.collection.id,
                 group.id,

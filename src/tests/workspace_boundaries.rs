@@ -100,15 +100,36 @@ fn workspace_crate_manifests_stay_app_neutral() {
         let manifest = toml::from_str::<toml::Value>(&manifest)
             .unwrap_or_else(|error| panic!("{} should be valid: {error}", manifest_path.display()));
 
-        if let Some((alias, package)) = forbidden_dependencies(&manifest, workspace_dependencies)
-            .into_iter()
-            .next()
-        {
+        let mut forbidden = forbidden_dependencies(&manifest, workspace_dependencies);
+        if member == "crates/hubuum-storage-postgres" {
+            forbidden.retain(|(_, package)| !package.starts_with("diesel"));
+        }
+
+        if let Some((alias, package)) = forbidden.into_iter().next() {
             panic!(
                 "workspace crate {member} must remain app-neutral and cannot depend on {package} (declared as {alias})"
             );
         }
     }
+}
+
+#[test]
+fn only_the_postgres_adapter_may_depend_on_diesel() {
+    let postgres_manifest = toml::from_str::<toml::Value>(
+        r#"
+        [dependencies]
+        diesel = "2"
+        diesel-async = "0.9"
+        "#,
+    )
+    .unwrap();
+    let unrelated_manifest = postgres_manifest.clone();
+
+    let mut postgres_forbidden = forbidden_dependencies(&postgres_manifest, None);
+    postgres_forbidden.retain(|(_, package)| !package.starts_with("diesel"));
+
+    assert!(postgres_forbidden.is_empty());
+    assert_eq!(forbidden_dependencies(&unrelated_manifest, None).len(), 2);
 }
 
 #[test]

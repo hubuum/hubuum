@@ -15,7 +15,6 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
-use crate::backend::capabilities::event_subscription::enabled_event_sink_count;
 use crate::backups::BackupSettings;
 #[cfg(test)]
 use crate::config::get_config;
@@ -24,7 +23,6 @@ use crate::config::initialize_config;
 use crate::config::running::RunningConfig;
 use crate::config::token_hash_key_is_ephemeral;
 use crate::config::{AppConfig, ClientAllowlist, LoginRateLimitBackendKind, MetricsPath};
-use crate::db::{DatabasePoolSettings, init_pool_with_settings};
 use crate::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, EXIT_CODE_INIT_ERROR,
     EXIT_CODE_PERMISSION_BACKEND_ERROR, EXIT_CODE_TLS_ERROR, fatal_error, json_error_handler,
@@ -41,10 +39,14 @@ use crate::middlewares::rate_limit::{
 };
 use crate::permissions::{AppContext, build_permission_backend};
 use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
+use crate::storage::StorageHandle;
+use crate::storage::capabilities::event_subscription::enabled_event_sink_count;
+use crate::storage::postgres;
+use crate::storage::postgres::{PostgresPoolSettings, init_postgres_pool_with_settings};
 use crate::tasks::{ensure_task_worker_running_with_settings, initialize_task_worker_settings};
 use crate::token_retention::ensure_token_retention_worker_running;
 use crate::utilities::is_valid_log_level;
-use crate::{api, db, logger, middlewares, observability, tls, utilities};
+use crate::{api, logger, middlewares, observability, tls, utilities};
 
 /// Build and run the configured Hubuum process until it shuts down.
 ///
@@ -101,14 +103,14 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         observability::metrics::runtime_identity(config.runtime_role);
     }
     utilities::auth::initialize_dummy_password_hash();
-    let database_settings = DatabasePoolSettings::builder(config.database_url.clone())
+    let database_settings = PostgresPoolSettings::builder(config.database_url.clone())
         .max_size(config.db_pool_size)
         .statement_timeout_ms(config.db_statement_timeout_ms)
         .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
         .build()
-        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
-    let pool = init_pool_with_settings(&database_settings);
-    db::ensure_database_schema_ready(&pool)
+        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
+    let pool = init_postgres_pool_with_settings(&database_settings);
+    postgres::ensure_postgres_schema_ready(&pool)
         .await
         .unwrap_or_else(|error| {
             fatal_error(
@@ -145,7 +147,8 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         );
     }
 
-    let permission_backend = build_permission_backend(&config, pool.clone())
+    let storage = StorageHandle::postgres(pool.clone());
+    let permission_backend = build_permission_backend(&config, storage.clone())
         .await
         .unwrap_or_else(|error| {
             fatal_error(
@@ -153,7 +156,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
                 EXIT_CODE_PERMISSION_BACKEND_ERROR,
             )
         });
-    let app_context = AppContext::new(pool.clone(), permission_backend);
+    let app_context = AppContext::new(storage, permission_backend);
     let storage_backend = app_context.storage_backend_descriptor();
     if config.metrics_enabled {
         observability::metrics::storage_backend_identity(
@@ -508,8 +511,8 @@ mod tests {
 
     use super::*;
 
-    fn unreachable_pool() -> db::DbPool {
-        let settings = DatabasePoolSettings::builder(
+    fn unreachable_pool() -> postgres::PostgresPool {
+        let settings = PostgresPoolSettings::builder(
             "postgres://hubuum:hubuum@127.0.0.1:1/hubuum_worker_metrics_unreachable",
         )
         .max_size(1)
@@ -517,14 +520,14 @@ mod tests {
         .acquire_timeout_ms(5)
         .build()
         .expect("unreachable test pool settings should be valid");
-        init_pool_with_settings(&settings)
+        init_postgres_pool_with_settings(&settings)
     }
 
     fn unreachable_context() -> AppContext {
         let pool = unreachable_pool();
-        AppContext::new(
+        AppContext::postgres(
             pool.clone(),
-            Arc::new(LocalPermissionBackend::new(pool, "admin".to_string())),
+            Arc::new(LocalPermissionBackend::postgres(pool, "admin".to_string())),
         )
     }
 

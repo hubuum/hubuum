@@ -3,7 +3,6 @@ use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, pos
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::task::TaskBackend;
 use crate::errors::ApiError;
 use crate::exports::{ExportTaskSubmission, submit_export_task};
 use crate::extractors::Authenticated;
@@ -12,6 +11,7 @@ use crate::models::{
     ExportTaskOutputRecord, ExportWarning, TaskID, TaskResponse, TokenID,
 };
 use crate::permissions::AppContext;
+use crate::storage::capabilities::task::TaskBackend;
 use crate::tasks::{ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker};
 
 const EXPORT_WARNINGS_HEADER: &str = "X-Hubuum-Export-Warnings";

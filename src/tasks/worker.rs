@@ -14,15 +14,6 @@ use crate::config::{
     DEFAULT_TASK_HEARTBEAT_SECONDS, DEFAULT_TASK_LEASE_SECONDS, DEFAULT_TASK_POLL_INTERVAL_MS,
     DEFAULT_TASK_RECOVERY_INTERVAL_SECONDS, get_config,
 };
-use crate::db::traits::service_account::principal_is_disabled;
-use crate::db::traits::task::{
-    TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_backup_outputs,
-    purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
-};
-use crate::db::{
-    DatabasePoolSettings, DbCallSite, DbPool, init_pool_with_settings, with_db_call_site,
-    with_mutation_provenance_scope,
-};
 use crate::errors::ApiError;
 use crate::events::{TASK_QUEUE_CHANNEL, spawn_postgres_notification_listener};
 use crate::exports::execute_export_task;
@@ -34,6 +25,15 @@ use crate::observability::metrics;
 use crate::permissions::LocalPermissionBackend;
 use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::restores::{MaintenanceActivityGuard, current_maintenance_state};
+use crate::storage::postgres::operations::service_account::principal_is_disabled;
+use crate::storage::postgres::operations::task::{
+    TaskBackend, TaskStateUpdate, claim_next_queued_task, purge_expired_backup_outputs,
+    purge_expired_export_outputs, recover_expired_task_leases, renew_task_lease,
+};
+use crate::storage::postgres::{
+    PostgresPool, PostgresPoolSettings, StorageCallSite, init_postgres_pool_with_settings,
+    with_mutation_provenance_scope, with_storage_call_site,
+};
 
 use super::TaskWorkerSettings;
 use super::execution::execute_import_task;
@@ -48,7 +48,7 @@ static TASK_OUTPUT_CLEANUP_STATE: OnceLock<Mutex<CleanupSchedule>> = OnceLock::n
 static TASK_RECOVERY_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static TASK_WORKER_SETTINGS: OnceLock<TaskWorkerSettings> = OnceLock::new();
 #[cfg(not(test))]
-static TASK_LEASE_POOL: OnceLock<DbPool> = OnceLock::new();
+static TASK_LEASE_POOL: OnceLock<PostgresPool> = OnceLock::new();
 static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -108,26 +108,26 @@ fn configured_task_poll_interval() -> Duration {
     task_worker_settings().poll_interval()
 }
 
-fn new_task_lease_pool() -> DbPool {
+fn new_task_lease_pool() -> PostgresPool {
     let config = get_config().expect("task lease renewal requires database configuration");
-    let settings = DatabasePoolSettings::builder(config.database_url.clone())
+    let settings = PostgresPoolSettings::builder(config.database_url.clone())
         .max_size(TASK_LEASE_POOL_SIZE)
         .statement_timeout_ms(config.db_statement_timeout_ms)
         .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
         .build()
         .expect("task lease pool settings must be valid");
-    init_pool_with_settings(&settings)
+    init_postgres_pool_with_settings(&settings)
 }
 
 #[cfg(not(test))]
-fn task_lease_pool() -> DbPool {
+fn task_lease_pool() -> PostgresPool {
     TASK_LEASE_POOL.get_or_init(new_task_lease_pool).clone()
 }
 
 // Test runtimes are short-lived, so do not retain async Postgres connections in
 // a process-global pool after the runtime that established them has stopped.
 #[cfg(test)]
-fn task_lease_pool() -> DbPool {
+fn task_lease_pool() -> PostgresPool {
     new_task_lease_pool()
 }
 
@@ -169,7 +169,7 @@ async fn task_worker_loop(
             Some(&shutdown),
             &backup_settings,
         ));
-        let result = with_db_call_site(DbCallSite::TaskWorker, iteration).await;
+        let result = with_storage_call_site(StorageCallSite::TaskWorker, iteration).await;
         if shutdown.is_requested() {
             break;
         }
@@ -217,12 +217,13 @@ fn task_worker_context(context: AppContext) -> AppContext {
 fn task_worker_context(context: AppContext) -> AppContext {
     drop(context);
     let config = get_config().expect("test task worker requires database configuration");
-    let pool = crate::db::init_pool(&config.database_url, config.db_pool_size);
-    let permissions = std::sync::Arc::new(LocalPermissionBackend::new(
+    let pool =
+        crate::storage::postgres::init_postgres_pool(&config.database_url, config.db_pool_size);
+    let permissions = std::sync::Arc::new(LocalPermissionBackend::postgres(
         pool.clone(),
         config.admin_groupname.clone(),
     ));
-    AppContext::new(pool, permissions)
+    AppContext::postgres(pool, permissions)
 }
 
 fn configured_backup_settings() -> BackupSettings {
@@ -288,16 +289,18 @@ pub fn kick_task_worker(context: AppContext) {
 
 #[cfg(test)]
 pub(super) async fn process_one_task(
-    pool: &DbPool,
+    storage: &impl crate::storage::StorageContext,
     shutdown: Option<&ShutdownSignal>,
 ) -> Result<bool, ApiError> {
     let admin_groupname = get_config()
         .map(|config| config.admin_groupname.clone())
         .unwrap_or_else(|_| "admin".to_string());
-    let context = AppContext::new(
-        pool.clone(),
-        std::sync::Arc::new(LocalPermissionBackend::new(pool.clone(), admin_groupname)),
-    );
+    let storage = crate::storage::storage_handle(storage);
+    let permissions = std::sync::Arc::new(LocalPermissionBackend::new(
+        storage.clone(),
+        admin_groupname,
+    ));
+    let context = AppContext::new(storage, permissions);
     process_one_task_with_settings(&context, shutdown, &configured_backup_settings()).await
 }
 
@@ -469,7 +472,7 @@ impl TaskLeaseHeartbeat {
 }
 
 fn start_task_lease_heartbeat(
-    pool: DbPool,
+    pool: PostgresPool,
     task: &TaskRecord,
     initial_confirmed_expiry: TokioInstant,
 ) -> Option<TaskLeaseHeartbeat> {
@@ -483,8 +486,8 @@ fn start_task_lease_heartbeat(
         move || {
             let pool = pool.clone();
             async move {
-                with_db_call_site(
-                    DbCallSite::TaskLease,
+                with_storage_call_site(
+                    StorageCallSite::TaskLease,
                     renew_task_lease(
                         &pool,
                         task_id,
@@ -626,9 +629,8 @@ where
 }
 
 async fn maybe_recover_expired_task_leases(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
 ) -> Result<(), ApiError> {
-    let pool = crate::traits::backend_pool(pool);
     let recovery_interval = task_worker_settings().recovery_interval();
     let previous_last_run = {
         let mut state = recovery_state().lock().map_err(|_| {
@@ -668,9 +670,8 @@ async fn maybe_recover_expired_task_leases(
 }
 
 async fn maybe_cleanup_expired_task_outputs(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
 ) -> Result<(), ApiError> {
-    let pool = crate::traits::backend_pool(pool);
     let cleanup_interval = task_worker_settings().export_output_cleanup_interval();
     let Some(reservation) = CleanupReservation::reserve(cleanup_state(), cleanup_interval)? else {
         return Ok(());
@@ -717,7 +718,7 @@ async fn process_claimed_task(
     let pool = context;
     let task_kind = TaskKind::from_db(&task.kind)?;
     if task_kind == TaskKind::Reindex {
-        return crate::db::traits::computed_field::execute_computed_reindex_task(pool, task).await;
+        return crate::storage::postgres::operations::computed_field::execute_computed_reindex_task(pool, task).await;
     }
     let submitted_by = task.submitted_by.ok_or_else(|| {
         ApiError::BadRequest(
@@ -771,11 +772,10 @@ async fn process_claimed_task(
 }
 
 pub(super) async fn mark_claimed_task_failed(
-    pool: &impl crate::traits::BackendContext,
+    pool: &impl crate::storage::StorageContext,
     task: &TaskRecord,
     err: &ApiError,
 ) -> Result<(), ApiError> {
-    let pool = crate::traits::backend_pool(pool);
     let task_kind = TaskKind::from_db(&task.kind)?;
     let task = if task_kind == TaskKind::Reindex {
         task.find_record(pool).await?
@@ -784,8 +784,10 @@ pub(super) async fn mark_claimed_task_failed(
     };
     let summary = sanitize_error_for_storage(err);
     if task_kind == TaskKind::Reindex {
-        crate::db::traits::computed_field::mark_computed_reindex_failed(pool, &task, &summary)
-            .await?;
+        crate::storage::postgres::operations::computed_field::mark_computed_reindex_failed(
+            pool, &task, &summary,
+        )
+        .await?;
     }
     let counts = match task_kind {
         TaskKind::Import => task.count_import_results(pool).await?,
@@ -911,15 +913,15 @@ mod lease_heartbeat_tests {
             .unwrap()
     }
 
-    fn new_single_connection_execution_pool() -> DbPool {
+    fn new_single_connection_execution_pool() -> PostgresPool {
         let config = get_config().expect("test requires database configuration");
-        let settings = DatabasePoolSettings::builder(config.database_url.clone())
+        let settings = PostgresPoolSettings::builder(config.database_url.clone())
             .max_size(1)
             .statement_timeout_ms(config.db_statement_timeout_ms)
             .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
             .build()
             .unwrap();
-        init_pool_with_settings(&settings)
+        init_postgres_pool_with_settings(&settings)
     }
 
     #[test]

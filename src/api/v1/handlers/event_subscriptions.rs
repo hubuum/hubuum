@@ -3,11 +3,6 @@ use actix_web::{HttpRequest, Responder, delete, get, patch, routes, web};
 use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::{ApiResponse, ResponseLocation};
-use crate::backend::capabilities::UserPermissions;
-use crate::backend::capabilities::event_subscription::{
-    DeleteEventSubscriptionRecord, SaveEventSubscriptionRecord, UpdateEventSubscriptionRecord,
-};
-use crate::backend::with_revision_precondition_scope;
 use crate::can;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
@@ -18,6 +13,11 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
+use crate::storage::capabilities::UserPermissions;
+use crate::storage::capabilities::event_subscription::{
+    DeleteEventSubscriptionRecord, SaveEventSubscriptionRecord, UpdateEventSubscriptionRecord,
+};
+use crate::storage::capabilities::with_revision_precondition_scope;
 
 #[utoipa::path(
     post,

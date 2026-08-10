@@ -1,11 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::db::prelude::*;
+    use crate::storage::postgres::prelude::*;
     use actix_web::{http::StatusCode, test};
     use serde_json::json;
 
-    use crate::db::traits::event_fanout::fanout_event;
-    use crate::db::with_connection;
     use crate::events::{Action, ActorKind, EntityType, NewEvent, emit_event};
     use crate::models::{
         CollectionID, EventDelivery, EventDeliveryHealthResponse, EventDeliveryResponse,
@@ -13,6 +11,8 @@ mod tests {
         NewEventSubscription,
     };
     use crate::pagination::TOTAL_COUNT_HEADER;
+    use crate::storage::postgres::operations::event_fanout::fanout_event;
+    use crate::storage::postgres::with_connection;
     use crate::test_support::{save_event_sink, save_event_subscription};
     use crate::tests::TestContext;
     use crate::tests::api_operations::{get_request, post_request};

@@ -10,7 +10,6 @@
 
 mod administration;
 mod application;
-mod backend;
 
 pub use administration::run_admin_from_environment;
 pub use application::run_runtime_from_environment;
@@ -18,8 +17,10 @@ pub use application::run_runtime_from_environment;
 pub mod api;
 pub mod auth;
 pub mod backups;
+#[cfg(feature = "postgres-bench")]
+#[doc(hidden)]
+pub mod benchmark_support;
 pub mod config;
-pub mod db;
 pub mod errors;
 pub mod events;
 pub mod exports;
@@ -36,7 +37,8 @@ pub mod permissions;
 pub mod restores;
 pub mod schema;
 pub mod services;
-mod storage;
+#[doc(hidden)]
+pub mod storage;
 pub mod tasks;
 #[cfg(feature = "integration-test-support")]
 #[doc(hidden)]

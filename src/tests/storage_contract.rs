@@ -3,11 +3,11 @@ use std::sync::{Arc, LazyLock};
 use actix_web::web::Data;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use crate::db::DbPool;
 use crate::models::CollectionID;
 use crate::services::Services;
+use crate::storage::StorageHandle;
+use crate::storage::postgres::PostgresPool;
 use crate::storage::{STORAGE_CONTRACT_VERSION, StorageBackendKind};
-use crate::traits::BackendHandle;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum LifecycleContractImplementation {
@@ -22,7 +22,7 @@ async fn every_available_storage_backend_composes_through_the_complete_contract(
     for kind in StorageBackendKind::ALL {
         match kind {
             StorageBackendKind::Postgresql => {
-                let backend = BackendHandle::postgres(pool().get_ref().clone());
+                let backend = StorageHandle::postgres(pool().get_ref().clone());
                 let descriptor = backend.descriptor();
                 assert_eq!(descriptor.kind(), kind);
                 assert_eq!(descriptor.contract_version(), STORAGE_CONTRACT_VERSION);
@@ -48,10 +48,13 @@ pub(crate) async fn postgres_permit() -> OwnedSemaphorePermit {
         .expect("storage contract semaphore should remain open")
 }
 
-pub(crate) fn pool() -> Data<DbPool> {
+pub(crate) fn pool() -> Data<PostgresPool> {
     let config = crate::tests::integration_test_config()
         .expect("integration test config should be initialized");
-    Data::new(crate::db::init_pool(&config.database_url, 2))
+    Data::new(crate::storage::postgres::init_postgres_pool(
+        &config.database_url,
+        2,
+    ))
 }
 
 pub(crate) fn prefix(label: &str) -> String {

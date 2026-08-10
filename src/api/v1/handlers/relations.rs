@@ -3,12 +3,6 @@ use std::collections::HashMap;
 use crate::api::etag::{RevisionedResource, revision_precondition_for_tag};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::authz::scope_allows;
-use crate::backend::capabilities::relations::{
-    class_relation_authorization_resources, object_relation_authorization_resources,
-};
-use crate::backend::capabilities::user::UserSearchBackend;
-use crate::backend::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::{QueryParamsExt, parse_query_parameter};
@@ -20,6 +14,12 @@ use crate::models::{
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, authorize_resources};
+use crate::storage::capabilities::authz::scope_allows;
+use crate::storage::capabilities::relations::{
+    class_relation_authorization_resources, object_relation_authorization_resources,
+};
+use crate::storage::capabilities::user::UserSearchBackend;
+use crate::storage::capabilities::with_revision_precondition_scope;
 use crate::traits::SelfAccessors;
 
 use actix_web::delete;

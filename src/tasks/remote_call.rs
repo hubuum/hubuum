@@ -14,9 +14,6 @@ use crate::config::{
     DEFAULT_REMOTE_CALL_ALLOW_PRIVATE_TARGETS, DEFAULT_REMOTE_CALL_MAX_RESPONSE_BYTES,
     DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
 };
-use crate::db::DbPool;
-use crate::db::traits::remote_target::insert_remote_call_result;
-use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
 use crate::errors::ApiError;
 use crate::models::{
     NewRemoteCallResult, NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod,
@@ -25,7 +22,10 @@ use crate::models::{
     authorize_remote_invocation,
 };
 use crate::observability::metrics;
-use crate::traits::{AuthzSubject, BackendContext};
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::remote_target::insert_remote_call_result;
+use crate::storage::postgres::operations::task::{TaskBackend, TaskStateUpdate};
+use crate::traits::AuthzSubject;
 
 #[cfg(feature = "integration-test-support")]
 static LOCAL_REMOTE_TARGET_TESTS: AtomicUsize = AtomicUsize::new(0);
@@ -58,9 +58,9 @@ pub(super) async fn execute_remote_call_task<C>(
     scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     let payload = task
         .request_payload
         .clone()
@@ -119,8 +119,8 @@ struct RemoteExecutionOutcome {
     event_data: Option<serde_json::Value>,
 }
 
-struct RemoteFailureContext<'a> {
-    pool: &'a DbPool,
+struct RemoteFailureContext<'a, C> {
+    storage: &'a C,
     task_id: i32,
     target_id: i32,
     subject_type: &'a str,
@@ -136,9 +136,9 @@ async fn execute_remote_call<C>(
     request: &StoredRemoteCallTaskPayload,
 ) -> Result<RemoteExecutionOutcome, ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     let target = request.target_id.instance(pool).await?;
     let resolved =
         authorize_remote_invocation(backend, user, scopes, &target, &request.subject).await?;
@@ -152,7 +152,7 @@ where
     let rendered_url = render_template("url_template", &target.url_template, &context)?;
     let start = Instant::now();
     let failure_context = RemoteFailureContext {
-        pool,
+        storage: pool,
         task_id,
         target_id: target.id,
         subject_type: resolved.subject_type.as_str(),
@@ -258,8 +258,8 @@ where
     }
 }
 
-async fn record_remote_call_failure(
-    context: &RemoteFailureContext<'_>,
+async fn record_remote_call_failure<C: StorageContext>(
+    context: &RemoteFailureContext<'_, C>,
     rendered_url: String,
     duration_ms: i32,
     error: OutboundHttpError,
@@ -284,7 +284,7 @@ async fn record_remote_call_failure(
         std::time::Duration::from_millis(u64::try_from(duration_ms).unwrap_or(0)),
     );
     insert_remote_call_result(
-        context.pool,
+        context.storage,
         NewRemoteCallResult {
             task_id: context.task_id,
             target_id: Some(context.target_id),
@@ -341,7 +341,7 @@ fn remote_error_outcome(error: &OutboundHttpError) -> &'static str {
 }
 
 async fn finalize_remote_task(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     task: &TaskRecord,
     outcome: RemoteExecutionOutcome,
 ) -> Result<(), ApiError> {

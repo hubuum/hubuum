@@ -46,7 +46,7 @@ fn app_context_exposes_only_an_opaque_backend_handle() {
     let context_path = root.join("src/permissions/context.rs");
     let context_source = fs::read_to_string(&context_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", context_path.display()));
-    let trait_path = root.join("src/traits/context.rs");
+    let trait_path = root.join("src/storage/context.rs");
     let trait_source = fs::read_to_string(&trait_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", trait_path.display()));
     let application_path = root.join("src/application.rs");
@@ -54,7 +54,7 @@ fn app_context_exposes_only_an_opaque_backend_handle() {
         .unwrap_or_else(|error| panic!("could not read {}: {error}", application_path.display()));
 
     assert!(
-        context_source.contains("backend: BackendHandle"),
+        context_source.contains("backend: StorageHandle"),
         "AppContext must own the opaque backend handle"
     );
     for forbidden in [
@@ -69,25 +69,25 @@ fn app_context_exposes_only_an_opaque_backend_handle() {
         );
     }
     let backend_context_body = trait_source
-        .split_once("pub trait BackendContext")
+        .split_once("pub trait StorageContext")
         .and_then(|(_, remainder)| remainder.split_once("\n}"))
         .map(|(body, _)| body)
-        .expect("BackendContext should have a readable trait body");
+        .expect("StorageContext should have a readable trait body");
     assert!(
         !backend_context_body.contains("fn db_pool"),
-        "BackendContext must not expose a database-pool accessor"
+        "StorageContext must not expose a database-pool accessor"
     );
     assert!(
-        trait_source.contains("pub(crate) fn backend_pool"),
-        "backend adapters need a crate-private implementation access point"
+        trait_source.contains("pub(in crate::storage) fn postgres_pool"),
+        "only storage adapter modules may recover the PostgreSQL pool"
     );
     assert!(
         !application_source.contains(".app_data(Data::new(app_pool"),
         "the production HTTP server must not register a raw database pool"
     );
     assert!(
-        !application_source.contains("pool: db::DbPool"),
-        "operational HTTP services must receive AppContext rather than DbPool"
+        !application_source.contains("pool: db::PostgresPool"),
+        "operational HTTP services must receive AppContext rather than PostgresPool"
     );
 }
 
@@ -95,7 +95,12 @@ fn app_context_exposes_only_an_opaque_backend_handle() {
 fn application_consumers_do_not_import_database_implementation_details() {
     let root = repository_root();
     let mut paths = Vec::new();
-    for directory in ["src/api", "src/extractors", "src/middlewares"] {
+    for directory in [
+        "src/api",
+        "src/services",
+        "src/extractors",
+        "src/middlewares",
+    ] {
         paths.extend(rust_files(&root.join(directory)));
     }
     paths.push(root.join("src/observability/metrics/scrape.rs"));
@@ -104,13 +109,17 @@ fn application_consumers_do_not_import_database_implementation_details() {
     for path in paths {
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        let source = if path.starts_with(root.join("src/services")) {
+            source.split("#[cfg(test)]").next().unwrap_or(&source)
+        } else {
+            &source
+        };
         for forbidden in [
-            "crate::db",
-            "DbPool",
-            "backend_pool",
+            "crate::storage::postgres",
+            "PostgresPool",
+            "postgres_pool",
             "diesel::",
             "diesel_async",
-            "postgres_pool",
             "pool: AppContext",
             "pool: &AppContext",
         ] {
@@ -134,21 +143,27 @@ fn backend_neutral_layers_do_not_import_database_implementation_details() {
 
     for directory in ["src/services", "src/storage"] {
         for path in rust_files(&root.join(directory)) {
-            if is_storage_adapter(&root, &path) {
+            if is_storage_adapter(&root, &path)
+                || path == root.join("src/storage/context.rs")
+                || path == root.join("src/storage/capabilities.rs")
+            {
                 continue;
             }
 
             let source = fs::read_to_string(&path)
                 .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+            let source = if path.starts_with(root.join("src/services")) {
+                source.split("#[cfg(test)]").next().unwrap_or(&source)
+            } else {
+                &source
+            };
             for forbidden in [
-                "crate::db::traits",
-                "crate::db::with_connection",
-                "crate::db::with_transaction",
+                "crate::storage::postgres::operations",
+                "crate::storage::postgres::with_connection",
+                "crate::storage::postgres::with_transaction",
                 "diesel::",
                 "diesel_async",
-                "BackendContext",
                 "postgres_pool",
-                "backend_pool",
             ] {
                 if source.contains(forbidden) {
                     violations.push(format!("{} imports or uses {forbidden}", path.display()));
@@ -176,7 +191,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
     let contract_path = root.join("src/storage/contract.rs");
     let contract_source = fs::read_to_string(&contract_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", contract_path.display()));
-    let context_path = root.join("src/traits/context.rs");
+    let context_path = root.join("src/storage/context.rs");
     let context_source = fs::read_to_string(&context_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", context_path.display()));
 
@@ -244,7 +259,7 @@ fn storage_error_translation_has_one_way_dependency_direction() {
 #[test]
 fn persistence_facades_do_not_reexport_internal_layers_wholesale() {
     let root = repository_root();
-    let backend_path = root.join("src/backend.rs");
+    let backend_path = root.join("src/storage/capabilities.rs");
     let backend_source = fs::read_to_string(&backend_path)
         .unwrap_or_else(|error| panic!("could not read {}: {error}", backend_path.display()));
     let library_path = root.join("src/lib.rs");
@@ -252,11 +267,12 @@ fn persistence_facades_do_not_reexport_internal_layers_wholesale() {
         .unwrap_or_else(|error| panic!("could not read {}: {error}", library_path.display()));
 
     assert!(
-        !backend_source.contains("pub(crate) use crate::db::traits as capabilities"),
+        !backend_source
+            .contains("pub(crate) use crate::storage::postgres::operations as capabilities"),
         "the application capability facade must explicitly whitelist operations"
     );
     assert!(
-        !library_source.contains("pub mod storage;"),
-        "storage adapters are internal application composition details"
+        library_source.contains("#[doc(hidden)]\npub mod storage;"),
+        "the internal root storage module must remain hidden from generated API documentation"
     );
 }

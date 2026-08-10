@@ -15,18 +15,19 @@ use crate::config::{
     DEFAULT_EVENT_RETENTION_PURGE_ENABLED, DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS,
     get_config,
 };
-use crate::db::traits::event_retention::{
-    EventRetentionPurgeSummary, purge_event_retention_batch_conn,
-    select_events_for_retention_purge_conn, try_acquire_event_retention_lock,
-};
-use crate::db::traits::maintenance::maintenance_state_conn;
-use crate::db::with_transaction;
-use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::events::{Event, EventRetentionSettings};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::restores::MaintenanceActivityGuard;
-use crate::traits::{BackendContext, backend_pool};
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::event_retention::{
+    EventRetentionPurgeSummary, purge_event_retention_batch_conn,
+    select_events_for_retention_purge_conn, try_acquire_event_retention_lock,
+};
+use crate::storage::postgres::operations::maintenance::maintenance_state_conn;
+use crate::storage::postgres::with_transaction;
+use crate::storage::postgres::{StorageCallSite, with_storage_call_site};
+use crate::storage::{StorageHandle, storage_handle};
 
 static EVENT_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
 
@@ -80,7 +81,7 @@ fn configured_event_retention_worker() -> Result<EventRetentionWorkerConfig, Api
 }
 
 pub async fn process_event_retention_batch(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     settings: EventRetentionSettings,
     archive_path: Option<&Path>,
 ) -> Result<EventRetentionPurgeSummary, ApiError> {
@@ -117,7 +118,7 @@ fn retention_worker_should_continue(result: &Result<EventRetentionPurgeSummary, 
 }
 
 async fn event_retention_worker_loop(
-    pool: DbPool,
+    pool: StorageHandle,
     config: EventRetentionWorkerConfig,
     shutdown: ShutdownSignal,
 ) {
@@ -126,8 +127,8 @@ async fn event_retention_worker_loop(
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = with_db_call_site(
-                DbCallSite::EventRetention,
+            result = with_storage_call_site(
+                StorageCallSite::EventRetention,
                 process_event_retention_batch(&pool, config.settings, archive_path),
             ) => result,
         };
@@ -142,7 +143,7 @@ async fn event_retention_worker_loop(
     }
 }
 
-fn spawn_event_retention_worker_loop(pool: DbPool, config: EventRetentionWorkerConfig) {
+fn spawn_event_retention_worker_loop(pool: StorageHandle, config: EventRetentionWorkerConfig) {
     spawn_background_worker("event-retention-worker", move |shutdown| {
         info!(
             message = "Starting event retention worker loop",
@@ -160,9 +161,9 @@ fn spawn_event_retention_worker_loop(pool: DbPool, config: EventRetentionWorkerC
 
 pub fn ensure_event_retention_worker_running<C>(backend: C)
 where
-    C: BackendContext,
+    C: StorageContext,
 {
-    let pool = backend_pool(&backend).clone();
+    let pool = storage_handle(&backend);
     if get_config().is_ok_and(|config| !config.runtime_role.runs_background_workers()) {
         return;
     }

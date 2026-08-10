@@ -4,7 +4,6 @@ use hubuum_task_core::IdempotencyKey;
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::capabilities::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot};
 use crate::config::{DEFAULT_IMPORT_MAX_ACTIVE_TASKS_PER_USER, get_config};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
@@ -15,12 +14,13 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
+use crate::storage::capabilities::task::{TaskBackend, TaskCreateRequest, TaskScopeSnapshot};
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
 
 async fn find_or_create_import_task(
-    context: &impl crate::traits::BackendContext,
+    context: &impl crate::storage::StorageContext,
     submitted_by: PrincipalID,
     snapshot: TaskScopeSnapshot,
     idempotency_key: Option<IdempotencyKey>,

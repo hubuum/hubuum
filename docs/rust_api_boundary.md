@@ -84,6 +84,8 @@ manifest.
 | `hubuum-events-core` | Workspace-internal |
 | `hubuum-outbound-http` | Workspace-internal |
 | `hubuum-query` | Workspace-internal |
+| `hubuum-storage-core` | Workspace-internal |
+| `hubuum-storage-postgres` | Workspace-internal |
 | `hubuum-task-core` | Workspace-internal |
 | `hubuum-templates` | Workspace-internal |
 

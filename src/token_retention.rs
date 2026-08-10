@@ -4,13 +4,13 @@ use actix_rt::time::sleep;
 use tracing::{error, info};
 
 use crate::config::get_config;
-use crate::db::traits::token_retention::purge_expired_token_batch;
-use crate::db::{DbCallSite, DbPool, with_db_call_site};
 use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::TokenRetentionSettings;
 use crate::restores::MaintenanceActivityGuard;
-use crate::traits::{BackendContext, backend_pool};
+use crate::storage::postgres::operations::token_retention::purge_expired_token_batch;
+use crate::storage::postgres::{StorageCallSite, with_storage_call_site};
+use crate::storage::{StorageContext, StorageHandle, storage_handle};
 
 static TOKEN_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
 
@@ -31,7 +31,7 @@ fn configured_token_retention_worker() -> Result<TokenRetentionWorkerConfig, Api
 }
 
 pub async fn process_token_retention_batch(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     settings: TokenRetentionSettings,
 ) -> Result<usize, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
@@ -56,7 +56,7 @@ fn retention_worker_should_continue(result: &Result<usize, ApiError>) -> bool {
 }
 
 async fn token_retention_worker_loop(
-    pool: DbPool,
+    pool: StorageHandle,
     config: TokenRetentionWorkerConfig,
     shutdown: ShutdownSignal,
 ) {
@@ -64,8 +64,8 @@ async fn token_retention_worker_loop(
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = with_db_call_site(
-                DbCallSite::TokenRetention,
+            result = with_storage_call_site(
+                StorageCallSite::TokenRetention,
                 process_token_retention_batch(&pool, config.settings),
             ) => result,
         };
@@ -80,7 +80,7 @@ async fn token_retention_worker_loop(
     }
 }
 
-fn spawn_token_retention_worker_loop(pool: DbPool, config: TokenRetentionWorkerConfig) {
+fn spawn_token_retention_worker_loop(pool: StorageHandle, config: TokenRetentionWorkerConfig) {
     spawn_background_worker("token-retention-worker", move |shutdown| {
         info!(
             message = "Starting token retention worker loop",
@@ -96,9 +96,9 @@ fn spawn_token_retention_worker_loop(pool: DbPool, config: TokenRetentionWorkerC
 
 pub fn ensure_token_retention_worker_running<C>(backend: C)
 where
-    C: BackendContext,
+    C: StorageContext,
 {
-    let pool = backend_pool(&backend).clone();
+    let pool = storage_handle(&backend);
     if get_config().is_ok_and(|config| !config.runtime_role.runs_background_workers()) {
         return;
     }

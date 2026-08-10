@@ -94,7 +94,6 @@ mod tests {
     use actix_web::web::Data;
     use rstest::rstest;
 
-    use crate::db::DbPool;
     use crate::errors::ApiError;
     use crate::events::{Action, EventContext};
     use crate::models::{
@@ -102,6 +101,7 @@ mod tests {
         UpdateCollection,
     };
     use crate::services::Services;
+    use crate::storage::postgres::PostgresPool;
     use crate::storage::{DynLifecycleStorage, MemoryStorageModel, PostgresStorage};
     use crate::tests::storage_contract::{
         LifecycleContractImplementation as ContractImplementation, pool as storage_contract_pool,
@@ -114,7 +114,7 @@ mod tests {
         service: CollectionService,
         group_id: GroupID,
         prefix: String,
-        postgres_cleanup: Option<(Data<DbPool>, Group)>,
+        postgres_cleanup: Option<(Data<PostgresPool>, Group)>,
         _postgres_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     }
 

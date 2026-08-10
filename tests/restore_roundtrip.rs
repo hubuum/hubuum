@@ -2,11 +2,6 @@ use diesel::ExpressionMethods;
 use diesel_async::RunQueryDsl;
 use hubuum::backups::create_backup_document;
 use hubuum::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
-use hubuum::db::prelude::*;
-use hubuum::db::{
-    init_pool_with_statement_timeout, with_connection, with_mutation_provenance_scope,
-    with_transaction,
-};
 use hubuum::events::{Action, ActorKind, EntityType, MutationProvenance, NewEvent, emit_event};
 use hubuum::models::{
     BackupRequest, NewHubuumClass, NewHubuumClassRelation, NewTaskRecord, ObjectRelationLimit,
@@ -21,6 +16,11 @@ use hubuum::schema::{
     collections, events, hubuumclass_history, hubuumclass_reachability, hubuumclass_relation,
     restore_jobs, system_maintenance, tasks,
 };
+use hubuum::storage::postgres::prelude::*;
+use hubuum::storage::postgres::{
+    init_postgres_pool_with_statement_timeout, with_connection, with_mutation_provenance_scope,
+    with_transaction,
+};
 use hubuum::traits::CanSave;
 
 fn database_url() -> String {
@@ -30,8 +30,11 @@ fn database_url() -> String {
 
 #[tokio::test]
 async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
-    let pool =
-        init_pool_with_statement_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+    let pool = init_postgres_pool_with_statement_timeout(
+        &database_url(),
+        2,
+        DEFAULT_DB_STATEMENT_TIMEOUT_MS,
+    );
     let root_collection_id = with_connection(&pool, async |conn| {
         collections::table
             .filter(collections::parent_collection_id.is_null())

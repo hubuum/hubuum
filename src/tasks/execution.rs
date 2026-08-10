@@ -1,7 +1,5 @@
 use tracing::{Instrument, error, info, info_span, warn};
 
-use crate::db::traits::task::{TaskBackend, TaskStateUpdate};
-use crate::db::{DbPool, with_transaction};
 use crate::errors::ApiError;
 use crate::models::{
     Collection, EventSinkKey, GroupKey, HubuumClass, HubuumObject, IdentityScopeKey,
@@ -12,7 +10,9 @@ use crate::models::{
     TaskStatus, TokenScope,
 };
 use crate::observability::metrics;
-use crate::traits::BackendContext;
+use crate::storage::StorageContext;
+use crate::storage::postgres::operations::task::{TaskBackend, TaskStateUpdate};
+use crate::storage::postgres::with_transaction;
 
 use super::helpers::{
     flush_import_result_batches, import_failure_outcome, sanitize_error_for_storage,
@@ -27,7 +27,7 @@ use super::types::{
     ExecutionAccumulator, PlannedExecution, PlannedItem, PlannedTaskResult, RuntimeState,
     TerminalTaskUpdate,
 };
-use crate::db::traits::task_import::{
+use crate::storage::postgres::operations::task_import::{
     apply_permissions_db, check_class_relation_import_condition_db,
     check_object_relation_import_condition_db, create_class_db, create_class_relation_db,
     create_collection_db, create_object_db, create_object_relation_db,
@@ -41,7 +41,7 @@ use crate::db::traits::task_import::{
 };
 
 async fn resolve_identity_scope_runtime(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     reference: Option<&str>,
     key: Option<&IdentityScopeKey>,
@@ -63,7 +63,7 @@ async fn resolve_identity_scope_runtime(
 }
 
 async fn validate_import_template_composition(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     input: &ImportExportTemplateInput,
     collection: &Collection,
@@ -90,7 +90,7 @@ async fn validate_import_template_composition(
 }
 
 async fn resolve_group_runtime(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     reference: Option<&str>,
     key: Option<&GroupKey>,
@@ -113,7 +113,7 @@ async fn resolve_group_runtime(
 }
 
 async fn resolve_principal_runtime(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     reference: Option<&str>,
     key: Option<&PrincipalKey>,
@@ -135,7 +135,7 @@ async fn resolve_principal_runtime(
 }
 
 async fn resolve_event_sink_runtime(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     reference: Option<&str>,
     key: Option<&EventSinkKey>,
@@ -156,7 +156,7 @@ async fn resolve_event_sink_runtime(
 }
 
 async fn resolve_class_relation_runtime(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     input: &ImportClassRelationInput,
 ) -> Result<(HubuumClass, HubuumClass), ApiError> {
@@ -178,7 +178,7 @@ async fn resolve_class_relation_runtime(
 }
 
 async fn resolve_object_relation_runtime(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     input: &ImportObjectRelationInput,
 ) -> Result<(HubuumObject, HubuumObject), ApiError> {
@@ -202,14 +202,14 @@ async fn resolve_object_relation_runtime(
 pub(super) async fn execute_import_task<C>(
     backend: &C,
     task: &TaskRecord,
-    user: &impl crate::db::traits::authz::AuthzSubject,
+    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
     scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
 where
-    C: BackendContext + ?Sized,
+    C: StorageContext,
 {
     let total_timer = metrics::import_phase_timer(metrics::ImportMetricPhase::Total);
-    let pool = crate::traits::backend_pool(backend);
+    let pool = backend;
     let payload = task
         .request_payload
         .clone()
@@ -273,7 +273,8 @@ where
                 planning_time = ?planning_time,
                 total_time = ?total_timer.elapsed()
             );
-            crate::db::traits::task::insert_import_results(pool, &results).await?;
+            crate::storage::postgres::operations::task::insert_import_results(pool, &results)
+                .await?;
             let summary = format!("Import validation failed for {failed_count} item(s)");
             finalize_task(
                 pool,
@@ -442,7 +443,7 @@ where
 }
 
 async fn finalize_task(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     task: &TaskRecord,
     terminal: TerminalTaskUpdate,
 ) -> Result<(), ApiError> {
@@ -463,7 +464,7 @@ async fn finalize_task(
 }
 
 pub(super) async fn execute_import_strict(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     task_id: i32,
     planned_items: &[PlannedItem],
     accumulator: &mut ExecutionAccumulator,
@@ -511,7 +512,7 @@ pub(super) async fn execute_import_strict(
 }
 
 pub(super) async fn execute_import_best_effort(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     task_id: i32,
     planned_items: &[PlannedItem],
     mode: &ImportMode,
@@ -561,12 +562,12 @@ pub(super) async fn execute_import_best_effort(
 /// Observe the current owner revision for dry-run reporting. The value is
 /// advisory; the subsequent execution path still locks and rechecks the row.
 pub(super) async fn observed_revision_for_planned_item(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &RuntimeState,
     execution: &PlannedExecution,
 ) -> Result<Option<crate::models::ResourceRevision>, ApiError> {
-    use crate::db::prelude::*;
     use crate::models::ImportComputedFieldVisibility;
+    use crate::storage::postgres::prelude::*;
 
     let revision = match execution {
         PlannedExecution::UpsertIdentityScope { input, .. } => {
@@ -820,7 +821,7 @@ pub(super) async fn observed_revision_for_planned_item(
 }
 
 pub(super) async fn execute_planned_item(
-    conn: &mut crate::db::DbConnection,
+    conn: &mut crate::storage::postgres::PostgresConnection,
     runtime: &mut RuntimeState,
     execution: &PlannedExecution,
 ) -> Result<(), ApiError> {

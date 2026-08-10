@@ -6,7 +6,7 @@ use super::super::{StorageError, StorageErrorKind};
 
 /// PostgreSQL adapter failure before it crosses the neutral storage boundary.
 ///
-/// The adapter currently delegates to legacy database operations that return
+/// The adapter currently delegates to PostgreSQL operations that return
 /// `ApiError`. Wrapping them here prevents that application error type from
 /// becoming part of the storage contract and gives the PostgreSQL adapter one
 /// deliberate translation point.

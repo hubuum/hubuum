@@ -1,4 +1,4 @@
-use crate::db::prelude::*;
+use crate::storage::postgres::prelude::*;
 use async_trait::async_trait;
 use diesel::deserialize::{self, FromSql, FromSqlRow};
 use diesel::expression::AsExpression;
@@ -862,7 +862,7 @@ fn new_hubuum_object_relation_example() -> NewHubuumObjectRelation {
 impl AuthzTarget for HubuumClassRelation {
     async fn to_resource_ref(
         &self,
-        pool: &dyn crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         let from_class = HubuumClassID::new(self.from_hubuum_class_id)?
             .instance(pool)
@@ -891,7 +891,7 @@ impl AuthzTarget for HubuumClassRelation {
 impl AuthzTarget for NewHubuumClassRelation {
     async fn to_resource_ref(
         &self,
-        pool: &dyn crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         let from_class = HubuumClassID::new(self.from_hubuum_class_id)?
             .instance(pool)
@@ -919,7 +919,7 @@ impl AuthzTarget for NewHubuumClassRelation {
 impl AuthzTarget for HubuumClassRelationID {
     async fn to_resource_ref(
         &self,
-        pool: &dyn crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
@@ -929,7 +929,7 @@ impl AuthzTarget for HubuumClassRelationID {
 impl AuthzTarget for HubuumObjectRelation {
     async fn to_resource_ref(
         &self,
-        pool: &dyn crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         let from_object = HubuumObjectID::new(self.from_hubuum_object_id)?
             .instance(pool)
@@ -961,7 +961,7 @@ impl AuthzTarget for HubuumObjectRelation {
 impl AuthzTarget for NewHubuumObjectRelation {
     async fn to_resource_ref(
         &self,
-        pool: &dyn crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         let from_object = HubuumObjectID::new(self.from_hubuum_object_id)?
             .instance(pool)
@@ -992,7 +992,7 @@ impl AuthzTarget for NewHubuumObjectRelation {
 impl AuthzTarget for HubuumObjectRelationID {
     async fn to_resource_ref(
         &self,
-        pool: &dyn crate::traits::BackendContext,
+        pool: &impl crate::storage::StorageContext,
     ) -> Result<ResourceRef, ApiError> {
         self.instance(pool).await?.to_resource_ref(pool).await
     }
@@ -1003,12 +1003,12 @@ pub mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::db::DbPool;
-    use crate::db::traits::ClassRelation;
+
     use crate::errors::ApiError;
     use crate::models::class::tests::create_class;
     use crate::models::object::tests::create_object;
     use crate::models::{HubuumClass, HubuumObject};
+    use crate::storage::postgres::operations::ClassRelation;
     use crate::tests::{TestContext, TestScope, test_context};
     use crate::traits::{CanDelete, CanSave, SelfAccessors};
 
@@ -1071,7 +1071,10 @@ pub mod tests {
         (collection, class1, class2)
     }
 
-    pub async fn verify_no_such_class_relation(pool: &DbPool, id: i32) {
+    pub async fn verify_no_such_class_relation(
+        pool: &impl crate::storage::StorageContext,
+        id: i32,
+    ) {
         match HubuumClassRelationID(id).instance(pool).await {
             Ok(_) => panic!("Found a class relation that should not exist"),
             Err(ApiError::NotFound(_)) => {}
@@ -1079,7 +1082,10 @@ pub mod tests {
         }
     }
 
-    pub async fn verify_no_such_object_relation(pool: &DbPool, id: i32) {
+    pub async fn verify_no_such_object_relation(
+        pool: &impl crate::storage::StorageContext,
+        id: i32,
+    ) {
         match HubuumObjectRelationID(id).instance(pool).await {
             Ok(_) => panic!("Found an object relation that should not exist"),
             Err(ApiError::NotFound(_)) => {}
@@ -1088,7 +1094,7 @@ pub mod tests {
     }
 
     pub async fn create_class_relation(
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         class1: &HubuumClass,
         class2: &HubuumClass,
     ) -> HubuumClassRelation {
@@ -1143,7 +1149,7 @@ pub mod tests {
     }
 
     pub async fn create_object_relation(
-        pool: &DbPool,
+        pool: &impl crate::storage::StorageContext,
         class1: &HubuumClassRelation,
         object1: &HubuumObject,
         object2: &HubuumObject,
@@ -1336,7 +1342,7 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_creating_object_relation_failure_class_mismatch() {
-        use crate::db::traits::ClassRelation;
+        use crate::storage::postgres::operations::ClassRelation;
         let pool = TestScope::new().pool;
 
         let (collection, class1, class2) =
@@ -1499,7 +1505,7 @@ pub mod tests {
     #[rstest]
     #[actix_rt::test]
     async fn test_finding_object_relations(#[future(awt)] test_context: TestContext) {
-        use crate::db::traits::ObjectRelationsFromUser;
+        use crate::storage::postgres::operations::ObjectRelationsFromUser;
         let context = test_context;
         let pool = &context.pool;
 
@@ -1555,7 +1561,7 @@ pub mod tests {
     async fn test_bidirectional_transitive_object_traversal(
         #[future(awt)] test_context: TestContext,
     ) {
-        use crate::db::traits::ObjectRelationsFromUser;
+        use crate::storage::postgres::operations::ObjectRelationsFromUser;
         let context = test_context;
         let pool = &context.pool;
 
@@ -1617,7 +1623,7 @@ pub mod tests {
     /// A ↔ B ↔ C: verify C sees a transitive relation to A.
     #[actix_rt::test]
     async fn test_bidirectional_transitive_class_relations() {
-        use crate::db::traits::SelfRelations;
+        use crate::storage::postgres::operations::SelfRelations;
         let pool = TestScope::new().pool;
 
         let scope = TestScope::new();
@@ -1659,7 +1665,7 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_class_reachability_rebuild_switches_to_remaining_shortest_path() {
-        use crate::db::traits::ClassRelation;
+        use crate::storage::postgres::operations::ClassRelation;
 
         let pool = TestScope::new().pool;
         let scope = TestScope::new();
@@ -1696,9 +1702,9 @@ pub mod tests {
 
     #[actix_rt::test]
     async fn test_transitive_class_relations_paginated_cursor_path_sort() {
-        use crate::db::traits::SelfRelations;
         use crate::models::search::parse_query_parameter;
         use crate::pagination::{finalize_page, prepare_db_pagination};
+        use crate::storage::postgres::operations::SelfRelations;
 
         let pool = TestScope::new().pool;
         let scope = TestScope::new();
@@ -1758,7 +1764,7 @@ pub mod tests {
     async fn test_transitive_object_traversal_supports_same_class_target(
         #[future(awt)] test_context: TestContext,
     ) {
-        use crate::db::traits::ObjectRelationsFromUser;
+        use crate::storage::postgres::operations::ObjectRelationsFromUser;
 
         let context = test_context;
         let pool = &context.pool;

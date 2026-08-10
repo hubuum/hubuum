@@ -3,13 +3,12 @@ use hubuum_task_core::{IdempotencyKey, IdempotencyKeyError};
 use sha2::{Digest, Sha256};
 use tracing::debug;
 
-use crate::db::DbPool;
-use crate::db::traits::task::insert_import_results;
 use crate::errors::ApiError;
 use crate::models::{
     Collection, HubuumClass, HubuumObject, ImportAtomicity, ImportCollisionPolicy, ImportMode,
     ImportPermissionPolicy,
 };
+use crate::storage::postgres::operations::task::insert_import_results;
 
 use super::types::{
     ClassResolution, CollectionResolution, ExecutionAccumulator, FailureKind,
@@ -189,7 +188,7 @@ pub(super) fn object_to_resolution(object: HubuumObject) -> ObjectResolution {
 }
 
 pub(super) async fn flush_import_result_batches(
-    pool: &DbPool,
+    pool: &impl crate::storage::StorageContext,
     accumulator: &mut ExecutionAccumulator,
     force: bool,
 ) -> Result<(), ApiError> {

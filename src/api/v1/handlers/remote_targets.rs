@@ -7,17 +7,6 @@ use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::HistoryResponse;
-use crate::backend::capabilities::UserPermissions;
-use crate::backend::capabilities::authz::scope_allows;
-use crate::backend::capabilities::history::{
-    HistoryCollectionFilter, remote_target_as_of, remote_target_history_paginated_with_total_count,
-};
-use crate::backend::capabilities::remote_target::{
-    DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
-    emit_remote_target_invoked_event,
-};
-use crate::backend::capabilities::task::{TaskCreateRequest, TaskScopeSnapshot};
-use crate::backend::with_revision_precondition_scope;
 use crate::can;
 use crate::config::{DEFAULT_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER, get_config};
 use crate::errors::ApiError;
@@ -32,6 +21,17 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, PrincipalRef};
+use crate::storage::capabilities::UserPermissions;
+use crate::storage::capabilities::authz::scope_allows;
+use crate::storage::capabilities::history::{
+    HistoryCollectionFilter, remote_target_as_of, remote_target_history_paginated_with_total_count,
+};
+use crate::storage::capabilities::remote_target::{
+    DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
+    emit_remote_target_invoked_event,
+};
+use crate::storage::capabilities::task::{TaskCreateRequest, TaskScopeSnapshot};
+use crate::storage::capabilities::with_revision_precondition_scope;
 use crate::tasks::{
     ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
 };
@@ -248,7 +248,7 @@ pub async fn patch_remote_target(
 }
 
 async fn validate_remote_target_class_scope(
-    context: &impl crate::traits::BackendContext,
+    context: &impl crate::storage::StorageContext,
     collection_id: i32,
     class_id: Option<i32>,
 ) -> Result<(), ApiError> {
@@ -380,7 +380,7 @@ pub async fn invoke_remote_target(
 }
 
 async fn find_or_create_remote_call_task(
-    context: &impl crate::traits::BackendContext,
+    context: &impl crate::storage::StorageContext,
     submitted_by: PrincipalID,
     snapshot: TaskScopeSnapshot,
     idempotency_key: Option<IdempotencyKey>,

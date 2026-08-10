@@ -2,7 +2,6 @@ use crate::api::etag::{RevisionedResource, revision_precondition, revision_preco
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backend::with_revision_precondition_scope;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, AdminOrSelfAccess};
 use crate::models::search::parse_query_parameter;
@@ -11,6 +10,7 @@ use crate::models::user::{
 };
 use crate::pagination::{count_query_options, prepare_db_pagination};
 use crate::permissions::AppContext;
+use crate::storage::capabilities::with_revision_precondition_scope;
 use actix_web::{HttpRequest, Responder, delete, get, patch, post, routes, web};
 use tracing::debug;
 
