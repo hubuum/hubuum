@@ -8,7 +8,7 @@ use crate::config::{
     DEFAULT_REMOTE_CALL_TIMEOUT_MS, get_config,
 };
 use crate::events::{Event, PrincipalNames};
-use crate::models::{EventSink, EventSinkKind, EventSubscription};
+use crate::storage::{EventDeliverySink, EventDeliverySubscription};
 
 pub use hubuum_event_sinks_common::{EventEnvelope, SinkError};
 
@@ -22,47 +22,27 @@ pub(crate) fn event_envelope_with_names(
     event: Event,
     principal_names: &PrincipalNames,
 ) -> EventEnvelope {
-    let provenance = event.resolved_provenance(principal_names);
-    EventEnvelope {
-        id: event.id,
-        event_id: event.event_id,
-        occurred_at: event.occurred_at,
-        entity_type: event.entity_type,
-        entity_id: event.entity_id,
-        entity_name: event.entity_name,
-        collection_id: event.collection_id,
-        action: event.action,
-        actor_user_id: event.actor_user_id,
-        actor_kind: event.actor_kind,
-        provenance,
-        request_id: event.request_id,
-        correlation_id: event.correlation_id,
-        summary: event.summary,
-        before: event.before,
-        after: event.after,
-        metadata: event.metadata,
-        schema_version: event.schema_version,
-    }
+    event.into_envelope(principal_names)
 }
 
 pub trait Sink: Send + Sync {
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
-        subscription: &'a EventSubscription,
-        sink: &'a EventSink,
+        subscription: &'a EventDeliverySubscription,
+        sink: &'a EventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>>;
 }
 
 pub trait SinkResolver: Send + Sync {
-    fn resolve(&self, kind: EventSinkKind) -> Option<&dyn Sink>;
+    fn resolve(&self, kind: &str) -> Option<&dyn Sink>;
 }
 
 #[derive(Debug, Default)]
 pub struct NoopSinkResolver;
 
 impl SinkResolver for NoopSinkResolver {
-    fn resolve(&self, _kind: EventSinkKind) -> Option<&dyn Sink> {
+    fn resolve(&self, _kind: &str) -> Option<&dyn Sink> {
         None
     }
 }
@@ -93,26 +73,29 @@ impl Default for DefaultSinkResolver {
 }
 
 impl SinkResolver for DefaultSinkResolver {
-    fn resolve(&self, kind: EventSinkKind) -> Option<&dyn Sink> {
+    fn resolve(&self, kind: &str) -> Option<&dyn Sink> {
         match kind {
             #[cfg(feature = "amqp")]
-            EventSinkKind::Amqp => Some(&self.amqp),
+            "amqp" => Some(&self.amqp),
             #[cfg(feature = "email")]
-            EventSinkKind::Email => Some(&self.email),
+            "email" => Some(&self.email),
             #[cfg(feature = "valkey")]
-            EventSinkKind::ValkeyStream => Some(&self.valkey),
-            EventSinkKind::Webhook => Some(&self.webhook),
+            "valkey_stream" => Some(&self.valkey),
+            "webhook" => Some(&self.webhook),
             #[cfg(not(all(feature = "amqp", feature = "email", feature = "valkey")))]
             _ => None,
         }
     }
 }
 
-fn sink_delivery<'a>(subscription: &'a EventSubscription, sink: &'a EventSink) -> SinkDelivery<'a> {
+fn sink_delivery<'a>(
+    subscription: &'a EventDeliverySubscription,
+    sink: &'a EventDeliverySink,
+) -> SinkDelivery<'a> {
     SinkDelivery::new(
-        &sink.config,
-        &subscription.routing,
-        sink.secret_ref.as_deref(),
+        sink.configuration(),
+        subscription.routing(),
+        sink.secret_ref(),
     )
 }
 
@@ -141,8 +124,8 @@ impl Sink for hubuum_event_sink_webhook::WebhookSink {
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
-        subscription: &'a EventSubscription,
-        sink: &'a EventSink,
+        subscription: &'a EventDeliverySubscription,
+        sink: &'a EventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
             self.deliver(envelope, sink_delivery(subscription, sink))
@@ -157,8 +140,8 @@ impl Sink for hubuum_event_sink_amqp::AmqpSink {
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
-        subscription: &'a EventSubscription,
-        sink: &'a EventSink,
+        subscription: &'a EventDeliverySubscription,
+        sink: &'a EventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
             self.deliver(envelope, sink_delivery(subscription, sink))
@@ -173,8 +156,8 @@ impl Sink for hubuum_event_sink_email::EmailSink {
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
-        subscription: &'a EventSubscription,
-        sink: &'a EventSink,
+        subscription: &'a EventDeliverySubscription,
+        sink: &'a EventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
             self.deliver(envelope, sink_delivery(subscription, sink))
@@ -189,8 +172,8 @@ impl Sink for hubuum_event_sink_valkey::ValkeySink {
     fn deliver<'a>(
         &'a self,
         envelope: &'a EventEnvelope,
-        subscription: &'a EventSubscription,
-        sink: &'a EventSink,
+        subscription: &'a EventDeliverySubscription,
+        sink: &'a EventDeliverySink,
     ) -> BoxFuture<'a, Result<(), SinkError>> {
         async move {
             self.deliver(envelope, sink_delivery(subscription, sink))
@@ -220,13 +203,13 @@ mod tests {
         fn deliver<'a>(
             &'a self,
             envelope: &'a EventEnvelope,
-            subscription: &'a EventSubscription,
-            sink: &'a EventSink,
+            subscription: &'a EventDeliverySubscription,
+            sink: &'a EventDeliverySink,
         ) -> BoxFuture<'a, Result<(), SinkError>> {
             async move {
                 assert_eq!(envelope.entity_type, "collection");
-                assert_eq!(subscription.name, "subscription");
-                assert_eq!(sink.name, "sink");
+                assert_eq!(subscription.name(), "subscription");
+                assert_eq!(sink.name(), "sink");
                 Ok(())
             }
             .boxed()
@@ -255,32 +238,8 @@ mod tests {
             metadata: serde_json::json!({}),
             schema_version: 1,
         };
-        let subscription = EventSubscription {
-            id: 1,
-            collection_id: 10,
-            sink_id: 1,
-            name: "subscription".to_string(),
-            description: String::new(),
-            entity_types: vec!["collection".to_string()],
-            actions: vec!["created".to_string()],
-            filter: hubuum_events_core::EventSubscriptionFilter::default(),
-            routing: serde_json::json!({}),
-            enabled: true,
-            created_at: envelope.occurred_at,
-            updated_at: envelope.occurred_at,
-            revision: crate::models::ResourceRevision::INITIAL,
-        };
-        let sink = EventSink {
-            id: 1,
-            name: "sink".to_string(),
-            kind: EventSinkKind::Webhook,
-            config: serde_json::json!({}),
-            secret_ref: None,
-            enabled: true,
-            created_at: envelope.occurred_at,
-            updated_at: envelope.occurred_at,
-            revision: crate::models::ResourceRevision::INITIAL,
-        };
+        let subscription = EventDeliverySubscription::new(1, "subscription", serde_json::json!({}));
+        let sink = EventDeliverySink::new(1, "sink", "webhook", serde_json::json!({}), None);
 
         RecordingSink
             .deliver(&envelope, &subscription, &sink)

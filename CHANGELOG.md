@@ -27,6 +27,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Event worker and retention configuration validation now uses backend-neutral
+  policy terminology, matching the storage traits and DTOs used by application
+  workers instead of exposing database implementation language.
 - **Breaking (Rust API support policy):** the root `hubuum` library and every
   current workspace crate are explicitly internal and non-publishable. Their
   Rust `pub` items are workspace construction details rather than supported

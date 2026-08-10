@@ -4,8 +4,14 @@
 //! asynchronous-runtime dependencies. Application services and adapters share
 //! these values without reversing the dependency from storage into the server.
 
+mod events;
 mod operational;
 
+pub use events::{
+    EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
+    EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
+    EventRetentionSummary, RetainedEvent,
+};
 pub use operational::{
     EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
     EventHealthStorage, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
@@ -154,6 +160,11 @@ impl StorageError {
     #[must_use]
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::Conflict, message, None)
+    }
+
+    #[must_use]
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::Internal, message, None)
     }
 
     #[must_use]

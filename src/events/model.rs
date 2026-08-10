@@ -25,8 +25,8 @@ use crate::pagination::{
 use crate::schema::events;
 
 use super::{
-    Action, ActorKind, EntityType, EventCatalogError, EventContext, MutationProvenance, Provenance,
-    ProvenanceActor, ProvenancePrincipal, is_valid_pair,
+    Action, ActorKind, EntityType, EventCatalogError, EventContext, EventEnvelope,
+    MutationProvenance, Provenance, ProvenanceActor, ProvenancePrincipal, is_valid_pair,
 };
 
 /// Principal names resolved in one database query for provenance responses.
@@ -208,6 +208,32 @@ impl fmt::Debug for Event {
             .field("initiator_user_id", &self.initiator_user_id)
             .field("task_id", &self.task_id)
             .finish()
+    }
+}
+
+impl Event {
+    pub(crate) fn into_envelope(self, principal_names: &PrincipalNames) -> EventEnvelope {
+        let provenance = self.resolved_provenance(principal_names);
+        EventEnvelope {
+            id: self.id,
+            event_id: self.event_id,
+            occurred_at: self.occurred_at,
+            entity_type: self.entity_type,
+            entity_id: self.entity_id,
+            entity_name: self.entity_name,
+            collection_id: self.collection_id,
+            action: self.action,
+            actor_user_id: self.actor_user_id,
+            actor_kind: self.actor_kind,
+            provenance,
+            request_id: self.request_id,
+            correlation_id: self.correlation_id,
+            summary: self.summary,
+            before: self.before,
+            after: self.after,
+            metadata: self.metadata,
+            schema_version: self.schema_version,
+        }
     }
 }
 

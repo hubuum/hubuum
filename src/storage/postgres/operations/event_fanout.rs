@@ -13,7 +13,7 @@ use crate::storage::postgres::with_connection;
 use crate::storage::postgres::with_transaction;
 
 pub(crate) async fn process_event_fanout_batch(
-    pool: &impl crate::storage::StorageContext,
+    pool: &crate::storage::postgres::PostgresPool,
     settings: EventFanoutSettings,
 ) -> Result<usize, ApiError> {
     let events = claim_events_for_fanout(pool, settings).await?;
@@ -45,7 +45,7 @@ pub(crate) async fn claim_events_for_fanout(
             .order(occurred_at.asc())
             .for_update()
             .skip_locked()
-            .limit(settings.database_batch_size())
+            .limit(settings.query_batch_size())
             .select(id)
             .load::<i64>(conn)
             .await?;

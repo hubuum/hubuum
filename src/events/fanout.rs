@@ -17,9 +17,8 @@ use crate::models::{EventWorkerHealth, EventWorkerWakeupStats};
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
-use crate::storage::capabilities::event_fanout::process_event_fanout_batch;
 use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
-use crate::storage::{StorageHandle, storage_handle};
+use crate::storage::{EventFanoutStorage, StorageError, StorageHandle, storage_handle};
 
 static EVENT_FANOUT_WORKER: Once = Once::new();
 static EVENT_FANOUT_LISTENER: Once = Once::new();
@@ -60,11 +59,11 @@ fn configured_event_fanout_settings() -> Result<EventFanoutSettings, ApiError> {
             DEFAULT_EVENT_FANOUT_BATCH_SIZE,
             DEFAULT_EVENT_FANOUT_LOCK_TIMEOUT_MS,
         )
-        .map_err(ApiError::BadRequest),
+        .map_err(Into::into),
     }
 }
 
-pub(super) fn fanout_worker_should_continue(result: &Result<usize, ApiError>) -> bool {
+pub(super) fn fanout_worker_should_continue(result: &Result<usize, StorageError>) -> bool {
     match result {
         Ok(processed) => *processed > 0,
         Err(error) => {
@@ -104,7 +103,7 @@ async fn event_fanout_worker_loop(
             _ = shutdown.requested() => break,
             result = with_storage_call_site(
                 StorageCallSite::EventFanout,
-                process_event_fanout_batch(&pool, settings),
+                pool.process_event_fanout_batch(settings),
             ) => result,
         };
         drop(activity);

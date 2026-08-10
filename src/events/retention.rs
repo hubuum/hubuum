@@ -16,15 +16,15 @@ use crate::config::{
     get_config,
 };
 use crate::errors::ApiError;
-use crate::events::{Event, EventRetentionSettings};
+use crate::events::EventRetentionSettings;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
-use crate::storage::capabilities::event_retention::{
-    EventRetentionPurgeSummary, process_event_retention_batch_from_storage,
-};
 use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
-use crate::storage::{StorageHandle, storage_handle};
+use crate::storage::{
+    EventArchive, EventRetentionStorage, EventRetentionSummary, RetainedEvent, StorageError,
+    StorageHandle, storage_handle,
+};
 
 static EVENT_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
 
@@ -40,7 +40,24 @@ struct EventRetentionWorkerConfig {
 #[derive(Debug, Serialize)]
 struct ArchivedEventRecord<'a> {
     archived_at: chrono::NaiveDateTime,
-    event: &'a Event,
+    event: &'a serde_json::Value,
+}
+
+struct FileEventArchive<'a> {
+    path: Option<&'a Path>,
+}
+
+impl EventArchive for FileEventArchive<'_> {
+    fn archive(&self, events: &[RetainedEvent]) -> Result<(), StorageError> {
+        if let Some(path) = self.path
+            && !events.is_empty()
+        {
+            append_event_archive(path, events).map_err(|error| {
+                StorageError::internal(format!("Event archive output failed: {error}"))
+            })?;
+        }
+        Ok(())
+    }
 }
 
 trait EventArchiveOutput: Write {
@@ -69,7 +86,7 @@ fn configured_event_retention_worker() -> Result<EventRetentionWorkerConfig, Api
                 DEFAULT_EVENT_DELIVERY_RETENTION_DAYS,
                 DEFAULT_EVENT_RETENTION_PURGE_BATCH_SIZE,
             )
-            .map_err(ApiError::BadRequest)?,
+            .map_err(ApiError::from)?,
             interval: Duration::from_secs(DEFAULT_EVENT_RETENTION_PURGE_INTERVAL_SECONDS),
             file_archive_enabled: DEFAULT_EVENT_RETENTION_FILE_ARCHIVE_ENABLED,
             archive_path: None,
@@ -81,22 +98,18 @@ pub async fn process_event_retention_batch(
     pool: &impl crate::storage::StorageContext,
     settings: EventRetentionSettings,
     archive_path: Option<&Path>,
-) -> Result<EventRetentionPurgeSummary, ApiError> {
+) -> Result<EventRetentionSummary, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
-    process_event_retention_batch_from_storage(pool, settings, |events| {
-        if let Some(path) = archive_path
-            && !events.is_empty()
-        {
-            append_event_archive(path, events)?;
-        }
-        Ok(())
-    })
-    .await
+    let storage = storage_handle(pool);
+    storage
+        .process_event_retention_batch(settings, &FileEventArchive { path: archive_path })
+        .await
+        .map_err(Into::into)
 }
 
-fn retention_worker_should_continue(result: &Result<EventRetentionPurgeSummary, ApiError>) -> bool {
+fn retention_worker_should_continue(result: &Result<EventRetentionSummary, ApiError>) -> bool {
     match result {
-        Ok(summary) => summary.purged_events > 0 || summary.purged_terminal_deliveries > 0,
+        Ok(summary) => summary.did_work(),
         Err(error) => {
             error!(message = "Event retention worker iteration failed", error = %error);
             false
@@ -179,7 +192,7 @@ where
     });
 }
 
-fn append_event_archive(path: &Path, events: &[Event]) -> Result<(), ApiError> {
+fn append_event_archive(path: &Path, events: &[RetainedEvent]) -> Result<(), ApiError> {
     let archived_at = chrono::Utc::now().naive_utc();
     let mut options = OpenOptions::new();
     options.create(true).append(true);
@@ -216,10 +229,18 @@ fn secure_event_archive_file(_file: &File) -> io::Result<()> {
 fn write_event_archive(
     file: &mut impl EventArchiveOutput,
     archived_at: chrono::NaiveDateTime,
-    events: &[Event],
+    events: &[RetainedEvent],
 ) -> Result<(), ApiError> {
     for event in events {
-        let record = ArchivedEventRecord { archived_at, event };
+        let event = serde_json::from_str(event.json()).map_err(|error| {
+            ApiError::InternalServerError(format!(
+                "Storage returned an invalid retained event document: {error}"
+            ))
+        })?;
+        let record = ArchivedEventRecord {
+            archived_at,
+            event: &event,
+        };
         serde_json::to_writer(&mut *file, &record).map_err(|error| {
             ApiError::InternalServerError(format!("Failed to serialize event archive: {error}"))
         })?;
@@ -278,51 +299,46 @@ mod tests {
         }
     }
 
-    fn event() -> Event {
-        Event {
-            id: 1,
-            event_id: Uuid::new_v4(),
-            occurred_at: chrono::Utc::now().naive_utc(),
-            entity_type: "collection".to_string(),
-            entity_id: Some(1),
-            entity_name: Some("example".to_string()),
-            collection_id: Some(1),
-            action: "created".to_string(),
-            actor_user_id: None,
-            actor_kind: "system".to_string(),
-            request_id: None,
-            correlation_id: None,
-            summary: "collection created".to_string(),
-            before: None,
-            after: None,
-            metadata: serde_json::json!({}),
-            schema_version: 1,
-            dispatched_at: None,
-            fanout_locked_until: None,
-            fanout_claim_token: None,
-            initiator_user_id: Some(17),
-            task_id: Some(18),
-            before_revision: None,
-            after_revision: None,
-        }
+    fn event() -> RetainedEvent {
+        let event = serde_json::json!({
+            "id": 1,
+            "event_id": Uuid::new_v4(),
+            "occurred_at": chrono::Utc::now().naive_utc(),
+            "entity_type": "collection",
+            "entity_id": 1,
+            "entity_name": "example",
+            "collection_id": 1,
+            "action": "created",
+            "actor_user_id": null,
+            "actor_kind": "system",
+            "request_id": null,
+            "correlation_id": null,
+            "summary": "collection created",
+            "before": null,
+            "after": null,
+            "metadata": {},
+            "schema_version": 1,
+            "dispatched_at": null,
+            "fanout_locked_until": null,
+            "fanout_claim_token": null,
+            "initiator_user_id": 17,
+            "task_id": 18,
+            "before_revision": null,
+            "after_revision": null,
+        });
+        RetainedEvent::new(1, serde_json::to_string(&event).unwrap())
     }
 
     #[test]
     fn retention_worker_retries_immediately_after_deleting_rows() {
         assert!(retention_worker_should_continue(&Ok(
-            EventRetentionPurgeSummary {
-                purged_events: 1,
-                purged_terminal_deliveries: 0,
-            },
+            EventRetentionSummary::new(1, 0),
         )));
         assert!(retention_worker_should_continue(&Ok(
-            EventRetentionPurgeSummary {
-                purged_events: 0,
-                purged_terminal_deliveries: 1,
-            },
+            EventRetentionSummary::new(0, 1),
         )));
         assert!(!retention_worker_should_continue(&Ok(
-            EventRetentionPurgeSummary::default(),
+            EventRetentionSummary::default(),
         )));
         assert!(!retention_worker_should_continue(&Err(
             ApiError::InternalServerError("boom".to_string()),

@@ -10,6 +10,8 @@ use std::num::ParseIntError;
 
 use tracing::{debug, error};
 
+use hubuum_domain::EventPolicyError;
+
 use crate::models::TokenPolicyError;
 use crate::observability::metrics;
 use crate::storage::{StorageError, StorageErrorKind};
@@ -182,6 +184,12 @@ impl From<StorageError> for ApiError {
 
 impl From<TokenPolicyError> for ApiError {
     fn from(error: TokenPolicyError) -> Self {
+        Self::BadRequest(error.to_string())
+    }
+}
+
+impl From<EventPolicyError> for ApiError {
+    fn from(error: EventPolicyError) -> Self {
         Self::BadRequest(error.to_string())
     }
 }

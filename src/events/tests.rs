@@ -25,13 +25,13 @@ use crate::models::object::{NewHubuumObject, UpdateHubuumObject};
 use crate::models::search::{QueryOptions, parse_query_parameter};
 use crate::models::token::{renew_token_by_id_for_principal, revoke_token_by_id_for_principal};
 use crate::models::{
-    CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink as EventSinkModel,
-    EventSinkID, EventSinkKind, EventSubscription, ExportContentType, ExportTemplateID,
-    ExportTemplateKind, GroupID, HubuumClassID, HubuumClassRelationID, HubuumObjectID,
-    NewEventSink, NewEventSubscription, NewExportTemplate, NewHubuumClassRelation,
-    NewHubuumObjectRelation, NewRemoteTargetRow, NewUser, ObjectRelationLimit, Permissions,
-    PermissionsList, PrincipalID, PrincipalToken, PrincipalTokenCreateRequest, RemoteTargetID,
-    Token, TokenID, TokenScope, UpdateExportTemplate, UpdateRemoteTargetRow, UpdateUser, UserID,
+    CollectionID, EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSinkID, EventSinkKind,
+    ExportContentType, ExportTemplateID, ExportTemplateKind, GroupID, HubuumClassID,
+    HubuumClassRelationID, HubuumObjectID, NewEventSink, NewEventSubscription, NewExportTemplate,
+    NewHubuumClassRelation, NewHubuumObjectRelation, NewRemoteTargetRow, NewUser,
+    ObjectRelationLimit, Permissions, PermissionsList, PrincipalID, PrincipalToken,
+    PrincipalTokenCreateRequest, RemoteTargetID, Token, TokenID, TokenScope, UpdateExportTemplate,
+    UpdateRemoteTargetRow, UpdateUser, UserID,
 };
 use crate::schema::events::dsl::events;
 use crate::storage::postgres::operations::event_delivery::{
@@ -55,6 +55,7 @@ use crate::storage::postgres::operations::remote_target::{
     emit_remote_target_invoked_event,
 };
 use crate::storage::postgres::{capture_queries, with_connection, with_transaction};
+use crate::storage::{EventDeliverySink, EventDeliverySubscription};
 use crate::tests::{
     TestMutex, TestScope, create_test_user, lock_test_mutex, test_mutex, test_scope,
 };
@@ -527,8 +528,8 @@ struct StaticSinkResolver<'a> {
 }
 
 impl crate::events::SinkResolver for StaticSinkResolver<'_> {
-    fn resolve(&self, kind: EventSinkKind) -> Option<&dyn crate::events::Sink> {
-        (kind == EventSinkKind::Webhook).then_some(self.sink)
+    fn resolve(&self, kind: &str) -> Option<&dyn crate::events::Sink> {
+        (kind == EventSinkKind::Webhook.as_str()).then_some(self.sink)
     }
 }
 
@@ -538,18 +539,15 @@ impl crate::events::Sink for SuccessfulSink {
     fn deliver<'a>(
         &'a self,
         envelope: &'a crate::events::EventEnvelope,
-        subscription: &'a EventSubscription,
-        sink: &'a EventSinkModel,
+        subscription: &'a EventDeliverySubscription,
+        sink: &'a EventDeliverySink,
     ) -> futures::future::BoxFuture<'a, Result<(), crate::events::SinkError>> {
         use futures::FutureExt;
 
         async move {
             assert_eq!(envelope.entity_type, EntityType::Collection.as_str());
-            assert_eq!(
-                subscription.entity_types,
-                vec![EntityType::Collection.as_str().to_string()]
-            );
-            assert_eq!(sink.kind, EventSinkKind::Webhook);
+            assert!(!subscription.name().is_empty());
+            assert_eq!(sink.kind(), EventSinkKind::Webhook.as_str());
             Ok(())
         }
         .boxed()
@@ -562,8 +560,8 @@ impl crate::events::Sink for FailingSink {
     fn deliver<'a>(
         &'a self,
         _envelope: &'a crate::events::EventEnvelope,
-        _subscription: &'a EventSubscription,
-        _sink: &'a EventSinkModel,
+        _subscription: &'a EventDeliverySubscription,
+        _sink: &'a EventDeliverySink,
     ) -> futures::future::BoxFuture<'a, Result<(), crate::events::SinkError>> {
         use futures::FutureExt;
 
@@ -933,8 +931,8 @@ async fn event_retention_purge_deletes_old_terminal_deliveries_without_deleting_
         .await
         .unwrap();
 
-    assert_eq!(summary.purged_events, 0);
-    assert_eq!(summary.purged_terminal_deliveries, 1);
+    assert_eq!(summary.purged_events(), 0);
+    assert_eq!(summary.purged_terminal_deliveries(), 1);
     assert_eq!(
         count_event_deliveries_for_event(&scope.pool, event.id)
             .await
@@ -1004,7 +1002,7 @@ async fn event_retention_bounds_terminal_delivery_deletes_to_the_batch_size() {
         .await
         .unwrap();
 
-    assert_eq!(first.purged_terminal_deliveries, 2);
+    assert_eq!(first.purged_terminal_deliveries(), 2);
     assert_eq!(
         count_event_deliveries_for_event(&scope.pool, event_ids[2])
             .await
@@ -1015,7 +1013,7 @@ async fn event_retention_bounds_terminal_delivery_deletes_to_the_batch_size() {
     let second = purge_event_retention_without_archive(&scope.pool, settings)
         .await
         .unwrap();
-    assert_eq!(second.purged_terminal_deliveries, 1);
+    assert_eq!(second.purged_terminal_deliveries(), 1);
 }
 
 #[actix_web::test]

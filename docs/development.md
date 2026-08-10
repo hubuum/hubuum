@@ -79,11 +79,18 @@ for package classifications, publishing policy, and promotion requirements.
 
 The collection, class, object, class-relation, and object-relation point and
 lifecycle operations are the first backend-neutral service/storage ports.
-Metrics, readiness, maintenance state, event persistence health, and token
-retention are also expressed as required storage traits with backend-neutral
-inputs and results. Runtime worker settings and counters are enriched above
-the event-health storage boundary. A selectable backend must nevertheless
-satisfy the complete application storage contract. See
+Metrics, readiness, maintenance state, event persistence health, atomic event
+fan-out, delivery, event retention, and token retention are also expressed as
+required storage traits with backend-neutral inputs and results. Delivery
+workers receive enriched work-item DTOs and acknowledge opaque claims through
+the contract. Retention archives receive storage-owned event DTOs rather than
+PostgreSQL row models. Runtime worker settings and counters are enriched above
+the event-health storage boundary. Validated event-worker and retention
+policies live in
+`hubuum-domain`; adapter-only query limits are derived through neutral
+accessors rather than leaking database terminology to consumers. A selectable
+backend must nevertheless satisfy the complete application storage contract.
+See
 [Application and Storage Boundary](storage_boundary.md) for the required
 families, compatibility tests, performance gates, and opaque backend boundary.
 

@@ -24,6 +24,11 @@ pub(crate) use contract::{
     DynLifecycleStorage, LifecycleStorage, StorageBackend, StorageBackendDescriptor,
     StorageBackendKind, StorageIdentity,
 };
+pub(crate) use hubuum_storage_core::{
+    EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
+    EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
+    EventRetentionSummary, RetainedEvent,
+};
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
 #[cfg(test)]
 pub(crate) use memory::MemoryStorageModel;

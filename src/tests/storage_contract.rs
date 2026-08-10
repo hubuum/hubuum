@@ -3,14 +3,16 @@ use std::sync::{Arc, LazyLock};
 use actix_web::web::Data;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+use crate::events::{EventFanoutSettings, EventRetentionSettings};
 use crate::models::CollectionID;
 use crate::models::TokenRetentionSettings;
 use crate::services::Services;
 use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
-    EventHealthStorage, MetricsStorage, OperationalStateStorage, STORAGE_CONTRACT_VERSION,
-    StorageBackendKind, TokenRetentionStorage,
+    EventArchive, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
+    EventRetentionStorage, MetricsStorage, OperationalStateStorage, RetainedEvent,
+    STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageError, TokenRetentionStorage,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -89,6 +91,54 @@ async fn every_available_storage_backend_supplies_event_health() {
 }
 
 #[actix_web::test]
+async fn every_available_storage_backend_processes_event_fanout() {
+    let _permit = postgres_permit().await;
+    let settings = EventFanoutSettings::new(10, 30_000)
+        .expect("compatibility fan-out settings should be valid");
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool().get_ref().clone());
+                backend
+                    .process_event_fanout_batch(settings)
+                    .await
+                    .expect("certified backend should process event fan-out");
+            }
+        }
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_processes_event_retention() {
+    struct DiscardArchive;
+
+    impl EventArchive for DiscardArchive {
+        fn archive(&self, _events: &[RetainedEvent]) -> Result<(), StorageError> {
+            Ok(())
+        }
+    }
+
+    let _permit = postgres_permit().await;
+    let settings = EventRetentionSettings::new(10_000, 10_000, 10)
+        .expect("compatibility event-retention settings should be valid");
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool().get_ref().clone());
+                let summary = backend
+                    .process_event_retention_batch(settings, &DiscardArchive)
+                    .await
+                    .expect("certified backend should process event retention");
+
+                assert!(!summary.did_work());
+            }
+        }
+    }
+}
+
+#[actix_web::test]
 async fn every_available_storage_backend_supplies_token_retention() {
     let _permit = postgres_permit().await;
     let settings = TokenRetentionSettings::builder()
@@ -121,6 +171,8 @@ async fn every_available_storage_backend_composes_through_the_complete_contract(
         match kind {
             StorageBackendKind::Postgresql => {
                 let backend = StorageHandle::postgres(pool().get_ref().clone());
+                fn accepts_event_delivery_contract(_backend: &impl EventDeliveryStorage) {}
+                accepts_event_delivery_contract(&backend);
                 let descriptor = backend.descriptor();
                 assert_eq!(descriptor.kind(), kind);
                 assert_eq!(descriptor.contract_version(), STORAGE_CONTRACT_VERSION);

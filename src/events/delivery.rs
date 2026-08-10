@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Once, OnceLock};
+use std::sync::{Once, OnceLock};
 use std::time::Duration;
 
 use actix_rt::time::sleep;
@@ -14,23 +14,22 @@ use crate::config::{
     DEFAULT_EVENT_DELIVERY_TRANSPORT_TIMEOUT_MS, DEFAULT_EVENT_DELIVERY_WORKERS, get_config,
 };
 use crate::errors::ApiError;
-use crate::events::sink::{
-    DefaultSinkResolver, EventEnvelope, SinkError, SinkResolver, event_envelope_with_names,
-};
-use crate::events::{EntityType, EventDeliverySettings, PrincipalNames};
+use crate::events::EventDeliverySettings;
+use crate::events::sink::{DefaultSinkResolver, EventEnvelope, SinkError, SinkResolver};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
-use crate::models::{EventSink, EventSubscription, EventWorkerHealth, EventWorkerWakeupStats};
+use crate::models::{EventWorkerHealth, EventWorkerWakeupStats};
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
+#[cfg(test)]
 use crate::storage::capabilities::event_delivery::{
-    ClaimedEventDelivery, claim_event_delivery_batch, mark_event_delivery_failed,
-    mark_event_delivery_succeeded,
+    ClaimedEventDelivery, claimed_event_delivery_work_item,
 };
-use crate::storage::capabilities::events::load_queued_task_initiators;
-use crate::storage::capabilities::history::resolve_principal_names;
 use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
-use crate::storage::{StorageHandle, storage_handle};
+use crate::storage::{
+    EventDeliverySink, EventDeliveryStorage, EventDeliverySubscription, EventDeliveryWorkItem,
+    StorageHandle, storage_handle,
+};
 
 static EVENT_DELIVERY_WORKER: Once = Once::new();
 static EVENT_DELIVERY_LISTENER: Once = Once::new();
@@ -85,7 +84,7 @@ fn configured_event_delivery_settings() -> Result<EventDeliverySettings, ApiErro
             .retry_backoff_max_ms(DEFAULT_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS)
             .max_attempts(DEFAULT_EVENT_DELIVERY_MAX_ATTEMPTS)
             .build()
-            .map_err(ApiError::BadRequest),
+            .map_err(Into::into),
     }
 }
 
@@ -95,47 +94,14 @@ async fn process_event_delivery_batch_with_schedule(
     resolver: &dyn SinkResolver,
 ) -> Result<EventDeliveryBatchOutcome, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
-    let (mut deliveries, next_wakeup_in) = claim_event_delivery_batch(pool, settings)
+    let storage = storage_handle(pool);
+    let (deliveries, next_wakeup_in) = storage
+        .claim_event_delivery_batch(settings)
         .await?
         .into_parts();
     let processed = deliveries.len();
-    let legacy_task_ids = deliveries
-        .iter()
-        .filter(|claimed| {
-            claimed.event.entity_type == EntityType::Task.as_str()
-                && claimed.event.initiator_user_id.is_none()
-        })
-        .filter_map(|claimed| claimed.event.entity_id)
-        .collect::<Vec<_>>();
-    let queued_initiators = load_queued_task_initiators(pool, &legacy_task_ids).await?;
-    for claimed in &mut deliveries {
-        if claimed.event.entity_type != EntityType::Task.as_str() {
-            continue;
-        }
-        let Some(task_id) = claimed.event.entity_id else {
-            continue;
-        };
-        claimed.event.task_id.get_or_insert(task_id);
-        if claimed.event.initiator_user_id.is_none() {
-            claimed.event.initiator_user_id = queued_initiators.get(&task_id).copied().flatten();
-        }
-    }
-    let principal_ids = deliveries
-        .iter()
-        .flat_map(|claimed| [claimed.event.actor_user_id, claimed.event.initiator_user_id])
-        .flatten()
-        .collect();
-    let principal_names = Arc::new(resolve_principal_names(pool, principal_ids).await?);
     let results = futures_util::stream::iter(deliveries)
-        .map(|claimed| {
-            process_claimed_event_delivery_with_names(
-                pool,
-                settings,
-                resolver,
-                claimed,
-                Arc::clone(&principal_names),
-            )
-        })
+        .map(|claimed| process_event_delivery_work_item(&storage, settings, resolver, claimed))
         .buffer_unordered(EVENT_DELIVERY_MAX_CONCURRENCY_PER_WORKER)
         .collect::<Vec<_>>()
         .await;
@@ -154,41 +120,20 @@ pub(crate) async fn process_claimed_event_delivery(
     pool: &impl crate::storage::StorageContext,
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,
-    mut claimed: ClaimedEventDelivery,
+    claimed: ClaimedEventDelivery,
 ) -> Result<(), ApiError> {
-    let task_ids = claimed
-        .event
-        .entity_id
-        .filter(|_| claimed.event.entity_type == EntityType::Task.as_str())
-        .into_iter()
-        .collect::<Vec<_>>();
-    let queued_initiators = load_queued_task_initiators(pool, &task_ids).await?;
-    if let Some(task_id) = task_ids.first().copied() {
-        claimed.event.task_id.get_or_insert(task_id);
-        if claimed.event.initiator_user_id.is_none() {
-            claimed.event.initiator_user_id = queued_initiators.get(&task_id).copied().flatten();
-        }
-    }
-    let principal_ids = [claimed.event.actor_user_id, claimed.event.initiator_user_id]
-        .into_iter()
-        .flatten()
-        .collect();
-    let principal_names = Arc::new(resolve_principal_names(pool, principal_ids).await?);
-    process_claimed_event_delivery_with_names(pool, settings, resolver, claimed, principal_names)
-        .await
+    let work_item = claimed_event_delivery_work_item(pool, claimed).await?;
+    let storage = storage_handle(pool);
+    process_event_delivery_work_item(&storage, settings, resolver, work_item).await
 }
 
-async fn process_claimed_event_delivery_with_names(
-    pool: &impl crate::storage::StorageContext,
+async fn process_event_delivery_work_item(
+    storage: &StorageHandle,
     settings: EventDeliverySettings,
     resolver: &dyn SinkResolver,
-    claimed: ClaimedEventDelivery,
-    principal_names: Arc<PrincipalNames>,
+    work_item: EventDeliveryWorkItem,
 ) -> Result<(), ApiError> {
-    let delivery = claimed.delivery;
-    let envelope = event_envelope_with_names(claimed.event, &principal_names);
-    let subscription = EventSubscription::try_from(claimed.subscription)?;
-    let sink = EventSink::try_from(claimed.sink)?;
+    let (claim, envelope, subscription, sink) = work_item.into_parts();
     let result = tokio::time::timeout(
         settings.transport_timeout(),
         deliver_one(resolver, &envelope, &subscription, &sink),
@@ -204,24 +149,21 @@ async fn process_claimed_event_delivery_with_names(
 
     match result {
         Ok(()) => {
-            let claim_token = delivery.claim_token.ok_or_else(|| {
-                ApiError::InternalServerError(
-                    "claimed event delivery is missing claim_token".to_string(),
-                )
-            })?;
-            mark_event_delivery_succeeded(pool, delivery.id, claim_token).await?;
+            storage.mark_event_delivery_succeeded(&claim).await?;
         }
         Err(error) => {
             warn!(
                 message = "Event sink delivery failed",
-                event_delivery_id = delivery.id,
+                event_delivery_id = claim.delivery_id(),
                 event_id = %envelope.event_id,
-                event_sink_id = sink.id,
-                event_subscription_id = subscription.id,
-                sink_kind = sink.kind.as_str(),
+                event_sink_id = sink.id(),
+                event_subscription_id = subscription.id(),
+                sink_kind = sink.kind(),
                 error = %error,
             );
-            mark_event_delivery_failed(pool, &delivery, settings, &error.to_string()).await?;
+            storage
+                .mark_event_delivery_failed(&claim, settings, &error.to_string())
+                .await?;
         }
     }
 
@@ -231,13 +173,13 @@ async fn process_claimed_event_delivery_with_names(
 async fn deliver_one(
     resolver: &dyn SinkResolver,
     envelope: &EventEnvelope,
-    subscription: &EventSubscription,
-    sink: &EventSink,
+    subscription: &EventDeliverySubscription,
+    sink: &EventDeliverySink,
 ) -> Result<(), SinkError> {
-    let Some(transport) = resolver.resolve(sink.kind) else {
+    let Some(transport) = resolver.resolve(sink.kind()) else {
         return Err(SinkError::new(format!(
             "No event sink transport is registered for kind '{}'",
-            sink.kind.as_str()
+            sink.kind()
         )));
     };
 
@@ -447,8 +389,8 @@ mod tests {
     }
 
     impl SinkResolver for StaticResolver<'_> {
-        fn resolve(&self, kind: EventSinkKind) -> Option<&dyn Sink> {
-            (kind == self.kind).then_some(self.sink)
+        fn resolve(&self, kind: &str) -> Option<&dyn Sink> {
+            (kind == self.kind.as_str()).then_some(self.sink)
         }
     }
 
@@ -458,8 +400,8 @@ mod tests {
         fn deliver<'a>(
             &'a self,
             _envelope: &'a EventEnvelope,
-            _subscription: &'a EventSubscription,
-            _sink: &'a EventSink,
+            _subscription: &'a EventDeliverySubscription,
+            _sink: &'a EventDeliverySink,
         ) -> futures::future::BoxFuture<'a, Result<(), SinkError>> {
             async { Err(SinkError::new("boom")) }.boxed()
         }
@@ -521,32 +463,8 @@ mod tests {
             metadata: serde_json::json!({}),
             schema_version: 1,
         };
-        let subscription = EventSubscription {
-            id: 1,
-            collection_id: 1,
-            sink_id: 1,
-            name: "subscription".to_string(),
-            description: String::new(),
-            entity_types: vec!["collection".to_string()],
-            actions: vec!["created".to_string()],
-            filter: hubuum_events_core::EventSubscriptionFilter::default(),
-            routing: serde_json::json!({}),
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-            revision: crate::models::ResourceRevision::INITIAL,
-        };
-        let sink = EventSink {
-            id: 1,
-            name: "sink".to_string(),
-            kind: EventSinkKind::Webhook,
-            config: serde_json::json!({}),
-            secret_ref: None,
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-            revision: crate::models::ResourceRevision::INITIAL,
-        };
+        let subscription = EventDeliverySubscription::new(1, "subscription", serde_json::json!({}));
+        let sink = EventDeliverySink::new(1, "sink", "webhook", serde_json::json!({}), None);
 
         let error = deliver_one(&NoopSinkResolver, &envelope, &subscription, &sink)
             .await
@@ -577,32 +495,8 @@ mod tests {
             metadata: serde_json::json!({}),
             schema_version: 1,
         };
-        let subscription = EventSubscription {
-            id: 1,
-            collection_id: 1,
-            sink_id: 1,
-            name: "subscription".to_string(),
-            description: String::new(),
-            entity_types: vec!["collection".to_string()],
-            actions: vec!["created".to_string()],
-            filter: hubuum_events_core::EventSubscriptionFilter::default(),
-            routing: serde_json::json!({}),
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-            revision: crate::models::ResourceRevision::INITIAL,
-        };
-        let sink = EventSink {
-            id: 1,
-            name: "sink".to_string(),
-            kind: EventSinkKind::Webhook,
-            config: serde_json::json!({}),
-            secret_ref: None,
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-            revision: crate::models::ResourceRevision::INITIAL,
-        };
+        let subscription = EventDeliverySubscription::new(1, "subscription", serde_json::json!({}));
+        let sink = EventDeliverySink::new(1, "sink", "webhook", serde_json::json!({}), None);
         let failing = FailingSink;
         let resolver = StaticResolver {
             kind: EventSinkKind::Webhook,

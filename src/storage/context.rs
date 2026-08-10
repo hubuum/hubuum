@@ -1,14 +1,17 @@
 use actix_web::web::Data;
 
+use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 use crate::models::{MaintenanceState, TokenRetentionSettings};
 use crate::permissions::{AppContext, PermissionBackend};
 use crate::storage::observed::observe_storage_call;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
-    DynLifecycleStorage, EventDeliveryHealthSnapshot, EventHealthStorage, EventMetricsSnapshot,
-    InventoryGaugeSnapshot, MetricsStorage, OperationalStateStorage, PostgresStorage,
-    ReadinessSnapshot, StorageBackend, StorageBackendDescriptor, StorageError, StoragePoolState,
-    TaskGaugeSnapshot, TokenRetentionStorage,
+    DynLifecycleStorage, EventArchive, EventDeliveryBatch, EventDeliveryClaim,
+    EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
+    EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, InventoryGaugeSnapshot,
+    MetricsStorage, OperationalStateStorage, PostgresStorage, ReadinessSnapshot, StorageBackend,
+    StorageBackendDescriptor, StorageError, StoragePoolState, TaskGaugeSnapshot,
+    TokenRetentionStorage,
 };
 use async_trait::async_trait;
 
@@ -157,6 +160,117 @@ impl EventHealthStorage for StorageHandle {
                 match &self.implementation {
                     BackendImplementation::Postgresql(backend) => {
                         backend.event_delivery_health().await
+                    }
+                }
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl EventDeliveryStorage for StorageHandle {
+    async fn claim_event_delivery_batch(
+        &self,
+        settings: EventDeliverySettings,
+    ) -> Result<EventDeliveryBatch, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_delivery",
+            "claim_batch",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.claim_event_delivery_batch(settings).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn mark_event_delivery_succeeded(
+        &self,
+        claim: &EventDeliveryClaim,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_delivery",
+            "mark_succeeded",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.mark_event_delivery_succeeded(claim).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn mark_event_delivery_failed(
+        &self,
+        claim: &EventDeliveryClaim,
+        settings: EventDeliverySettings,
+        error: &str,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_delivery",
+            "mark_failed",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .mark_event_delivery_failed(claim, settings, error)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl EventFanoutStorage for StorageHandle {
+    async fn process_event_fanout_batch(
+        &self,
+        settings: EventFanoutSettings,
+    ) -> Result<usize, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_fanout",
+            "process_batch",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.process_event_fanout_batch(settings).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl EventRetentionStorage for StorageHandle {
+    async fn process_event_retention_batch(
+        &self,
+        settings: EventRetentionSettings,
+        archive: &dyn EventArchive,
+    ) -> Result<EventRetentionSummary, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_retention",
+            "process_batch",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .process_event_retention_batch(settings, archive)
+                            .await
                     }
                 }
             },

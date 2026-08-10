@@ -8,11 +8,17 @@ use diesel::sql_types::{Nullable, Timestamp};
 use uuid::Uuid;
 
 use crate::errors::ApiError;
-use crate::events::{Event, EventDeliverySettings};
+use crate::events::{EntityType, Event, EventDeliverySettings};
 use crate::models::event_subscription::{EventSinkRow, EventSubscriptionRow};
 use crate::models::search::{FilterField, Operator, ParsedQueryParamExt, QueryOptions};
-use crate::models::{EventDelivery, EventDeliveryID, EventDeliveryStatus};
+use crate::models::{
+    EventDelivery, EventDeliveryID, EventDeliveryStatus, EventSink, EventSubscription,
+};
 use crate::storage::postgres::{with_connection, with_transaction};
+use crate::storage::{
+    EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliverySubscription,
+    EventDeliveryWorkItem,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClaimedEventDelivery {
@@ -118,7 +124,7 @@ pub(crate) async fn claim_event_delivery_batch(
                 .order((next_attempt_at.asc(), id.asc()))
                 .for_update()
                 .skip_locked()
-                .limit(settings.database_batch_size())
+                .limit(settings.query_batch_size())
                 .select(id)
                 .load::<i64>(conn)
                 .await?;
@@ -154,6 +160,102 @@ pub(crate) async fn claim_event_delivery_batch(
         },
     )
     .await
+}
+
+/// Claim and fully enrich one delivery batch before crossing the storage edge.
+///
+/// PostgreSQL rows and claim columns remain adapter-private. The worker sees a
+/// bounded work-item DTO containing only the envelope and transport settings
+/// required to perform and acknowledge delivery.
+pub(crate) async fn claim_event_delivery_batch_from_storage(
+    pool: &crate::storage::postgres::PostgresPool,
+    settings: EventDeliverySettings,
+) -> Result<EventDeliveryBatch, ApiError> {
+    let (deliveries, next_wakeup_in) = claim_event_delivery_batch(pool, settings)
+        .await?
+        .into_parts();
+    let deliveries = claimed_delivery_work_items(pool, deliveries).await?;
+    Ok(EventDeliveryBatch::new(deliveries, next_wakeup_in))
+}
+
+async fn claimed_delivery_work_items(
+    pool: &crate::storage::postgres::PostgresPool,
+    mut deliveries: Vec<ClaimedEventDelivery>,
+) -> Result<Vec<EventDeliveryWorkItem>, ApiError> {
+    let legacy_task_ids = deliveries
+        .iter()
+        .filter(|claimed| {
+            claimed.event.entity_type == EntityType::Task.as_str()
+                && claimed.event.initiator_user_id.is_none()
+        })
+        .filter_map(|claimed| claimed.event.entity_id)
+        .collect::<Vec<_>>();
+    let queued_initiators =
+        super::events::load_queued_task_initiators(pool, &legacy_task_ids).await?;
+    for claimed in &mut deliveries {
+        if claimed.event.entity_type != EntityType::Task.as_str() {
+            continue;
+        }
+        let Some(task_id) = claimed.event.entity_id else {
+            continue;
+        };
+        claimed.event.task_id.get_or_insert(task_id);
+        if claimed.event.initiator_user_id.is_none() {
+            claimed.event.initiator_user_id = queued_initiators.get(&task_id).copied().flatten();
+        }
+    }
+
+    let principal_ids = deliveries
+        .iter()
+        .flat_map(|claimed| [claimed.event.actor_user_id, claimed.event.initiator_user_id])
+        .flatten()
+        .collect();
+    let principal_names = super::history::resolve_principal_names(pool, principal_ids).await?;
+
+    deliveries
+        .into_iter()
+        .map(|claimed| {
+            let claim_token = claimed.delivery.claim_token.ok_or_else(|| {
+                ApiError::InternalServerError(
+                    "claimed event delivery is missing claim_token".to_string(),
+                )
+            })?;
+            let subscription = EventSubscription::try_from(claimed.subscription)?;
+            let sink = EventSink::try_from(claimed.sink)?;
+            Ok(EventDeliveryWorkItem::new(
+                EventDeliveryClaim::new(
+                    claimed.delivery.id,
+                    claimed.delivery.attempts,
+                    claim_token,
+                ),
+                claimed.event.into_envelope(&principal_names),
+                EventDeliverySubscription::new(
+                    subscription.id,
+                    subscription.name,
+                    subscription.routing,
+                ),
+                EventDeliverySink::new(
+                    sink.id,
+                    sink.name,
+                    sink.kind.as_str(),
+                    sink.config,
+                    sink.secret_ref,
+                ),
+            ))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+pub(crate) async fn claimed_event_delivery_work_item(
+    pool: &impl crate::storage::StorageContext,
+    claimed: ClaimedEventDelivery,
+) -> Result<EventDeliveryWorkItem, ApiError> {
+    claimed_delivery_work_items(crate::storage::context::postgres_pool(pool), vec![claimed])
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::NotFound("Event delivery work item not found".to_string()))
 }
 
 #[cfg(test)]
@@ -327,9 +429,56 @@ pub(crate) async fn mark_event_delivery_succeeded(
     .await
 }
 
+pub(crate) async fn mark_event_delivery_claim_succeeded(
+    pool: &crate::storage::postgres::PostgresPool,
+    claim: &EventDeliveryClaim,
+) -> Result<(), ApiError> {
+    mark_event_delivery_succeeded(pool, claim.delivery_id(), claim.token())
+        .await
+        .map(|_| ())
+}
+
+#[cfg(test)]
 pub(crate) async fn mark_event_delivery_failed(
     pool: &impl crate::storage::StorageContext,
     delivery: &EventDelivery,
+    settings: EventDeliverySettings,
+    error: &str,
+) -> Result<EventDelivery, ApiError> {
+    mark_event_delivery_failed_values(
+        pool,
+        delivery.id,
+        delivery.claim_token,
+        delivery.attempts,
+        settings,
+        error,
+    )
+    .await
+}
+
+pub(crate) async fn mark_event_delivery_claim_failed(
+    pool: &crate::storage::postgres::PostgresPool,
+    claim: &EventDeliveryClaim,
+    settings: EventDeliverySettings,
+    error: &str,
+) -> Result<(), ApiError> {
+    mark_event_delivery_failed_values(
+        pool,
+        claim.delivery_id(),
+        Some(claim.token()),
+        claim.attempts(),
+        settings,
+        error,
+    )
+    .await
+    .map(|_| ())
+}
+
+async fn mark_event_delivery_failed_values(
+    pool: &impl crate::storage::StorageContext,
+    delivery_id: i64,
+    delivery_claim_token: Option<Uuid>,
+    delivery_attempts: i32,
     settings: EventDeliverySettings,
     error: &str,
 ) -> Result<EventDelivery, ApiError> {
@@ -338,7 +487,7 @@ pub(crate) async fn mark_event_delivery_failed(
         status,
     };
 
-    let next_attempts = delivery.attempts + 1;
+    let next_attempts = delivery_attempts + 1;
     let next_status = if next_attempts >= settings.max_attempts() {
         EventDeliveryStatus::Dead
     } else {
@@ -356,8 +505,8 @@ pub(crate) async fn mark_event_delivery_failed(
     with_connection(pool, async |conn| {
         diesel::update(
             event_deliveries
-                .filter(id.eq(delivery.id))
-                .filter(claim_token.eq(delivery.claim_token))
+                .filter(id.eq(delivery_id))
+                .filter(claim_token.eq(delivery_claim_token))
                 .filter(status.eq(EventDeliveryStatus::InFlight.as_str())),
         )
         .set((

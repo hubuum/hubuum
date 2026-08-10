@@ -221,7 +221,10 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         .expect("StorageBackend should have a readable aggregate trait declaration");
     for required in [
         "LifecycleStorage",
+        "EventDeliveryStorage",
+        "EventFanoutStorage",
         "EventHealthStorage",
+        "EventRetentionStorage",
         "MetricsStorage",
         "OperationalStateStorage",
         "TokenRetentionStorage",

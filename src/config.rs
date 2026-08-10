@@ -943,32 +943,29 @@ impl AppConfig {
     }
 
     pub(crate) fn event_fanout_settings(&self) -> Result<EventFanoutSettings, ApiError> {
-        EventFanoutSettings::new(
+        Ok(EventFanoutSettings::new(
             self.event_fanout_batch_size,
             self.event_fanout_lock_timeout_ms,
-        )
-        .map_err(ApiError::BadRequest)
+        )?)
     }
 
     pub(crate) fn event_delivery_settings(&self) -> Result<EventDeliverySettings, ApiError> {
-        EventDeliverySettings::builder()
+        Ok(EventDeliverySettings::builder()
             .batch_size(self.event_delivery_batch_size)
             .lock_timeout_ms(self.event_delivery_lock_timeout_ms)
             .transport_timeout_ms(self.event_delivery_transport_timeout_ms)
             .retry_backoff_base_ms(self.event_delivery_retry_backoff_base_ms)
             .retry_backoff_max_ms(self.event_delivery_retry_backoff_max_ms)
             .max_attempts(self.event_delivery_max_attempts)
-            .build()
-            .map_err(ApiError::BadRequest)
+            .build()?)
     }
 
     pub(crate) fn event_retention_settings(&self) -> Result<EventRetentionSettings, ApiError> {
-        EventRetentionSettings::new(
+        Ok(EventRetentionSettings::new(
             self.event_retention_days,
             self.event_delivery_retention_days,
             self.event_retention_purge_batch_size,
-        )
-        .map_err(ApiError::BadRequest)
+        )?)
     }
 
     fn validate(self) -> Result<Self, ApiError> {
@@ -2222,24 +2219,24 @@ mod tests {
     #[case::fanout_timeout(
         "HUBUUM_EVENT_FANOUT_LOCK_TIMEOUT_MS",
         "18446744073709551615",
-        "event_fanout_lock_timeout_ms is too large for database timestamps"
+        "event_fanout_lock_timeout_ms is too large for timestamps"
     )]
     #[case::delivery_timeout(
         "HUBUUM_EVENT_DELIVERY_LOCK_TIMEOUT_MS",
         "18446744073709551615",
-        "event_delivery_lock_timeout_ms is too large for database timestamps"
+        "event_delivery_lock_timeout_ms is too large for timestamps"
     )]
     #[case::delivery_retry(
         "HUBUUM_EVENT_DELIVERY_RETRY_BACKOFF_MAX_MS",
         "18446744073709551615",
-        "event_delivery_retry_backoff_max_ms is too large for database timestamps"
+        "event_delivery_retry_backoff_max_ms is too large for timestamps"
     )]
     #[case::retention_days(
         "HUBUUM_EVENT_RETENTION_DAYS",
         "9223372036854775807",
-        "event_retention_days is too large for database timestamps"
+        "event_retention_days is too large for timestamps"
     )]
-    fn event_worker_database_durations_must_be_representable(
+    fn event_worker_durations_must_be_representable(
         #[case] variable: &'static str,
         #[case] value: &str,
         #[case] expected: &str,
