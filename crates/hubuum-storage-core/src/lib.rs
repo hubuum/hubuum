@@ -9,6 +9,7 @@ mod events;
 mod history;
 mod identity;
 mod operational;
+mod unified_search;
 
 pub use authorization::{
     AuthorizationCollection, AuthorizationCollectionAccessQuery,
@@ -40,6 +41,10 @@ pub use operational::{
     EventSubscriptionHealthSnapshot, OperationalStateStorage, ReadinessSnapshot,
     TokenRetentionStorage,
 };
+pub use unified_search::{
+    UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor, UnifiedSearchObject,
+    UnifiedSearchQuery, UnifiedSearchResourceScope, UnifiedSearchStorage, UnifiedSearchVisibility,
+};
 
 use std::fmt;
 
@@ -47,7 +52,7 @@ use std::fmt;
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 2;
+pub const STORAGE_CONTRACT_VERSION: u16 = 3;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,15 +78,17 @@ pub enum StorageCapability {
     DomainLifecycle,
     IdentityAndAuthorizationData,
     TemporalHistory,
+    UnifiedSearch,
     Workflows,
     Operations,
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::DomainLifecycle,
         Self::IdentityAndAuthorizationData,
         Self::TemporalHistory,
+        Self::UnifiedSearch,
         Self::Workflows,
         Self::Operations,
     ];
@@ -92,6 +99,7 @@ impl StorageCapability {
             Self::DomainLifecycle => "domain_lifecycle",
             Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
             Self::TemporalHistory => "temporal_history",
+            Self::UnifiedSearch => "unified_search",
             Self::Workflows => "workflows",
             Self::Operations => "operations",
         }
@@ -244,6 +252,7 @@ mod tests {
                 "domain_lifecycle",
                 "identity_and_authorization_data",
                 "temporal_history",
+                "unified_search",
                 "workflows",
                 "operations",
             ]

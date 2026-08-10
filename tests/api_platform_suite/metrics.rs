@@ -117,7 +117,10 @@ async fn metrics_endpoint_is_best_effort_when_database_refresh_fails() {
 #[actix_web::test]
 async fn storage_metrics_export_backend_identity_and_bounded_operation_labels() {
     let body = scrape_recorded_metrics(|| {
-        metrics::storage_backend_identity("postgresql", 2);
+        metrics::storage_backend_identity(
+            "postgresql",
+            hubuum_storage_core::STORAGE_CONTRACT_VERSION,
+        );
         metrics::storage_operation_finished(
             "postgresql",
             "objects",
@@ -130,7 +133,7 @@ async fn storage_metrics_export_backend_identity_and_bounded_operation_labels() 
 
     assert!(
         body.contains(
-            "hubuum_storage_backend_info{backend=\"postgresql\",contract_version=\"2\"} 1"
+            "hubuum_storage_backend_info{backend=\"postgresql\",contract_version=\"3\"} 1"
         )
     );
     assert!(body.contains(

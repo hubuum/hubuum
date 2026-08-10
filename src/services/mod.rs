@@ -4,6 +4,7 @@ mod collections;
 pub(crate) mod history;
 mod object_relations;
 mod objects;
+pub(crate) mod unified_search;
 
 pub use class_relations::ClassRelationService;
 pub use classes::ClassService;

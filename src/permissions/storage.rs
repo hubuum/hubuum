@@ -8,7 +8,7 @@ use crate::models::{
     Collection, Group, GroupPermission, Permission, Permissions, ResourceRevision,
 };
 
-pub(super) const fn permission_to_storage(permission: Permissions) -> AuthorizationPermission {
+pub(crate) const fn permission_to_storage(permission: Permissions) -> AuthorizationPermission {
     match permission {
         Permissions::ReadCollection => AuthorizationPermission::ReadCollection,
         Permissions::UpdateCollection => AuthorizationPermission::UpdateCollection,

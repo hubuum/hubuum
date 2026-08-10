@@ -26,6 +26,7 @@ pub mod object;
 pub mod permissions;
 pub mod principal;
 pub(crate) mod probe;
+pub(crate) mod ranked_search;
 pub mod relations;
 pub mod remote_target;
 pub(crate) mod resource_scope;

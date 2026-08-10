@@ -236,6 +236,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "OperationalStateStorage",
         "TokenRetentionStorage",
         "HistoryStorage",
+        "UnifiedSearchStorage",
         "WorkflowStorage",
         "OperationalStorage",
         "sealed::CertifiedStorageBackend",

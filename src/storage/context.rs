@@ -20,7 +20,8 @@ use crate::storage::{
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, OperationalStateStorage,
     PostgresStorage, ReadinessSnapshot, RemoteTargetHistoryRecord, StorageBackend,
     StorageBackendDescriptor, StorageError, StoragePoolState, TaskGaugeSnapshot,
-    TokenRetentionStorage,
+    TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
+    UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
@@ -521,6 +522,56 @@ impl HistoryStorage for StorageHandle {
                 }
             },
         )
+        .await
+    }
+}
+
+#[async_trait]
+impl UnifiedSearchStorage for StorageHandle {
+    async fn search_unified_collections(
+        &self,
+        query: UnifiedSearchQuery,
+    ) -> Result<Vec<UnifiedSearchCollection>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "unified_search",
+            "collections",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.search_unified_collections(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn search_unified_classes(
+        &self,
+        query: UnifiedSearchQuery,
+    ) -> Result<Vec<UnifiedSearchClass>, StorageError> {
+        observe_storage_call(self.backend_name(), "unified_search", "classes", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.search_unified_classes(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn search_unified_objects(
+        &self,
+        query: UnifiedSearchQuery,
+    ) -> Result<Vec<UnifiedSearchObject>, StorageError> {
+        observe_storage_call(self.backend_name(), "unified_search", "objects", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.search_unified_objects(query).await
+                }
+            }
+        })
         .await
     }
 }

@@ -38,7 +38,9 @@ pub(crate) use hubuum_storage_core::{
     EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryCollectionScope,
     HistoryListQuery, HistoryMetadata, HistoryPage, HistoryPrincipalName, HistoryStorage,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, RemoteTargetHistoryRecord,
-    RetainedEvent,
+    RetainedEvent, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchCursor,
+    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchResourceScope, UnifiedSearchStorage,
+    UnifiedSearchVisibility,
 };
 pub(crate) use hubuum_storage_core::{ClassHistoryRecord, CollectionHistoryRecord};
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};

@@ -9,7 +9,7 @@ use crate::models::identity::LOCAL_IDENTITY_SCOPE;
 use crate::models::search::QueryOptions;
 use crate::models::{
     CollectionHistory, CollectionID, ExportTemplateHistory, HubuumClassHistory,
-    HubuumObjectHistory, RemoteTargetHistory,
+    HubuumObjectHistory, NewHubuumClass, NewHubuumObject, RemoteTargetHistory,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::services::Services;
@@ -23,7 +23,8 @@ use crate::storage::{
     EventHealthStorage, EventRetentionStorage, HistoryAsOfQuery, HistoryCollectionScope,
     HistoryListQuery, HistoryStorage, MetricsStorage, ObjectHistoryAsOfQuery,
     ObjectHistoryListQuery, OperationalStateStorage, RetainedEvent, STORAGE_CONTRACT_VERSION,
-    StorageBackendKind, StorageError, TokenRetentionStorage,
+    StorageBackendKind, StorageError, TokenRetentionStorage, UnifiedSearchQuery,
+    UnifiedSearchStorage, UnifiedSearchVisibility,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -443,6 +444,87 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
         .delete_without_events(pool.get_ref())
         .await
         .expect("history compatibility actor should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_ranked_unified_search() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let needle = prefix("unified_search");
+    let collection = crate::tests::create_collection_fixture(pool.get_ref(), &needle).await;
+    let fixture = crate::tests::create_object_fixture(
+        pool.get_ref(),
+        collection,
+        NewHubuumClass {
+            name: format!("{needle}_class"),
+            collection_id: 0,
+            json_schema: Some(serde_json::json!({"title": needle})),
+            validate_schema: Some(false),
+            description: "unified search compatibility class".to_string(),
+        },
+        vec![NewHubuumObject {
+            name: format!("{needle}_object"),
+            collection_id: 0,
+            hubuum_class_id: 0,
+            data: serde_json::json!({"needle": needle}),
+            description: "unified search compatibility object".to_string(),
+        }],
+    )
+    .await
+    .expect("unified search compatibility fixture should be created");
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let request = || {
+                    UnifiedSearchQuery::new(
+                        needle.clone(),
+                        10,
+                        UnifiedSearchVisibility::new(
+                            i32::MAX,
+                            true,
+                            None::<Vec<AuthorizationPermission>>,
+                            None,
+                        ),
+                    )
+                    .search_extended_document(true)
+                };
+
+                let collections = backend
+                    .search_unified_collections(request())
+                    .await
+                    .expect("certified backend should search collections");
+                assert!(collections.into_iter().any(|row| {
+                    let (id, ..) = row.into_parts();
+                    id == fixture.collection.collection.id
+                }));
+
+                let classes = backend
+                    .search_unified_classes(request())
+                    .await
+                    .expect("certified backend should search classes");
+                assert!(classes.into_iter().any(|row| {
+                    let (id, ..) = row.into_parts();
+                    id == fixture.class.id
+                }));
+
+                let objects = backend
+                    .search_unified_objects(request())
+                    .await
+                    .expect("certified backend should search objects");
+                assert!(objects.into_iter().any(|row| {
+                    let (id, ..) = row.into_parts();
+                    id == fixture.objects[0].id
+                }));
+            }
+        }
+    }
+
+    fixture
+        .cleanup()
+        .await
+        .expect("unified search compatibility fixture should be removed");
 }
 
 #[actix_web::test]
