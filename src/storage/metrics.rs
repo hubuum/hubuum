@@ -1,11 +1,9 @@
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 
-use crate::models::{
-    EventDeliveryQueueHealth, EventFanoutHealth, ExportTemplateID, TaskKind, TaskStatus,
-};
+use crate::models::{ExportTemplateID, TaskKind, TaskStatus};
 
-use super::StorageError;
+use super::{EventFanoutSnapshot, EventQueueSnapshot, StorageError};
 
 /// Backend-neutral state for the configured storage connection pool.
 #[derive(Debug)]
@@ -81,8 +79,8 @@ pub(crate) struct TaskGaugeSnapshot {
 
 #[derive(Debug, Clone)]
 pub(crate) struct EventMetricsSnapshot {
-    pub(crate) fanout: EventFanoutHealth,
-    pub(crate) delivery: EventDeliveryQueueHealth,
+    pub(crate) fanout: EventFanoutSnapshot,
+    pub(crate) delivery: EventQueueSnapshot,
 }
 
 /// Metrics data every selectable storage backend must provide.

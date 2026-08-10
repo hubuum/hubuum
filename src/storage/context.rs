@@ -1,11 +1,14 @@
 use actix_web::web::Data;
 
+use crate::models::{MaintenanceState, TokenRetentionSettings};
 use crate::permissions::{AppContext, PermissionBackend};
+use crate::storage::observed::observe_storage_call;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
-    DynLifecycleStorage, EventMetricsSnapshot, InventoryGaugeSnapshot, MetricsStorage,
-    PostgresStorage, StorageBackend, StorageBackendDescriptor, StorageError, StoragePoolState,
-    TaskGaugeSnapshot,
+    DynLifecycleStorage, EventDeliveryHealthSnapshot, EventHealthStorage, EventMetricsSnapshot,
+    InventoryGaugeSnapshot, MetricsStorage, OperationalStateStorage, PostgresStorage,
+    ReadinessSnapshot, StorageBackend, StorageBackendDescriptor, StorageError, StoragePoolState,
+    TaskGaugeSnapshot, TokenRetentionStorage,
 };
 use async_trait::async_trait;
 
@@ -46,6 +49,10 @@ impl StorageHandle {
         }
     }
 
+    fn backend_name(&self) -> &'static str {
+        self.descriptor().kind().as_str()
+    }
+
     pub(crate) fn lifecycle_storage(&self) -> DynLifecycleStorage {
         match &self.implementation {
             BackendImplementation::Postgresql(backend) => {
@@ -70,23 +77,113 @@ impl MetricsStorage for StorageHandle {
     }
 
     async fn metrics_inventory_snapshot(&self) -> Result<InventoryGaugeSnapshot, StorageError> {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => {
-                backend.metrics_inventory_snapshot().await
-            }
-        }
+        observe_storage_call(
+            self.backend_name(),
+            "metrics",
+            "inventory_snapshot",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.metrics_inventory_snapshot().await
+                    }
+                }
+            },
+        )
+        .await
     }
 
     async fn metrics_task_snapshot(&self) -> Result<TaskGaugeSnapshot, StorageError> {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => backend.metrics_task_snapshot().await,
-        }
+        observe_storage_call(self.backend_name(), "metrics", "task_snapshot", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.metrics_task_snapshot().await,
+            }
+        })
+        .await
     }
 
     async fn metrics_event_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
-        match &self.implementation {
-            BackendImplementation::Postgresql(backend) => backend.metrics_event_snapshot().await,
-        }
+        observe_storage_call(self.backend_name(), "metrics", "event_snapshot", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.metrics_event_snapshot().await
+                }
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl OperationalStateStorage for StorageHandle {
+    async fn readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "operational_state",
+            "readiness_snapshot",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.readiness_snapshot().await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn maintenance_state(&self) -> Result<MaintenanceState, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "operational_state",
+            "maintenance_state",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => backend.maintenance_state().await,
+                }
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl EventHealthStorage for StorageHandle {
+    async fn event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "event_health",
+            "delivery_health",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.event_delivery_health().await
+                    }
+                }
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl TokenRetentionStorage for StorageHandle {
+    async fn purge_expired_tokens(
+        &self,
+        settings: TokenRetentionSettings,
+    ) -> Result<usize, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "token_retention",
+            "purge_expired",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.purge_expired_tokens(settings).await
+                    }
+                }
+            },
+        )
+        .await
     }
 }
 

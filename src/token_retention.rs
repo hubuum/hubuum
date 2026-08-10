@@ -8,9 +8,8 @@ use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::TokenRetentionSettings;
 use crate::restores::MaintenanceActivityGuard;
-use crate::storage::capabilities::token_retention::purge_expired_token_batch;
 use crate::storage::capabilities::{StorageCallSite, with_storage_call_site};
-use crate::storage::{StorageContext, StorageHandle, storage_handle};
+use crate::storage::{StorageContext, StorageHandle, TokenRetentionStorage, storage_handle};
 
 static TOKEN_RETENTION_WORKER: std::sync::Once = std::sync::Once::new();
 
@@ -30,12 +29,15 @@ fn configured_token_retention_worker() -> Result<TokenRetentionWorkerConfig, Api
     })
 }
 
-pub async fn process_token_retention_batch(
-    pool: &impl crate::storage::StorageContext,
+pub(crate) async fn process_token_retention_batch(
+    storage: &(impl TokenRetentionStorage + ?Sized),
     settings: TokenRetentionSettings,
 ) -> Result<usize, ApiError> {
     let _activity = MaintenanceActivityGuard::begin();
-    purge_expired_token_batch(pool, settings).await
+    storage
+        .purge_expired_tokens(settings)
+        .await
+        .map_err(Into::into)
 }
 
 fn retention_worker_should_continue(result: &Result<usize, ApiError>) -> bool {

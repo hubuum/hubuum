@@ -58,7 +58,7 @@ where
 }
 
 pub(crate) fn active_tokens_cutoff() -> Result<chrono::NaiveDateTime, ApiError> {
-    configured_token_lifetime()?.cutoff_from(chrono::Utc::now().naive_utc())
+    Ok(configured_token_lifetime()?.cutoff_from(chrono::Utc::now().naive_utc())?)
 }
 
 /// Boxed Diesel predicate for "token is active": not revoked, and not expired —

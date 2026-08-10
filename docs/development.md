@@ -54,10 +54,15 @@ for package classifications, publishing policy, and promotion requirements.
 - `src/services/*`:
   Application-facing use cases. Migrated handlers call services instead of
   choosing persistence helpers directly.
+- `crates/hubuum-domain` and `crates/hubuum-storage-core`:
+  Backend-neutral values, storage DTOs, errors, and extracted capability
+  traits. These crates cannot depend on Actix, Diesel, global application
+  configuration, or `ApiError`.
 - `src/storage/*`:
-  Backend-neutral capability traits plus PostgreSQL adapters. The test-only
-  memory contract model exercises focused logical behavior. It is not a
-  selectable backend and does not represent partial application support.
+  Remaining backend-neutral capabilities plus PostgreSQL adapter composition.
+  The test-only memory contract model exercises focused logical behavior. It
+  is not a selectable backend and does not represent partial application
+  support.
 - `src/models/*`:
   Application domain models and high-level operations.
   These should not contain Diesel query construction for non-trivial backend logic.
@@ -73,11 +78,14 @@ for package classifications, publishing policy, and promotion requirements.
   This is where query details, joins, filters, and transactions belong.
 
 The collection, class, object, class-relation, and object-relation point and
-lifecycle operations are the first backend-neutral service/storage ports. A
-selectable backend must nevertheless satisfy the complete application storage
-contract. See [Application and Storage Boundary](storage_boundary.md) for the
-required families, compatibility tests, performance gates, and opaque backend
-boundary.
+lifecycle operations are the first backend-neutral service/storage ports.
+Metrics, readiness, maintenance state, event persistence health, and token
+retention are also expressed as required storage traits with backend-neutral
+inputs and results. Runtime worker settings and counters are enriched above
+the event-health storage boundary. A selectable backend must nevertheless
+satisfy the complete application storage contract. See
+[Application and Storage Boundary](storage_boundary.md) for the required
+families, compatibility tests, performance gates, and opaque backend boundary.
 
 ### Practical layering rule
 

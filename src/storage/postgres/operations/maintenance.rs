@@ -1,7 +1,7 @@
 use crate::errors::ApiError;
 use crate::models::MaintenanceState;
 use crate::storage::postgres::prelude::*;
-use crate::storage::postgres::{PostgresConnection, with_connection};
+use crate::storage::postgres::{PostgresConnection, PostgresPool, with_connection};
 
 pub(crate) async fn maintenance_state_conn(
     conn: &mut PostgresConnection,
@@ -13,11 +13,12 @@ pub(crate) async fn maintenance_state_conn(
         .select(state)
         .first::<String>(conn)
         .await?;
-    MaintenanceState::from_db(&state_value)
+    MaintenanceState::try_from(state_value.as_str())
+        .map_err(|error| ApiError::InternalServerError(error.to_string()))
 }
 
-pub(crate) async fn maintenance_state_db(
-    pool: &impl crate::storage::StorageContext,
+pub(crate) async fn load_maintenance_state(
+    pool: &PostgresPool,
 ) -> Result<MaintenanceState, ApiError> {
     with_connection(pool, maintenance_state_conn).await
 }

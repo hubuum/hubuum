@@ -4,6 +4,15 @@
 //! asynchronous-runtime dependencies. Application services and adapters share
 //! these values without reversing the dependency from storage into the server.
 
+mod operational;
+
+pub use operational::{
+    EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
+    EventHealthStorage, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
+    EventSubscriptionHealthSnapshot, OperationalStateStorage, ReadinessSnapshot,
+    TokenRetentionStorage,
+};
+
 use std::fmt;
 
 /// Version of the complete application storage contract.

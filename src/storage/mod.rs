@@ -10,6 +10,7 @@ mod metrics;
 mod object_relations;
 mod objects;
 mod observed;
+mod operational;
 #[doc(hidden)]
 pub mod postgres;
 
@@ -33,4 +34,10 @@ pub(crate) use metrics::{
 };
 pub(crate) use object_relations::ObjectRelationStore;
 pub(crate) use objects::ObjectStore;
+pub(crate) use operational::{
+    EventDeliveryHealthSnapshot, EventDeliveryStatusSnapshot, EventFanoutSnapshot,
+    EventHealthStorage, EventQueueSnapshot, EventSinkHealthSnapshot, EventSinkSnapshot,
+    EventSubscriptionHealthSnapshot, OperationalStateStorage, ReadinessSnapshot,
+    TokenRetentionStorage,
+};
 pub(crate) use postgres::PostgresStorage;

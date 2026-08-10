@@ -40,47 +40,56 @@ impl ObservedLifecycleStorage {
         operation: &'static str,
         future: impl Future<Output = Result<T, StorageError>>,
     ) -> Result<T, StorageError> {
-        let backend = self.backend;
-        let span = debug_span!("storage_operation", backend, capability, operation,);
-        async move {
-            let started_at = Instant::now();
-            let result = future.await;
-            let duration = started_at.elapsed();
-            let result_kind = result
-                .as_ref()
-                .map(|_| "ok")
-                .unwrap_or_else(|error| error.kind().as_str());
-            crate::observability::metrics::storage_operation_finished(
-                backend,
-                capability,
-                operation,
-                result_kind,
-                duration,
-            );
-
-            match &result {
-                Ok(_) => debug!(
-                    message = "storage operation complete",
-                    elapsed_ms = duration.as_millis(),
-                ),
-                Err(error) if error.kind().is_backend_failure() => warn!(
-                    message = "storage operation failed",
-                    error_kind = error.kind().as_str(),
-                    elapsed_ms = duration.as_millis(),
-                    error = %error,
-                ),
-                Err(error) => debug!(
-                    message = "storage operation rejected",
-                    error_kind = error.kind().as_str(),
-                    elapsed_ms = duration.as_millis(),
-                    error = %error,
-                ),
-            }
-            result
-        }
-        .instrument(span)
-        .await
+        observe_storage_call(self.backend, capability, operation, future).await
     }
+}
+
+/// Apply the common logical-storage diagnostics to any capability entrypoint.
+pub(super) async fn observe_storage_call<T>(
+    backend: &'static str,
+    capability: &'static str,
+    operation: &'static str,
+    future: impl Future<Output = Result<T, StorageError>>,
+) -> Result<T, StorageError> {
+    let span = debug_span!("storage_operation", backend, capability, operation,);
+    async move {
+        let started_at = Instant::now();
+        let result = future.await;
+        let duration = started_at.elapsed();
+        let result_kind = result
+            .as_ref()
+            .map(|_| "ok")
+            .unwrap_or_else(|error| error.kind().as_str());
+        crate::observability::metrics::storage_operation_finished(
+            backend,
+            capability,
+            operation,
+            result_kind,
+            duration,
+        );
+
+        match &result {
+            Ok(_) => debug!(
+                message = "storage operation complete",
+                elapsed_ms = duration.as_millis(),
+            ),
+            Err(error) if error.kind().is_backend_failure() => warn!(
+                message = "storage operation failed",
+                error_kind = error.kind().as_str(),
+                elapsed_ms = duration.as_millis(),
+                error = %error,
+            ),
+            Err(error) => debug!(
+                message = "storage operation rejected",
+                error_kind = error.kind().as_str(),
+                elapsed_ms = duration.as_millis(),
+                error = %error,
+            ),
+        }
+        result
+    }
+    .instrument(span)
+    .await
 }
 
 impl StorageIdentity for ObservedLifecycleStorage {

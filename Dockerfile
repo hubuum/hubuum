@@ -16,6 +16,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/hubuum-auth-core/Cargo.toml ./crates/hubuum-auth-core/Cargo.toml
 COPY crates/hubuum-auth-ldap/Cargo.toml ./crates/hubuum-auth-ldap/Cargo.toml
 COPY crates/hubuum-computed-fields/Cargo.toml ./crates/hubuum-computed-fields/Cargo.toml
+COPY crates/hubuum-domain/Cargo.toml ./crates/hubuum-domain/Cargo.toml
 COPY crates/hubuum-event-sink-amqp/Cargo.toml ./crates/hubuum-event-sink-amqp/Cargo.toml
 COPY crates/hubuum-event-sink-email/Cargo.toml ./crates/hubuum-event-sink-email/Cargo.toml
 COPY crates/hubuum-event-sink-valkey/Cargo.toml ./crates/hubuum-event-sink-valkey/Cargo.toml

@@ -914,15 +914,18 @@ impl std::fmt::Debug for AppConfig {
 
 impl AppConfig {
     pub(crate) fn token_issuance_policy(&self) -> Result<TokenIssuancePolicy, ApiError> {
-        TokenIssuancePolicy::from_hours(self.token_lifetime_hours, self.max_token_lifetime_hours)
+        Ok(TokenIssuancePolicy::from_hours(
+            self.token_lifetime_hours,
+            self.max_token_lifetime_hours,
+        )?)
     }
 
     pub fn token_retention_settings(&self) -> Result<TokenRetentionSettings, ApiError> {
-        TokenRetentionSettings::builder()
+        Ok(TokenRetentionSettings::builder()
             .retention_days(self.token_retention_days)
             .token_lifetime_hours(self.token_lifetime_hours)
             .batch_size(self.token_retention_purge_batch_size)
-            .build()
+            .build()?)
     }
 
     pub fn task_worker_settings(&self) -> Result<TaskWorkerSettings, ApiError> {

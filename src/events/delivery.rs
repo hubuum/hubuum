@@ -19,7 +19,7 @@ use crate::events::sink::{
 };
 use crate::events::{EntityType, EventDeliverySettings, PrincipalNames};
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
-use crate::models::{EventSink, EventSubscription, EventWorkerWakeupStats};
+use crate::models::{EventSink, EventSubscription, EventWorkerHealth, EventWorkerWakeupStats};
 use crate::observability::metrics;
 use crate::restores::MaintenanceActivityGuard;
 use crate::storage::StorageContext;
@@ -408,6 +408,26 @@ pub fn event_delivery_wakeup_stats() -> EventWorkerWakeupStats {
         notifications_sent: EVENT_DELIVERY_NOTIFICATIONS_SENT.load(Ordering::Relaxed),
         notification_wakeups: EVENT_DELIVERY_NOTIFICATION_WAKEUPS.load(Ordering::Relaxed),
         poll_wakeups: EVENT_DELIVERY_POLL_WAKEUPS.load(Ordering::Relaxed),
+    }
+}
+
+pub(crate) fn event_delivery_worker_health() -> EventWorkerHealth {
+    let config = get_config().ok();
+    EventWorkerHealth {
+        workers_configured: configured_event_delivery_worker_count(),
+        batch_size: config
+            .as_ref()
+            .map(|config| config.event_delivery_batch_size)
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_BATCH_SIZE),
+        poll_interval_ms: config
+            .as_ref()
+            .map(|config| config.event_delivery_poll_interval_ms)
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_POLL_INTERVAL_MS),
+        lock_timeout_ms: config
+            .as_ref()
+            .map(|config| config.event_delivery_lock_timeout_ms)
+            .unwrap_or(DEFAULT_EVENT_DELIVERY_LOCK_TIMEOUT_MS),
+        wakeups: event_delivery_wakeup_stats(),
     }
 }
 

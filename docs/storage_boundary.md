@@ -134,7 +134,13 @@ expose SQL rows, query builders, connections, pools, or driver errors. Each
 adapter keeps its persistence rows private and explicitly converts them into
 the contract DTOs. Metrics use this pattern today: `MetricsStorage` returns
 neutral inventory, task, event, and pool snapshots while PostgreSQL keeps its
-queryable row structs inside the adapter.
+queryable row structs inside the adapter. `OperationalStateStorage` does the
+same for readiness and maintenance state, and `TokenRetentionStorage` accepts
+validated retention settings without exposing the transaction, advisory lock,
+or SQL cutoffs. `EventHealthStorage` returns only persisted queue and claim
+state. The application adds worker configuration and in-process wake-up
+counters when projecting that snapshot into its API response; those values are
+not a storage backend responsibility.
 
 ## Error Direction
 
@@ -163,8 +169,10 @@ responses use the existing safe generic messages.
 
 ## Observability Contract
 
-Every lifecycle call is wrapped outside the implementation, so backends cannot
-silently omit common diagnostics. The wrapper provides:
+Every migrated storage call is wrapped outside the implementation, so backends
+cannot silently omit common diagnostics. Lifecycle services use the observed
+storage wrapper; opaque-handle metrics and operational calls use the same
+observation function. It provides:
 
 - a `storage_operation` tracing span with bounded `backend`, `capability`, and
   `operation` fields;
@@ -237,11 +245,16 @@ not an available storage backend.
 
 ## Workspace Crates and Extraction Path
 
-The first workspace boundary is now in place:
+The first workspace boundaries are now in place:
+
+- `hubuum-domain` owns maintenance and token-policy values and their validation
+  errors without application or persistence dependencies. More domain DTOs
+  move here as mixed Diesel/domain models are separated.
 
 - `hubuum-storage-core` owns backend-neutral descriptors, the contract version,
-  capability identities, and `StorageError` without runtime or driver
-  dependencies.
+  capability identities, `StorageError`, operational snapshot DTOs, and the
+  extracted operational state, event-health, and token-retention traits without
+  application, transport, or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection
   setup, safe endpoint diagnostics, JSONB validation, query capture, and its
   crate-owned pool-construction error.
@@ -267,11 +280,14 @@ No workspace crate depends on the root application package.
 The crates have deliberately different responsibilities:
 
 - `hubuum-domain` owns validated identifiers, commands, aggregates, and result
-  types without Diesel, Actix, global configuration, or `ApiError`.
+  types without Diesel, Actix, global configuration, or `ApiError`. It starts
+  with maintenance and token-policy values; remaining mixed models are an
+  incremental extraction.
 - `hubuum-storage-core` ultimately owns the complete traits in addition to its
-  current errors, descriptors, and capability metadata. Behavioral traits that
-  still name root domain types remain in `src/storage` until `hubuum-domain`
-  exists; the root aggregate trait already enforces completeness meanwhile.
+  current errors, descriptors, capability metadata, operational traits, and
+  storage DTOs. Behavioral traits that still name root domain types remain in
+  `src/storage` until those types move to `hubuum-domain`; the root aggregate
+  trait enforces completeness meanwhile.
 - `hubuum-storage-postgres` currently owns pool and TLS setup, JSONB helpers,
   and query capture. It ultimately owns generated schema, migrations,
   transaction helpers, persistence rows, PostgreSQL queries, and
@@ -292,8 +308,8 @@ PostgreSQL row types at the adapter edge.
 
 A safe continuation stack is:
 
-1. Introduce backend-neutral domain command/result types and explicit
-   conversions to private PostgreSQL rows.
+1. Continue extracting backend-neutral domain command/result types and add
+   explicit conversions to private PostgreSQL rows.
 2. Move domain-typed behavioral contracts and the compatibility harness into
    `hubuum-storage-core` and `hubuum-storage-contract-tests`.
 3. Move the remaining transaction boundary, queries, and adapter errors into

@@ -10,11 +10,11 @@ use async_trait::async_trait;
 use crate::events::EventContext;
 use crate::models::{
     ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassRelationID, HubuumObject,
-    NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation, NewHubuumObject,
-    ObjectDataPatchDocument, ObjectRelationCreateSelector, ObjectRelationSelector, ObjectSelector,
-    PreparedClassRelation, PreparedObjectRelation, ResolvedClassRelationTarget,
-    ResolvedClassTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget, UpdateCollection,
-    UpdateHubuumClass, UpdateHubuumObject,
+    MaintenanceState, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
+    NewHubuumObject, ObjectDataPatchDocument, ObjectRelationCreateSelector, ObjectRelationSelector,
+    ObjectSelector, PreparedClassRelation, PreparedObjectRelation, ResolvedClassRelationTarget,
+    ResolvedClassTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget,
+    TokenRetentionSettings, UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::storage::postgres::operations::GetCollection;
 use crate::storage::postgres::operations::class::{
@@ -38,9 +38,10 @@ use crate::storage::postgres::operations::relations::{
 };
 
 use super::{
-    ClassRelationStore, ClassStore, CollectionStore, EventMetricsSnapshot, InventoryGaugeSnapshot,
-    MetricsStorage, ObjectRelationStore, ObjectStore, StorageError, StorageIdentity,
-    StoragePoolState, TaskGaugeSnapshot,
+    ClassRelationStore, ClassStore, CollectionStore, EventDeliveryHealthSnapshot,
+    EventHealthStorage, EventMetricsSnapshot, InventoryGaugeSnapshot, MetricsStorage,
+    ObjectRelationStore, ObjectStore, OperationalStateStorage, ReadinessSnapshot, StorageError,
+    StorageIdentity, StoragePoolState, TaskGaugeSnapshot, TokenRetentionStorage,
 };
 use error::map_postgres_error;
 
@@ -107,6 +108,42 @@ impl MetricsStorage for PostgresStorage {
 
     async fn metrics_event_snapshot(&self) -> Result<EventMetricsSnapshot, StorageError> {
         operations::event_observability::load_event_metrics_snapshot(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl OperationalStateStorage for PostgresStorage {
+    async fn readiness_snapshot(&self) -> Result<ReadinessSnapshot, StorageError> {
+        operations::probe::load_readiness_snapshot(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn maintenance_state(&self) -> Result<MaintenanceState, StorageError> {
+        operations::maintenance::load_maintenance_state(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl EventHealthStorage for PostgresStorage {
+    async fn event_delivery_health(&self) -> Result<EventDeliveryHealthSnapshot, StorageError> {
+        operations::event_observability::load_event_delivery_health(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl TokenRetentionStorage for PostgresStorage {
+    async fn purge_expired_tokens(
+        &self,
+        settings: TokenRetentionSettings,
+    ) -> Result<usize, StorageError> {
+        operations::token_retention::purge_expired_token_batch(&self.pool, settings)
             .await
             .map_err(map_postgres_error)
     }

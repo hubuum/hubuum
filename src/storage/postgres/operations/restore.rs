@@ -338,7 +338,8 @@ pub(crate) async fn apply_restore_db(
             .select((state, restore_job_id))
             .first::<(String, Option<i64>)>(conn)
             .await?;
-        let maintenance_state = MaintenanceState::from_db(&maintenance_state_value)?;
+        let maintenance_state = MaintenanceState::try_from(maintenance_state_value.as_str())
+            .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         if current_status != RestoreJobStatus::Confirmed.as_str()
             || maintenance_state != MaintenanceState::Draining
             || maintenance_restore_job_id != Some(job.id)
@@ -491,7 +492,8 @@ pub(crate) async fn load_restore_coordinator_snapshot_db(
             .first::<(String, Option<i64>, NaiveDateTime)>(conn)
             .await?;
         Ok::<_, ApiError>(RestoreCoordinatorSnapshot {
-            maintenance_state: MaintenanceState::from_db(&maintenance_state_value)?,
+            maintenance_state: MaintenanceState::try_from(maintenance_state_value.as_str())
+                .map_err(|error| ApiError::InternalServerError(error.to_string()))?,
             restore_job_id: restore_job_id_value,
             database_now,
         })
@@ -574,7 +576,8 @@ pub(crate) async fn restore_coordinator_tick_db(
         // Do not sample local activity until this transaction has observed
         // the maintenance generation. Work that began while the state was
         // still normal has already installed its guard by this point.
-        let maintenance_state = MaintenanceState::from_db(&state_value)?;
+        let maintenance_state = MaintenanceState::try_from(state_value.as_str())
+            .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         let drained_value = !maintenance_state.is_normal() && local_work_is_idle();
         let record = ServerInstanceRecord {
             instance_id: instance_id_value,

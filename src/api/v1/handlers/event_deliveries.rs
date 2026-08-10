@@ -3,7 +3,9 @@ use actix_web::{Responder, get, http::StatusCode, post, routes, web};
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
-use crate::events::kick_event_delivery_worker;
+use crate::events::{
+    event_delivery_worker_health, event_fanout_worker_health, kick_event_delivery_worker,
+};
 use crate::extractors::AdminAccess;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
@@ -12,11 +14,11 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
+use crate::storage::EventHealthStorage;
 use crate::storage::capabilities::event_delivery::{
     list_event_deliveries_with_total_count, load_event_delivery, mark_event_delivery_dead,
     release_event_delivery_for_retry,
 };
-use crate::storage::capabilities::event_observability::load_event_delivery_health;
 
 #[utoipa::path(
     get,
@@ -71,8 +73,13 @@ pub async fn get_event_delivery_health(
     context: AppContext,
     _admin: AdminAccess,
 ) -> Result<impl Responder, ApiError> {
+    let snapshot = context.backend().event_delivery_health().await?;
     Ok(ApiResponse::new(
-        load_event_delivery_health(&context).await?,
+        EventDeliveryHealthResponse::from_storage(
+            snapshot,
+            event_fanout_worker_health(),
+            event_delivery_worker_health(),
+        ),
         StatusCode::OK,
     ))
 }
