@@ -749,7 +749,7 @@ where
             authorization.principal,
             target_candidates,
             authorization.scopes,
-            vec![Permissions::ReadObject],
+            vec![Permissions::ReadObject, Permissions::ReadCollection],
             HubuumObject::authorization_resource,
         )
         .await?;
@@ -821,7 +821,7 @@ where
         authorization.principal,
         candidates,
         authorization.scopes,
-        vec![Permissions::ReadObject],
+        vec![Permissions::ReadObject, Permissions::ReadCollection],
         HubuumObject::authorization_resource,
     )
     .await?;
@@ -1243,7 +1243,7 @@ async fn externally_authorized_related_group_ids(
             authorization.principal,
             object_candidates,
             authorization.scopes,
-            vec![Permissions::ReadObject],
+            vec![Permissions::ReadObject, Permissions::ReadCollection],
             |(_, resource)| resource.clone(),
         )
         .await?

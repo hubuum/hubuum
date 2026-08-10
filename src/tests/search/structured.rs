@@ -550,6 +550,56 @@ async fn structured_search_composes_nested_boolean_field_predicates() {
 }
 
 #[actix_web::test]
+async fn structured_search_accepts_dotted_json_paths() {
+    let context = TestContext::new().await;
+    let collection = context.collection_fixture("structured_dotted_path").await;
+    let class = save_class(&context, &collection, "dotted_path_class").await;
+    let matching = save_object(
+        &context,
+        &collection,
+        &class,
+        "dotted_path_match",
+        "matching",
+        json!({"hardware": {"cpu": {"count": 8}}}),
+    )
+    .await;
+    save_object(
+        &context,
+        &collection,
+        &class,
+        "dotted_path_other",
+        "other",
+        json!({"hardware": {"cpu": {"count": 4}}}),
+    )
+    .await;
+    let request = request_for_class(
+        &class,
+        json!({
+            "op": "field",
+            "predicate": {
+                "field": "json_data",
+                "operator": "equals",
+                "path": "hardware.cpu.count",
+                "value": 8
+            }
+        }),
+    );
+
+    let response = post_request(
+        &context.pool,
+        &context.admin_token,
+        "/api/v1/search",
+        request,
+    )
+    .await;
+    let response = assert_response_status(response, http::StatusCode::OK).await;
+    let body: StructuredSearchResponse = test::read_body_json(response).await;
+
+    assert_eq!(object_results(body), vec![matching]);
+    collection.cleanup().await.unwrap();
+}
+
+#[actix_web::test]
 async fn not_related_means_no_visible_related_target_matches() {
     let context = TestContext::new().await;
     let collection = context.collection_fixture("structured_not_related").await;
@@ -799,6 +849,119 @@ async fn external_policy_structured_search_only_uses_visible_paths() {
     let body: StructuredSearchResponse = test::read_body_json(response).await;
 
     assert_eq!(object_results(body), vec![visible_host]);
+    collection.cleanup().await.unwrap();
+    group.delete_without_events(&context.pool).await.unwrap();
+}
+
+#[actix_web::test]
+async fn external_policy_object_search_requires_parent_collection_visibility() {
+    let context = TestContext::new().await;
+    let collection = context
+        .collection_fixture("structured_external_object_collection")
+        .await;
+    let group = create_test_group(&context.pool).await;
+    group
+        .add_member_without_events(&context.pool, &context.normal_user)
+        .await
+        .unwrap();
+    let class = save_class(&context, &collection, "external_object_class").await;
+    let object = save_object(
+        &context,
+        &collection,
+        &class,
+        "external_object",
+        "object",
+        json!({}),
+    )
+    .await;
+    let permission_backend = MockTreetopBackend::new();
+    permission_backend.add_rule(MockAllowRule {
+        group_id: group.id,
+        action: Permissions::ReadObject,
+        resource_kind: ResourceKind::Object,
+        resource_id: Some(object.id),
+        attrs: ResourceAttrs::default(),
+    });
+    let request = json!({
+        "version": 1,
+        "target": {"kind": "object"},
+        "filter": {
+            "op": "field",
+            "predicate": {
+                "field": "id",
+                "operator": "equals",
+                "value": object.id
+            }
+        },
+        "include_total": true
+    });
+
+    let response = post_request_with_permission_backend(
+        &context.pool,
+        &context.normal_token,
+        "/api/v1/search",
+        request,
+        Arc::new(permission_backend),
+    )
+    .await;
+    let response = assert_response_status(response, http::StatusCode::OK).await;
+    let body: StructuredSearchResponse = test::read_body_json(response).await;
+    let total = body.total;
+
+    assert!(object_results(body).is_empty());
+    assert_eq!(total, Some(0));
+    collection.cleanup().await.unwrap();
+    group.delete_without_events(&context.pool).await.unwrap();
+}
+
+#[actix_web::test]
+async fn external_policy_class_search_requires_parent_collection_visibility() {
+    let context = TestContext::new().await;
+    let collection = context
+        .collection_fixture("structured_external_class_collection")
+        .await;
+    let group = create_test_group(&context.pool).await;
+    group
+        .add_member_without_events(&context.pool, &context.normal_user)
+        .await
+        .unwrap();
+    let class = save_class(&context, &collection, "external_visible_class").await;
+    let permission_backend = MockTreetopBackend::new();
+    permission_backend.add_rule(MockAllowRule {
+        group_id: group.id,
+        action: Permissions::ReadClass,
+        resource_kind: ResourceKind::Class,
+        resource_id: Some(class.id),
+        attrs: ResourceAttrs::default(),
+    });
+    let request = json!({
+        "version": 1,
+        "target": {"kind": "class"},
+        "filter": {
+            "op": "field",
+            "predicate": {
+                "field": "id",
+                "operator": "equals",
+                "value": class.id
+            }
+        },
+        "include_total": true
+    });
+
+    let response = post_request_with_permission_backend(
+        &context.pool,
+        &context.normal_token,
+        "/api/v1/search",
+        request,
+        Arc::new(permission_backend),
+    )
+    .await;
+    let response = assert_response_status(response, http::StatusCode::OK).await;
+    let body: StructuredSearchResponse = test::read_body_json(response).await;
+    let total = body.total;
+
+    assert!(class_results(body).is_empty());
+    assert_eq!(total, Some(0));
     collection.cleanup().await.unwrap();
     group.delete_without_events(&context.pool).await.unwrap();
 }

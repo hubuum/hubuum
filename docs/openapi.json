@@ -28643,7 +28643,8 @@
                   "and"
                 ]
               }
-            }
+            },
+            "maxProperties": 2
           },
           {
             "type": "object",
@@ -28666,7 +28667,8 @@
                   "or"
                 ]
               }
-            }
+            },
+            "maxProperties": 2
           },
           {
             "type": "object",
@@ -28684,7 +28686,8 @@
                   "not"
                 ]
               }
-            }
+            },
+            "maxProperties": 2
           },
           {
             "type": "object",
@@ -28702,7 +28705,8 @@
               "predicate": {
                 "$ref": "#/components/schemas/StructuredSearchFieldPredicate"
               }
-            }
+            },
+            "maxProperties": 2
           },
           {
             "type": "object",
@@ -28720,7 +28724,8 @@
               "predicate": {
                 "$ref": "#/components/schemas/StructuredRelatedPredicate"
               }
-            }
+            },
+            "maxProperties": 2
           }
         ],
         "description": "Recursive boolean expression used by version 1 structured search."
