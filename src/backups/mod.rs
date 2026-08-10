@@ -197,14 +197,13 @@ mod tests {
 
     use super::{BackupSettings, authorize_backup_request};
     use crate::errors::ApiError;
-    use crate::permissions::AppContext;
     use crate::permissions::test_support::MockTreetopBackend;
     use crate::tests::{TestContext, create_test_group};
 
     #[tokio::test]
     async fn configured_backend_can_deny_a_sql_administrator_backup() {
         let test = TestContext::new().await;
-        let context = AppContext::postgres(
+        let context = crate::tests::app_context_with_permission_backend(
             test.pool.get_ref().clone(),
             Arc::new(MockTreetopBackend::new()),
         );
@@ -224,7 +223,10 @@ mod tests {
             .unwrap();
         let backend = MockTreetopBackend::new();
         backend.add_admin_rule(policy_group.id);
-        let context = AppContext::postgres(test.pool.get_ref().clone(), Arc::new(backend));
+        let context = crate::tests::app_context_with_permission_backend(
+            test.pool.get_ref().clone(),
+            Arc::new(backend),
+        );
 
         authorize_backup_request(&context, &test.normal_user, None)
             .await

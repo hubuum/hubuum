@@ -32,10 +32,10 @@ pub(crate) use hubuum_storage_core::{
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
     AuthorizationGroupGrantPage, AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery,
     AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
-    AuthorizationPrincipal, AuthorizationStorage, EventArchive, EventDeliveryBatch,
-    EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage, EventDeliverySubscription,
-    EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage, EventRetentionSummary,
-    RetainedEvent,
+    AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationStorage, EventArchive,
+    EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
+    EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
+    EventRetentionSummary, RetainedEvent,
 };
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
 #[cfg(test)]

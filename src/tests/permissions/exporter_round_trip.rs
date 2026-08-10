@@ -1,6 +1,6 @@
-//! Round-trip test for the SQL → Cedar exporter.
+//! Round-trip test for the local permission-store → Cedar exporter.
 //!
-//! Builds a fixture in the SQL `permissions` table via
+//! Builds a fixture in the local permission store via
 //! `LocalPermissionBackend`, runs the exporter, parses the Cedar output
 //! into `MockAllowRule`s, installs them on a `MockTreetopBackend`, and
 //! verifies both backends produce identical decisions for representative

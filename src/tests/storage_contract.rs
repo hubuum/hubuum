@@ -215,6 +215,43 @@ async fn every_available_storage_backend_supplies_local_authorization_data() {
                 assert!(total_count >= 1);
                 assert!(!items.is_empty());
 
+                let collection_candidates = backend
+                    .list_authorization_collection_candidates()
+                    .await
+                    .expect("certified backend should list authorization collection candidates");
+                assert!(
+                    collection_candidates
+                        .iter()
+                        .any(|collection| collection.id() == fixture.collection.id)
+                );
+
+                let group_candidates = backend
+                    .list_authorization_group_candidates(QueryOptions {
+                        filters: Vec::new(),
+                        sort: Vec::new(),
+                        limit: None,
+                        cursor: None,
+                        include_total: false,
+                    })
+                    .await
+                    .expect("certified backend should list authorization group candidates");
+                assert!(
+                    group_candidates
+                        .iter()
+                        .any(|candidate| candidate.id() == group.id)
+                );
+
+                let policy_snapshot = backend
+                    .authorization_policy_snapshot()
+                    .await
+                    .expect("certified backend should supply the local policy snapshot");
+                assert!(policy_snapshot.into_iter().any(|row| {
+                    let (grant, snapshot_group, collection) = row.into_parts();
+                    grant.group_id() == group.id
+                        && snapshot_group.id() == group.id
+                        && collection.id() == fixture.collection.id
+                }));
+
                 backend
                     .revoke_local_collection_grant(AuthorizationGrantMutation::new(
                         key,

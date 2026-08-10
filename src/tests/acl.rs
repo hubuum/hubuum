@@ -30,6 +30,7 @@ async fn test_endpoint_access() {
             ))
             .app_data(Data::new(RunningConfig::from(&config)))
             .app_data(Data::new(pool.clone()))
+            .app_data(crate::tests::app_context(&pool))
             .configure(crate::api::config),
     )
     .await;

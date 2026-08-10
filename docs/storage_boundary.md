@@ -179,6 +179,13 @@ permission-set DTOs and are converted into API models only in the permission
 application layer. The opaque handle observes every entry point with bounded
 `authorization/*` operation labels.
 
+External policy evaluation uses the same boundary. Candidate collection and
+group reads, along with complete local-policy snapshots used for Cedar export,
+are mandatory authorization operations rather than connection recovery paths.
+Consequently the complete `src/permissions` application tree is independent of
+PostgreSQL, Diesel, generated schema modules, and connection pools; a source
+guard enforces that boundary.
+
 ## Error Direction
 
 Errors cross the boundary in one direction:

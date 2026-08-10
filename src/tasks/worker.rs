@@ -223,7 +223,7 @@ fn task_worker_context(context: AppContext) -> AppContext {
         crate::storage::StorageHandle::postgres(pool.clone()),
         config.admin_groupname.clone(),
     ));
-    AppContext::postgres(pool, permissions)
+    crate::tests::app_context_with_permission_backend(pool, permissions)
 }
 
 fn configured_backup_settings() -> BackupSettings {

@@ -2886,7 +2886,7 @@ mod tests {
         NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, Permissions,
     };
     use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
-    use crate::permissions::{AppContext, ResourceAttrs, ResourceKind};
+    use crate::permissions::{ResourceAttrs, ResourceKind};
 
     use super::{
         AuthorizationCandidates, ExportRuntime, HydrationBudget, ObjectGraphEdge,
@@ -2991,8 +2991,10 @@ mod tests {
                 ..Default::default()
             },
         });
-        let backend =
-            AppContext::postgres(context.pool.get_ref().clone(), Arc::new(permission_backend));
+        let backend = crate::tests::app_context_with_permission_backend(
+            context.pool.get_ref().clone(),
+            Arc::new(permission_backend),
+        );
         let exporter = PermissionAwareExport::new(&backend, &context.normal_user, None)
             .await
             .unwrap();
@@ -3079,8 +3081,10 @@ mod tests {
             resource_id: Some(source_object.id),
             attrs: ResourceAttrs::default(),
         });
-        let backend =
-            AppContext::postgres(context.pool.get_ref().clone(), Arc::new(permission_backend));
+        let backend = crate::tests::app_context_with_permission_backend(
+            context.pool.get_ref().clone(),
+            Arc::new(permission_backend),
+        );
         let exporter = PermissionAwareExport::new(&backend, &context.normal_user, None)
             .await
             .unwrap();
@@ -3243,8 +3247,10 @@ mod tests {
                 attrs: ResourceAttrs::default(),
             });
         }
-        let backend =
-            AppContext::postgres(context.pool.get_ref().clone(), Arc::new(permission_backend));
+        let backend = crate::tests::app_context_with_permission_backend(
+            context.pool.get_ref().clone(),
+            Arc::new(permission_backend),
+        );
         let exporter = PermissionAwareExport::new(&backend, &context.normal_user, None)
             .await
             .unwrap();

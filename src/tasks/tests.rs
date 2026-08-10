@@ -36,9 +36,9 @@ use crate::models::{
     RemoteAuthConfig, RemoteHttpMethod, RemoteTargetSubjectType, ResourceRevision,
     RestoreTimestamps, TaskKind, TaskStatus,
 };
+use crate::permissions::PermissionBackend;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::types::{ResourceAttrs, ResourceKind};
-use crate::permissions::{AppContext, PermissionBackend};
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
 use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
@@ -196,7 +196,10 @@ async fn import_planning_uses_the_task_execution_permission_backend() {
         .collection_fixture("external_task_authorization")
         .await;
     let permissions: Arc<dyn PermissionBackend> = Arc::new(MockTreetopBackend::new());
-    let backend = AppContext::postgres(context.pool.get_ref().clone(), permissions);
+    let backend = crate::tests::app_context_with_permission_backend(
+        context.pool.get_ref().clone(),
+        permissions,
+    );
     let request = ImportRequest {
         version: CURRENT_IMPORT_VERSION,
         dry_run: Some(true),
@@ -320,8 +323,10 @@ async fn relation_timestamp_overwrite_requires_update_permission(
             },
         });
     }
-    let backend =
-        AppContext::postgres(context.pool.get_ref().clone(), Arc::new(permission_backend));
+    let backend = crate::tests::app_context_with_permission_backend(
+        context.pool.get_ref().clone(),
+        Arc::new(permission_backend),
+    );
 
     let collection_key = |index: usize| CollectionKey {
         name: fixtures[index].collection.name.clone(),
@@ -884,7 +889,7 @@ async fn core_imports_without_timestamps_use_database_transaction_time() {
 #[tokio::test]
 async fn test_extended_import_uses_backend_denial_for_sql_administrator() {
     let test = TestContext::new().await;
-    let context = AppContext::postgres(
+    let context = crate::tests::app_context_with_permission_backend(
         test.pool.get_ref().clone(),
         Arc::new(MockTreetopBackend::new()),
     );
@@ -909,7 +914,10 @@ async fn test_extended_import_uses_backend_grant_for_non_sql_administrator() {
         .unwrap();
     let backend = MockTreetopBackend::new();
     backend.add_admin_rule(policy_group.id);
-    let context = AppContext::postgres(test.pool.get_ref().clone(), Arc::new(backend));
+    let context = crate::tests::app_context_with_permission_backend(
+        test.pool.get_ref().clone(),
+        Arc::new(backend),
+    );
     let request = extended_import_request(test.scoped_name("backend_allowed_import"));
 
     let planning = plan_import(&context, &test.normal_user, None, &request).await;

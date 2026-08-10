@@ -8,6 +8,7 @@ pub use runtime::*;
 use async_trait::async_trait;
 
 use crate::events::{EventContext, EventFanoutSettings, EventRetentionSettings};
+use crate::models::search::QueryOptions;
 use crate::models::{
     ClassSelector, Collection, CollectionID, HubuumClass, HubuumClassRelationID, HubuumObject,
     MaintenanceState, NewCollectionWithAssignee, NewHubuumClass, NewHubuumClassRelation,
@@ -41,14 +42,14 @@ use super::{
     AuthenticationIdentity, AuthenticationStorage, AuthenticationTokenScope,
     AuthenticationTokenScopeQuery, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
-    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroupGrantPage,
-    AuthorizationGroupMembershipQuery, AuthorizationPrincipal, AuthorizationStorage,
-    ClassRelationStore, ClassStore, CollectionStore, EventArchive, EventDeliveryBatch,
-    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
-    InventoryGaugeSnapshot, MetricsStorage, ObjectRelationStore, ObjectStore,
-    OperationalStateStorage, ReadinessSnapshot, StorageError, StorageIdentity, StoragePoolState,
-    TaskGaugeSnapshot, TokenRetentionStorage,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
+    AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationPolicySnapshotRow,
+    AuthorizationPrincipal, AuthorizationStorage, ClassRelationStore, ClassStore, CollectionStore,
+    EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot,
+    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot,
+    EventRetentionStorage, EventRetentionSummary, InventoryGaugeSnapshot, MetricsStorage,
+    ObjectRelationStore, ObjectStore, OperationalStateStorage, ReadinessSnapshot, StorageError,
+    StorageIdentity, StoragePoolState, TaskGaugeSnapshot, TokenRetentionStorage,
 };
 use error::map_postgres_error;
 
@@ -129,6 +130,31 @@ impl AuthorizationStorage for PostgresStorage {
         query: AuthorizationCollectionsQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError> {
         operations::authorization::local_authorized_collections(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_authorization_collection_candidates(
+        &self,
+    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+        operations::authorization::list_authorization_collection_candidates(&self.pool)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_authorization_group_candidates(
+        &self,
+        query_options: QueryOptions,
+    ) -> Result<Vec<AuthorizationGroup>, StorageError> {
+        operations::authorization::list_authorization_group_candidates(&self.pool, query_options)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn authorization_policy_snapshot(
+        &self,
+    ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
+        operations::authorization::authorization_policy_snapshot(&self.pool)
             .await
             .map_err(map_postgres_error)
     }

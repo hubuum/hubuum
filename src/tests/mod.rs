@@ -1,7 +1,7 @@
 #[cfg(test)]
 pub mod acl;
 pub mod api_operations;
-pub use api_operations::app_context;
+pub use api_operations::{app_context, app_context_with_permission_backend};
 pub mod application_boundary;
 pub mod asserts;
 #[cfg(test)]

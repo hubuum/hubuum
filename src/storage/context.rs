@@ -1,6 +1,7 @@
 use actix_web::web::Data;
 
 use crate::events::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
+use crate::models::search::QueryOptions;
 use crate::models::{MaintenanceState, TokenRetentionSettings};
 use crate::permissions::{AppContext, PermissionBackend};
 use crate::storage::observed::observe_storage_call;
@@ -9,14 +10,14 @@ use crate::storage::{
     AuthenticationIdentity, AuthenticationStorage, AuthenticationTokenScope,
     AuthenticationTokenScopeQuery, AuthorizationCollection, AuthorizationCollectionAccessQuery,
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
-    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroupGrantPage,
-    AuthorizationGroupMembershipQuery, AuthorizationPrincipal, AuthorizationStorage,
-    DynLifecycleStorage, EventArchive, EventDeliveryBatch, EventDeliveryClaim,
-    EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
-    EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, InventoryGaugeSnapshot,
-    MetricsStorage, OperationalStateStorage, PostgresStorage, ReadinessSnapshot, StorageBackend,
-    StorageBackendDescriptor, StorageError, StoragePoolState, TaskGaugeSnapshot,
-    TokenRetentionStorage,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
+    AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationPolicySnapshotRow,
+    AuthorizationPrincipal, AuthorizationStorage, DynLifecycleStorage, EventArchive,
+    EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
+    EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
+    EventRetentionSummary, InventoryGaugeSnapshot, MetricsStorage, OperationalStateStorage,
+    PostgresStorage, ReadinessSnapshot, StorageBackend, StorageBackendDescriptor, StorageError,
+    StoragePoolState, TaskGaugeSnapshot, TokenRetentionStorage,
 };
 use async_trait::async_trait;
 
@@ -188,6 +189,63 @@ impl AuthorizationStorage for StorageHandle {
                 match &self.implementation {
                     BackendImplementation::Postgresql(backend) => {
                         backend.local_authorized_collections(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn list_authorization_collection_candidates(
+        &self,
+    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "list_collection_candidates",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.list_authorization_collection_candidates().await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn list_authorization_group_candidates(
+        &self,
+        query_options: QueryOptions,
+    ) -> Result<Vec<AuthorizationGroup>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "list_group_candidates",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend
+                            .list_authorization_group_candidates(query_options)
+                            .await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn authorization_policy_snapshot(
+        &self,
+    ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "policy_snapshot",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.authorization_policy_snapshot().await
                     }
                 }
             },

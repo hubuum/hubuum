@@ -82,7 +82,6 @@ impl SinkResolver for DefaultSinkResolver {
             #[cfg(feature = "valkey")]
             "valkey_stream" => Some(&self.valkey),
             "webhook" => Some(&self.webhook),
-            #[cfg(not(all(feature = "amqp", feature = "email", feature = "valkey")))]
             _ => None,
         }
     }
@@ -196,6 +195,11 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+
+    #[test]
+    fn default_resolver_rejects_unknown_sink_kinds() {
+        assert!(DefaultSinkResolver::default().resolve("unknown").is_none());
+    }
 
     struct RecordingSink;
 

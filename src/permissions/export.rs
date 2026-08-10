@@ -1,10 +1,10 @@
-//! SQL → Cedar policy export.
+//! Local permission-store → Cedar policy export.
 //!
-//! Walks the `permissions` table and emits one Cedar `permit` clause per
+//! Walks the local authorization snapshot and emits one Cedar `permit` clause per
 //! `(group_id, collection_id, resource_kind)` bucket. The output is a
 //! complete Cedar policy bundle that, when uploaded to a Treetop server
 //! configured with `docs/treetop/schema.cedarschema`, grants exactly the
-//! permissions the SQL table currently records.
+//! permissions the local store currently records.
 //!
 //! This is a one-shot tool: Hubuum does not push policies at runtime;
 //! the operator uploads the file via Treetop's own tooling. See
@@ -12,11 +12,11 @@
 
 use std::io::Write;
 
-use crate::storage::postgres::prelude::*;
-
 use crate::errors::ApiError;
 use crate::models::{Collection, Group, Permission};
-use crate::storage::postgres::with_connection;
+use crate::storage::{AuthorizationStorage, storage_handle};
+
+use super::storage::{collection_from_storage, grant_from_storage, group_from_storage};
 
 /// Helper macro to convert io::Error to ApiError for writeln! calls
 macro_rules! w {
@@ -30,23 +30,22 @@ macro_rules! w {
 
 /// Emit the Cedar bundle to `writer`.
 pub async fn export_cedar_to<W: Write>(
-    pool: &impl crate::storage::StorageContext,
+    backend: &impl crate::storage::StorageContext,
     writer: &mut W,
 ) -> Result<(), ApiError> {
-    use crate::schema::{collections, groups, permissions as perms_schema};
-
-    let rows: Vec<(Permission, Group, Collection)> = with_connection(pool, async |conn| {
-        perms_schema::table
-            .inner_join(groups::table.on(perms_schema::group_id.eq(groups::id)))
-            .inner_join(collections::table.on(perms_schema::collection_id.eq(collections::id)))
-            .order_by((
-                perms_schema::collection_id.asc(),
-                perms_schema::group_id.asc(),
+    let rows = storage_handle(backend)
+        .authorization_policy_snapshot()
+        .await?
+        .into_iter()
+        .map(|row| {
+            let (grant, group, collection) = row.into_parts();
+            Ok((
+                grant_from_storage(grant),
+                group_from_storage(group)?,
+                collection_from_storage(collection)?,
             ))
-            .load::<(Permission, Group, Collection)>(conn)
-            .await
-    })
-    .await?;
+        })
+        .collect::<Result<Vec<(Permission, Group, Collection)>, ApiError>>()?;
 
     w!(
         writer,
@@ -61,7 +60,7 @@ pub async fn export_cedar_to<W: Write>(
         "// Group IDs and Collection IDs are numeric; names appear in comments only."
     )?;
     w!(writer, "//")?;
-    w!(writer, "// Source: SQL permissions table at export time.")?;
+    w!(writer, "// Source: local permission store at export time.")?;
     w!(writer, "//")?;
     w!(
         writer,
@@ -69,7 +68,7 @@ pub async fn export_cedar_to<W: Write>(
     )?;
     w!(
         writer,
-        "// on EITHER endpoint collection can act on the relation. The Local SQL"
+        "// on EITHER endpoint collection can act on the relation. The local"
     )?;
     w!(
         writer,

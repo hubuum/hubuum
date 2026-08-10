@@ -22,12 +22,12 @@ use crate::models::permissions::Permissions;
 use crate::models::{
     CollectionID, HubuumClassID, HubuumObjectID, PrincipalToken, TokenResourceScope, TokenScope,
 };
-use crate::permissions::ResourceRef;
 use crate::schema::{
     group_memberships, token_class_scopes, token_collection_scopes, token_object_scopes,
     token_scopes,
 };
 use crate::storage::postgres::{PostgresConnection, with_connection};
+pub use crate::traits::{scope_allows, scope_allows_resource, scope_allows_resources};
 
 /// Identity-only authorization subject: principal id, group membership, admin
 /// status, and kind. Implemented once (blanket) for everything that can name a
@@ -46,35 +46,6 @@ pub trait AuthzSubject: crate::traits::AuthzSubject {
 }
 
 impl<T: crate::traits::AuthzSubject + ?Sized> AuthzSubject for T {}
-
-/// Fail-closed token-scope pre-filter.
-///
-/// Returns `true` iff the token scope set permits *all* of `requested`:
-/// * `None`        ⇒ unscoped ⇒ always allowed.
-/// * `Some(scope)` ⇒ every requested permission must be present when the
-///   permission dimension is enabled; an empty enabled dimension denies all.
-///
-/// Callers apply this **before** the admin-bypass so a scoped admin token can
-/// never exceed its scopes.
-pub fn scope_allows(scopes: Option<&TokenScope>, requested: &[Permissions]) -> bool {
-    match scopes {
-        None => true,
-        Some(scope) => scope.allows_permissions(requested),
-    }
-}
-
-/// Fail-closed resource-identity pre-filter for a token scope.
-pub fn scope_allows_resource(scope: Option<&TokenScope>, resource: &ResourceRef) -> bool {
-    scope.is_none_or(|scope| scope.allows_resource(resource))
-}
-
-/// Require every resource touched by an operation to be inside the token's
-/// resource boundary.
-pub fn scope_allows_resources(scope: Option<&TokenScope>, resources: &[ResourceRef]) -> bool {
-    resources
-        .iter()
-        .all(|resource| scope_allows_resource(scope, resource))
-}
 
 /// Load a token's permission dimension from `token_scopes`, validating each
 /// stored string against the `Permissions` enum (fail-closed on an unknown

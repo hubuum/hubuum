@@ -22,6 +22,7 @@ use crate::models::{CollectionID, GroupID, Permissions};
 use crate::permissions::backend::PermissionBackend;
 use crate::permissions::treetop::TreetopPermissionBackend;
 use crate::permissions::types::{PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef};
+use crate::storage::StorageHandle;
 use crate::tests::get_test_pool;
 
 /// Numeric IDs the external Treetop fixture is expected to recognize.
@@ -38,8 +39,8 @@ fn treetop_url() -> Option<String> {
 }
 
 /// Build a TreetopPermissionBackend pointed at the live server. Uses the
-/// shared test pool so the candidate-enumeration paths in the backend
-/// (e.g. collections_user_can) have a real DB to query.
+/// shared test storage so candidate-enumeration paths exercise the production
+/// adapter contract.
 async fn live_backend(url: &str) -> Result<TreetopPermissionBackend, ApiError> {
     let pool = get_test_pool().get_ref().clone();
     // In test context, get_config() uses get_config_from_env() which reads
@@ -47,7 +48,7 @@ async fn live_backend(url: &str) -> Result<TreetopPermissionBackend, ApiError> {
     let mut cfg = get_config().expect("failed to load test config").clone();
     cfg.treetop_url = Some(url.to_string());
     cfg.permission_backend = PermissionBackendKind::Treetop;
-    TreetopPermissionBackend::connect_postgres(url, &cfg, pool).await
+    TreetopPermissionBackend::connect(url, &cfg, StorageHandle::postgres(pool)).await
 }
 
 #[actix_test]

@@ -325,15 +325,17 @@ mod tests {
 
         let allow_backend = MockTreetopBackend::new();
         allow_backend.add_admin_rule(policy_group.id);
-        let allow_context =
-            AppContext::postgres(test.pool.get_ref().clone(), Arc::new(allow_backend));
+        let allow_context = crate::tests::app_context_with_permission_backend(
+            test.pool.get_ref().clone(),
+            Arc::new(allow_backend),
+        );
         assert!(
             can_read_deleted_history(&allow_context, &test.normal_user, false)
                 .await
                 .unwrap()
         );
 
-        let deny_context = AppContext::postgres(
+        let deny_context = crate::tests::app_context_with_permission_backend(
             test.pool.get_ref().clone(),
             Arc::new(MockTreetopBackend::new()),
         );
@@ -370,7 +372,10 @@ mod tests {
                 ..Default::default()
             },
         });
-        let context = AppContext::postgres(test.pool.get_ref().clone(), backend.clone());
+        let context = crate::tests::app_context_with_permission_backend(
+            test.pool.get_ref().clone(),
+            backend.clone(),
+        );
         let timestamp = Utc::now();
         let visible = HubuumClassHistory {
             id: 41,

@@ -585,6 +585,40 @@ pub struct AuthorizationGroupGrantPage {
     total_count: i64,
 }
 
+/// One complete local-policy row for backend-neutral policy export.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorizationPolicySnapshotRow {
+    grant: AuthorizationGrant,
+    group: AuthorizationGroup,
+    collection: AuthorizationCollection,
+}
+
+impl AuthorizationPolicySnapshotRow {
+    #[must_use]
+    pub const fn new(
+        grant: AuthorizationGrant,
+        group: AuthorizationGroup,
+        collection: AuthorizationCollection,
+    ) -> Self {
+        Self {
+            grant,
+            group,
+            collection,
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        AuthorizationGrant,
+        AuthorizationGroup,
+        AuthorizationCollection,
+    ) {
+        (self.grant, self.group, self.collection)
+    }
+}
+
 impl AuthorizationGroupGrantPage {
     #[must_use]
     pub const fn new(items: Vec<AuthorizationGroupGrant>, total_count: i64) -> Self {
@@ -765,6 +799,19 @@ pub trait AuthorizationStorage: Send + Sync {
         &self,
         query: AuthorizationCollectionsQuery,
     ) -> Result<Vec<AuthorizationCollection>, StorageError>;
+
+    async fn list_authorization_collection_candidates(
+        &self,
+    ) -> Result<Vec<AuthorizationCollection>, StorageError>;
+
+    async fn list_authorization_group_candidates(
+        &self,
+        query_options: QueryOptions,
+    ) -> Result<Vec<AuthorizationGroup>, StorageError>;
+
+    async fn authorization_policy_snapshot(
+        &self,
+    ) -> Result<Vec<AuthorizationPolicySnapshotRow>, StorageError>;
 
     async fn list_local_collection_grants(
         &self,

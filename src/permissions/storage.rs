@@ -58,7 +58,7 @@ pub(super) fn collection_from_storage(
     })
 }
 
-fn group_from_storage(group: AuthorizationGroup) -> Result<Group, ApiError> {
+pub(super) fn group_from_storage(group: AuthorizationGroup) -> Result<Group, ApiError> {
     Ok(Group {
         id: group.id(),
         groupname: group.group_name().to_string(),

@@ -62,6 +62,9 @@ fn app_context_exposes_only_an_opaque_backend_handle() {
         "pub fn postgres_pool",
         "pub fn clone_postgres_pool",
         "impl Deref for AppContext",
+        "crate::storage::postgres",
+        "PostgresPool",
+        "fn postgres",
     ] {
         assert!(
             !context_source.contains(forbidden),
@@ -101,6 +104,7 @@ fn application_consumers_do_not_import_database_implementation_details() {
         "src/extractors",
         "src/middlewares",
         "src/observability/metrics",
+        "src/permissions",
     ] {
         paths.extend(rust_files(&root.join(directory)));
     }
@@ -111,9 +115,6 @@ fn application_consumers_do_not_import_database_implementation_details() {
         "src/events/fanout.rs",
         "src/events/retention.rs",
         "src/exports/mod.rs",
-        "src/permissions/local/mod.rs",
-        "src/permissions/storage.rs",
-        "src/permissions/types.rs",
         "src/restores/mod.rs",
         "src/tasks/helpers.rs",
         "src/tasks/preload.rs",

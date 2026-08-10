@@ -15,7 +15,7 @@ pub use authorization::{
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
     AuthorizationGroupGrantPage, AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery,
     AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
-    AuthorizationPrincipal, AuthorizationStorage,
+    AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationStorage,
 };
 pub use events::{
     EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
