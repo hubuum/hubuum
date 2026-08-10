@@ -113,6 +113,20 @@ pub(super) fn object_from_storage(row: StorageObject) -> Result<HubuumObject, Ap
     })
 }
 
+pub(super) fn object_to_storage(object: HubuumObject) -> StorageObject {
+    StorageObject::new(
+        object.id,
+        object.name,
+        object.collection_id,
+        object.hubuum_class_id,
+        object.data,
+        object.description,
+        object.created_at,
+        object.updated_at,
+        object.revision.get(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -522,6 +522,66 @@ impl fmt::Debug for RelationIdsQuery {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct ObjectRelationsTouchingIdsQuery {
+    object_ids: Vec<i32>,
+    excluded_relation_ids: Vec<i32>,
+    max_results: usize,
+    visibility: StorageVisibility,
+}
+
+impl ObjectRelationsTouchingIdsQuery {
+    #[must_use]
+    pub fn new(
+        object_ids: impl IntoIterator<Item = i32>,
+        max_results: usize,
+        visibility: StorageVisibility,
+    ) -> Self {
+        let mut object_ids = object_ids.into_iter().collect::<Vec<_>>();
+        object_ids.sort_unstable();
+        object_ids.dedup();
+        Self {
+            object_ids,
+            excluded_relation_ids: Vec::new(),
+            max_results,
+            visibility,
+        }
+    }
+
+    #[must_use]
+    pub fn excluding_relation_ids(mut self, relation_ids: impl IntoIterator<Item = i32>) -> Self {
+        self.excluded_relation_ids = relation_ids.into_iter().collect();
+        self.excluded_relation_ids.sort_unstable();
+        self.excluded_relation_ids.dedup();
+        self
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<i32>, Vec<i32>, usize, StorageVisibility) {
+        (
+            self.object_ids,
+            self.excluded_relation_ids,
+            self.max_results,
+            self.visibility,
+        )
+    }
+}
+
+impl fmt::Debug for ObjectRelationsTouchingIdsQuery {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ObjectRelationsTouchingIdsQuery")
+            .field("object_id_count", &self.object_ids.len())
+            .field(
+                "excluded_relation_id_count",
+                &self.excluded_relation_ids.len(),
+            )
+            .field("max_results", &self.max_results)
+            .field("visibility", &self.visibility)
+            .finish()
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub struct RelationGraphQuery {
     root_id: i32,
@@ -796,6 +856,11 @@ pub trait RelationQueryStorage: Send + Sync {
         query: RelationIdsQuery,
     ) -> Result<Vec<StorageClassRelation>, StorageError>;
 
+    async fn object_relations_touching_ids(
+        &self,
+        query: ObjectRelationsTouchingIdsQuery,
+    ) -> Result<Vec<StorageObjectRelation>, StorageError>;
+
     async fn object_relations_between_ids(
         &self,
         query: RelationIdsQuery,
@@ -849,5 +914,22 @@ mod tests {
         assert!(!debug.contains("secret cursor"));
         assert!(!debug.contains("42"));
         assert!(!debug.contains("73"));
+    }
+
+    #[test]
+    fn touching_ids_debug_redacts_endpoint_and_exclusion_ids() {
+        let visibility =
+            StorageVisibility::new(42, true, None::<[crate::AuthorizationPermission; 0]>, None);
+        let query =
+            ObjectRelationsTouchingIdsQuery::new([73], 20, visibility).excluding_relation_ids([99]);
+
+        let debug = format!("{query:?}");
+
+        assert!(debug.contains("object_id_count: 1"));
+        assert!(debug.contains("excluded_relation_id_count: 1"));
+        assert!(debug.contains("max_results: 20"));
+        for id in [42, 73, 99] {
+            assert!(!debug.contains(&id.to_string()));
+        }
     }
 }

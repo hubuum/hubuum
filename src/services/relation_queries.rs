@@ -8,12 +8,12 @@ use crate::models::{
 };
 use crate::services::storage_boundary::visibility;
 use crate::storage::{
-    BidirectionalRelatedObjectsQuery, RelatedObjectsForRootsQuery, RelationGraphQuery,
-    RelationIdsQuery, RelationListQuery, RelationQueryStorage, RelationTouchingQuery,
-    StorageClassGraphRow, StorageClassRelation, StorageContext, StorageGraphClass,
-    StorageGraphObject, StorageObjectGraphRow, StorageObjectRelation, StorageRelatedDirection,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRelatedSort,
-    storage_handle,
+    BidirectionalRelatedObjectsQuery, ObjectRelationsTouchingIdsQuery, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationQueryStorage,
+    RelationTouchingQuery, StorageClassGraphRow, StorageClassRelation, StorageContext,
+    StorageGraphClass, StorageGraphObject, StorageObjectGraphRow, StorageObjectRelation,
+    StorageRelatedDirection, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageRelatedSort, storage_handle,
 };
 
 fn class_relation_from_storage(row: StorageClassRelation) -> Result<HubuumClassRelation, ApiError> {
@@ -426,6 +426,27 @@ pub(crate) async fn object_relations_between_ids(
     let query = RelationIdsQuery::new(object_ids.iter().copied(), access.visibility()?);
     storage_handle(backend)
         .object_relations_between_ids(query)
+        .await?
+        .into_iter()
+        .map(object_relation_from_storage)
+        .collect()
+}
+
+pub(crate) async fn object_relations_touching_ids(
+    backend: &impl StorageContext,
+    access: RelationAccess<'_>,
+    object_ids: &[i32],
+    excluded_relation_ids: &[i32],
+    max_results: usize,
+) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+    let query = ObjectRelationsTouchingIdsQuery::new(
+        object_ids.iter().copied(),
+        max_results,
+        access.visibility()?,
+    )
+    .excluding_relation_ids(excluded_relation_ids.iter().copied());
+    storage_handle(backend)
+        .object_relations_touching_ids(query)
         .await?
         .into_iter()
         .map(object_relation_from_storage)

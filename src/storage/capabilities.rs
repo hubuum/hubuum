@@ -29,12 +29,10 @@ pub(crate) mod collection {
 
 pub(crate) mod computed_field {
     pub(crate) use crate::storage::postgres::operations::computed_field::{
-        ComputedQuerySnapshot, class_computation_state_for, create_personal_definition,
-        create_shared_definition, delete_personal_definition, delete_shared_definition,
-        enrich_objects_with_computed, enrich_objects_with_computed_query_snapshot,
-        get_computed_definition, list_personal_definitions_page, list_shared_definitions,
-        preview_computed_definition, request_class_rebuild, resolve_computed_query_fields,
-        update_personal_definition, update_shared_definition,
+        class_computation_state_for, create_personal_definition, create_shared_definition,
+        delete_personal_definition, delete_shared_definition, get_computed_definition,
+        list_personal_definitions_page, list_shared_definitions, preview_computed_definition,
+        request_class_rebuild, update_personal_definition, update_shared_definition,
     };
 }
 
@@ -137,85 +135,6 @@ pub(crate) mod task_import {
     };
 }
 
-pub(crate) mod user {
-    use crate::errors::ApiError;
-    use crate::models::search::QueryOptions;
-    use crate::models::{HubuumObject, TokenScope};
-    use crate::storage::StorageContext;
-
-    use super::computed_field::ComputedQuerySnapshot;
-
-    /// The search operations required by application consumers.
-    ///
-    /// The underlying PostgreSQL trait also contains connection-pool
-    /// helpers for adapter composition. Keeping those methods out of this
-    /// facade prevents method resolution from becoming a pool escape hatch.
-    pub(crate) trait UserSearchBackend {
-        async fn search_objects_with_computed_query_from_backend<C>(
-            &self,
-            context: &C,
-            query_options: QueryOptions,
-            scopes: Option<&TokenScope>,
-            snapshot: &ComputedQuerySnapshot,
-        ) -> Result<Vec<HubuumObject>, ApiError>
-        where
-            C: StorageContext;
-
-        async fn count_objects_with_computed_query_from_backend<C>(
-            &self,
-            context: &C,
-            query_options: QueryOptions,
-            scopes: Option<&TokenScope>,
-            snapshot: &ComputedQuerySnapshot,
-        ) -> Result<i64, ApiError>
-        where
-            C: StorageContext;
-    }
-
-    impl<T> UserSearchBackend for T
-    where
-        T: crate::storage::postgres::operations::user::UserSearchBackend + Sync + ?Sized,
-    {
-        async fn search_objects_with_computed_query_from_backend<C>(
-            &self,
-            context: &C,
-            query_options: QueryOptions,
-            scopes: Option<&TokenScope>,
-            snapshot: &ComputedQuerySnapshot,
-        ) -> Result<Vec<HubuumObject>, ApiError>
-        where
-            C: StorageContext,
-        {
-            crate::storage::postgres::operations::user::UserSearchBackend::search_objects_with_computed_query_from_backend(
-                    self, context, query_options, scopes, snapshot,
-                )
-                .await
-        }
-
-        async fn count_objects_with_computed_query_from_backend<C>(
-            &self,
-            context: &C,
-            query_options: QueryOptions,
-            scopes: Option<&TokenScope>,
-            snapshot: &ComputedQuerySnapshot,
-        ) -> Result<i64, ApiError>
-        where
-            C: StorageContext,
-        {
-            crate::storage::postgres::operations::user::UserSearchBackend::count_objects_with_computed_query_from_backend(
-                    self, context, query_options, scopes, snapshot,
-                )
-                .await
-        }
-    }
-
-    pub(crate) mod search {
-        pub(crate) use crate::storage::postgres::operations::user::search::{
-            ExternalRelatedFilterAuthorization, count_computed_objects_with_authorized_ids,
-            externally_authorized_related_object_ids, search_computed_objects_with_authorized_ids,
-        };
-    }
-}
 pub(crate) use crate::storage::postgres::{
     StorageCallSite, with_mutation_provenance_scope, with_revision_precondition_scope,
     with_statement_timeout_scope, with_storage_call_site,

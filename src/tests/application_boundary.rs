@@ -229,6 +229,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "AuthenticationStorage",
         "AuthorizationStorage",
         "CatalogStorage",
+        "ComputedObjectStorage",
         "RelationQueryStorage",
         "EventDeliveryStorage",
         "EventFanoutStorage",
@@ -266,6 +267,12 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
             "catalog operation {operation} must use the common storage observer"
         );
     }
+    for operation in ["list", "enrich"] {
+        assert!(
+            context_source.contains(&format!("\"computed_objects\", \"{operation}\"")),
+            "computed-object operation {operation} must use the common storage observer"
+        );
+    }
     let compact_context = context_source.split_whitespace().collect::<String>();
     for operation in [
         "list_classes",
@@ -274,6 +281,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "objects_touching",
         "classes_touching_ids",
         "classes_between_ids",
+        "objects_touching_ids",
         "objects_between_ids",
         "related_classes",
         "related_objects",

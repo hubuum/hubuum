@@ -8,6 +8,7 @@ pub(crate) mod catalog;
 pub mod class;
 pub mod collection;
 pub mod computed_field;
+pub(crate) mod computed_objects;
 pub mod event_delivery;
 pub mod event_fanout;
 pub mod event_observability;

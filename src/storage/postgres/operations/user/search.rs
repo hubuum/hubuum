@@ -6,18 +6,12 @@ use crate::models::search::{
     RelatedClassField, RelatedFilterTarget, RelatedObjectField, SQLComponent, SQLValue,
 };
 use crate::models::token_scope::TokenScope;
-use crate::permissions::visibility::{
-    AuthorizedObjectIds, authorize_all_candidates, authorize_resource_permissions,
-};
-use crate::permissions::{PermissionBackend, PrincipalRef};
+use crate::permissions::visibility::AuthorizedObjectIds;
 use crate::storage::postgres::operations::authz::{
     AuthzSubject as PostgresAuthzSubject, scope_allows,
 };
 use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
-};
-use crate::storage::postgres::operations::relations::{
-    object_authorization_resources, object_relation_authorization_resources,
 };
 use crate::storage::postgres::operations::resource_scope::{
     class_scope_predicate, collection_scope_predicate, object_scope_predicate, resource_scope_ids,
@@ -30,11 +24,7 @@ use crate::traits::{CursorPaginated, CursorSqlMapping};
 use crate::utilities::extensions::CustomStringExtensions;
 use diesel::BoolExpressionMethods;
 use diesel_async::RunQueryDsl;
-use std::collections::{BTreeMap, HashSet};
-
-const MAX_EXTERNAL_RELATED_FILTER_TARGETS: usize = 1_000;
-const MAX_EXTERNAL_RELATED_FILTER_OBJECTS: usize = 10_000;
-const MAX_EXTERNAL_RELATED_FILTER_RELATIONS: usize = 20_000;
+use std::collections::BTreeMap;
 
 #[derive(diesel::QueryableByName)]
 struct CountRow {
@@ -278,441 +268,6 @@ where
         scopes,
     )?;
     dynamic_sql_predicate(component).map(Some)
-}
-
-/// Dependencies and caller scope for external-policy related filtering.
-pub(crate) struct ExternalRelatedFilterAuthorization<'a> {
-    pool: &'a PostgresPool,
-    permission_backend: &'a dyn PermissionBackend,
-    principal: &'a PrincipalRef,
-    scopes: Option<&'a TokenScope>,
-}
-
-impl<'a> ExternalRelatedFilterAuthorization<'a> {
-    pub(crate) fn new(
-        storage: &'a impl crate::storage::StorageContext,
-        permission_backend: &'a dyn PermissionBackend,
-        principal: &'a PrincipalRef,
-        scopes: Option<&'a TokenScope>,
-    ) -> Self {
-        Self {
-            pool: crate::storage::context::postgres_pool(storage),
-            permission_backend,
-            principal,
-            scopes,
-        }
-    }
-}
-
-/// Resolve related-object matches without relying on SQL permission joins.
-///
-/// This is the external-policy counterpart to [`related_object_filter_predicate`].
-/// Target objects are loaded without local ACL filtering and then authorized.
-/// From those targets, a bounded breadth-first traversal authorizes relations
-/// and newly encountered objects before adding them to the next frontier. A
-/// candidate is retained when a fully visible path reaches a target in every
-/// named group.
-pub(crate) async fn externally_authorized_related_object_ids<U>(
-    user: &U,
-    filters: &[ParsedQueryParam],
-    authorization: ExternalRelatedFilterAuthorization<'_>,
-) -> Result<Option<AuthorizedObjectIds>, ApiError>
-where
-    U: UserSearchBackend + ?Sized,
-{
-    let groups = related_filter_groups(filters)?;
-    if groups.is_empty() {
-        return Ok(None);
-    }
-    debug!(
-        message = "Planning related-object filters",
-        authorization = "external_policy",
-        group_count = groups.len(),
-        max_depths = ?groups.iter().map(|group| group.max_depth).collect::<Vec<_>>()
-    );
-    if !scope_allows(
-        authorization.scopes,
-        &[
-            Permissions::ReadCollection,
-            Permissions::ReadClass,
-            Permissions::ReadObject,
-            Permissions::ReadObjectRelation,
-        ],
-    ) {
-        return Ok(Some(AuthorizedObjectIds::empty()));
-    }
-
-    let mut intersection = None::<HashSet<i32>>;
-    for group in groups {
-        let Some(target_class) =
-            load_related_target_class(authorization.pool, group.class_filter).await?
-        else {
-            return Ok(Some(AuthorizedObjectIds::empty()));
-        };
-        let target_class_resource = target_class.authorization_resource();
-        let target_class_is_visible = authorize_resource_permissions(
-            authorization.permission_backend,
-            authorization.principal,
-            &target_class_resource,
-            authorization.scopes,
-            &[Permissions::ReadClass, Permissions::ReadCollection],
-        )
-        .await?;
-        if !target_class_is_visible {
-            return Ok(Some(AuthorizedObjectIds::empty()));
-        }
-
-        let mut target_query = related_target_query(&group, target_class.id);
-        target_query.limit = Some(MAX_EXTERNAL_RELATED_FILTER_TARGETS + 1);
-        let target_candidates = user
-            .search_objects_from_backend_with_admin_status(
-                authorization.pool,
-                target_query,
-                true,
-                None,
-            )
-            .await?;
-        RelatedTraversalResource::TargetObjects.ensure_count(target_candidates.len())?;
-        let target_objects = authorize_all_candidates(
-            authorization.permission_backend,
-            authorization.principal,
-            target_candidates,
-            authorization.scopes,
-            vec![Permissions::ReadObject],
-            HubuumObject::authorization_resource,
-        )
-        .await?;
-        let target_ids = target_objects
-            .into_iter()
-            .map(|object| object.id)
-            .collect::<Vec<_>>();
-        if target_ids.is_empty() {
-            return Ok(Some(AuthorizedObjectIds::empty()));
-        }
-
-        let group_matches =
-            externally_authorized_related_group_ids(&authorization, &target_ids, group.max_depth)
-                .await?;
-        intersection = Some(match intersection {
-            None => group_matches,
-            Some(existing) => existing.intersection(&group_matches).copied().collect(),
-        });
-        if intersection
-            .as_ref()
-            .is_some_and(|matches| matches.is_empty())
-        {
-            break;
-        }
-    }
-
-    AuthorizedObjectIds::new(intersection.unwrap_or_default()).map(Some)
-}
-
-async fn load_related_target_class(
-    pool: &impl crate::storage::StorageContext,
-    class_filter: &ParsedQueryParam,
-) -> Result<Option<HubuumClass>, ApiError> {
-    use crate::schema::hubuumclass::dsl::{hubuumclass, id, name};
-    use diesel::OptionalExtension;
-
-    let class_field = class_filter
-        .field
-        .related_query()
-        .and_then(|field| match field.target() {
-            RelatedFilterTarget::Class(class_field) => Some(class_field),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            ApiError::InternalServerError(
-                "Related filter group lost its class selector".to_string(),
-            )
-        })?;
-
-    with_connection(pool, async |conn| match class_field {
-        RelatedClassField::Id => {
-            let values = class_filter.value_as_integer()?;
-            if values.len() != 1 {
-                return Err(ApiError::BadRequest(
-                    "related.<alias>.class.id requires exactly one integer".to_string(),
-                ));
-            }
-            hubuumclass
-                .filter(id.eq(values[0]))
-                .first::<HubuumClass>(conn)
-                .await
-                .optional()
-                .map_err(Into::into)
-        }
-        RelatedClassField::Name => hubuumclass
-            .filter(name.eq(&class_filter.value))
-            .first::<HubuumClass>(conn)
-            .await
-            .optional()
-            .map_err(Into::into),
-    })
-    .await
-}
-
-fn related_target_query(group: &RelatedFilterGroup<'_>, class_id: i32) -> QueryOptions {
-    let mut filters = Vec::with_capacity(group.object_filters.len() + 1);
-    filters.push(ParsedQueryParam {
-        field: FilterField::ClassId,
-        operator: SearchOperator::Equals { is_negated: false },
-        value: class_id.to_string(),
-    });
-    filters.extend(group.object_filters.iter().map(|(filter, field)| {
-        let mut filter = (*filter).clone();
-        filter.field = match field {
-            RelatedObjectField::Id => FilterField::Id,
-            RelatedObjectField::Name => FilterField::Name,
-            RelatedObjectField::Description => FilterField::Description,
-            RelatedObjectField::CollectionId => FilterField::Collections,
-            RelatedObjectField::CreatedAt => FilterField::CreatedAt,
-            RelatedObjectField::UpdatedAt => FilterField::UpdatedAt,
-            RelatedObjectField::Revision => FilterField::Revision,
-            RelatedObjectField::JsonData => FilterField::JsonData,
-        };
-        filter
-    }));
-    QueryOptions {
-        filters,
-        sort: Vec::new(),
-        limit: None,
-        cursor: None,
-        include_total: false,
-    }
-}
-
-#[derive(Clone, Copy)]
-enum RelatedTraversalResource {
-    TargetObjects,
-    Objects,
-    ObjectRelations,
-}
-
-impl RelatedTraversalResource {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::TargetObjects => "target objects",
-            Self::Objects => "objects",
-            Self::ObjectRelations => "object relations",
-        }
-    }
-
-    const fn limit(self) -> usize {
-        match self {
-            Self::TargetObjects => MAX_EXTERNAL_RELATED_FILTER_TARGETS,
-            Self::Objects => MAX_EXTERNAL_RELATED_FILTER_OBJECTS,
-            Self::ObjectRelations => MAX_EXTERNAL_RELATED_FILTER_RELATIONS,
-        }
-    }
-
-    fn ensure_count(self, candidate_count: usize) -> Result<(), ApiError> {
-        let limit = self.limit();
-        if candidate_count <= limit {
-            return Ok(());
-        }
-        Err(ApiError::BadRequest(format!(
-            "Related filter traversal exceeds the {limit} {} safety limit; narrow the target filters or reduce depth",
-            self.label()
-        )))
-    }
-}
-
-struct RelatedTraversalBudget {
-    examined_objects: usize,
-    examined_relations: usize,
-}
-
-impl RelatedTraversalBudget {
-    fn new(target_count: usize) -> Result<Self, ApiError> {
-        RelatedTraversalResource::Objects.ensure_count(target_count)?;
-        Ok(Self {
-            examined_objects: target_count,
-            examined_relations: 0,
-        })
-    }
-
-    fn relation_query_limit(&self) -> usize {
-        RelatedTraversalResource::ObjectRelations
-            .limit()
-            .saturating_sub(self.examined_relations)
-            .saturating_add(1)
-    }
-
-    fn record_objects(&mut self, count: usize) -> Result<(), ApiError> {
-        self.examined_objects = checked_related_traversal_total(
-            RelatedTraversalResource::Objects,
-            self.examined_objects,
-            count,
-        )?;
-        Ok(())
-    }
-
-    fn record_relations(&mut self, count: usize) -> Result<(), ApiError> {
-        self.examined_relations = checked_related_traversal_total(
-            RelatedTraversalResource::ObjectRelations,
-            self.examined_relations,
-            count,
-        )?;
-        Ok(())
-    }
-}
-
-fn checked_related_traversal_total(
-    resource: RelatedTraversalResource,
-    current: usize,
-    additional: usize,
-) -> Result<usize, ApiError> {
-    let total = current.saturating_add(additional);
-    resource.ensure_count(total)?;
-    Ok(total)
-}
-
-async fn load_object_relations_touching_frontier(
-    pool: &impl crate::storage::StorageContext,
-    frontier: &HashSet<i32>,
-    seen_relation_ids: &HashSet<i32>,
-    limit: usize,
-) -> Result<Vec<HubuumObjectRelation>, ApiError> {
-    use crate::schema::hubuumobject_relation::dsl::{
-        from_hubuum_object_id, hubuumobject_relation, id, to_hubuum_object_id,
-    };
-    use diesel::dsl::not;
-
-    if frontier.is_empty() || limit == 0 {
-        return Ok(Vec::new());
-    }
-
-    let mut frontier = frontier.iter().copied().collect::<Vec<_>>();
-    frontier.sort_unstable();
-    let mut seen_relation_ids = seen_relation_ids.iter().copied().collect::<Vec<_>>();
-    seen_relation_ids.sort_unstable();
-    let mut query = hubuumobject_relation
-        .filter(
-            from_hubuum_object_id
-                .eq_any(&frontier)
-                .or(to_hubuum_object_id.eq_any(&frontier)),
-        )
-        .into_boxed();
-    if !seen_relation_ids.is_empty() {
-        query = query.filter(not(id.eq_any(&seen_relation_ids)));
-    }
-    let limit = i64::try_from(limit).map_err(|_| {
-        ApiError::InternalServerError("Related filter traversal limit overflow".to_string())
-    })?;
-
-    with_connection(pool, async |conn| {
-        query
-            .order(id.asc())
-            .limit(limit)
-            .load::<HubuumObjectRelation>(conn)
-            .await
-    })
-    .await
-}
-
-async fn externally_authorized_related_group_ids(
-    authorization: &ExternalRelatedFilterAuthorization<'_>,
-    target_ids: &[i32],
-    max_depth: i32,
-) -> Result<HashSet<i32>, ApiError> {
-    let mut visible_objects = target_ids.iter().copied().collect::<HashSet<_>>();
-    let mut examined_objects = visible_objects.clone();
-    let mut budget = RelatedTraversalBudget::new(examined_objects.len())?;
-    let mut frontier = visible_objects.clone();
-    let mut seen_relation_ids = HashSet::new();
-    let mut matches = HashSet::new();
-
-    for _ in 0..max_depth {
-        if frontier.is_empty() {
-            break;
-        }
-
-        let relation_candidates = load_object_relations_touching_frontier(
-            authorization.pool,
-            &frontier,
-            &seen_relation_ids,
-            budget.relation_query_limit(),
-        )
-        .await?;
-        budget.record_relations(relation_candidates.len())?;
-        if relation_candidates.is_empty() {
-            break;
-        }
-        seen_relation_ids.extend(relation_candidates.iter().map(|relation| relation.id));
-
-        let relation_resources =
-            object_relation_authorization_resources(authorization.pool, &relation_candidates)
-                .await?;
-        let relation_candidates = relation_candidates
-            .into_iter()
-            .zip(relation_resources)
-            .collect::<Vec<_>>();
-        let visible_relations = authorize_all_candidates(
-            authorization.permission_backend,
-            authorization.principal,
-            relation_candidates,
-            authorization.scopes,
-            vec![Permissions::ReadObjectRelation],
-            |(_, resource)| resource.clone(),
-        )
-        .await?
-        .into_iter()
-        .map(|(relation, _)| relation)
-        .collect::<Vec<_>>();
-
-        let mut new_object_ids = visible_relations
-            .iter()
-            .flat_map(|relation| [relation.from_hubuum_object_id, relation.to_hubuum_object_id])
-            .filter(|object_id| !examined_objects.contains(object_id))
-            .collect::<Vec<_>>();
-        new_object_ids.sort_unstable();
-        new_object_ids.dedup();
-        budget.record_objects(new_object_ids.len())?;
-        examined_objects.extend(new_object_ids.iter().copied());
-
-        let object_resources =
-            object_authorization_resources(authorization.pool, &new_object_ids).await?;
-        let object_candidates = new_object_ids
-            .into_iter()
-            .zip(object_resources)
-            .collect::<Vec<_>>();
-        let newly_visible_objects = authorize_all_candidates(
-            authorization.permission_backend,
-            authorization.principal,
-            object_candidates,
-            authorization.scopes,
-            vec![Permissions::ReadObject],
-            |(_, resource)| resource.clone(),
-        )
-        .await?
-        .into_iter()
-        .map(|(object_id, _)| object_id)
-        .collect::<HashSet<_>>();
-        visible_objects.extend(newly_visible_objects.iter().copied());
-
-        let mut next_frontier = HashSet::new();
-        for relation in visible_relations {
-            for (source_id, target_id) in [
-                (relation.from_hubuum_object_id, relation.to_hubuum_object_id),
-                (relation.to_hubuum_object_id, relation.from_hubuum_object_id),
-            ] {
-                if source_id != target_id
-                    && frontier.contains(&source_id)
-                    && visible_objects.contains(&target_id)
-                {
-                    matches.insert(target_id);
-                    if newly_visible_objects.contains(&target_id) {
-                        next_frontier.insert(target_id);
-                    }
-                }
-            }
-        }
-        frontier = next_frontier;
-    }
-
-    Ok(matches)
 }
 
 pub(crate) async fn search_computed_objects_with_authorized_ids<U>(
@@ -1276,14 +831,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             .await
     }
 
-    async fn search_objects_with_computed_query_from_backend(
+    async fn search_objects_with_computed_query_from_backend_with_admin_status(
         &self,
         pool: &impl crate::storage::StorageContext,
         query_options: QueryOptions,
+        is_admin: bool,
         scopes: Option<&TokenScope>,
         snapshot: &ComputedQuerySnapshot,
     ) -> Result<Vec<HubuumObject>, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
         let plan = ObjectQueryPlan::computed(query_options, snapshot);
         self.search_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
             .await
@@ -1455,14 +1010,14 @@ pub trait UserSearchBackend: UserCollectionAccessors {
             .await
     }
 
-    async fn count_objects_with_computed_query_from_backend(
+    async fn count_objects_with_computed_query_from_backend_with_admin_status(
         &self,
         pool: &impl crate::storage::StorageContext,
         query_options: QueryOptions,
+        is_admin: bool,
         scopes: Option<&TokenScope>,
         snapshot: &ComputedQuerySnapshot,
     ) -> Result<i64, ApiError> {
-        let is_admin = self.is_admin(pool).await?;
         let plan = ObjectQueryPlan::computed(query_options, snapshot);
         self.count_objects_from_backend_with_query_plan(pool, plan, is_admin, scopes)
             .await
@@ -2663,6 +2218,88 @@ pub trait UserSearchBackend: UserCollectionAccessors {
         self.search_object_relations_between_ids_from_backend_with_admin_status(
             pool, object_ids, is_admin, scopes,
         )
+        .await
+    }
+
+    async fn search_object_relations_touching_ids_from_backend_with_admin_status(
+        &self,
+        pool: &impl crate::storage::StorageContext,
+        object_ids: &[i32],
+        excluded_relation_ids: &[i32],
+        max_results: usize,
+        is_admin: bool,
+        scopes: Option<&TokenScope>,
+    ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
+        use crate::schema::hubuumobject::dsl::{
+            collection_id as object_collection_id, hubuumobject, id as object_id_column,
+        };
+        use crate::schema::hubuumobject_relation::dsl::{
+            from_hubuum_object_id, hubuumobject_relation, id, to_hubuum_object_id,
+        };
+        use diesel::dsl::not;
+
+        if object_ids.is_empty() || max_results == 0 {
+            return Ok(Vec::new());
+        }
+        let max_results = i64::try_from(max_results).map_err(|_| {
+            ApiError::BadRequest("Object-relation result limit is too large".to_string())
+        })?;
+
+        let permission_list = [Permissions::ReadObjectRelation];
+        let collection_ids = self
+            .load_collections_with_permissions_with_admin_status(
+                pool,
+                &permission_list,
+                is_admin,
+                scopes,
+            )
+            .await?
+            .into_iter()
+            .map(|collection| collection.id)
+            .collect::<Vec<_>>();
+        let mut base_query = hubuumobject_relation
+            .filter(
+                from_hubuum_object_id
+                    .eq_any(object_ids)
+                    .or(to_hubuum_object_id.eq_any(object_ids)),
+            )
+            .filter(
+                from_hubuum_object_id.eq_any(
+                    hubuumobject
+                        .select(object_id_column)
+                        .filter(object_collection_id.eq_any(&collection_ids)),
+                ),
+            )
+            .filter(
+                to_hubuum_object_id.eq_any(
+                    hubuumobject
+                        .select(object_id_column)
+                        .filter(object_collection_id.eq_any(&collection_ids)),
+                ),
+            )
+            .into_boxed();
+        if let Some(scope) = resource_scope_ids(scopes) {
+            let scoped_object_query = || {
+                hubuumobject
+                    .select(object_id_column)
+                    .filter(object_scope_predicate(scope))
+            };
+            base_query = base_query
+                .filter(from_hubuum_object_id.eq_any(scoped_object_query()))
+                .filter(to_hubuum_object_id.eq_any(scoped_object_query()));
+        }
+        if !excluded_relation_ids.is_empty() {
+            base_query = base_query.filter(not(id.eq_any(excluded_relation_ids)));
+        }
+        let base_query = base_query.order(id.asc()).limit(max_results);
+
+        trace_query!(
+            base_query,
+            "Searching visible object relations touching object IDs"
+        );
+        with_connection(pool, async |connection| {
+            base_query.load::<HubuumObjectRelation>(connection).await
+        })
         .await
     }
 
@@ -5165,18 +4802,6 @@ mod related_filter_tests {
         assert!(component.sql.contains(
             "SELECT id AS class_id FROM hubuumclass WHERE collection_id = ANY(ARRAY[]::integer[]) OR id = ANY(ARRAY[]::integer[])"
         ));
-    }
-
-    #[test]
-    fn related_external_traversal_rejects_work_over_budget() {
-        let mut budget = RelatedTraversalBudget::new(1).unwrap();
-        let error = budget
-            .record_objects(MAX_EXTERNAL_RELATED_FILTER_OBJECTS)
-            .unwrap_err();
-
-        assert!(
-            matches!(error, ApiError::BadRequest(message) if message.contains("10000 objects"))
-        );
     }
 
     #[test]

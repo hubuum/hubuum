@@ -16,7 +16,7 @@ use crate::models::{
     HubuumObject, HubuumObjectRelation, NewUser, Permissions, PermissionsList, PrincipalToken,
     RelatedObjectGraphRow, RelatedObjectIncludeRow, Token, UpdateUser, User, UserID,
 };
-use crate::storage::postgres::{PostgresPool, with_connection, with_transaction};
+use crate::storage::postgres::{with_connection, with_transaction};
 use crate::traits::{ClassAccessors, CollectionAccessors, GroupAccessors, SelfAccessors};
 
 use crate::{date_search, numeric_search, revision_search, string_search, trace_query};

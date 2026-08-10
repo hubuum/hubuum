@@ -63,6 +63,7 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | --- | --- |
 | Domain lifecycle | Collection, class, object, class-relation, and object-relation resolution and lifecycle behavior |
 | Catalog queries | Permission- and resource-scoped collection, class, and object filtering, cursor paging, and optional exact counts |
+| Computed object queries | Computed filtering and sorting, exact counts, cursor-boundary snapshots, and computed-value enrichment |
 | Relation queries | Relation filtering and paging, endpoint-set queries, graph traversal, and export-oriented multi-root expansion |
 | Identity and authorization data | Principals, credentials, memberships, grants, and data needed by configured authorization providers |
 | Temporal history | Revision-filtered pages, stable cursors, point-in-time reads, visibility pushdown, and provenance-name resolution |
@@ -81,7 +82,8 @@ be replaced by mandatory operation-shaped traits and shared tests. The former
 identity, catalog-query, relation-query, history, and unified-search gates have
 now been replaced by the real `AuthenticationStorage`,
 `AuthorizationStorage`, `HistoryStorage`, `CatalogStorage`,
-`RelationQueryStorage`, and `UnifiedSearchStorage` contracts; no family is
+`ComputedObjectStorage`, `RelationQueryStorage`, and `UnifiedSearchStorage`
+contracts; no family is
 considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
@@ -223,18 +225,30 @@ therefore share one boundary instead of calling PostgreSQL query traits. The
 opaque handle observes the three operations with bounded
 `catalog/{collections,classes,objects}` labels.
 
+`ComputedObjectStorage` owns computed object filtering, sorting, optional exact
+counts, and enrichment. Query snapshots, materialization rows, generated SQL,
+and Diesel models remain adapter-private. The request carries either ordinary
+storage visibility or object identifiers already authorized by an external
+policy backend. The result returns private-field object and computed-scope DTOs
+plus resolved backend-neutral query metadata needed to encode stable computed
+cursors. The application converts those DTOs into API responses. The opaque
+handle observes the complete capability with bounded
+`computed_objects/{list,enrich}` labels, and the available-backend test invokes
+both operations.
+
 `RelationQueryStorage` owns the complete relation read surface rather than only
 ordinary relation lists. Its mandatory operations cover class and object
 relation filtering and counts, direct relations touching one endpoint,
-relations touching or contained within endpoint sets, related-class and
-related-object graph pages, and both directional and bidirectional multi-root
+relations touching or contained within endpoint sets, bounded object-relation
+frontier reads with explicit exclusions, related-class and related-object graph
+pages, and both directional and bidirectional multi-root
 expansion used by exports. Graph DTOs are composed from storage-owned class and
 object projections, so Diesel query rows and SQL traversal functions remain
 adapter-private. Alternative-path preservation is an explicit backend-neutral
 request semantic used when external policy authorization must remove graph
 edges before canonical paths and limits are selected. The opaque handle
 observes every operation under bounded `relations/*` labels, and the shared
-available-backend compatibility test exercises all eleven operations.
+available-backend compatibility test exercises all twelve operations.
 
 ## Error Direction
 
@@ -312,7 +326,8 @@ There are two complementary test layers:
    `StorageBackendKind`, composes it through `StorageHandle`, verifies its
    contract descriptor, and exercises every mandatory operation family. The
    temporal-history contract test covers all list, point-in-time, visibility,
-   and provenance-resolution entry points.
+   and provenance-resolution entry points; the computed-object contract covers
+   query and enrichment entry points.
 
 PostgreSQL-specific tests remain responsible for behavior a logical model
 cannot reproduce: transactions, rollbacks, isolation, row locks, trigger

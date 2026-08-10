@@ -13,16 +13,18 @@ use crate::storage::{
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
     AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationPolicySnapshotRow,
     AuthorizationPrincipal, AuthorizationStorage, BidirectionalRelatedObjectsQuery,
-    CatalogListQuery, CatalogPage, CatalogStorage, DynLifecycleStorage, EventArchive,
-    EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
-    EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery,
-    HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
-    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, OperationalStateStorage,
-    PostgresStorage, ReadinessSnapshot, RelatedObjectsForRootsQuery, RelationGraphQuery,
-    RelationIdsQuery, RelationListQuery, RelationPage, RelationQueryStorage, RelationTouchingQuery,
-    RemoteTargetHistoryRecord, StorageBackend, StorageBackendDescriptor, StorageClass,
-    StorageClassGraphRow, StorageClassRelation, StorageCollection, StorageError, StorageObject,
+    CatalogListQuery, CatalogPage, CatalogStorage, ComputedObjectEnrichmentQuery,
+    ComputedObjectListQuery, ComputedObjectPage, ComputedObjectStorage, DynLifecycleStorage,
+    EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot,
+    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot,
+    EventRetentionStorage, EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery,
+    HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot,
+    MetricsStorage, ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord,
+    ObjectRelationsTouchingIdsQuery, OperationalStateStorage, PostgresStorage, ReadinessSnapshot,
+    RelatedObjectsForRootsQuery, RelationGraphQuery, RelationIdsQuery, RelationListQuery,
+    RelationPage, RelationQueryStorage, RelationTouchingQuery, RemoteTargetHistoryRecord,
+    StorageBackend, StorageBackendDescriptor, StorageClass, StorageClassGraphRow,
+    StorageClassRelation, StorageCollection, StorageComputedObject, StorageError, StorageObject,
     StorageObjectGraphRow, StorageObjectRelation, StoragePoolState, StorageRelatedObjectForRootRow,
     StorageRelatedObjectIncludeRow, TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass,
     UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
@@ -570,6 +572,37 @@ impl CatalogStorage for StorageHandle {
 }
 
 #[async_trait]
+impl ComputedObjectStorage for StorageHandle {
+    async fn list_computed_objects(
+        &self,
+        query: ComputedObjectListQuery,
+    ) -> Result<ComputedObjectPage, StorageError> {
+        observe_storage_call(self.backend_name(), "computed_objects", "list", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.list_computed_objects(query).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn enrich_objects_with_computed(
+        &self,
+        query: ComputedObjectEnrichmentQuery,
+    ) -> Result<Vec<StorageComputedObject>, StorageError> {
+        observe_storage_call(self.backend_name(), "computed_objects", "enrich", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.enrich_objects_with_computed(query).await
+                }
+            }
+        })
+        .await
+    }
+}
+
+#[async_trait]
 impl RelationQueryStorage for StorageHandle {
     async fn list_class_relations(
         &self,
@@ -687,6 +720,25 @@ impl RelationQueryStorage for StorageHandle {
                 match &self.implementation {
                     BackendImplementation::Postgresql(backend) => {
                         backend.object_relations_between_ids(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn object_relations_touching_ids(
+        &self,
+        query: ObjectRelationsTouchingIdsQuery,
+    ) -> Result<Vec<StorageObjectRelation>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "relations",
+            "objects_touching_ids",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.object_relations_touching_ids(query).await
                     }
                 }
             },

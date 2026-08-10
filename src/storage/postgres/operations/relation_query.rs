@@ -11,10 +11,11 @@ use crate::storage::postgres::operations::relation_rows::{
 use crate::storage::postgres::operations::user::UserSearchBackend;
 use crate::storage::postgres::operations::visibility::{principal, token_scope};
 use crate::storage::{
-    BidirectionalRelatedObjectsQuery, RelatedObjectsForRootsQuery, RelationGraphQuery,
-    RelationIdsQuery, RelationListQuery, RelationPage, RelationTouchingQuery, StorageClassGraphRow,
-    StorageClassRelation, StorageObjectGraphRow, StorageObjectRelation, StorageRelatedDirection,
-    StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow, StorageRelatedSort,
+    BidirectionalRelatedObjectsQuery, ObjectRelationsTouchingIdsQuery, RelatedObjectsForRootsQuery,
+    RelationGraphQuery, RelationIdsQuery, RelationListQuery, RelationPage, RelationTouchingQuery,
+    StorageClassGraphRow, StorageClassRelation, StorageObjectGraphRow, StorageObjectRelation,
+    StorageRelatedDirection, StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
+    StorageRelatedSort,
 };
 
 pub(crate) async fn list_class_relations(
@@ -160,6 +161,28 @@ pub(crate) async fn object_relations_between_ids(
         .search_object_relations_between_ids_from_backend_with_admin_status(
             pool,
             &ids,
+            visibility.is_admin(),
+            scope.as_ref(),
+        )
+        .await?
+        .into_iter()
+        .map(object_relation_to_storage)
+        .collect())
+}
+
+pub(crate) async fn object_relations_touching_ids(
+    pool: &PostgresPool,
+    query: ObjectRelationsTouchingIdsQuery,
+) -> Result<Vec<StorageObjectRelation>, ApiError> {
+    let (object_ids, excluded_relation_ids, max_results, visibility) = query.into_parts();
+    let principal = principal(&visibility)?;
+    let scope = token_scope(&visibility)?;
+    Ok(principal
+        .search_object_relations_touching_ids_from_backend_with_admin_status(
+            pool,
+            &object_ids,
+            &excluded_relation_ids,
+            max_results,
             visibility.is_admin(),
             scope.as_ref(),
         )
