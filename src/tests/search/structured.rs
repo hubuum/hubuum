@@ -187,6 +187,75 @@ async fn structured_search_targets_collections() {
 }
 
 #[actix_web::test]
+async fn structured_search_streams_the_same_tagged_collection_results() {
+    let context = TestContext::new().await;
+    let collection = context
+        .collection_fixture("structured_collection_stream")
+        .await;
+    let request = json!({
+        "version": 1,
+        "target": {"kind": "collection"},
+        "filter": {
+            "op": "field",
+            "predicate": {
+                "field": "name",
+                "operator": "equals",
+                "value": collection.collection.name
+            }
+        },
+        "include_total": true
+    });
+
+    let response = post_request(
+        &context.pool,
+        &context.admin_token,
+        "/api/v1/search/stream",
+        request,
+    )
+    .await;
+    let response = assert_response_status(response, http::StatusCode::OK).await;
+    assert_eq!(
+        response.headers().get(http::header::CONTENT_TYPE).unwrap(),
+        "text/event-stream; charset=utf-8"
+    );
+    let body = String::from_utf8(test::read_body(response).await.to_vec()).unwrap();
+    let started = body.find("event: started").unwrap();
+    let result = body.find("event: result").unwrap();
+    let done = body.find("event: done").unwrap();
+
+    assert!(started < result && result < done);
+    assert!(body.contains("\"kind\":\"collection\""));
+    assert!(body.contains(&collection.collection.name));
+    assert!(body.contains("\"total\":1"));
+    collection.cleanup().await.unwrap();
+}
+
+#[actix_web::test]
+async fn structured_search_stream_reports_execution_authorization_errors_as_terminal_events() {
+    let context = TestContext::new().await;
+    let request = json!({
+        "version": 1,
+        "target": {"kind": "user"}
+    });
+
+    let response = post_request(
+        &context.pool,
+        &context.normal_token,
+        "/api/v1/search/stream",
+        request,
+    )
+    .await;
+    let response = assert_response_status(response, http::StatusCode::OK).await;
+    let body = String::from_utf8(test::read_body(response).await.to_vec()).unwrap();
+
+    assert!(body.contains("event: started"));
+    assert!(body.contains("event: error"));
+    assert!(body.contains("user search requires administrator access"));
+    assert!(!body.contains("event: result"));
+    assert!(!body.contains("event: done"));
+}
+
+#[actix_web::test]
 async fn structured_search_targets_classes() {
     let context = TestContext::new().await;
     let collection = context.collection_fixture("structured_class").await;

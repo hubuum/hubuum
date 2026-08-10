@@ -2,7 +2,7 @@ use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, pos
 use bytes::Bytes;
 use futures_util::{
     FutureExt, Stream, StreamExt,
-    future::BoxFuture,
+    future::{BoxFuture, LocalBoxFuture},
     stream::{self, FuturesUnordered},
 };
 use serde::Serialize;
@@ -27,8 +27,9 @@ use crate::extractors::{Authenticated, StructuredSearchPayload};
 use crate::models::traits::ResolveClassTarget;
 use crate::models::{
     Group, GroupResponse, MAX_STRUCTURED_SEARCH_EXTERNAL_CANDIDATES, Permissions, Principal,
-    ServiceAccountResponse, ServiceAccountWithName, StructuredSearchRequest,
-    StructuredSearchResourceKind, StructuredSearchResponse, StructuredSearchResult, TokenScope,
+    ServiceAccountResponse, ServiceAccountWithName, StructuredSearchDoneEvent,
+    StructuredSearchErrorEvent, StructuredSearchRequest, StructuredSearchResourceKind,
+    StructuredSearchResponse, StructuredSearchResult, StructuredSearchStartedEvent, TokenScope,
     UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
     UnifiedSearchQuery, UnifiedSearchResponse, UnifiedSearchStartedEvent, User, UserResponse,
     UserWithName, decode_structured_search_cursor, encode_structured_search_cursor,
@@ -195,6 +196,107 @@ pub async fn get_search(
 pub(crate) struct StructuredSearchExecution {
     pub(crate) response: StructuredSearchResponse,
     pub(crate) page_limit: usize,
+}
+
+type StructuredSearchFuture = LocalBoxFuture<'static, Result<StructuredSearchExecution, ApiError>>;
+
+enum StructuredSearchEventStreamPhase {
+    Starting(StructuredSearchFuture),
+    Searching(StructuredSearchFuture),
+    Delivering {
+        results: std::vec::IntoIter<StructuredSearchResult>,
+        done: StructuredSearchDoneEvent,
+    },
+    Finished,
+}
+
+struct StructuredSearchEventStreamState {
+    version: u8,
+    kind: StructuredSearchResourceKind,
+    phase: StructuredSearchEventStreamPhase,
+}
+
+fn structured_search_event_stream(
+    version: u8,
+    kind: StructuredSearchResourceKind,
+    execution: StructuredSearchFuture,
+) -> impl Stream<Item = Result<Bytes, actix_web::Error>> {
+    let state = StructuredSearchEventStreamState {
+        version,
+        kind,
+        phase: StructuredSearchEventStreamPhase::Starting(execution),
+    };
+
+    stream::unfold(state, |mut state| async move {
+        loop {
+            let phase =
+                std::mem::replace(&mut state.phase, StructuredSearchEventStreamPhase::Finished);
+            match phase {
+                StructuredSearchEventStreamPhase::Starting(execution) => {
+                    state.phase = StructuredSearchEventStreamPhase::Searching(execution);
+                    let event = sse_event(
+                        "started",
+                        &StructuredSearchStartedEvent {
+                            version: state.version,
+                            kind: state.kind,
+                        },
+                    )
+                    .map_err(actix_web::Error::from);
+                    return Some((event, state));
+                }
+                StructuredSearchEventStreamPhase::Searching(execution) => match execution.await {
+                    Ok(execution) => {
+                        let StructuredSearchExecution {
+                            response,
+                            page_limit,
+                        } = execution;
+                        let StructuredSearchResponse {
+                            version,
+                            kind,
+                            results,
+                            next,
+                            total,
+                        } = response;
+                        state.phase = StructuredSearchEventStreamPhase::Delivering {
+                            results: results.into_iter(),
+                            done: StructuredSearchDoneEvent {
+                                version,
+                                kind,
+                                next,
+                                total,
+                                page_limit,
+                            },
+                        };
+                    }
+                    Err(error) => {
+                        state.phase = StructuredSearchEventStreamPhase::Finished;
+                        let event = sse_event(
+                            "error",
+                            &StructuredSearchErrorEvent {
+                                version: state.version,
+                                kind: state.kind,
+                                message: error.public_message().to_string(),
+                            },
+                        )
+                        .map_err(actix_web::Error::from);
+                        return Some((event, state));
+                    }
+                },
+                StructuredSearchEventStreamPhase::Delivering { mut results, done } => {
+                    if let Some(result) = results.next() {
+                        state.phase =
+                            StructuredSearchEventStreamPhase::Delivering { results, done };
+                        let event = sse_event("result", &result).map_err(actix_web::Error::from);
+                        return Some((event, state));
+                    }
+                    state.phase = StructuredSearchEventStreamPhase::Finished;
+                    let event = sse_event("done", &done).map_err(actix_web::Error::from);
+                    return Some((event, state));
+                }
+                StructuredSearchEventStreamPhase::Finished => return None,
+            }
+        }
+    })
 }
 
 fn finalize_structured_search<T, F>(
@@ -658,6 +760,55 @@ pub async fn post_search(
 }
 
 #[utoipa::path(
+    post,
+    path = "/api/v1/search/stream",
+    tag = "search",
+    description = "Runs the same versioned structured resource-search DSL as POST /api/v1/search and returns server-sent events. The stream emits started, zero or more tagged result events, and one terminal done event carrying cursor metadata; execution failures after streaming starts produce a terminal error event.",
+    security(("bearer_auth" = [])),
+    request_body(content = StructuredSearchRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Structured search server-sent event stream", content_type = "text/event-stream"),
+        (status = 400, description = "Invalid DSL or request envelope", body = ApiErrorResponse),
+        (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 413, description = "Request body exceeds the structured-search size limit", body = ApiErrorResponse),
+        (status = 415, description = "Content type is not application/json", body = ApiErrorResponse)
+    )
+)]
+#[post("/stream")]
+pub async fn post_stream_search(
+    pool: AppContext,
+    requestor: Authenticated,
+    payload: StructuredSearchPayload,
+) -> Result<HttpResponse, ApiError> {
+    let request = payload.into_inner();
+    let version = request.version;
+    let kind = request.target.kind();
+    let principal = requestor.principal;
+    let token_id = requestor.token_meta.id;
+    let token_revision = requestor.token_meta.revision.get();
+    let scopes = requestor.scope;
+    let execution = async move {
+        execute_structured_search(
+            &pool,
+            &principal,
+            token_id,
+            token_revision,
+            scopes.as_ref(),
+            request,
+        )
+        .await
+    }
+    .boxed_local();
+    let stream = structured_search_event_stream(version, kind, execution);
+
+    Ok(HttpResponse::Ok()
+        .insert_header(("Content-Type", "text/event-stream; charset=utf-8"))
+        .insert_header(("Cache-Control", "private, no-store"))
+        .insert_header(("X-Accel-Buffering", "no"))
+        .streaming(stream))
+}
+
+#[utoipa::path(
     get,
     path = "/api/v1/search/stream",
     tag = "search",
@@ -712,6 +863,19 @@ mod tests {
             classes: vec![],
             objects: vec![],
             next: None,
+        }
+    }
+
+    fn empty_structured_execution() -> StructuredSearchExecution {
+        StructuredSearchExecution {
+            response: StructuredSearchResponse {
+                version: 1,
+                kind: StructuredSearchResourceKind::Object,
+                results: vec![],
+                next: Some("next-page".to_string()),
+                total: Some(0),
+            },
+            page_limit: 25,
         }
     }
 
@@ -824,6 +988,85 @@ mod tests {
             .boxed(),
         );
         let mut events = Box::pin(search_event_stream("needle".to_string(), searches));
+
+        events.next().await.unwrap().unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), events.next())
+                .await
+                .is_err()
+        );
+        drop(events);
+
+        tokio::time::timeout(Duration::from_secs(1), drop_observed)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[actix_web::test]
+    async fn structured_stream_emits_started_before_execution_completes() {
+        let (release, blocked) = oneshot::channel::<()>();
+        let execution = async move {
+            blocked.await.unwrap();
+            Ok(empty_structured_execution())
+        }
+        .boxed_local();
+        let events =
+            structured_search_event_stream(1, StructuredSearchResourceKind::Object, execution);
+        pin_mut!(events);
+
+        let started = events.next().await.unwrap().unwrap();
+        let started = String::from_utf8(started.to_vec()).unwrap();
+        assert!(started.contains("event: started"));
+        assert!(started.contains("\"kind\":\"object\""));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), events.next())
+                .await
+                .is_err()
+        );
+
+        release.send(()).unwrap();
+        let done = events.next().await.unwrap().unwrap();
+        let done = String::from_utf8(done.to_vec()).unwrap();
+        assert!(done.contains("event: done"));
+        assert!(done.contains("\"next\":\"next-page\""));
+        assert!(done.contains("\"page_limit\":25"));
+        assert!(events.next().await.is_none());
+    }
+
+    #[actix_web::test]
+    async fn structured_stream_error_is_terminal() {
+        let execution = async {
+            Err(ApiError::BadRequest(
+                "structured search deliberately failed".to_string(),
+            ))
+        }
+        .boxed_local();
+        let events =
+            structured_search_event_stream(1, StructuredSearchResourceKind::Collection, execution);
+        pin_mut!(events);
+
+        events.next().await.unwrap().unwrap();
+        let error = events.next().await.unwrap().unwrap();
+        let error = String::from_utf8(error.to_vec()).unwrap();
+        assert!(error.contains("event: error"));
+        assert!(error.contains("structured search deliberately failed"));
+        assert!(events.next().await.is_none());
+    }
+
+    #[actix_web::test]
+    async fn dropping_structured_stream_drops_pending_execution() {
+        let (notify_drop, drop_observed) = oneshot::channel();
+        let execution = async move {
+            let _drop_notifier = DropNotifier(Some(notify_drop));
+            future::pending::<Result<StructuredSearchExecution, ApiError>>().await
+        }
+        .boxed_local();
+        let mut events = Box::pin(structured_search_event_stream(
+            1,
+            StructuredSearchResourceKind::Object,
+            execution,
+        ));
 
         events.next().await.unwrap().unwrap();
         assert!(
