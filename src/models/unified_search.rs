@@ -15,9 +15,9 @@ use crate::permissions::{
     PermissionBackend, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
 };
 use crate::storage::StorageContext;
-use crate::storage::postgres::operations::authz::scope_allows;
 use crate::storage::postgres::operations::user::UnifiedSearchBackend;
 use crate::traits::Search;
+use crate::traits::scope_allows;
 use crate::utilities::extensions::CustomStringExtensions;
 
 const MAX_UNIFIED_SEARCH_QUERY_LENGTH: usize = 256;

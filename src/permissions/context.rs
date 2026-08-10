@@ -3,8 +3,6 @@ use std::sync::Arc;
 use actix_web::{FromRequest, HttpRequest, dev::Payload, web::Data};
 use futures_util::future::{Ready, ready};
 
-#[cfg(any(test, feature = "integration-test-support"))]
-use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::services::{
     ClassRelationService, ClassService, CollectionService, ObjectRelationService, ObjectService,
@@ -12,12 +10,8 @@ use crate::services::{
 };
 use crate::storage::StorageContext;
 use crate::storage::StorageHandle;
-#[cfg(any(test, feature = "integration-test-support"))]
-use crate::storage::postgres::PostgresPool;
 
 use super::backend::PermissionBackend;
-#[cfg(any(test, feature = "integration-test-support"))]
-use super::local::LocalPermissionBackend;
 
 #[derive(Clone)]
 pub struct AppContext {
@@ -36,30 +30,9 @@ impl AppContext {
         }
     }
 
-    /// PostgreSQL composition helper retained for integration tests.
-    #[doc(hidden)]
-    #[cfg(any(test, feature = "integration-test-support"))]
-    pub fn postgres(db_pool: PostgresPool, permissions: Arc<dyn PermissionBackend>) -> Self {
-        Self::new(StorageHandle::postgres(db_pool), permissions)
-    }
-
     pub(crate) fn from_http_request(req: &HttpRequest) -> Result<Self, ApiError> {
         if let Some(context) = req.app_data::<Data<Self>>() {
             return Ok(context.get_ref().clone());
-        }
-
-        #[cfg(any(test, feature = "integration-test-support"))]
-        if let Some(pool) = req.app_data::<Data<PostgresPool>>() {
-            let admin_groupname = get_config()
-                .map(|config| config.admin_groupname.clone())
-                .unwrap_or_else(|_| "admin".to_string());
-            return Ok(Self::postgres(
-                pool.get_ref().clone(),
-                Arc::new(LocalPermissionBackend::new(
-                    StorageHandle::postgres(pool.get_ref().clone()),
-                    admin_groupname,
-                )),
-            ));
         }
 
         Err(ApiError::InternalServerError(

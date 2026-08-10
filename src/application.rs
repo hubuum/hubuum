@@ -526,7 +526,7 @@ mod tests {
 
     fn unreachable_context() -> AppContext {
         let pool = unreachable_pool();
-        AppContext::postgres(
+        crate::tests::app_context_with_permission_backend(
             pool.clone(),
             Arc::new(LocalPermissionBackend::new(
                 StorageHandle::postgres(pool),

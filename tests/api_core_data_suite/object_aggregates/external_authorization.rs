@@ -9,10 +9,12 @@ async fn get_with_permission_backend(
     let app = test::init_service(
         App::new()
             .app_data(Data::new(context.pool.get_ref().clone()))
-            .app_data(Data::new(AppContext::postgres(
-                context.pool.get_ref().clone(),
-                backend,
-            )))
+            .app_data(Data::new(
+                crate::tests::app_context_with_permission_backend(
+                    context.pool.get_ref().clone(),
+                    backend,
+                ),
+            ))
             .configure(crate::api::config),
     )
     .await;

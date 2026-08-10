@@ -23,6 +23,7 @@ use crate::permissions::PermissionBackend;
 use crate::permissions::treetop::TreetopPermissionBackend;
 use crate::permissions::types::{PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef};
 use crate::permissions::visibility::{AuthorizationPage, paginate_authorized};
+use crate::storage::StorageHandle;
 use crate::tests::get_test_pool;
 use crate::tests::permissions::conformance::{
     ConformanceBackend, ConformanceFixture, assert_backend_conformance,
@@ -66,13 +67,13 @@ fn live_config(url: &str) -> AppConfig {
 
 async fn backend_with_config(config: &AppConfig) -> Result<TreetopPermissionBackend, ApiError> {
     let pool = get_test_pool().get_ref().clone();
-    TreetopPermissionBackend::connect_postgres(
+    TreetopPermissionBackend::connect(
         config
             .treetop_url
             .as_deref()
             .expect("the live test URL must be configured"),
         config,
-        pool,
+        StorageHandle::postgres(pool),
     )
     .await
 }

@@ -20,9 +20,11 @@ async fn test_healthz_returns_ok_without_database_pool() {
 
 #[actix_web::test]
 async fn test_readyz_checks_database_connectivity() {
+    let pool = get_test_pool();
     let app = test::init_service(
         App::new()
-            .app_data(get_test_pool())
+            .app_data(pool.clone())
+            .app_data(crate::tests::app_context(&pool))
             .configure(prod_api::config),
     )
     .await;

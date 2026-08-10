@@ -30,9 +30,8 @@ use std::sync::Arc;
 use crate::config::{AppConfig, PermissionBackendKind};
 use crate::errors::ApiError;
 use crate::models::{Permissions, TokenScope};
-use crate::storage::postgres::operations::authz::{scope_allows, scope_allows_resources};
 use crate::storage::{StorageContext, StorageHandle};
-use crate::traits::{AuthzSubject, PrincipalIdAccessor};
+use crate::traits::{AuthzSubject, PrincipalIdAccessor, scope_allows, scope_allows_resources};
 
 pub async fn authorize_resources<S>(
     backend: &dyn PermissionBackend,

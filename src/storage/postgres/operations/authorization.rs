@@ -1,6 +1,7 @@
 use diesel::dsl::{exists, select};
 
 use crate::errors::ApiError;
+use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{
     Collection, CollectionID, Group, GroupID, GroupPermission, Permission, Permissions,
     PermissionsList, PrincipalID,
@@ -14,7 +15,7 @@ use crate::storage::{
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
     AuthorizationGroupGrantPage, AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery,
     AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
-    AuthorizationPrincipal,
+    AuthorizationPolicySnapshotRow, AuthorizationPrincipal,
 };
 use crate::traits::PermissionController;
 
@@ -271,6 +272,84 @@ pub(crate) async fn local_authorized_collections(
     })
     .await?;
     Ok(rows.into_iter().map(collection_to_storage).collect())
+}
+
+pub(crate) async fn list_authorization_collection_candidates(
+    pool: &PostgresPool,
+) -> Result<Vec<AuthorizationCollection>, ApiError> {
+    use crate::schema::collections;
+
+    let rows = with_connection(pool, async |conn| {
+        collections::table
+            .order_by(collections::id.asc())
+            .load::<Collection>(conn)
+            .await
+    })
+    .await?;
+    Ok(rows.into_iter().map(collection_to_storage).collect())
+}
+
+pub(crate) async fn list_authorization_group_candidates(
+    pool: &PostgresPool,
+    query_options: QueryOptions,
+) -> Result<Vec<AuthorizationGroup>, ApiError> {
+    use crate::schema::groups::dsl::{created_at, groupname, groups as groups_dsl, id, updated_at};
+    use crate::{date_search, numeric_search, string_search};
+
+    let mut query = groups_dsl.into_boxed();
+    for parameter in &query_options.filters {
+        let operator = parameter.operator.clone();
+        match parameter.field {
+            FilterField::Id => numeric_search!(query, parameter, operator, id),
+            FilterField::Name | FilterField::Groupname => {
+                string_search!(query, parameter, operator, groupname)
+            }
+            FilterField::CreatedAt => {
+                date_search!(query, parameter, operator, created_at)
+            }
+            FilterField::UpdatedAt => {
+                date_search!(query, parameter, operator, updated_at)
+            }
+            FilterField::Permissions => {}
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "Field '{}' isn't searchable (or does not exist) for permissions",
+                    parameter.field
+                )));
+            }
+        }
+    }
+    let rows = with_connection(pool, async |conn| query.load::<Group>(conn).await).await?;
+    Ok(rows.into_iter().map(group_to_storage).collect())
+}
+
+pub(crate) async fn authorization_policy_snapshot(
+    pool: &PostgresPool,
+) -> Result<Vec<AuthorizationPolicySnapshotRow>, ApiError> {
+    use crate::schema::{collections, groups, permissions};
+
+    let rows = with_connection(pool, async |conn| {
+        permissions::table
+            .inner_join(groups::table.on(permissions::group_id.eq(groups::id)))
+            .inner_join(collections::table.on(permissions::collection_id.eq(collections::id)))
+            .order_by((
+                permissions::collection_id.asc(),
+                permissions::group_id.asc(),
+            ))
+            .load::<(Permission, Group, Collection)>(conn)
+            .await
+    })
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(grant, group, collection)| {
+            AuthorizationPolicySnapshotRow::new(
+                grant_to_storage(grant),
+                group_to_storage(group),
+                collection_to_storage(collection),
+            )
+        })
+        .collect())
 }
 
 pub(crate) async fn list_local_collection_grants(

@@ -35,6 +35,7 @@ async fn metrics_endpoint_exports_prometheus_text(#[future(awt)] test_context: T
     let app = test::init_service(
         App::new()
             .app_data(context.pool.clone())
+            .app_data(crate::tests::app_context(&context.pool))
             .route("/metrics", web::get().to(metrics::scrape)),
     )
     .await;
@@ -90,9 +91,11 @@ async fn metrics_endpoint_is_best_effort_when_database_refresh_fails() {
     metrics::init().unwrap();
     clear_metrics_scrape_cache();
 
+    let pool = web::Data::new(unreachable_pool());
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(unreachable_pool()))
+            .app_data(pool.clone())
+            .app_data(crate::tests::app_context(&pool))
             .route("/metrics", web::get().to(metrics::scrape)),
     )
     .await;
@@ -258,6 +261,7 @@ async fn task_gauges_export_zero_for_bounded_kind_status_pairs(
     let app = test::init_service(
         App::new()
             .app_data(context.pool.clone())
+            .app_data(crate::tests::app_context(&context.pool))
             .route("/metrics", web::get().to(metrics::scrape)),
     )
     .await;
@@ -320,6 +324,7 @@ async fn task_terminal_gauge_exports_latest_finished_timestamp(
     let app = test::init_service(
         App::new()
             .app_data(context.pool.clone())
+            .app_data(crate::tests::app_context(&context.pool))
             .route("/metrics", web::get().to(metrics::scrape)),
     )
     .await;
@@ -364,10 +369,12 @@ async fn tracing_metrics_keep_stable_route_templates() {
         HttpResponse::Ok().finish()
     }
 
+    let pool = web::Data::new(unreachable_pool());
     let app = test::init_service(
         App::new()
             .wrap(TracingMiddleware::new())
-            .app_data(web::Data::new(unreachable_pool()))
+            .app_data(pool.clone())
+            .app_data(crate::tests::app_context(&pool))
             .route(
                 "/api/v1/classes/{class_id}/objects/{object_id}",
                 web::get().to(ok),
@@ -438,9 +445,11 @@ async fn scrape_recorded_metrics(record: impl FnOnce()) -> String {
     clear_metrics_scrape_cache();
     record();
 
+    let pool = web::Data::new(unreachable_pool());
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(unreachable_pool()))
+            .app_data(pool.clone())
+            .app_data(crate::tests::app_context(&pool))
             .route("/metrics", web::get().to(metrics::scrape)),
     )
     .await;

@@ -21,7 +21,17 @@ pub fn app_context(pool: &PostgresPool) -> Data<AppContext> {
         StorageHandle::postgres(pool.clone()),
         config.admin_groupname.clone(),
     );
-    Data::new(AppContext::postgres(pool.clone(), Arc::new(permissions)))
+    Data::new(app_context_with_permission_backend(
+        pool.clone(),
+        Arc::new(permissions),
+    ))
+}
+
+pub fn app_context_with_permission_backend(
+    pool: PostgresPool,
+    permissions: Arc<dyn PermissionBackend>,
+) -> AppContext {
+    AppContext::new(StorageHandle::postgres(pool), permissions)
 }
 
 fn create_token_header(token: &str) -> (http::header::HeaderName, String) {
@@ -115,7 +125,10 @@ pub async fn get_request_with_permission_backend(
     endpoint: &str,
     permissions: Arc<dyn PermissionBackend>,
 ) -> actix_web::dev::ServiceResponse {
-    let context = Data::new(AppContext::postgres(pool.clone(), permissions));
+    let context = Data::new(app_context_with_permission_backend(
+        pool.clone(),
+        permissions,
+    ));
     get_request_with_headers_and_context(pool, token, endpoint, Vec::new(), context).await
 }
 

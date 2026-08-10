@@ -12,7 +12,7 @@ use crate::models::{
 };
 use crate::pagination::{NEXT_CURSOR_HEADER, TOTAL_COUNT_HEADER};
 use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
-use crate::permissions::{AppContext, PermissionBackend, ResourceAttrs, ResourceKind};
+use crate::permissions::{PermissionBackend, ResourceAttrs, ResourceKind};
 use crate::storage::postgres::operations::computed_field::{
     class_computation_state_for, create_personal_definition, create_shared_definition,
     execute_computed_reindex_task, update_shared_definition,

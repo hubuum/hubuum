@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::storage::postgres::prelude::*;
 use async_trait::async_trait;
 use reqwest::Certificate;
 use treetop_client::{
@@ -11,19 +10,17 @@ use treetop_client::{
 
 use crate::config::AppConfig;
 use crate::errors::ApiError;
-use crate::models::search::{FilterField, QueryOptions, QueryParamsExt};
+use crate::models::search::{QueryOptions, QueryParamsExt};
 use crate::models::{
-    Collection, CollectionID, Group, GroupID, GroupPermission, Permission, Permissions,
-    PermissionsList,
+    Collection, CollectionID, GroupID, GroupPermission, Permission, Permissions, PermissionsList,
 };
 use crate::pagination::{known_count_or_skipped, paginate_in_memory};
-use crate::schema::collections;
-use crate::storage::StorageHandle;
-use crate::storage::postgres::with_connection;
+use crate::storage::{AuthorizationStorage, StorageHandle};
 use crate::utilities::bounded_file::{MAX_CERTIFICATE_BUNDLE_BYTES, read_bounded_regular_file};
 
 use super::backend::PermissionBackend;
 use super::observability::{record_authorize_many, record_is_admin, record_reverse_query};
+use super::storage::{collection_from_storage, group_from_storage};
 use super::types::{PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef};
 
 const BACKEND_KIND: &str = "treetop";
@@ -79,16 +76,6 @@ impl TreetopPermissionBackend {
         client.health().await.map_err(treetop_to_api_error)?;
 
         Ok(Self { client, storage })
-    }
-
-    #[doc(hidden)]
-    #[cfg(any(test, feature = "integration-test-support"))]
-    pub async fn connect_postgres(
-        url: &str,
-        cfg: &AppConfig,
-        pool: crate::storage::postgres::PostgresPool,
-    ) -> Result<Self, ApiError> {
-        Self::connect(url, cfg, StorageHandle::postgres(pool)).await
     }
 
     async fn authorize_cedar_requests(
@@ -372,14 +359,17 @@ impl PermissionBackend for TreetopPermissionBackend {
         principal: &PrincipalRef,
         permissions: &[Permissions],
     ) -> Result<Vec<Collection>, ApiError> {
-        // Enumerate candidates from the local DB, filter via Treetop.
+        // Enumerate candidates from storage, then filter via Treetop.
         // We load all collections without any permission filtering, then
         // use paginate_authorized to filter via Treetop batch authorization.
         let start = Instant::now();
-        let all_collections = with_connection(&self.storage, async |conn| {
-            collections::table.load::<Collection>(conn).await
-        })
-        .await?;
+        let all_collections = self
+            .storage
+            .list_authorization_collection_candidates()
+            .await?
+            .into_iter()
+            .map(collection_from_storage)
+            .collect::<Result<Vec<_>, _>>()?;
         let candidate_count = all_collections.len();
         let tested_permissions = if permissions.is_empty() {
             Permissions::all()
@@ -434,41 +424,15 @@ impl PermissionBackend for TreetopPermissionBackend {
         permissions_filter: &[Permissions],
         page: &QueryOptions,
     ) -> Result<(Vec<GroupPermission>, i64), ApiError> {
-        use crate::schema::groups::dsl::{
-            created_at, groupname, groups as groups_dsl, id, updated_at,
-        };
-        use crate::{date_search, numeric_search, string_search};
-
         let start = Instant::now();
         let collection_id = collection_id.id();
-
-        let mut group_query = groups_dsl.into_boxed();
-        for param in &page.filters {
-            let operator = param.operator.clone();
-            match param.field {
-                FilterField::Id => numeric_search!(group_query, param, operator, id),
-                FilterField::Name | FilterField::Groupname => {
-                    string_search!(group_query, param, operator, groupname)
-                }
-                FilterField::CreatedAt => {
-                    date_search!(group_query, param, operator, created_at)
-                }
-                FilterField::UpdatedAt => {
-                    date_search!(group_query, param, operator, updated_at)
-                }
-                FilterField::Permissions => {}
-                _ => {
-                    return Err(ApiError::BadRequest(format!(
-                        "Field '{}' isn't searchable (or does not exist) for permissions",
-                        param.field
-                    )));
-                }
-            }
-        }
-        let all_groups: Vec<Group> = with_connection(&self.storage, async |conn| {
-            group_query.load::<Group>(conn).await
-        })
-        .await?;
+        let all_groups = self
+            .storage
+            .list_authorization_group_candidates(page.clone())
+            .await?
+            .into_iter()
+            .map(group_from_storage)
+            .collect::<Result<Vec<_>, _>>()?;
         let candidate_count = all_groups.len();
 
         if all_groups.is_empty() {
