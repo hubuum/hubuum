@@ -18907,6 +18907,77 @@
             "bearer_auth": []
           }
         ]
+      },
+      "post": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Post Api V1 Search Stream",
+        "description": "Runs the same versioned structured resource-search DSL as POST /api/v1/search and returns server-sent events. The stream emits started, zero or more tagged result events, and one terminal done event carrying cursor metadata; execution failures after streaming starts produce a terminal error event.",
+        "operationId": "postApiV1SearchStream",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StructuredSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Structured search server-sent event stream",
+            "content": {
+              "text/event-stream": {}
+            }
+          },
+          "400": {
+            "description": "Invalid DSL or request envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds the structured-search size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content type is not application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
       }
     },
     "/api/v1/tasks": {
@@ -28667,6 +28738,72 @@
         },
         "additionalProperties": false
       },
+      "StructuredSearchDoneEvent": {
+        "type": "object",
+        "description": "Terminal success event emitted by the structured-search SSE endpoint.",
+        "required": [
+          "version",
+          "kind",
+          "page_limit"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/StructuredSearchResourceKind",
+            "description": "Resource kind shared by all preceding result events."
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque next-page cursor, or null at the final page."
+          },
+          "page_limit": {
+            "type": "integer",
+            "description": "Effective page size after applying server pagination limits.",
+            "minimum": 0
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Exact authorized count when requested; otherwise null."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "DSL version used to execute the request.",
+            "minimum": 0
+          }
+        }
+      },
+      "StructuredSearchErrorEvent": {
+        "type": "object",
+        "description": "Terminal failure event emitted after an SSE response has started.",
+        "required": [
+          "version",
+          "kind",
+          "message"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/StructuredSearchResourceKind",
+            "description": "Resource kind selected by the request."
+          },
+          "message": {
+            "type": "string",
+            "description": "Public API error message."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "DSL version supplied by the request.",
+            "minimum": 0
+          }
+        }
+      },
       "StructuredSearchExpression": {
         "oneOf": [
           {
@@ -29189,6 +29326,26 @@
           "asc",
           "desc"
         ]
+      },
+      "StructuredSearchStartedEvent": {
+        "type": "object",
+        "description": "First event emitted by the structured-search SSE endpoint.",
+        "required": [
+          "version",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/StructuredSearchResourceKind",
+            "description": "Resource kind selected by the request."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "DSL version used to execute the request.",
+            "minimum": 0
+          }
+        }
       },
       "StructuredSearchTarget": {
         "oneOf": [

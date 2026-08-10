@@ -6,8 +6,9 @@ resource:
 - `GET /api/v1/search` performs grouped plain-text discovery.
 - `GET /api/v1/search/stream` performs the same discovery over SSE.
 - `POST /api/v1/search` evaluates a versioned structured resource-search DSL.
+- `POST /api/v1/search/stream` streams that DSL over SSE.
 
-All three operations are read-only.
+All four operations are read-only.
 
 ## Plain-text discovery
 
@@ -57,11 +58,12 @@ timeout. A terminal `error` event replaces `done` when any batch fails.
 
 ## Structured resource search
 
-Use `POST /api/v1/search` when a query needs typed predicates or boolean
-expressions that would be ambiguous in a query string. Version 1 searches one
-resource kind per request: `collection`, `class`, `object`, `audit_event`, or
-`user`, `group`, or `service_account`. The request must use
-`Content-Type: application/json` and is limited to 64 KiB.
+Use `POST /api/v1/search` or `POST /api/v1/search/stream` when a query needs
+typed predicates or boolean expressions that would be ambiguous in a query
+string. Both operations accept the same request and execute the same search.
+Version 1 searches one resource kind per request: `collection`, `class`,
+`object`, `audit_event`, `user`, `group`, or `service_account`. The request must
+use `Content-Type: application/json` and is limited to 64 KiB.
 
 This is the complete request envelope:
 
@@ -509,9 +511,40 @@ a new DSL version. Unknown properties on the request, target, expression,
 predicate, related predicate, and sort objects remain errors so misspellings do
 not silently broaden a query.
 
-Version 1 returns a completed, globally sorted page. Progressive row streaming
-is not part of the POST contract: reachability and stable ordering must finish
-before the first row is final, and holding a database connection under client
-backpressure would reduce pool capacity. A future `POST /api/v1/search/stream`
-can expose progress or completed-page events without claiming that database
-rows are progressive.
+### Structured streaming
+
+`POST /api/v1/search/stream` returns `text/event-stream` and accepts the exact
+request envelope documented above. It emits these events in order:
+
+- one `started` event before search execution begins
+- zero or more `result` events, in the requested stable sort order
+- one terminal `done` event after successful execution
+- one terminal `error` event instead of results or `done` when execution fails
+
+The payload shapes are:
+
+```text
+event: started
+data: {"version":1,"kind":"object"}
+
+event: result
+data: {"kind":"object","resource":{...}}
+
+event: done
+data: {"version":1,"kind":"object","next":"...","total":42,"page_limit":100}
+```
+
+An `error` payload contains `version`, `kind`, and the public `message`. Request
+envelope failures that can be detected before streaming, such as malformed
+JSON, an unsupported DSL version, an oversized body, or an incorrect content
+type, use the normal HTTP `ApiError` response. Resolution, authorization, cursor,
+and database failures discovered after the SSE response starts use the terminal
+`error` event because the HTTP status and headers have already been sent.
+
+Structured results are deliberately page-progressive, not database-row
+progressive. Permission-aware reachability, exact totals, and stable ordering
+must finish before the first result is final. The completed page releases its
+database connection before result events are paced by the client, preventing a
+slow or disconnected consumer from occupying the connection pool. A disconnect
+before completion drops the pending search future; database statements remain
+bounded by the configured statement timeout.
