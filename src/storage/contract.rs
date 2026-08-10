@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use super::{
-    AuthenticationStorage, ClassRelationStore, ClassStore, CollectionStore, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, MetricsStorage,
-    ObjectRelationStore, ObjectStore, OperationalStateStorage, PostgresStorage,
+    AuthenticationStorage, AuthorizationStorage, ClassRelationStore, ClassStore, CollectionStore,
+    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventRetentionStorage,
+    MetricsStorage, ObjectRelationStore, ObjectStore, OperationalStateStorage, PostgresStorage,
     TokenRetentionStorage, observed::ObservedLifecycleStorage,
 };
 
@@ -62,6 +62,7 @@ mod sealed {
 pub(crate) trait StorageBackend:
     LifecycleStorage
     + AuthenticationStorage
+    + AuthorizationStorage
     + EventDeliveryStorage
     + EventFanoutStorage
     + EventHealthStorage

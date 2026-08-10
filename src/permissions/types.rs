@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::errors::ApiError;
 use crate::models::Permissions;
-use crate::storage::postgres::with_connection;
+use crate::storage::{AuthorizationStorage, storage_handle};
 use crate::traits::PrincipalIdAccessor;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,19 +30,11 @@ impl PrincipalRef {
     where
         S: PrincipalIdAccessor + ?Sized,
     {
-        use crate::schema::group_memberships::dsl::{group_id, group_memberships, principal_id};
-        use crate::storage::postgres::prelude::*;
-
         let user_id = subject.principal_id();
-        let group_ids = with_connection(pool, async |conn| {
-            group_memberships
-                .filter(principal_id.eq(user_id))
-                .select(group_id)
-                .load::<i32>(conn)
-                .await
-        })
-        .await?;
-        Ok(Self::new(user_id, group_ids))
+        let principal = storage_handle(pool)
+            .load_authorization_principal(user_id)
+            .await?;
+        Ok(Self::new(user_id, principal.into_group_ids()))
     }
 }
 
@@ -214,8 +206,8 @@ impl ResourceRef {
     }
 
     /// Construct the global System resource. Currently only Treetop's
-    /// `is_admin` dispatches against it; the SQL backend reads the admin
-    /// group directly. Marked `dead_code`-allow so a build without the
+    /// `is_admin` dispatches against it; the local backend checks membership in
+    /// the configured admin group. Marked `dead_code`-allow so a build without the
     /// optional Treetop backend doesn't lint the helper away.
     pub fn system() -> Self {
         Self {

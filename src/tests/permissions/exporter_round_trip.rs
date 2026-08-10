@@ -26,6 +26,7 @@ mod tests {
         PermissionDecision, PermissionRequest, PrincipalRef, ResourceAttrs, ResourceKind,
         ResourceRef,
     };
+    use crate::storage::StorageHandle;
     use crate::tests::{
         create_collection_fixture, create_test_group, create_test_user, get_pool_and_config,
     };
@@ -34,8 +35,8 @@ mod tests {
     #[actix_test]
     async fn exported_cedar_grants_same_non_relation_decisions_as_local() {
         let (pool, _) = get_pool_and_config().await;
-        let local: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::postgres(
-            pool.clone(),
+        let local: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
+            StorageHandle::postgres(pool.clone()),
             "admin".to_string(),
         ));
 
@@ -184,8 +185,8 @@ mod tests {
     #[actix_test]
     async fn exporter_relation_permits_emit_or_doubled_rules() {
         let (pool, _) = get_pool_and_config().await;
-        let local: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::postgres(
-            pool.clone(),
+        let local: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
+            StorageHandle::postgres(pool.clone()),
             "admin".to_string(),
         ));
 

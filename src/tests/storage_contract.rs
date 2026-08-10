@@ -6,14 +6,19 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use crate::events::{EventFanoutSettings, EventRetentionSettings};
 use crate::models::CollectionID;
 use crate::models::TokenRetentionSettings;
+use crate::models::identity::LOCAL_IDENTITY_SCOPE;
+use crate::models::search::QueryOptions;
 use crate::services::Services;
 use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
-    AuthenticationStorage, AuthenticationTokenScopeQuery, EventArchive, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventRetentionStorage, MetricsStorage,
-    OperationalStateStorage, RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind,
-    StorageError, TokenRetentionStorage,
+    AuthenticationStorage, AuthenticationTokenScopeQuery, AuthorizationCollectionAccessQuery,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrantKey,
+    AuthorizationGrantMutation, AuthorizationGroupMembershipQuery, AuthorizationPermission,
+    AuthorizationStorage, EventArchive, EventDeliveryStorage, EventFanoutStorage,
+    EventHealthStorage, EventRetentionStorage, MetricsStorage, OperationalStateStorage,
+    RetainedEvent, STORAGE_CONTRACT_VERSION, StorageBackendKind, StorageError,
+    TokenRetentionStorage,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -94,6 +99,159 @@ async fn every_available_storage_backend_supplies_authentication_projections() {
     user.delete_without_events(pool.get_ref())
         .await
         .expect("authentication compatibility fixture should be removed");
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_supplies_local_authorization_data() {
+    let _permit = postgres_permit().await;
+    let pool = pool();
+    let user = crate::tests::create_user_with_params(
+        pool.get_ref(),
+        &prefix("authorization_user"),
+        "testpassword",
+    )
+    .await;
+    let group = crate::tests::create_test_group(pool.get_ref()).await;
+    group
+        .add_member_without_events(pool.get_ref(), &user)
+        .await
+        .expect("authorization compatibility membership should be created");
+    let fixture = crate::tests::create_collection_fixture(
+        pool.get_ref(),
+        &prefix("authorization_collection"),
+    )
+    .await;
+
+    for kind in StorageBackendKind::ALL {
+        match kind {
+            StorageBackendKind::Postgresql => {
+                let backend = StorageHandle::postgres(pool.get_ref().clone());
+                let principal = backend
+                    .load_authorization_principal(user.id)
+                    .await
+                    .expect("certified backend should supply authorization principal facts");
+                assert!(principal.group_ids().contains(&group.id));
+
+                let membership = AuthorizationGroupMembershipQuery::new(
+                    user.id,
+                    &group.groupname,
+                    LOCAL_IDENTITY_SCOPE,
+                );
+                assert!(
+                    backend
+                        .authorization_principal_is_group_member(membership)
+                        .await
+                        .expect("certified backend should query group membership")
+                );
+
+                let access_query = || {
+                    AuthorizationCollectionAccessQuery::new(
+                        user.id,
+                        fixture.collection.id,
+                        [AuthorizationPermission::ReadCollection],
+                    )
+                };
+                assert!(
+                    !backend
+                        .authorize_local_collection(access_query())
+                        .await
+                        .expect("missing local grant should deny")
+                );
+
+                let key = AuthorizationGrantKey::new(fixture.collection.id, group.id);
+                backend
+                    .apply_local_collection_grant(AuthorizationGrantMutation::new(
+                        key,
+                        [AuthorizationPermission::ReadCollection],
+                        false,
+                    ))
+                    .await
+                    .expect("certified backend should apply a local grant");
+                let grant = backend
+                    .get_local_collection_grant(key)
+                    .await
+                    .expect("certified backend should load a local grant")
+                    .expect("applied local grant should exist");
+                assert!(
+                    grant
+                        .permissions()
+                        .contains(&AuthorizationPermission::ReadCollection)
+                );
+                assert!(
+                    backend
+                        .authorize_local_collection(access_query())
+                        .await
+                        .expect("applied local grant should authorize")
+                );
+
+                let collections = backend
+                    .local_authorized_collections(AuthorizationCollectionsQuery::new(
+                        user.id,
+                        [AuthorizationPermission::ReadCollection],
+                    ))
+                    .await
+                    .expect("certified backend should run reverse authorization queries");
+                assert!(
+                    collections
+                        .iter()
+                        .any(|collection| collection.id() == fixture.collection.id)
+                );
+
+                let page = backend
+                    .list_local_collection_grants(AuthorizationCollectionGrantListQuery::new(
+                        fixture.collection.id,
+                        [AuthorizationPermission::ReadCollection],
+                        QueryOptions {
+                            filters: Vec::new(),
+                            sort: Vec::new(),
+                            limit: None,
+                            cursor: None,
+                            include_total: true,
+                        },
+                    ))
+                    .await
+                    .expect("certified backend should list local grants");
+                let (items, total_count) = page.into_parts();
+                assert!(total_count >= 1);
+                assert!(!items.is_empty());
+
+                backend
+                    .revoke_local_collection_grant(AuthorizationGrantMutation::new(
+                        key,
+                        [AuthorizationPermission::ReadCollection],
+                        false,
+                    ))
+                    .await
+                    .expect("certified backend should revoke selected local permissions");
+                assert!(
+                    !backend
+                        .authorize_local_collection(access_query())
+                        .await
+                        .expect("revoked local grant should deny")
+                );
+                backend
+                    .revoke_all_local_collection_grants(key)
+                    .await
+                    .expect("certified backend should remove the local grant row");
+            }
+        }
+    }
+
+    group
+        .remove_member_without_events(&user, pool.get_ref())
+        .await
+        .expect("authorization compatibility membership should be removed");
+    group
+        .delete_without_events(pool.get_ref())
+        .await
+        .expect("authorization compatibility group should be removed");
+    fixture
+        .cleanup()
+        .await
+        .expect("authorization compatibility collection should be removed");
+    user.delete_without_events(pool.get_ref())
+        .await
+        .expect("authorization compatibility user should be removed");
 }
 
 #[actix_web::test]

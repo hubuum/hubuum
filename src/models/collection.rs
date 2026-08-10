@@ -14,8 +14,8 @@ use crate::models::{Permission, Permissions, ResourceRevision};
 use crate::permissions::{AuthzTarget, ResourceAttrs, ResourceKind, ResourceRef};
 use crate::schema::collections;
 use crate::storage::StorageContext;
-use crate::storage::postgres::operations::authz::AuthzSubject;
 use crate::storage::postgres::operations::collection as collection_backend;
+use crate::traits::AuthzSubject;
 use crate::traits::{CollectionAccessors, SelfAccessors};
 
 #[derive(
@@ -165,7 +165,7 @@ pub async fn principal_on_paginated_with_total_count<C, S, T>(
 ) -> Result<(Vec<GroupPermission>, i64), ApiError>
 where
     C: StorageContext,
-    S: crate::storage::postgres::operations::authz::AuthzSubject,
+    S: AuthzSubject,
     T: CollectionAccessors,
 {
     collection_backend::principal_on_paginated_with_total_count_from_backend(
@@ -184,7 +184,7 @@ pub async fn effective_principal_on<C, S, T>(
 ) -> Result<Vec<EffectiveGroupPermission>, ApiError>
 where
     C: StorageContext,
-    S: crate::storage::postgres::operations::authz::AuthzSubject,
+    S: AuthzSubject,
     T: CollectionAccessors,
 {
     collection_backend::effective_principal_on_from_backend(backend, principal, collection_ref)

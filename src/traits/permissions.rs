@@ -5,10 +5,9 @@ use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{GroupID, Permission, Permissions, PermissionsList};
 use crate::storage::StorageContext;
-use crate::storage::capabilities::authz::AuthzSubject;
 use crate::storage::capabilities::permissions::PermissionControllerBackend;
 
-use super::CollectionAccessors;
+use super::{AuthzSubject, CollectionAccessors};
 
 pub trait PermissionController: Serialize + CollectionAccessors {
     /// Check if the user has all the given permissions on the object.

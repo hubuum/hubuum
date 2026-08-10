@@ -37,7 +37,7 @@ impl TaskID {
     pub async fn load_authorized_backup(
         &self,
         pool: &impl crate::storage::StorageContext,
-        requestor: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+        requestor: &impl AuthzSubject,
     ) -> Result<TaskRecord, ApiError> {
         self.load_authorized_of_kind(pool, requestor, Some(TaskKind::Backup), "Backup task")
             .await

@@ -158,7 +158,7 @@ async fn authorized_page_preserves_order_across_batch_boundaries() {
 }
 
 /// Wrapper that forces the slow-path branch by returning false from
-/// `supports_sql_visibility_pushdown`.
+/// `supports_storage_visibility_filtering`.
 struct ForceSlowPath {
     inner: Arc<LocalPermissionBackend>,
 }
@@ -255,11 +255,11 @@ impl PermissionBackend for ForceSlowPath {
         "local-forced-slowpath"
     }
 
-    fn supports_sql_visibility_pushdown(&self) -> bool {
+    fn supports_storage_visibility_filtering(&self) -> bool {
         false
     }
 
-    fn uses_sql_permission_store(&self) -> bool {
+    fn uses_local_permission_store(&self) -> bool {
         true
     }
 
@@ -271,13 +271,13 @@ impl PermissionBackend for ForceSlowPath {
 #[actix_test]
 async fn paginate_authorized_filters_pages_correctly_under_slow_path() {
     let (pool, _) = get_pool_and_config().await;
-    let local = Arc::new(LocalPermissionBackend::postgres(
-        pool.clone(),
+    let local = Arc::new(LocalPermissionBackend::new(
+        crate::storage::StorageHandle::postgres(pool.clone()),
         "admin".to_string(),
     ));
     let backend = ForceSlowPath { inner: local };
-    assert!(!backend.supports_sql_visibility_pushdown());
-    assert!(backend.uses_sql_permission_store());
+    assert!(!backend.supports_storage_visibility_filtering());
+    assert!(backend.uses_local_permission_store());
     assert!(backend.supports_permission_provenance());
 
     let user = create_test_user(&pool).await;

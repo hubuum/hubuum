@@ -8,6 +8,7 @@ use crate::config::{
 use crate::middlewares::tracing::TracingMiddleware;
 use crate::permissions::{AppContext, LocalPermissionBackend, PermissionBackend};
 use crate::restores::RestoreSettings;
+use crate::storage::StorageHandle;
 use crate::storage::postgres::PostgresPool;
 use actix_web::{App, http, test, web::Data};
 use serde::Serialize;
@@ -16,8 +17,10 @@ use std::sync::Arc;
 pub fn app_context(pool: &PostgresPool) -> Data<AppContext> {
     let config = crate::tests::integration_test_config()
         .expect("integration test configuration must be valid");
-    let permissions =
-        LocalPermissionBackend::postgres(pool.clone(), config.admin_groupname.clone());
+    let permissions = LocalPermissionBackend::new(
+        StorageHandle::postgres(pool.clone()),
+        config.admin_groupname.clone(),
+    );
     Data::new(AppContext::postgres(pool.clone(), Arc::new(permissions)))
 }
 

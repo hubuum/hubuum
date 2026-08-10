@@ -260,7 +260,7 @@ async fn computed_list_visibility(
 ) -> Result<Option<ComputedListVisibility>, ApiError> {
     if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         return can_list_objects_in_class(context, requestor, class)
             .await

@@ -685,7 +685,7 @@ where
     let search_spec = params.search_spec();
     let external_backend = backend
         .permission_backend()
-        .filter(|permission_backend| !permission_backend.supports_sql_visibility_pushdown());
+        .filter(|permission_backend| !permission_backend.supports_storage_visibility_filtering());
     let principal = if external_backend.is_some() {
         Some(PrincipalRef::load(backend, user).await?)
     } else {
@@ -754,7 +754,7 @@ where
     let search_spec = params.search_spec();
     let external_backend = backend
         .permission_backend()
-        .filter(|permission_backend| !permission_backend.supports_sql_visibility_pushdown());
+        .filter(|permission_backend| !permission_backend.supports_storage_visibility_filtering());
     let principal = if external_backend.is_some() {
         Some(PrincipalRef::load(backend, user).await?)
     } else {

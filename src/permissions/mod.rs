@@ -3,6 +3,7 @@ pub mod context;
 pub mod export;
 pub mod local;
 pub mod observability;
+mod storage;
 #[cfg(feature = "permissions-treetop")]
 pub mod treetop;
 pub mod types;

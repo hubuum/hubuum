@@ -173,17 +173,18 @@ pub trait PermissionBackend: Send + Sync {
     /// decision against the system resource.
     async fn is_admin(&self, principal: &PrincipalRef) -> Result<bool, ApiError>;
 
-    /// Whether list/search visibility can be pushed into the existing SQL
-    /// queries. Backends returning `false` must authorize candidate rows.
-    fn supports_sql_visibility_pushdown(&self) -> bool;
+    /// Whether storage reads already enforce this backend's visibility policy.
+    /// Backends returning `false` must authorize the candidate resources after
+    /// loading them from storage.
+    fn supports_storage_visibility_filtering(&self) -> bool;
 
-    /// Whether point authorization and permission-row queries should use the
-    /// local SQL permission store. Kept separate from visibility pushdown so
-    /// hybrid backends can independently choose each strategy.
-    fn uses_sql_permission_store(&self) -> bool;
+    /// Whether point authorization and grant queries use Hubuum's local
+    /// permission store. Kept separate from visibility filtering so hybrid
+    /// backends can independently choose each strategy.
+    fn uses_local_permission_store(&self) -> bool;
 
     /// Whether effective/granting-group provenance is available. A backend
-    /// may authorize from SQL without exposing provenance, or provide
-    /// provenance through another authoritative store.
+    /// may authorize from the local store without exposing provenance, or
+    /// provide provenance through another authoritative store.
     fn supports_permission_provenance(&self) -> bool;
 }

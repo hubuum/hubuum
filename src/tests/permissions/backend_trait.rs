@@ -14,6 +14,7 @@ use crate::permissions::local::LocalPermissionBackend;
 use crate::permissions::{
     PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef, ResourceRef,
 };
+use crate::storage::StorageHandle;
 use crate::tests::permissions::conformance::{
     ConformanceBackend, ConformanceFixture, assert_backend_conformance,
 };
@@ -32,8 +33,8 @@ fn unique_label(prefix: &str) -> String {
 #[actix_test]
 async fn local_backend_grants_then_authorizes_collection_read() {
     let (pool, _) = get_pool_and_config().await;
-    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::postgres(
-        pool.clone(),
+    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
+        StorageHandle::postgres(pool.clone()),
         "admin".to_string(),
     ));
 
@@ -109,8 +110,8 @@ async fn local_backend_grants_then_authorizes_collection_read() {
 #[actix_test]
 async fn local_backend_authorize_many_returns_per_request_decisions() {
     let (pool, _) = get_pool_and_config().await;
-    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::postgres(
-        pool.clone(),
+    let backend: Arc<dyn PermissionBackend> = Arc::new(LocalPermissionBackend::new(
+        StorageHandle::postgres(pool.clone()),
         "admin".to_string(),
     ));
 
@@ -177,7 +178,10 @@ async fn local_backend_satisfies_the_shared_authorization_corpus() {
 
     let granted = create_collection_fixture(&pool, &unique_label("conformance_granted")).await;
     let denied = create_collection_fixture(&pool, &unique_label("conformance_denied")).await;
-    let backend = LocalPermissionBackend::new(pool.clone(), administrator_group.groupname.clone());
+    let backend = LocalPermissionBackend::new(
+        StorageHandle::postgres(pool.clone()),
+        administrator_group.groupname.clone(),
+    );
     backend
         .apply_permissions(
             CollectionID::new(granted.collection.id).unwrap(),

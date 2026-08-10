@@ -11,6 +11,7 @@ use crate::models::{
 };
 use crate::schema::service_accounts;
 use crate::storage::StorageContext;
+use crate::storage::postgres::operations::authz::AuthzSubject as PostgresAuthzSubject;
 use crate::storage::postgres::operations::identity::identity_scope_by_name;
 use crate::storage::postgres::operations::principal::{
     InsertPrincipalRecord, lock_principal_revision_conn, principal_revision_conn,

@@ -17,8 +17,7 @@ pub(crate) mod active_tokens {
 
 pub(crate) mod authz {
     pub use crate::storage::postgres::operations::authz::{
-        AuthzSubject, PrincipalIdAccessor, scope_allows, scope_allows_resource,
-        scope_allows_resources,
+        scope_allows, scope_allows_resource, scope_allows_resources,
     };
 }
 

@@ -10,7 +10,9 @@ use crate::permissions::visibility::{
     AuthorizedObjectIds, authorize_all_candidates, authorize_resource_permissions,
 };
 use crate::permissions::{PermissionBackend, PrincipalRef};
-use crate::storage::postgres::operations::authz::scope_allows;
+use crate::storage::postgres::operations::authz::{
+    AuthzSubject as PostgresAuthzSubject, scope_allows,
+};
 use crate::storage::postgres::operations::computed_field::{
     ComputedQuerySnapshot, computed_filter_predicate, object_cursor_sql_fields,
 };

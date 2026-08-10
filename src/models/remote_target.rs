@@ -916,7 +916,7 @@ impl RemoteTarget {
 
 pub async fn authorize_remote_invocation<C>(
     backend: &C,
-    actor: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    actor: &impl crate::traits::AuthzSubject,
     scopes: Option<&TokenScope>,
     target: &RemoteTarget,
     subject: &RemoteInvocationSubject,

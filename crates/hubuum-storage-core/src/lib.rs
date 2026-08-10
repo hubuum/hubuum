@@ -4,10 +4,19 @@
 //! asynchronous-runtime dependencies. Application services and adapters share
 //! these values without reversing the dependency from storage into the server.
 
+mod authorization;
 mod events;
 mod identity;
 mod operational;
 
+pub use authorization::{
+    AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
+    AuthorizationGroupGrantPage, AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery,
+    AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
+    AuthorizationPrincipal, AuthorizationStorage,
+};
 pub use events::{
     EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
     EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,

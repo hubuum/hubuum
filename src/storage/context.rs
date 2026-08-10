@@ -7,12 +7,16 @@ use crate::storage::observed::observe_storage_call;
 use crate::storage::postgres::PostgresPool;
 use crate::storage::{
     AuthenticationIdentity, AuthenticationStorage, AuthenticationTokenScope,
-    AuthenticationTokenScopeQuery, DynLifecycleStorage, EventArchive, EventDeliveryBatch,
-    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
-    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
-    InventoryGaugeSnapshot, MetricsStorage, OperationalStateStorage, PostgresStorage,
-    ReadinessSnapshot, StorageBackend, StorageBackendDescriptor, StorageError, StoragePoolState,
-    TaskGaugeSnapshot, TokenRetentionStorage,
+    AuthenticationTokenScopeQuery, AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroupGrantPage,
+    AuthorizationGroupMembershipQuery, AuthorizationPrincipal, AuthorizationStorage,
+    DynLifecycleStorage, EventArchive, EventDeliveryBatch, EventDeliveryClaim,
+    EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
+    EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary, InventoryGaugeSnapshot,
+    MetricsStorage, OperationalStateStorage, PostgresStorage, ReadinessSnapshot, StorageBackend,
+    StorageBackendDescriptor, StorageError, StoragePoolState, TaskGaugeSnapshot,
+    TokenRetentionStorage,
 };
 use async_trait::async_trait;
 
@@ -105,6 +109,180 @@ impl AuthenticationStorage for StorageHandle {
                 match &self.implementation {
                     BackendImplementation::Postgresql(backend) => {
                         backend.load_authentication_token_scope(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl AuthorizationStorage for StorageHandle {
+    async fn load_authorization_principal(
+        &self,
+        principal_id: i32,
+    ) -> Result<AuthorizationPrincipal, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "load_principal",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.load_authorization_principal(principal_id).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn authorization_principal_is_group_member(
+        &self,
+        query: AuthorizationGroupMembershipQuery,
+    ) -> Result<bool, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "principal_is_group_member",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.authorization_principal_is_group_member(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn authorize_local_collection(
+        &self,
+        query: AuthorizationCollectionAccessQuery,
+    ) -> Result<bool, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "authorize_local_collection",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.authorize_local_collection(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn local_authorized_collections(
+        &self,
+        query: AuthorizationCollectionsQuery,
+    ) -> Result<Vec<AuthorizationCollection>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "local_authorized_collections",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.local_authorized_collections(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn list_local_collection_grants(
+        &self,
+        query: AuthorizationCollectionGrantListQuery,
+    ) -> Result<AuthorizationGroupGrantPage, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "list_local_collection_grants",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.list_local_collection_grants(query).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn get_local_collection_grant(
+        &self,
+        key: AuthorizationGrantKey,
+    ) -> Result<Option<AuthorizationGrant>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "get_local_collection_grant",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.get_local_collection_grant(key).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn apply_local_collection_grant(
+        &self,
+        mutation: AuthorizationGrantMutation,
+    ) -> Result<AuthorizationGrant, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "apply_local_collection_grant",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.apply_local_collection_grant(mutation).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn revoke_local_collection_grant(
+        &self,
+        mutation: AuthorizationGrantMutation,
+    ) -> Result<AuthorizationGrant, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "revoke_local_collection_grant",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.revoke_local_collection_grant(mutation).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn revoke_all_local_collection_grants(
+        &self,
+        key: AuthorizationGrantKey,
+    ) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "authorization",
+            "revoke_all_local_collection_grants",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.revoke_all_local_collection_grants(key).await
                     }
                 }
             },

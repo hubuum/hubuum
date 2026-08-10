@@ -219,8 +219,8 @@ fn task_worker_context(context: AppContext) -> AppContext {
     let config = get_config().expect("test task worker requires database configuration");
     let pool =
         crate::storage::postgres::init_postgres_pool(&config.database_url, config.db_pool_size);
-    let permissions = std::sync::Arc::new(LocalPermissionBackend::postgres(
-        pool.clone(),
+    let permissions = std::sync::Arc::new(LocalPermissionBackend::new(
+        crate::storage::StorageHandle::postgres(pool.clone()),
         config.admin_groupname.clone(),
     ));
     AppContext::postgres(pool, permissions)

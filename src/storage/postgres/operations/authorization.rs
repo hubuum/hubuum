@@ -1,0 +1,367 @@
+use diesel::dsl::{exists, select};
+
+use crate::errors::ApiError;
+use crate::models::{
+    Collection, CollectionID, Group, GroupID, GroupPermission, Permission, Permissions,
+    PermissionsList, PrincipalID,
+};
+use crate::storage::postgres::operations::collection as collection_backend;
+use crate::storage::postgres::prelude::*;
+use crate::storage::postgres::{PostgresPool, with_connection};
+use crate::storage::{
+    AuthorizationCollection, AuthorizationCollectionAccessQuery,
+    AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
+    AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup, AuthorizationGroupGrant,
+    AuthorizationGroupGrantPage, AuthorizationGroupIdentity, AuthorizationGroupMembershipQuery,
+    AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
+    AuthorizationPrincipal,
+};
+use crate::traits::PermissionController;
+
+const fn permission_from_storage(permission: AuthorizationPermission) -> Permissions {
+    match permission {
+        AuthorizationPermission::ReadCollection => Permissions::ReadCollection,
+        AuthorizationPermission::UpdateCollection => Permissions::UpdateCollection,
+        AuthorizationPermission::DeleteCollection => Permissions::DeleteCollection,
+        AuthorizationPermission::DelegateCollection => Permissions::DelegateCollection,
+        AuthorizationPermission::CreateClass => Permissions::CreateClass,
+        AuthorizationPermission::ReadClass => Permissions::ReadClass,
+        AuthorizationPermission::UpdateClass => Permissions::UpdateClass,
+        AuthorizationPermission::DeleteClass => Permissions::DeleteClass,
+        AuthorizationPermission::CreateObject => Permissions::CreateObject,
+        AuthorizationPermission::ReadObject => Permissions::ReadObject,
+        AuthorizationPermission::UpdateObject => Permissions::UpdateObject,
+        AuthorizationPermission::DeleteObject => Permissions::DeleteObject,
+        AuthorizationPermission::CreateClassRelation => Permissions::CreateClassRelation,
+        AuthorizationPermission::ReadClassRelation => Permissions::ReadClassRelation,
+        AuthorizationPermission::UpdateClassRelation => Permissions::UpdateClassRelation,
+        AuthorizationPermission::DeleteClassRelation => Permissions::DeleteClassRelation,
+        AuthorizationPermission::CreateObjectRelation => Permissions::CreateObjectRelation,
+        AuthorizationPermission::ReadObjectRelation => Permissions::ReadObjectRelation,
+        AuthorizationPermission::UpdateObjectRelation => Permissions::UpdateObjectRelation,
+        AuthorizationPermission::DeleteObjectRelation => Permissions::DeleteObjectRelation,
+        AuthorizationPermission::ReadTemplate => Permissions::ReadTemplate,
+        AuthorizationPermission::CreateTemplate => Permissions::CreateTemplate,
+        AuthorizationPermission::UpdateTemplate => Permissions::UpdateTemplate,
+        AuthorizationPermission::DeleteTemplate => Permissions::DeleteTemplate,
+        AuthorizationPermission::ReadRemoteTarget => Permissions::ReadRemoteTarget,
+        AuthorizationPermission::CreateRemoteTarget => Permissions::CreateRemoteTarget,
+        AuthorizationPermission::UpdateRemoteTarget => Permissions::UpdateRemoteTarget,
+        AuthorizationPermission::DeleteRemoteTarget => Permissions::DeleteRemoteTarget,
+        AuthorizationPermission::ExecuteRemoteTarget => Permissions::ExecuteRemoteTarget,
+        AuthorizationPermission::ReadAudit => Permissions::ReadAudit,
+        AuthorizationPermission::ManageEventSubscription => Permissions::ManageEventSubscription,
+    }
+}
+
+fn permission_to_storage(permission: Permissions) -> AuthorizationPermission {
+    match permission {
+        Permissions::ReadCollection => AuthorizationPermission::ReadCollection,
+        Permissions::UpdateCollection => AuthorizationPermission::UpdateCollection,
+        Permissions::DeleteCollection => AuthorizationPermission::DeleteCollection,
+        Permissions::DelegateCollection => AuthorizationPermission::DelegateCollection,
+        Permissions::CreateClass => AuthorizationPermission::CreateClass,
+        Permissions::ReadClass => AuthorizationPermission::ReadClass,
+        Permissions::UpdateClass => AuthorizationPermission::UpdateClass,
+        Permissions::DeleteClass => AuthorizationPermission::DeleteClass,
+        Permissions::CreateObject => AuthorizationPermission::CreateObject,
+        Permissions::ReadObject => AuthorizationPermission::ReadObject,
+        Permissions::UpdateObject => AuthorizationPermission::UpdateObject,
+        Permissions::DeleteObject => AuthorizationPermission::DeleteObject,
+        Permissions::CreateClassRelation => AuthorizationPermission::CreateClassRelation,
+        Permissions::ReadClassRelation => AuthorizationPermission::ReadClassRelation,
+        Permissions::UpdateClassRelation => AuthorizationPermission::UpdateClassRelation,
+        Permissions::DeleteClassRelation => AuthorizationPermission::DeleteClassRelation,
+        Permissions::CreateObjectRelation => AuthorizationPermission::CreateObjectRelation,
+        Permissions::ReadObjectRelation => AuthorizationPermission::ReadObjectRelation,
+        Permissions::UpdateObjectRelation => AuthorizationPermission::UpdateObjectRelation,
+        Permissions::DeleteObjectRelation => AuthorizationPermission::DeleteObjectRelation,
+        Permissions::ReadTemplate => AuthorizationPermission::ReadTemplate,
+        Permissions::CreateTemplate => AuthorizationPermission::CreateTemplate,
+        Permissions::UpdateTemplate => AuthorizationPermission::UpdateTemplate,
+        Permissions::DeleteTemplate => AuthorizationPermission::DeleteTemplate,
+        Permissions::ReadRemoteTarget => AuthorizationPermission::ReadRemoteTarget,
+        Permissions::CreateRemoteTarget => AuthorizationPermission::CreateRemoteTarget,
+        Permissions::UpdateRemoteTarget => AuthorizationPermission::UpdateRemoteTarget,
+        Permissions::DeleteRemoteTarget => AuthorizationPermission::DeleteRemoteTarget,
+        Permissions::ExecuteRemoteTarget => AuthorizationPermission::ExecuteRemoteTarget,
+        Permissions::ReadAudit => AuthorizationPermission::ReadAudit,
+        Permissions::ManageEventSubscription => AuthorizationPermission::ManageEventSubscription,
+    }
+}
+
+fn collection_to_storage(collection: Collection) -> AuthorizationCollection {
+    AuthorizationCollection::new(
+        collection.id,
+        collection.name,
+        collection.description,
+        collection.created_at,
+        collection.updated_at,
+        collection.parent_collection_id,
+        collection.revision.get(),
+    )
+}
+
+fn group_to_storage(group: Group) -> AuthorizationGroup {
+    AuthorizationGroup::new(
+        AuthorizationGroupIdentity::new(
+            group.id,
+            group.groupname,
+            group.identity_scope_id,
+            group.managed_by,
+            group.external_key,
+        ),
+        AuthorizationGroupProfile::new(
+            group.description,
+            group.created_at,
+            group.updated_at,
+            group.revision.get(),
+        ),
+        AuthorizationGroupSyncState::new(group.last_sync_attempted_at, group.last_sync_success_at),
+    )
+}
+
+fn grant_to_storage(grant: Permission) -> AuthorizationGrant {
+    AuthorizationGrant::new(
+        grant.id,
+        grant.collection_id,
+        grant.group_id,
+        grant.granted().into_iter().map(permission_to_storage),
+        grant.created_at,
+        grant.updated_at,
+    )
+}
+
+fn group_grant_to_storage(row: GroupPermission) -> AuthorizationGroupGrant {
+    AuthorizationGroupGrant::new(
+        group_to_storage(row.group),
+        grant_to_storage(row.permission),
+    )
+}
+
+pub(crate) async fn load_authorization_principal(
+    pool: &PostgresPool,
+    principal_id: i32,
+) -> Result<AuthorizationPrincipal, ApiError> {
+    use crate::schema::group_memberships;
+
+    let group_ids = with_connection(pool, async |conn| {
+        group_memberships::table
+            .filter(group_memberships::principal_id.eq(principal_id))
+            .order_by(group_memberships::group_id.asc())
+            .select(group_memberships::group_id)
+            .load::<i32>(conn)
+            .await
+    })
+    .await?;
+    Ok(AuthorizationPrincipal::new(principal_id, group_ids))
+}
+
+pub(crate) async fn authorization_principal_is_group_member(
+    pool: &PostgresPool,
+    query: AuthorizationGroupMembershipQuery,
+) -> Result<bool, ApiError> {
+    use crate::schema::{group_memberships, groups, identity_scopes};
+
+    let principal_id = query.principal_id();
+    let group_name = query.group_name().to_string();
+    let identity_scope = query.identity_scope().to_string();
+    with_connection(pool, async move |conn| {
+        select(exists(
+            group_memberships::table
+                .inner_join(groups::table)
+                .inner_join(
+                    identity_scopes::table.on(groups::identity_scope_id.eq(identity_scopes::id)),
+                )
+                .filter(group_memberships::principal_id.eq(principal_id))
+                .filter(groups::groupname.eq(group_name))
+                .filter(identity_scopes::name.eq(identity_scope)),
+        ))
+        .get_result(conn)
+        .await
+    })
+    .await
+}
+
+pub(crate) async fn authorize_local_collection(
+    pool: &PostgresPool,
+    query: AuthorizationCollectionAccessQuery,
+) -> Result<bool, ApiError> {
+    use crate::models::permissions::PermissionFilter;
+    use crate::schema::{group_memberships, permissions};
+
+    let group_ids = group_memberships::table
+        .filter(group_memberships::principal_id.eq(query.principal_id()))
+        .select(group_memberships::group_id);
+    let mut permission_query = permissions::table
+        .filter(permissions::collection_id.eq(query.collection_id()))
+        .filter(permissions::group_id.eq_any(group_ids))
+        .into_boxed();
+    for permission in query.permissions().iter().copied() {
+        permission_query =
+            permission_from_storage(permission).create_boxed_filter(permission_query, true);
+    }
+
+    with_connection(pool, async |conn| {
+        select(exists(permission_query)).get_result(conn).await
+    })
+    .await
+}
+
+pub(crate) async fn local_authorized_collections(
+    pool: &PostgresPool,
+    query: AuthorizationCollectionsQuery,
+) -> Result<Vec<AuthorizationCollection>, ApiError> {
+    use crate::schema::{collections, group_memberships, permissions};
+
+    let permissions_requested = query
+        .permissions()
+        .iter()
+        .copied()
+        .map(permission_from_storage)
+        .collect::<Vec<_>>();
+    if permissions_requested.is_empty() {
+        let group_ids = group_memberships::table
+            .filter(group_memberships::principal_id.eq(query.principal_id()))
+            .select(group_memberships::group_id);
+        let collection_ids = permissions::table
+            .filter(permissions::group_id.eq_any(group_ids))
+            .select(permissions::collection_id);
+        let rows = with_connection(pool, async |conn| {
+            collections::table
+                .filter(collections::id.eq_any(collection_ids))
+                .distinct()
+                .load::<Collection>(conn)
+                .await
+        })
+        .await?;
+        return Ok(rows.into_iter().map(collection_to_storage).collect());
+    }
+
+    let principal_id = PrincipalID::new(query.principal_id())?;
+    let mut authorized_collection_ids: Option<Vec<i32>> = None;
+    for permission in permissions_requested {
+        let rows =
+            collection_backend::user_can_on_any_from_backend(pool, principal_id, permission, None)
+                .await?;
+        let mut ids = rows
+            .into_iter()
+            .map(|collection| collection.id)
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        authorized_collection_ids = Some(match authorized_collection_ids {
+            Some(existing) => existing
+                .into_iter()
+                .filter(|id| ids.binary_search(id).is_ok())
+                .collect(),
+            None => ids,
+        });
+    }
+
+    let ids = authorized_collection_ids.unwrap_or_default();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = with_connection(pool, async |conn| {
+        collections::table
+            .filter(collections::id.eq_any(ids))
+            .load::<Collection>(conn)
+            .await
+    })
+    .await?;
+    Ok(rows.into_iter().map(collection_to_storage).collect())
+}
+
+pub(crate) async fn list_local_collection_grants(
+    pool: &PostgresPool,
+    query: AuthorizationCollectionGrantListQuery,
+) -> Result<AuthorizationGroupGrantPage, ApiError> {
+    let required_permissions = query
+        .required_permissions()
+        .iter()
+        .copied()
+        .map(permission_from_storage)
+        .collect();
+    let (rows, total_count) =
+        collection_backend::groups_on_paginated_with_total_count_from_backend(
+            pool,
+            CollectionID::new(query.collection_id())?,
+            required_permissions,
+            query.query_options(),
+        )
+        .await?;
+    Ok(AuthorizationGroupGrantPage::new(
+        rows.into_iter().map(group_grant_to_storage).collect(),
+        total_count,
+    ))
+}
+
+pub(crate) async fn get_local_collection_grant(
+    pool: &PostgresPool,
+    key: AuthorizationGrantKey,
+) -> Result<Option<AuthorizationGrant>, ApiError> {
+    use crate::schema::permissions;
+
+    let row = with_connection(pool, async |conn| {
+        permissions::table
+            .filter(permissions::collection_id.eq(key.collection_id()))
+            .filter(permissions::group_id.eq(key.group_id()))
+            .first(conn)
+            .await
+            .optional()
+    })
+    .await?;
+    Ok(row.map(grant_to_storage))
+}
+
+pub(crate) async fn apply_local_collection_grant(
+    pool: &PostgresPool,
+    mutation: AuthorizationGrantMutation,
+) -> Result<AuthorizationGrant, ApiError> {
+    let key = mutation.key();
+    let permissions = PermissionsList::new(
+        mutation
+            .permissions()
+            .iter()
+            .copied()
+            .map(permission_from_storage),
+    );
+    let grant = CollectionID::new(key.collection_id())?
+        .apply_permissions(
+            pool,
+            GroupID::new(key.group_id())?,
+            permissions,
+            mutation.replace_existing(),
+            None,
+        )
+        .await?;
+    Ok(grant_to_storage(grant))
+}
+
+pub(crate) async fn revoke_local_collection_grant(
+    pool: &PostgresPool,
+    mutation: AuthorizationGrantMutation,
+) -> Result<AuthorizationGrant, ApiError> {
+    let key = mutation.key();
+    let permissions = PermissionsList::new(
+        mutation
+            .permissions()
+            .iter()
+            .copied()
+            .map(permission_from_storage),
+    );
+    let grant = CollectionID::new(key.collection_id())?
+        .revoke(pool, GroupID::new(key.group_id())?, permissions, None)
+        .await?;
+    Ok(grant_to_storage(grant))
+}
+
+pub(crate) async fn revoke_all_local_collection_grants(
+    pool: &PostgresPool,
+    key: AuthorizationGrantKey,
+) -> Result<(), ApiError> {
+    CollectionID::new(key.collection_id())?
+        .revoke_all(pool, GroupID::new(key.group_id())?, None)
+        .await
+}

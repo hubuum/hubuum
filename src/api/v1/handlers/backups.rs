@@ -50,7 +50,7 @@ async fn load_authorized_backup(
     requestor: &Authenticated,
     task_id: TaskID,
 ) -> Result<TaskRecord, ApiError> {
-    if context.permission_backend().uses_sql_permission_store() {
+    if context.permission_backend().uses_local_permission_store() {
         return task_id
             .load_authorized_backup(context, &requestor.principal)
             .await;

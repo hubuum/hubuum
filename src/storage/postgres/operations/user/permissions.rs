@@ -52,7 +52,7 @@ pub trait UserPermissions: AuthzSubject {
             ));
         }
 
-        if AuthzSubject::is_admin(self, pool).await? {
+        if crate::traits::AuthzSubject::is_admin(self, pool).await? {
             crate::logger::log_authorization_grant(principal_id, &requested, None, None, "admin");
             return Ok(());
         }

@@ -76,7 +76,8 @@ families retain temporary central migration gates. Those gates prevent another
 backend from becoming selectable, but they are not behavioral proof and must
 be replaced by mandatory operation-shaped traits and shared tests. The former
 identity gate has now been replaced by the real `AuthenticationStorage`
-contract; no family is considered complete merely because a marker exists.
+and `AuthorizationStorage` contracts; no family is considered complete merely
+because a marker exists.
 
 PostgreSQL query implementations live in
 `src/storage/postgres/operations/*`. Separating their persistence rows from
@@ -167,6 +168,16 @@ deny-all dimension. PostgreSQL kind strings, credential hashes, Diesel rows,
 and scope-table layouts never cross into request handling. The opaque
 `StorageHandle` applies the common `authentication` tracing and metric labels
 before dispatching to the selected adapter.
+
+`AuthorizationStorage` supplies neutral principal membership facts and the
+complete local-policy-store surface: collection decisions, reverse collection
+queries, paginated grant reads, and grant mutations. The application-facing
+`AuthzSubject`, `PrincipalRef`, and `LocalPermissionBackend` consume that
+contract; they do not construct Diesel queries, import schema modules, or
+recover a PostgreSQL pool. Local grant rows cross the boundary as compact
+permission-set DTOs and are converted into API models only in the permission
+application layer. The opaque handle observes every entry point with bounded
+`authorization/*` operation labels.
 
 ## Error Direction
 
@@ -278,10 +289,11 @@ The first workspace boundaries are now in place:
   More domain DTOs move here as mixed Diesel/domain models are separated.
 
 - `hubuum-storage-core` owns backend-neutral descriptors, the contract version,
-  capability identities, `StorageError`, authentication DTOs, operational
-  snapshot DTOs, and the extracted authentication, operational state,
-  event-health, event-fan-out, event-retention, and token-retention traits
-  without application, transport, or driver dependencies.
+  capability identities, `StorageError`, authentication and authorization
+  DTOs, operational snapshot DTOs, and the extracted authentication,
+  authorization, operational state, event-health, event-fan-out,
+  event-retention, and token-retention traits without application, transport,
+  or driver dependencies.
 - `hubuum-storage-postgres` owns PostgreSQL pool construction, TLS connection
   setup, safe endpoint diagnostics, JSONB validation, query capture, and its
   crate-owned pool-construction error.
@@ -312,10 +324,11 @@ The crates have deliberately different responsibilities:
   mixed models are an incremental extraction.
 - `hubuum-storage-core` ultimately owns the complete traits in addition to its
   current errors, descriptors, capability metadata, operational traits, and
-  storage DTOs. Its authentication contract already uses only crate-owned DTOs
-  and is mandatory in the root aggregate trait. Behavioral traits that still
-  name root domain types remain in `src/storage` until those types move to
-  `hubuum-domain`; the root aggregate trait enforces completeness meanwhile.
+  storage DTOs. Its authentication and authorization contracts use only
+  backend-neutral DTOs and are mandatory in the root aggregate trait.
+  Behavioral traits that still name root domain types remain in `src/storage`
+  until those types move to `hubuum-domain`; the root aggregate trait enforces
+  completeness meanwhile.
 - `hubuum-storage-postgres` currently owns pool and TLS setup, JSONB helpers,
   and query capture. It ultimately owns generated schema, migrations,
   transaction helpers, persistence rows, PostgreSQL queries, and

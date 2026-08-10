@@ -202,7 +202,7 @@ async fn resolve_object_relation_runtime(
 pub(super) async fn execute_import_task<C>(
     backend: &C,
     task: &TaskRecord,
-    user: &impl crate::storage::postgres::operations::authz::AuthzSubject,
+    user: &impl crate::traits::AuthzSubject,
     scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
 where

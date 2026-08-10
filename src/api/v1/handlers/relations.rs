@@ -58,7 +58,7 @@ async fn get_class_relations(
 
     let (classes, total_count) = if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let search_params = prepare_db_pagination::<HubuumClassRelation>(&params)?;
         user.class_relations_page(&context, search_params, requestor.scopes())
@@ -302,7 +302,7 @@ async fn get_object_relations(
 
     let (object_relations, total_count) = if context
         .permission_backend()
-        .supports_sql_visibility_pushdown()
+        .supports_storage_visibility_filtering()
     {
         let search_params = prepare_db_pagination::<HubuumObjectRelation>(&params)?;
         user.object_relations_page(&context, search_params, requestor.scopes())

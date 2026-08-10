@@ -508,6 +508,7 @@ mod tests {
     use actix_web::{http::StatusCode, test as actix_test};
 
     use crate::permissions::LocalPermissionBackend;
+    use crate::storage::StorageHandle;
 
     use super::*;
 
@@ -527,7 +528,10 @@ mod tests {
         let pool = unreachable_pool();
         AppContext::postgres(
             pool.clone(),
-            Arc::new(LocalPermissionBackend::postgres(pool, "admin".to_string())),
+            Arc::new(LocalPermissionBackend::new(
+                StorageHandle::postgres(pool),
+                "admin".to_string(),
+            )),
         )
     }
 
