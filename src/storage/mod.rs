@@ -35,8 +35,12 @@ pub(crate) use hubuum_storage_core::{
     AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationStorage, EventArchive,
     EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
     EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
-    EventRetentionSummary, RetainedEvent,
+    EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryCollectionScope,
+    HistoryListQuery, HistoryMetadata, HistoryPage, HistoryPrincipalName, HistoryStorage,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, RemoteTargetHistoryRecord,
+    RetainedEvent,
 };
+pub(crate) use hubuum_storage_core::{ClassHistoryRecord, CollectionHistoryRecord};
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
 #[cfg(test)]
 pub(crate) use memory::MemoryStorageModel;

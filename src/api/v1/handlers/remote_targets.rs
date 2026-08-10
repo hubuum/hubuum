@@ -21,11 +21,11 @@ use crate::models::{
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{AppContext, PrincipalRef};
-use crate::storage::capabilities::UserPermissions;
-use crate::storage::capabilities::authz::scope_allows;
-use crate::storage::capabilities::history::{
+use crate::services::history::{
     HistoryCollectionFilter, remote_target_as_of, remote_target_history_paginated_with_total_count,
 };
+use crate::storage::capabilities::UserPermissions;
+use crate::storage::capabilities::authz::scope_allows;
 use crate::storage::capabilities::remote_target::{
     DeleteRemoteTargetRecord, SaveRemoteTargetRecord, UpdateRemoteTargetRecord,
     emit_remote_target_invoked_event,

@@ -17,11 +17,11 @@ use crate::models::{
 use crate::pagination::{SKIPPED_TOTAL_COUNT, count_query_options, prepare_db_pagination};
 use crate::permissions::visibility::authorize_cursor_page;
 use crate::permissions::{AppContext, PrincipalRef, ResourceRef};
-use crate::storage::capabilities::UserPermissions;
-use crate::storage::capabilities::authz::scope_allows;
-use crate::storage::capabilities::history::{
+use crate::services::history::{
     HistoryCollectionFilter, collection_as_of, collection_history_paginated_with_total_count,
 };
+use crate::storage::capabilities::UserPermissions;
+use crate::storage::capabilities::authz::scope_allows;
 use crate::storage::capabilities::user::UserSearchBackend;
 use crate::storage::capabilities::with_revision_precondition_scope;
 use actix_web::{

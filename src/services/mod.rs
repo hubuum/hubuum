@@ -1,6 +1,7 @@
 mod class_relations;
 mod classes;
 mod collections;
+pub(crate) mod history;
 mod object_relations;
 mod objects;
 

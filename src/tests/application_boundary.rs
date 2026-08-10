@@ -235,7 +235,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "MetricsStorage",
         "OperationalStateStorage",
         "TokenRetentionStorage",
-        "QueryAndHistoryStorage",
+        "HistoryStorage",
         "WorkflowStorage",
         "OperationalStorage",
         "sealed::CertifiedStorageBackend",
