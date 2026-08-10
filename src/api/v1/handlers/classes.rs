@@ -25,6 +25,7 @@ use crate::permissions::{
     AppContext, AuthzTarget, PrincipalRef, ResourceAttrs, ResourceKind, ResourceRef,
     authorize_resources,
 };
+use crate::services::catalog as catalog_service;
 use crate::services::history::{
     HistoryCollectionFilter, class_as_of, class_history_paginated_with_total_count, object_as_of,
     object_history_paginated_with_total_count,
@@ -325,29 +326,27 @@ async fn get_classes(
         .permission_backend()
         .supports_storage_visibility_filtering()
     {
-        let total_count = if params.include_total {
-            user.count_classes(&context, count_query_options(&params), requestor.scopes())
-                .await?
-        } else {
-            SKIPPED_TOTAL_COUNT
-        };
+        let is_admin = crate::traits::AuthzSubject::is_admin(user, &context).await?;
         let search_params = prepare_db_pagination::<HubuumClassExpanded>(&params)?;
-        let classes = user
-            .search_classes(&context, search_params, requestor.scopes())
-            .await?;
+        let (classes, total_count) = catalog_service::list_classes(
+            &context,
+            user.id(),
+            is_admin,
+            requestor.scopes(),
+            search_params,
+        )
+        .await?;
+        let total_count = total_count.unwrap_or(SKIPPED_TOTAL_COUNT);
         (classes, total_count)
     } else {
         if !scope_allows(requestor.scopes(), &[Permissions::ReadClass]) {
             return ApiResponse::paginated(Vec::new(), 0, &params);
         }
-        let candidates = user
-            .search_classes_from_backend_with_admin_status(
-                &context,
-                count_query_options(&params),
-                true,
-                None,
-            )
-            .await?;
+        let mut candidate_options = count_query_options(&params);
+        candidate_options.include_total = false;
+        let (candidates, _) =
+            catalog_service::list_classes(&context, user.id(), true, None, candidate_options)
+                .await?;
         let principal = PrincipalRef::load(&context, user).await?;
         let search_params = prepare_db_pagination::<HubuumClassExpanded>(&params)?;
         let page = authorize_cursor_page(

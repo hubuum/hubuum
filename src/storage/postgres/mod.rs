@@ -44,16 +44,17 @@ use super::{
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
     AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationPolicySnapshotRow,
-    AuthorizationPrincipal, AuthorizationStorage, ClassRelationStore, ClassStore, CollectionStore,
-    EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot,
-    EventDeliveryStorage, EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot,
-    EventRetentionStorage, EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery,
-    HistoryCollectionScope, HistoryListQuery, HistoryPage, HistoryPrincipalName, HistoryStorage,
-    InventoryGaugeSnapshot, MetricsStorage, ObjectHistoryAsOfQuery, ObjectHistoryListQuery,
-    ObjectHistoryRecord, ObjectRelationStore, ObjectStore, OperationalStateStorage,
-    ReadinessSnapshot, RemoteTargetHistoryRecord, StorageError, StorageIdentity, StoragePoolState,
-    TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection,
-    UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
+    AuthorizationPrincipal, AuthorizationStorage, CatalogListQuery, CatalogPage, CatalogStorage,
+    ClassRelationStore, ClassStore, CollectionStore, EventArchive, EventDeliveryBatch,
+    EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage,
+    EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
+    ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryCollectionScope, HistoryListQuery,
+    HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
+    ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, ObjectRelationStore,
+    ObjectStore, OperationalStateStorage, ReadinessSnapshot, RemoteTargetHistoryRecord,
+    StorageClass, StorageCollection, StorageError, StorageIdentity, StorageObject,
+    StoragePoolState, TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass,
+    UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use super::{ClassHistoryRecord, CollectionHistoryRecord};
 use error::map_postgres_error;
@@ -405,6 +406,36 @@ impl HistoryStorage for PostgresStorage {
         operations::history::remote_target_as_of(entity_id, at, &self.pool)
             .await
             .map(|row| row.map(operations::history::remote_target_history_to_storage))
+            .map_err(map_postgres_error)
+    }
+}
+
+#[async_trait]
+impl CatalogStorage for PostgresStorage {
+    async fn list_collections(
+        &self,
+        query: CatalogListQuery,
+    ) -> Result<CatalogPage<StorageCollection>, StorageError> {
+        operations::catalog::list_collections(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_classes(
+        &self,
+        query: CatalogListQuery,
+    ) -> Result<CatalogPage<StorageClass>, StorageError> {
+        operations::catalog::list_classes(&self.pool, query)
+            .await
+            .map_err(map_postgres_error)
+    }
+
+    async fn list_objects(
+        &self,
+        query: CatalogListQuery,
+    ) -> Result<CatalogPage<StorageObject>, StorageError> {
+        operations::catalog::list_objects(&self.pool, query)
+            .await
             .map_err(map_postgres_error)
     }
 }

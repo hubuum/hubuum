@@ -43,21 +43,39 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        self.search_collections_from_backend(backend, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_collections(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn count_collections<C>(
         &self,
         backend: &C,
-        query_options: QueryOptions,
+        mut query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
         C: StorageContext,
     {
-        self.count_collections_from_backend(backend, query_options, scopes)
-            .await
+        query_options.include_total = true;
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_collections(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await?
+        .1
+        .ok_or_else(|| ApiError::InternalServerError("catalog count was not returned".to_string()))
     }
 
     async fn search_classes<C>(
@@ -69,21 +87,39 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        self.search_classes_from_backend(backend, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_classes(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn count_classes<C>(
         &self,
         backend: &C,
-        query_options: QueryOptions,
+        mut query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
         C: StorageContext,
     {
-        self.count_classes_from_backend(backend, query_options, scopes)
-            .await
+        query_options.include_total = true;
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_classes(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await?
+        .1
+        .ok_or_else(|| ApiError::InternalServerError("catalog count was not returned".to_string()))
     }
 
     async fn search_objects<C>(
@@ -95,21 +131,39 @@ pub trait Search: UserCollectionAccessors {
     where
         C: StorageContext,
     {
-        self.search_objects_from_backend(backend, query_options, scopes)
-            .await
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_objects(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await
+        .map(|(rows, _)| rows)
     }
 
     async fn count_objects<C>(
         &self,
         backend: &C,
-        query_options: QueryOptions,
+        mut query_options: QueryOptions,
         scopes: Option<&TokenScope>,
     ) -> Result<i64, ApiError>
     where
         C: StorageContext,
     {
-        self.count_objects_from_backend(backend, query_options, scopes)
-            .await
+        query_options.include_total = true;
+        let is_admin = AuthzSubject::is_admin(self, backend).await?;
+        crate::services::catalog::list_objects(
+            backend,
+            self.principal_id(),
+            is_admin,
+            scopes,
+            query_options,
+        )
+        .await?
+        .1
+        .ok_or_else(|| ApiError::InternalServerError("catalog count was not returned".to_string()))
     }
 
     async fn search_class_relations<C>(

@@ -5,6 +5,7 @@
 //! these values without reversing the dependency from storage into the server.
 
 mod authorization;
+mod catalog;
 mod events;
 mod history;
 mod identity;
@@ -19,6 +20,7 @@ pub use authorization::{
     AuthorizationGroupProfile, AuthorizationGroupSyncState, AuthorizationPermission,
     AuthorizationPolicySnapshotRow, AuthorizationPrincipal, AuthorizationStorage,
 };
+pub use catalog::{CatalogListQuery, CatalogPage, CatalogStorage};
 pub use events::{
     EventArchive, EventDeliveryBatch, EventDeliveryClaim, EventDeliverySink, EventDeliveryStorage,
     EventDeliverySubscription, EventDeliveryWorkItem, EventFanoutStorage, EventRetentionStorage,
@@ -46,13 +48,20 @@ pub use unified_search::{
     UnifiedSearchQuery, UnifiedSearchResourceScope, UnifiedSearchStorage, UnifiedSearchVisibility,
 };
 
+/// Shared backend-neutral resource projections used by read capabilities.
+pub type StorageCollection = UnifiedSearchCollection;
+pub type StorageClass = UnifiedSearchClass;
+pub type StorageObject = UnifiedSearchObject;
+pub type StorageResourceScope = UnifiedSearchResourceScope;
+pub type StorageVisibility = UnifiedSearchVisibility;
+
 use std::fmt;
 
 /// Version of the complete application storage contract.
 ///
 /// Increment this when a selectable backend must implement a new capability
 /// family or when an existing family's externally observable semantics change.
-pub const STORAGE_CONTRACT_VERSION: u16 = 3;
+pub const STORAGE_CONTRACT_VERSION: u16 = 4;
 
 /// Stable identity of a selectable storage backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +85,7 @@ impl StorageBackendKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageCapability {
     DomainLifecycle,
+    CatalogQueries,
     IdentityAndAuthorizationData,
     TemporalHistory,
     UnifiedSearch,
@@ -84,8 +94,9 @@ pub enum StorageCapability {
 }
 
 impl StorageCapability {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::DomainLifecycle,
+        Self::CatalogQueries,
         Self::IdentityAndAuthorizationData,
         Self::TemporalHistory,
         Self::UnifiedSearch,
@@ -97,6 +108,7 @@ impl StorageCapability {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::DomainLifecycle => "domain_lifecycle",
+            Self::CatalogQueries => "catalog_queries",
             Self::IdentityAndAuthorizationData => "identity_and_authorization_data",
             Self::TemporalHistory => "temporal_history",
             Self::UnifiedSearch => "unified_search",
@@ -250,6 +262,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "domain_lifecycle",
+                "catalog_queries",
                 "identity_and_authorization_data",
                 "temporal_history",
                 "unified_search",

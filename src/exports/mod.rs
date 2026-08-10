@@ -36,6 +36,7 @@ use crate::permissions::{
     AuthzTarget, PermissionBackend, PermissionDecision, PermissionRequest, PrincipalRef,
     ResourceRef,
 };
+use crate::services::catalog as catalog_service;
 use crate::storage::StorageContext;
 use crate::storage::capabilities::UserPermissions;
 use crate::storage::capabilities::authz::{scope_allows, scope_allows_resource};
@@ -589,54 +590,58 @@ where
         })
     }
 
-    async fn collections(&self, query: QueryOptions) -> Result<Vec<Collection>, ApiError> {
+    async fn collections(&self, mut query: QueryOptions) -> Result<Vec<Collection>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return self
-                .subject
-                .search_collections_from_backend_with_admin_status(
-                    self.pool(),
-                    query,
-                    is_admin,
-                    self.scopes,
-                )
-                .await;
-        }
-        let candidates = self
-            .subject
-            .search_collections_from_backend_with_admin_status(
+            query.include_total = false;
+            return catalog_service::list_collections(
                 self.pool(),
-                count_query_options(&query),
-                true,
-                None,
+                self.subject.principal_id(),
+                is_admin,
+                self.scopes,
+                query,
             )
-            .await?;
+            .await
+            .map(|(rows, _)| rows);
+        }
+        let mut candidate_options = count_query_options(&query);
+        candidate_options.include_total = false;
+        let (candidates, _) = catalog_service::list_collections(
+            self.pool(),
+            self.subject.principal_id(),
+            true,
+            None,
+            candidate_options,
+        )
+        .await?;
         let resources = self.target_resources(&candidates).await?;
         let permissions = query_permissions(&query, &[Permissions::ReadCollection])?;
         self.authorize_page(candidates, resources, permissions, &query)
             .await
     }
 
-    async fn classes(&self, query: QueryOptions) -> Result<Vec<HubuumClassExpanded>, ApiError> {
+    async fn classes(&self, mut query: QueryOptions) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return self
-                .subject
-                .search_classes_from_backend_with_admin_status(
-                    self.pool(),
-                    query,
-                    is_admin,
-                    self.scopes,
-                )
-                .await;
-        }
-        let candidates = self
-            .subject
-            .search_classes_from_backend_with_admin_status(
+            query.include_total = false;
+            return catalog_service::list_classes(
                 self.pool(),
-                count_query_options(&query),
-                true,
-                None,
+                self.subject.principal_id(),
+                is_admin,
+                self.scopes,
+                query,
             )
-            .await?;
+            .await
+            .map(|(rows, _)| rows);
+        }
+        let mut candidate_options = count_query_options(&query);
+        candidate_options.include_total = false;
+        let (candidates, _) = catalog_service::list_classes(
+            self.pool(),
+            self.subject.principal_id(),
+            true,
+            None,
+            candidate_options,
+        )
+        .await?;
         let resources = candidates
             .iter()
             .map(|class| crate::permissions::ResourceRef {
@@ -654,27 +659,29 @@ where
             .await
     }
 
-    async fn objects(&self, query: QueryOptions) -> Result<Vec<HubuumObject>, ApiError> {
+    async fn objects(&self, mut query: QueryOptions) -> Result<Vec<HubuumObject>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
-            return self
-                .subject
-                .search_objects_from_backend_with_admin_status(
-                    self.pool(),
-                    query,
-                    is_admin,
-                    self.scopes,
-                )
-                .await;
-        }
-        let candidates = self
-            .subject
-            .search_objects_from_backend_with_admin_status(
+            query.include_total = false;
+            return catalog_service::list_objects(
                 self.pool(),
-                count_query_options(&query),
-                true,
-                None,
+                self.subject.principal_id(),
+                is_admin,
+                self.scopes,
+                query,
             )
-            .await?;
+            .await
+            .map(|(rows, _)| rows);
+        }
+        let mut candidate_options = count_query_options(&query);
+        candidate_options.include_total = false;
+        let (candidates, _) = catalog_service::list_objects(
+            self.pool(),
+            self.subject.principal_id(),
+            true,
+            None,
+            candidate_options,
+        )
+        .await?;
         let resources = self.target_resources(&candidates).await?;
         let permissions = query_permissions(&query, &[Permissions::ReadObject])?;
         self.authorize_page(candidates, resources, permissions, &query)

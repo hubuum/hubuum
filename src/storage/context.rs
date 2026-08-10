@@ -12,16 +12,17 @@ use crate::storage::{
     AuthorizationCollectionGrantListQuery, AuthorizationCollectionsQuery, AuthorizationGrant,
     AuthorizationGrantKey, AuthorizationGrantMutation, AuthorizationGroup,
     AuthorizationGroupGrantPage, AuthorizationGroupMembershipQuery, AuthorizationPolicySnapshotRow,
-    AuthorizationPrincipal, AuthorizationStorage, DynLifecycleStorage, EventArchive,
-    EventDeliveryBatch, EventDeliveryClaim, EventDeliveryHealthSnapshot, EventDeliveryStorage,
-    EventFanoutStorage, EventHealthStorage, EventMetricsSnapshot, EventRetentionStorage,
-    EventRetentionSummary, ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery,
-    HistoryPage, HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
+    AuthorizationPrincipal, AuthorizationStorage, CatalogListQuery, CatalogPage, CatalogStorage,
+    DynLifecycleStorage, EventArchive, EventDeliveryBatch, EventDeliveryClaim,
+    EventDeliveryHealthSnapshot, EventDeliveryStorage, EventFanoutStorage, EventHealthStorage,
+    EventMetricsSnapshot, EventRetentionStorage, EventRetentionSummary,
+    ExportTemplateHistoryRecord, HistoryAsOfQuery, HistoryListQuery, HistoryPage,
+    HistoryPrincipalName, HistoryStorage, InventoryGaugeSnapshot, MetricsStorage,
     ObjectHistoryAsOfQuery, ObjectHistoryListQuery, ObjectHistoryRecord, OperationalStateStorage,
     PostgresStorage, ReadinessSnapshot, RemoteTargetHistoryRecord, StorageBackend,
-    StorageBackendDescriptor, StorageError, StoragePoolState, TaskGaugeSnapshot,
-    TokenRetentionStorage, UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject,
-    UnifiedSearchQuery, UnifiedSearchStorage,
+    StorageBackendDescriptor, StorageClass, StorageCollection, StorageError, StorageObject,
+    StoragePoolState, TaskGaugeSnapshot, TokenRetentionStorage, UnifiedSearchClass,
+    UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 use crate::storage::{ClassHistoryRecord, CollectionHistoryRecord};
 use async_trait::async_trait;
@@ -522,6 +523,45 @@ impl HistoryStorage for StorageHandle {
                 }
             },
         )
+        .await
+    }
+}
+
+#[async_trait]
+impl CatalogStorage for StorageHandle {
+    async fn list_collections(
+        &self,
+        query: CatalogListQuery,
+    ) -> Result<CatalogPage<StorageCollection>, StorageError> {
+        observe_storage_call(self.backend_name(), "catalog", "collections", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.list_collections(query).await,
+            }
+        })
+        .await
+    }
+
+    async fn list_classes(
+        &self,
+        query: CatalogListQuery,
+    ) -> Result<CatalogPage<StorageClass>, StorageError> {
+        observe_storage_call(self.backend_name(), "catalog", "classes", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.list_classes(query).await,
+            }
+        })
+        .await
+    }
+
+    async fn list_objects(
+        &self,
+        query: CatalogListQuery,
+    ) -> Result<CatalogPage<StorageObject>, StorageError> {
+        observe_storage_call(self.backend_name(), "catalog", "objects", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.list_objects(query).await,
+            }
+        })
         .await
     }
 }

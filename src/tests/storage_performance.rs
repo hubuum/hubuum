@@ -20,7 +20,6 @@ use crate::services::Services;
 use crate::storage::postgres::operations::history::{
     HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_principal_names,
 };
-use crate::storage::postgres::operations::user::UserSearchBackend;
 use crate::storage::postgres::prelude::{QueryableByName, RunQueryDsl};
 use crate::storage::postgres::with_actor_scope;
 use crate::storage::postgres::{PostgresPool, capture_queries, with_connection};
@@ -947,18 +946,18 @@ async fn object_page_query_count_is_constant_with_page_size() {
         ))
         .expect("valid object page query");
         async {
-            let total = subject
-                .count_objects_from_backend_with_admin_status(
-                    &scope.pool,
-                    query.clone(),
-                    true,
-                    None,
-                )
-                .await?;
-            let rows = subject
-                .search_objects_from_backend_with_admin_status(&scope.pool, query, true, None)
-                .await?;
-            Ok::<_, crate::errors::ApiError>((rows, total))
+            let (rows, total) = crate::services::catalog::list_objects(
+                &scope.pool,
+                subject.id(),
+                true,
+                None,
+                query,
+            )
+            .await?;
+            Ok::<_, crate::errors::ApiError>((
+                rows,
+                total.expect("catalog query requested an exact total"),
+            ))
         }
     };
 
