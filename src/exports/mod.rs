@@ -22,11 +22,10 @@ use crate::models::{
     ExportIncludeRelatedDirection, ExportIncludeRelatedQuery, ExportIncludeRelatedSort,
     ExportJsonResponse, ExportMeta, ExportMissingDataPolicy, ExportRequest, ExportTemplate,
     ExportTemplateID, ExportWarning, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
-    HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath, NewExportTaskOutputRecord,
-    NewTaskEventRecord, Permissions, PermissionsList, PrincipalID, RELATED_INCLUDE_DEFAULT_LIMIT,
-    RELATED_INCLUDE_DEFAULT_MAX_DEPTH, RelatedObjectForRootRow, RelatedObjectGraphRow,
-    RelatedObjectIncludeRow, TaskKind, TaskRecord, TaskResultCounts, TaskStatus, TokenID,
-    TokenScope, ValidatedExportScope,
+    HubuumObjectID, HubuumObjectRelation, HubuumObjectWithPath, NewTaskEventRecord, Permissions,
+    PermissionsList, PrincipalID, RELATED_INCLUDE_DEFAULT_LIMIT, RELATED_INCLUDE_DEFAULT_MAX_DEPTH,
+    RelatedObjectForRootRow, RelatedObjectGraphRow, RelatedObjectIncludeRow, TaskKind, TaskRecord,
+    TaskResultCounts, TaskStatus, TokenID, TokenScope, ValidatedExportScope,
 };
 use crate::observability::metrics;
 use crate::pagination::{
@@ -38,16 +37,21 @@ use crate::permissions::{
 };
 use crate::services::catalog as catalog_service;
 use crate::services::relation_queries;
-use crate::services::tasks::{TaskSubmission, submit_task, task_scope_snapshot};
+use crate::services::tasks::{
+    ClaimedTask, TaskStateChange, TaskSubmission, append_task_event, complete_task, submit_task,
+    task_scope_snapshot, update_task_state,
+};
 use crate::storage::capabilities::UserPermissions;
 use crate::storage::capabilities::authz::{scope_allows, scope_allows_resource};
 use crate::storage::capabilities::relations::{
     class_relation_authorization_resources, object_authorization_resources,
     object_relation_authorization_resources,
 };
-use crate::storage::capabilities::task::{TaskBackend, TaskStateUpdate};
 use crate::storage::capabilities::with_statement_timeout_scope;
-use crate::storage::{StorageContext, StorageTaskScopeSnapshot};
+use crate::storage::{
+    StorageContext, StorageExportTaskArtifact, StorageTaskCompletionArtifact, StorageTaskDurations,
+    StorageTaskScopeSnapshot,
+};
 use crate::tasks::request_hash;
 use crate::traits::{AuthzSubject, SelfAccessors};
 use crate::utilities::exporting::render_template;
@@ -1115,7 +1119,7 @@ async fn find_or_create_export_task(
 
 pub(crate) async fn execute_export_task<C>(
     backend: &C,
-    task: &TaskRecord,
+    task: &ClaimedTask,
     subject: &impl crate::traits::Search,
     scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
@@ -1150,31 +1154,38 @@ where
         metrics::export_phase_timer(metrics::ExportMetricPhase::Total, metric_template_id);
     let mut timings = ExportExecutionTimings::default();
 
-    NewTaskEventRecord {
-        task_id: task.id,
-        event_type: "running".to_string(),
-        message: "Export execution started".to_string(),
-        data: None,
-    }
-    .append(pool)
-    .await?;
-    task.update_state(
+    append_task_event(
         pool,
-        TaskStateUpdate::new(TaskStatus::Running, TaskResultCounts::default())
-            .with_started_at(task.started_at),
+        task,
+        NewTaskEventRecord {
+            task_id: task.id,
+            event_type: "running".to_string(),
+            message: "Export execution started".to_string(),
+            data: None,
+        },
+    )
+    .await?;
+    update_task_state(
+        pool,
+        task,
+        TaskStateChange::new(TaskStatus::Running, TaskResultCounts::default())
+            .started_at(task.started_at),
     )
     .await?;
 
-    NewTaskEventRecord {
-        task_id: task.id,
-        event_type: "running".to_string(),
-        message: "Query execution started".to_string(),
-        data: Some(serde_json::json!({
-            "scope": runtime.scope.kind().as_str(),
-            "content_type": runtime.content_type.as_mime(),
-        })),
-    }
-    .append(pool)
+    append_task_event(
+        pool,
+        task,
+        NewTaskEventRecord {
+            task_id: task.id,
+            event_type: "running".to_string(),
+            message: "Query execution started".to_string(),
+            data: Some(serde_json::json!({
+                "scope": runtime.scope.kind().as_str(),
+                "content_type": runtime.content_type.as_mime(),
+            })),
+        },
+    )
     .await?;
 
     // Export-scoped, in-flight query budget. While these query stages run, every
@@ -1209,17 +1220,20 @@ where
         .as_ref()
         .is_some_and(|plan| plan.enabled_for_scope)
     {
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "running".to_string(),
-            message: "Hydrating relation-aware template context".to_string(),
-            data: relation_hydration.as_ref().map(|plan| {
-                serde_json::json!({
-                    "depth_limit": plan.depth_limit,
-                })
-            }),
-        }
-        .append(pool)
+        append_task_event(
+            pool,
+            task,
+            NewTaskEventRecord {
+                task_id: task.id,
+                event_type: "running".to_string(),
+                message: "Hydrating relation-aware template context".to_string(),
+                data: relation_hydration.as_ref().map(|plan| {
+                    serde_json::json!({
+                        "depth_limit": plan.depth_limit,
+                    })
+                }),
+            },
+        )
         .await?;
     }
 
@@ -1265,13 +1279,16 @@ where
         source,
     };
 
-    NewTaskEventRecord {
-        task_id: task.id,
-        event_type: "running".to_string(),
-        message: "Rendering export output".to_string(),
-        data: None,
-    }
-    .append(pool)
+    append_task_event(
+        pool,
+        task,
+        NewTaskEventRecord {
+            task_id: task.id,
+            event_type: "running".to_string(),
+            message: "Rendering export output".to_string(),
+            data: None,
+        },
+    )
     .await?;
 
     let render_metric =
@@ -1298,23 +1315,27 @@ where
     let metric_truncated = artifact.meta.truncated;
     let metric_warning_count = artifact.warnings.len();
 
-    NewTaskEventRecord {
-        task_id: task.id,
-        event_type: "running".to_string(),
-        message: "Persisting export output".to_string(),
-        data: None,
-    }
-    .append(pool)
+    append_task_event(
+        pool,
+        task,
+        NewTaskEventRecord {
+            task_id: task.id,
+            event_type: "running".to_string(),
+            message: "Persisting export output".to_string(),
+            data: None,
+        },
+    )
     .await?;
 
-    task.finalize_export_with_output(
+    complete_task(
         pool,
-        TaskStateUpdate::new(
+        task,
+        TaskStateChange::new(
             TaskStatus::Succeeded,
             TaskResultCounts::from_outcomes(1, 0)?,
         )
-        .with_summary("Export completed successfully")
-        .with_started_at(task.started_at),
+        .summary("Export completed successfully")
+        .started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: TaskStatus::Succeeded.as_str().to_string(),
@@ -1330,7 +1351,7 @@ where
                 "render_duration_ms": artifact.timings.render_millis(),
             })),
         },
-        artifact_to_output_record(task.id, artifact)?,
+        StorageTaskCompletionArtifact::Export(artifact_to_storage(artifact)?),
     )
     .await?;
 
@@ -1349,10 +1370,7 @@ where
     Ok(())
 }
 
-fn artifact_to_output_record(
-    task_id: i32,
-    artifact: ExportArtifact,
-) -> Result<NewExportTaskOutputRecord, ApiError> {
+fn artifact_to_storage(artifact: ExportArtifact) -> Result<StorageExportTaskArtifact, ApiError> {
     let retention_hours = get_config()
         .map(|config| config.export_output_retention_hours)
         .unwrap_or(DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS);
@@ -1360,22 +1378,28 @@ fn artifact_to_output_record(
         FutureRetention::from_hours(retention_hours, "export_output_retention_hours")
             .and_then(|retention| retention.expires_at(chrono::Utc::now().naive_utc()))
             .map_err(ApiError::BadRequest)?;
-    Ok(NewExportTaskOutputRecord {
-        task_id,
-        template_name: artifact.template_name,
-        content_type: artifact.content_type.as_mime().to_string(),
-        json_output: artifact.json_output.map(serde_json::to_value).transpose()?,
-        text_output: artifact.text_output,
-        meta_json: serde_json::to_value(&artifact.meta)?,
-        warnings_json: serde_json::to_value(&artifact.warnings)?,
-        warning_count: i32::try_from(artifact.warnings.len()).unwrap_or(i32::MAX),
-        truncated: artifact.meta.truncated,
+    Ok(StorageExportTaskArtifact::builder(
+        artifact.content_type.as_mime(),
+        serde_json::to_value(&artifact.meta)?,
+        serde_json::to_value(&artifact.warnings)?,
         output_expires_at,
-        total_duration_ms: artifact.timings.total_millis(),
-        query_duration_ms: artifact.timings.query_millis(),
-        hydration_duration_ms: artifact.timings.hydration_millis(),
-        render_duration_ms: artifact.timings.render_millis(),
-    })
+    )
+    .template_name(artifact.template_name)
+    .output(
+        artifact.json_output.map(serde_json::to_value).transpose()?,
+        artifact.text_output,
+    )
+    .warning_state(
+        i32::try_from(artifact.warnings.len()).unwrap_or(i32::MAX),
+        artifact.meta.truncated,
+    )
+    .durations(StorageTaskDurations::new(
+        artifact.timings.total_millis(),
+        artifact.timings.query_millis(),
+        artifact.timings.hydration_millis(),
+        artifact.timings.render_millis(),
+    ))
+    .build())
 }
 
 fn validate_export_include(

@@ -6,12 +6,15 @@ use crate::models::{
     ImportAtomicity, ImportClassRelationInput, ImportCollisionPolicy,
     ImportComputedFieldVisibility, ImportExportTemplateInput, ImportMode,
     ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype, ImportRequest,
-    NewHubuumClassRelation, NewTaskEventRecord, PrincipalKey, TaskRecord, TaskResultCounts,
-    TaskStatus, TokenScope,
+    NewHubuumClassRelation, NewTaskEventRecord, PrincipalKey, TaskResultCounts, TaskStatus,
+    TokenScope,
 };
 use crate::observability::metrics;
+use crate::services::tasks::{
+    ClaimedTask, TaskStateChange, append_task_event, complete_task, update_task_state,
+};
 use crate::storage::StorageContext;
-use crate::storage::postgres::operations::task::{TaskBackend, TaskStateUpdate};
+use crate::storage::StorageTaskCompletionArtifact;
 use crate::storage::postgres::with_transaction;
 
 use super::helpers::{
@@ -201,7 +204,7 @@ async fn resolve_object_relation_runtime(
 
 pub(super) async fn execute_import_task<C>(
     backend: &C,
-    task: &TaskRecord,
+    task: &ClaimedTask,
     user: &impl crate::traits::AuthzSubject,
     scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
@@ -310,28 +313,32 @@ where
             planning_time = ?planning_time
         );
 
-        NewTaskEventRecord {
-            task_id: task.id,
-            event_type: "running".to_string(),
-            message: if request.dry_run() {
-                "Import dry run planned successfully".to_string()
-            } else if failures.is_empty() {
-                "Import execution started".to_string()
-            } else {
-                format!(
-                    "Import execution started with {} planned failure(s)",
-                    failures.len()
-                )
+        append_task_event(
+            pool,
+            task,
+            NewTaskEventRecord {
+                task_id: task.id,
+                event_type: "running".to_string(),
+                message: if request.dry_run() {
+                    "Import dry run planned successfully".to_string()
+                } else if failures.is_empty() {
+                    "Import execution started".to_string()
+                } else {
+                    format!(
+                        "Import execution started with {} planned failure(s)",
+                        failures.len()
+                    )
+                },
+                data: None,
             },
-            data: None,
-        }
-        .append(pool)
+        )
         .await?;
 
-        task.update_state(
+        update_task_state(
             pool,
-            TaskStateUpdate::new(TaskStatus::Running, TaskResultCounts::default())
-                .with_started_at(task.started_at),
+            task,
+            TaskStateChange::new(TaskStatus::Running, TaskResultCounts::default())
+                .started_at(task.started_at),
         )
         .await?;
 
@@ -444,20 +451,22 @@ where
 
 async fn finalize_task(
     pool: &impl crate::storage::StorageContext,
-    task: &TaskRecord,
+    task: &ClaimedTask,
     terminal: TerminalTaskUpdate,
 ) -> Result<(), ApiError> {
-    task.finalize_terminal(
+    complete_task(
         pool,
-        TaskStateUpdate::new(terminal.status, terminal.counts)
-            .with_summary(terminal.summary.clone())
-            .with_started_at(task.started_at),
+        task,
+        TaskStateChange::new(terminal.status, terminal.counts)
+            .summary(terminal.summary.clone())
+            .started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: terminal.status.as_str().to_string(),
             message: terminal.summary.clone(),
             data: terminal.event_data,
         },
+        StorageTaskCompletionArtifact::None,
     )
     .await?;
     Ok(())

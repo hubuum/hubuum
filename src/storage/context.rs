@@ -35,9 +35,11 @@ use crate::storage::{
     StoragePersonalComputedFieldListQuery, StoragePersonalComputedFieldUpdate, StoragePoolState,
     StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
     StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
-    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskAccess, StorageTaskCreateRequest,
-    StorageTaskEventPage, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage,
-    StorageTaskPageQuery, TaskGaugeSnapshot, TaskQueueStorage, TokenRetentionStorage,
+    StorageSharedComputedFieldUpdate, StorageTask, StorageTaskAccess, StorageTaskClaim,
+    StorageTaskCompletion, StorageTaskCreateRequest, StorageTaskEventAppend, StorageTaskEventPage,
+    StorageTaskFailure, StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery,
+    StorageTaskOutputLookup, StorageTaskPage, StorageTaskPageQuery, StorageTaskStateUpdate,
+    TaskExecutionStorage, TaskGaugeSnapshot, TaskQueueStorage, TokenRetentionStorage,
     UnifiedSearchClass, UnifiedSearchCollection, UnifiedSearchObject, UnifiedSearchQuery,
     UnifiedSearchStorage,
 };
@@ -758,6 +760,152 @@ impl TaskQueueStorage for StorageHandle {
                 }
             }
         })
+        .await
+    }
+}
+
+#[async_trait]
+impl TaskExecutionStorage for StorageHandle {
+    async fn claim_next_task(
+        &self,
+        lease_duration: StorageTaskLeaseDuration,
+    ) -> Result<Option<StorageTaskClaim>, StorageError> {
+        observe_storage_call(self.backend_name(), "task_execution", "claim", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.claim_next_task(lease_duration).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn renew_task_lease(
+        &self,
+        lease: StorageTaskLease,
+        lease_duration: StorageTaskLeaseDuration,
+    ) -> Result<bool, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "task_execution",
+            "renew_lease",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.renew_task_lease(lease, lease_duration).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn recover_expired_task_leases(
+        &self,
+        batch_size: usize,
+    ) -> Result<Vec<StorageTask>, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "task_execution",
+            "recover_leases",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.recover_expired_task_leases(batch_size).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn append_task_event(&self, event: StorageTaskEventAppend) -> Result<(), StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "task_execution",
+            "append_event",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.append_task_event(event).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn update_task_state(
+        &self,
+        update: StorageTaskStateUpdate,
+    ) -> Result<StorageTask, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "task_execution",
+            "update_state",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.update_task_state(update).await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn complete_task(
+        &self,
+        completion: StorageTaskCompletion,
+    ) -> Result<StorageTask, StorageError> {
+        observe_storage_call(self.backend_name(), "task_execution", "complete", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => {
+                    backend.complete_task(completion).await
+                }
+            }
+        })
+        .await
+    }
+
+    async fn fail_task(&self, failure: StorageTaskFailure) -> Result<StorageTask, StorageError> {
+        observe_storage_call(self.backend_name(), "task_execution", "fail", async {
+            match &self.implementation {
+                BackendImplementation::Postgresql(backend) => backend.fail_task(failure).await,
+            }
+        })
+        .await
+    }
+
+    async fn purge_expired_export_outputs(&self) -> Result<usize, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "task_execution",
+            "purge_export_outputs",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.purge_expired_export_outputs().await
+                    }
+                }
+            },
+        )
+        .await
+    }
+
+    async fn purge_expired_backup_outputs(&self) -> Result<usize, StorageError> {
+        observe_storage_call(
+            self.backend_name(),
+            "task_execution",
+            "purge_backup_outputs",
+            async {
+                match &self.implementation {
+                    BackendImplementation::Postgresql(backend) => {
+                        backend.purge_expired_backup_outputs().await
+                    }
+                }
+            },
+        )
         .await
     }
 }

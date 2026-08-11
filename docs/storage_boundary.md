@@ -71,8 +71,9 @@ satisfy every capability family below before `StorageHandle` can compose it:
 | Temporal history | Revision-filtered pages, stable cursors, point-in-time reads, visibility pushdown, and provenance-name resolution |
 | Unified search | Ranked collection, class, and object search with stable per-kind cursors and token visibility pushdown |
 | Task queue | Idempotent task submission, access facts, task/event/result paging, and retained export and backup output reads |
-| Workflows | Imports, restores, tasks, backups, exports, remote calls, and their atomic state transitions |
-| Operations | Probes, metrics snapshots, retention, event delivery, leases, locking, and worker coordination |
+| Task execution | Opaque claims, lease renewal and recovery, claim-checked events and state changes, atomic terminal artifacts, failure accounting, and output retention |
+| Workflows | Import, restore, backup, export, remote-call, and reindex execution with backend-owned atomic entity mutations |
+| Operations | Probes, metrics snapshots, retention, event delivery, locking, and worker coordination |
 
 The families are not feature flags and the admin configuration does not report
 optional support. Every selectable backend implements the entire list. The
@@ -87,10 +88,10 @@ now been replaced by the real `AuthenticationStorage`,
 `AuthorizationStorage`, `HistoryStorage`, `CatalogStorage`,
 `ComputedObjectStorage`, `ComputedFieldLifecycleStorage`,
 `ObjectAggregateStorage`, `RelationQueryStorage`, and `UnifiedSearchStorage`
-contracts. `TaskQueueStorage` now replaces the task submission and read portion
-of the workflow gate; worker leases and workflow-specific atomic transitions
-remain in that gate until their complete contracts and compatibility tests land.
-No family is
+contracts. `TaskQueueStorage` replaces task submission and reads, while
+`TaskExecutionStorage` owns the complete worker claim and state machine. The
+remaining workflow-specific entity mutations stay behind the workflow gate
+until their complete contracts and compatibility tests land. No family is
 considered complete merely because a marker exists.
 
 PostgreSQL query implementations live in
@@ -255,6 +256,18 @@ bounded `computed_fields/*` observation label. Reindex task execution is a
 workflow responsibility and will cross the boundary with the complete task
 state machine rather than leaking worker persistence into this lifecycle
 trait.
+
+`TaskExecutionStorage` owns every persistence transition needed by task
+workers. Claims cross the boundary as a task DTO plus an opaque, redacted token;
+the application can only return that token for renewal, events, state updates,
+completion, or failure. PostgreSQL's UUID representation, lease SQL, durable
+timestamps, row locks, task/output insert records, and workflow result counting
+remain adapter-private. Completion stores an optional export or backup artifact
+and the terminal lifecycle event in the same backend operation. Failure counts
+are derived by the backend so the application never queries workflow result
+tables. The opaque handle observes all nine entry points with bounded
+`task_execution/*` labels, and every selectable backend must pass the shared
+state-machine compatibility test.
 
 `ObjectAggregateStorage` owns filtered grouping, numeric measures, computed
 aggregate snapshots, exact group counts, and stable aggregate cursors. The

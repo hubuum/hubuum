@@ -112,9 +112,7 @@ pub(crate) mod service_account {
 }
 
 pub(crate) mod task {
-    pub(crate) use crate::storage::postgres::operations::task::{
-        TaskBackend, TaskStateUpdate, insert_import_results,
-    };
+    pub(crate) use crate::storage::postgres::operations::task::insert_import_results;
 }
 
 pub(crate) mod task_import {

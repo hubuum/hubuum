@@ -42,6 +42,7 @@ use crate::permissions::types::{ResourceAttrs, ResourceKind};
 use crate::schema::collections::dsl::{collections, name as collection_name};
 use crate::schema::hubuumclass::dsl::{hubuumclass, name as class_name};
 use crate::schema::tasks::dsl::{created_at, id as task_id, tasks};
+use crate::services::tasks::ClaimedTask;
 use crate::storage::postgres::operations::collection::DeleteCollectionRecord;
 use crate::storage::postgres::operations::task::{TaskBackend, insert_import_results};
 use crate::storage::postgres::operations::task_import::{
@@ -2909,6 +2910,25 @@ async fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
     .create(&context.pool))
     .await
     .unwrap();
+    let claim_token = uuid::Uuid::new_v4();
+    with_connection(&context.pool, async |conn| {
+        use crate::schema::tasks::dsl::{
+            id, lease_expires_at, lease_token, started_at, status, tasks,
+        };
+        let now = chrono::Utc::now().naive_utc();
+        diesel::update(tasks.filter(id.eq(task.id)))
+            .set((
+                status.eq(TaskStatus::Running.as_str()),
+                started_at.eq(Some(now)),
+                lease_token.eq(Some(claim_token)),
+                lease_expires_at.eq(Some(now + chrono::Duration::minutes(1))),
+            ))
+            .execute(conn)
+            .await
+    })
+    .await
+    .unwrap();
+    let claimed = ClaimedTask::from_record(task.find_record(&context.pool).await.unwrap()).unwrap();
 
     (insert_import_results(
         &context.pool,
@@ -2940,7 +2960,7 @@ async fn test_mark_claimed_task_failed_uses_recorded_result_counts() {
 
     (mark_claimed_task_failed(
         &context.pool,
-        &task,
+        &claimed,
         &ApiError::InternalServerError("boom".to_string()),
     ))
     .await
@@ -2977,6 +2997,25 @@ async fn test_reindex_failure_finalization_reloads_persisted_progress() {
     .create(&context.pool))
     .await
     .unwrap();
+    let claim_token = uuid::Uuid::new_v4();
+    with_connection(&context.pool, async |conn| {
+        use crate::schema::tasks::dsl::{
+            id, lease_expires_at, lease_token, started_at, status, tasks,
+        };
+        let now = chrono::Utc::now().naive_utc();
+        diesel::update(tasks.filter(id.eq(task.id)))
+            .set((
+                status.eq(TaskStatus::Running.as_str()),
+                started_at.eq(Some(now)),
+                lease_token.eq(Some(claim_token)),
+                lease_expires_at.eq(Some(now + chrono::Duration::minutes(1))),
+            ))
+            .execute(conn)
+            .await
+    })
+    .await
+    .unwrap();
+    let claimed = ClaimedTask::from_record(task.find_record(&context.pool).await.unwrap()).unwrap();
 
     with_connection(&context.pool, async |conn| {
         use crate::schema::tasks::dsl::{id, processed_items, success_items, tasks};
@@ -2990,7 +3029,7 @@ async fn test_reindex_failure_finalization_reloads_persisted_progress() {
 
     mark_claimed_task_failed(
         &context.pool,
-        &task,
+        &claimed,
         &ApiError::InternalServerError("batch failed".to_string()),
     )
     .await

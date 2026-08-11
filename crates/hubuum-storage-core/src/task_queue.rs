@@ -99,6 +99,19 @@ impl StorageTaskStatus {
             _ => None,
         }
     }
+
+    #[must_use]
+    pub const fn is_active(self) -> bool {
+        matches!(self, Self::Validating | Self::Running)
+    }
+
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::PartiallySucceeded | Self::Cancelled
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

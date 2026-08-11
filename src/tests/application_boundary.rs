@@ -243,6 +243,7 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
         "HistoryStorage",
         "UnifiedSearchStorage",
         "TaskQueueStorage",
+        "TaskExecutionStorage",
         "WorkflowStorage",
         "OperationalStorage",
         "sealed::CertifiedStorageBackend",
@@ -295,6 +296,22 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
             "computed-field lifecycle operation {operation} must use the common storage observer"
         );
     }
+    for operation in [
+        "claim",
+        "renew_lease",
+        "recover_leases",
+        "append_event",
+        "update_state",
+        "complete",
+        "fail",
+        "purge_export_outputs",
+        "purge_backup_outputs",
+    ] {
+        assert!(
+            compact_context.contains(&format!("\"task_execution\",\"{operation}\"")),
+            "task execution operation {operation} must use the common storage observer"
+        );
+    }
     assert!(
         compact_context.contains("\"object_aggregates\",\"aggregate\""),
         "object aggregation must use the common storage observer"
@@ -335,6 +352,37 @@ fn selectable_storage_backends_are_complete_and_test_models_are_not_selectable()
             compact_context.contains(&format!("\"relations\",\"{operation}\"")),
             "relation operation {operation} must use the common storage observer"
         );
+    }
+}
+
+#[test]
+fn task_execution_consumers_do_not_import_postgres_task_state_helpers() {
+    let root = repository_root();
+    for file in [
+        "src/backups/mod.rs",
+        "src/exports/mod.rs",
+        "src/tasks/execution.rs",
+        "src/tasks/remote_call.rs",
+        "src/tasks/worker.rs",
+    ] {
+        let path = root.join(file);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        for forbidden in [
+            "TaskBackend",
+            "TaskStateUpdate",
+            "claim_next_queued_task",
+            "renew_task_lease(&pool",
+            "storage::capabilities::task",
+            "storage::postgres::operations::task::{",
+            "storage::postgres::operations::task::purge_expired_",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} still imports PostgreSQL task state helper {forbidden}",
+                path.display()
+            );
+        }
     }
 }
 

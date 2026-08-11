@@ -62,16 +62,20 @@ pub(crate) use hubuum_storage_core::{
     StorageRelatedObjectIncludeRow, StorageRelatedSort, StorageResourceScope,
     StorageSharedComputedFieldCreate, StorageSharedComputedFieldDelete,
     StorageSharedComputedFieldUpdate, StorageSharedComputedScope, StorageTask, StorageTaskAccess,
-    StorageTaskCreateRequest, StorageTaskDurations, StorageTaskEvent, StorageTaskEventPage,
-    StorageTaskKind, StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskPage,
-    StorageTaskPageQuery, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
-    StorageVisibility, TaskQueueStorage, UnifiedSearchClass, UnifiedSearchCollection,
+    StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion, StorageTaskCompletionArtifact,
+    StorageTaskCreateRequest, StorageTaskDurations, StorageTaskEvent, StorageTaskEventAppend,
+    StorageTaskEventInput, StorageTaskEventPage, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskPage, StorageTaskPageQuery, StorageTaskProgress, StorageTaskResultCounts,
+    StorageTaskScopeSnapshot, StorageTaskStateUpdate, StorageTaskStatus, StorageVisibility,
+    TaskExecutionStorage, TaskQueueStorage, UnifiedSearchClass, UnifiedSearchCollection,
     UnifiedSearchCursor, UnifiedSearchObject, UnifiedSearchQuery, UnifiedSearchStorage,
 };
 pub(crate) use hubuum_storage_core::{ClassHistoryRecord, CollectionHistoryRecord};
 pub(crate) use hubuum_storage_core::{
-    StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
-    StorageExportOutputSummary, StorageImportTaskResult, StorageImportTaskResultPage,
+    StorageBackupOutput, StorageBackupOutputSummary, StorageBackupTaskArtifact,
+    StorageExportOutput, StorageExportOutputSummary, StorageExportTaskArtifact,
+    StorageImportTaskResult, StorageImportTaskResultPage,
 };
 pub(crate) use hubuum_storage_core::{StorageError, StorageErrorKind};
 #[cfg(test)]

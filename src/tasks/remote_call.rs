@@ -18,13 +18,12 @@ use crate::errors::ApiError;
 use crate::models::{
     NewRemoteCallResult, NewTaskEventRecord, RemoteAuthConfig, RemoteHttpMethod,
     RemoteInvocationBodyOverride, RemoteInvocationParameters, RemoteTemplateContext,
-    StoredRemoteCallTaskPayload, TaskRecord, TaskResultCounts, TaskStatus,
-    authorize_remote_invocation,
+    StoredRemoteCallTaskPayload, TaskResultCounts, TaskStatus, authorize_remote_invocation,
 };
 use crate::observability::metrics;
-use crate::storage::StorageContext;
+use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task, update_task_state};
 use crate::storage::capabilities::remote_target::insert_remote_call_result;
-use crate::storage::capabilities::task::{TaskBackend, TaskStateUpdate};
+use crate::storage::{StorageContext, StorageTaskCompletionArtifact};
 use crate::traits::AuthzSubject;
 
 #[cfg(feature = "integration-test-support")]
@@ -53,7 +52,7 @@ fn local_remote_targets_enabled_for_tests() -> bool {
 
 pub(super) async fn execute_remote_call_task<C>(
     backend: &C,
-    task: &TaskRecord,
+    task: &ClaimedTask,
     user: &impl AuthzSubject,
     scopes: Option<&TokenScope>,
 ) -> Result<(), ApiError>
@@ -67,10 +66,11 @@ where
         .ok_or_else(|| ApiError::BadRequest("Remote call task payload is missing".to_string()))?;
     let request: StoredRemoteCallTaskPayload = serde_json::from_value(payload)?;
 
-    task.update_state(
+    update_task_state(
         pool,
-        TaskStateUpdate::new(TaskStatus::Running, TaskResultCounts::default())
-            .with_started_at(task.started_at),
+        task,
+        TaskStateChange::new(TaskStatus::Running, TaskResultCounts::default())
+            .started_at(task.started_at),
     )
     .await?;
 
@@ -342,7 +342,7 @@ fn remote_error_outcome(error: &OutboundHttpError) -> &'static str {
 
 async fn finalize_remote_task(
     pool: &impl crate::storage::StorageContext,
-    task: &TaskRecord,
+    task: &ClaimedTask,
     outcome: RemoteExecutionOutcome,
 ) -> Result<(), ApiError> {
     let status = if outcome.success {
@@ -350,23 +350,25 @@ async fn finalize_remote_task(
     } else {
         TaskStatus::Failed
     };
-    task.finalize_terminal(
+    complete_task(
         pool,
-        TaskStateUpdate::new(
+        task,
+        TaskStateChange::new(
             status,
             TaskResultCounts::from_outcomes(
                 i32::from(outcome.success),
                 i32::from(!outcome.success),
             )?,
         )
-        .with_summary(outcome.summary.clone())
-        .with_started_at(task.started_at),
+        .summary(outcome.summary.clone())
+        .started_at(task.started_at),
         NewTaskEventRecord {
             task_id: task.id,
             event_type: status.as_str().to_string(),
             message: outcome.summary,
             data: outcome.event_data,
         },
+        StorageTaskCompletionArtifact::None,
     )
     .await?;
     Ok(())

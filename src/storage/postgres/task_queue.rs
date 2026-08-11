@@ -214,7 +214,7 @@ fn task_kind_from_storage(kind: StorageTaskKind) -> TaskKind {
     }
 }
 
-fn task_to_storage(task: TaskRecord) -> Result<StorageTask, ApiError> {
+pub(super) fn task_to_storage(task: TaskRecord) -> Result<StorageTask, ApiError> {
     let kind = StorageTaskKind::from_persisted(&task.kind).ok_or_else(|| {
         ApiError::InternalServerError(format!("Unknown stored task kind '{}'", task.kind))
     })?;
